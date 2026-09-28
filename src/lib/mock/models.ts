@@ -451,7 +451,7 @@ function pickFor(role: string): RecCandidate | null {
           roleLabel: "Edit",
           title: "Qwen Image Edit 2511",
           familyId: "qwen_image_edit_2511",
-          goodAt: "Change a photo by describing it — clothes, objects, backgrounds — while keeping faces and logos.",
+          goodAt: "Change a photo by describing it — objects, backgrounds, lighting or style.",
           quant: "q4_k",
           mainMb: 13100,
           vram: { min: 12, rec: 16 },

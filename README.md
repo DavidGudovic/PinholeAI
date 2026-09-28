@@ -13,13 +13,13 @@ decision can be seen and changed in the **Fine-tune** drawer.
   (**Fits / Tight / Too big**).
 - **Built-in CivitAI browser** with plain-language filters (Realistic · Anime · Illustration · 3D ·
   Brand & product), safe-only by default, paid/early-access hidden by default, SafeTensor/GGUF only.
-- **Create** (text → image), **Edit** ("keep the face, change the shirt to a navy hoodie"),
+- **Create** (text → image), **Edit** ("make it evening", "replace the mug with a bottle"),
   **Describe** (image → prompt), reusable **Styles** and **Presets**.
 - **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
   CivitAI* in Pinhole: prompt, negative, steps, CFG, sampler, seed, size and LoRAs are applied,
   and missing models/LoRAs are one click away. The pasted text is never stored.
-- **Private by construction.** Never stores your prompts. No telemetry. Works fully offline
-  once models are downloaded.
+- **Private by construction.** Your prompts and images stay on your computer. No telemetry.
+  Works offline once models are downloaded.
 - **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
   (`sd-server`) and [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) —
   NVIDIA (CUDA, incl. RTX 50xx), AMD/Intel (Vulkan), or CPU.

@@ -177,7 +177,7 @@ export function EditTab() {
                     minRows={3}
                     maxRows={10}
                     value={e.instruction}
-                    placeholder="e.g. keep the same face, change the shirt to a navy hoodie"
+                    placeholder="e.g. make it evening with warm street lights, or replace the mug with a water bottle"
                     onChange={(ev) => dispatch({ type: "patchEdit", patch: { instruction: ev.target.value } })}
                   />
                 </div>

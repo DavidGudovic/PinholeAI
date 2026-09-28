@@ -199,9 +199,9 @@ The image comes in as an in-memory buffer (never copied into `Data/`).
 Two modes, picked automatically:
 
 1. **Instruction edit** (default when an edit model is installed): the user types what to change:
-   "keep the same face, change the shirt to a navy hoodie" or "keep the logo, replace the mug
-   with a water bottle". Uses the edit family (Qwen Image Edit 2511 preferred, Flux.1 Kontext
-   as the lower-VRAM option) with the image passed as `ref_images[0]`.
+   "make it evening with warm street lights" or "replace the mug with a water bottle". Uses the
+   edit family (Qwen Image Edit 2511 preferred, Flux.1 Kontext as the lower-VRAM option) with
+   the image passed as `ref_images[0]`.
    - Dial: **Stay close to original** (maps to the family's guidance setting).
    - Optional **"Only change here"** brush: paint a mask → `mask_image`.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
@@ -421,7 +421,9 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - License: MIT (compatible with stable-diffusion.cpp and llama.cpp). Include their license
   files in `THIRD_PARTY_LICENSES`.
 - Model licenses are the user's concern, but show the license name on the model card
-  (e.g. FLUX.1-dev is non-commercial).
+  (e.g. FLUX.1-dev is non-commercial). Release adds licence acceptance (`docs/RELEASE-SPEC.md` §6).
+- **No build is shared with anyone** (public release, zip for a friend, store listing) until
+  every item in `docs/RELEASE-SPEC.md` is done.
 
 ---
 
@@ -446,6 +448,10 @@ style library (built-ins + user styles, final-prompt preview); presets save/load
 **M5 – Polish**: live preview (TAESD), upscale, LoRAs + trigger words, offline mode enforcement
 test, packaging, README with screenshots.
 
+**M6 – Release readiness**: everything in `docs/RELEASE-SPEC.md` (AI-generated marking, local
+image check + guard LLM, catalog and licence changes, terms, `SAFETY.md`). Required before any
+build is shared.
+
 ---
 
 ## 12. Nice-to-haves (post v1, pick later)
@@ -468,7 +474,12 @@ test, packaging, README with screenshots.
   that fits the user's GPU (§6.1).
 - **VRAM**: every model shows how much VRAM it needs (§6.2).
 - **Paid (early access) models**: hidden by default.
-- **Content filter**: Safe only (default) · Include 18+ · 18+ only.
+- **Content filter**: Safe only (default) · Include 18+ · 18+ only. Release drops "18+ only"
+  (`docs/RELEASE-SPEC.md` §5).
+- **Distribution**: personal testing only for now. Any shared build is gated by
+  `docs/RELEASE-SPEC.md`.
+- **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
+  Prompts are never sent to a server for moderation.
 
 ### Implementation decisions (v1 build-out)
 - **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the
