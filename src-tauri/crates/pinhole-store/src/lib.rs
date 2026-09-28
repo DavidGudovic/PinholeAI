@@ -47,16 +47,32 @@ impl StoreError {
     }
 
     /// Plain-language message for the UI (says what to do next where it can).
-    /// `Invalid` and `Keychain` messages are already written for users.
+    /// `Invalid` and `Keychain` messages are already written for users. Raw
+    /// OS / parser text never goes here: it is in [`StoreError::details`].
     pub fn user_message(&self) -> String {
         match self {
-            StoreError::Io(e) => format!("Could not read or write Pinhole's Data folder: {e}"),
-            StoreError::Parse { path, msg } => format!("A file in Pinhole's Data folder is damaged ({path}): {msg}"),
+            StoreError::Io(_) => IO_MESSAGE.to_string(),
+            StoreError::Parse { path, .. } => {
+                let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+                format!("A file in Pinhole's Data folder is damaged ({name}). Restore it from a backup, or move it out of the Data folder and restart Pinhole.")
+            }
             StoreError::NotFound(what) => format!("{what} was not found. It may have been deleted."),
             StoreError::Invalid(msg) | StoreError::Keychain(msg) => msg.clone(),
         }
     }
+
+    /// Technical text for the "Details" toggle (OS error, file + parser message).
+    pub fn details(&self) -> Option<String> {
+        match self {
+            StoreError::Io(e) => Some(e.to_string()),
+            StoreError::Parse { path, msg } => Some(format!("{path}: {msg}")),
+            StoreError::NotFound(_) | StoreError::Invalid(_) | StoreError::Keychain(_) => None,
+        }
+    }
 }
+
+/// What an I/O failure means to the user (the OS error goes to details).
+pub const IO_MESSAGE: &str = "Pinhole couldn't read or write a file. Check that the disk isn't full and that Pinhole's Data folder is writable.";
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 

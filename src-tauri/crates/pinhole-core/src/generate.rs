@@ -196,7 +196,8 @@ pub(crate) struct EngineFlags {
     pub loading: bool,
     pub running: bool,
     pub loaded_model_id: Option<String>,
-    pub error: Option<String>,
+    /// Last engine failure, shown by the top bar's "Engine problem" popover.
+    pub error: Option<CoreError>,
 }
 
 #[derive(Default)]
@@ -768,7 +769,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
                 }
             };
             if err.code != "cancelled" {
-                core.gen.flags.lock().error = Some(err.message.clone());
+                core.gen.flags.lock().error = Some(err.clone());
             }
             engine_setup::emit_status(core);
             Err(err)
@@ -793,7 +794,10 @@ pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreEr
         Failure::NoGpu => ("engine_failed", "The image engine couldn't use your graphics card. Update your graphics driver, or switch the engine to CPU in Settings."),
         Failure::GlibcTooOld => ("engine_failed", "The image engine needs Ubuntu 24.04 or newer. Please update your system."),
         Failure::MissingLibrary => ("engine_failed", MISSING_LIBRARY_MESSAGE),
-        Failure::ModelLoad => ("engine_failed", "This model couldn't be loaded — the file may be damaged or not supported. Try downloading it again."),
+        Failure::ModelLoad => (
+            "model_load",
+            "This model couldn't be loaded — the file may be damaged or not supported. Delete it in Models → Installed and download it again.",
+        ),
         Failure::Unknown => ("engine_failed", "The engine stopped unexpectedly. Try again; if it keeps happening, try the Fast setting or restart Pinhole."),
     };
     let details = match exit_code {
@@ -1378,6 +1382,13 @@ mod tests {
         assert!(e.details.unwrap().contains("exit code 1"));
         let e = engine_failure(&LogBuffer::default(), None);
         assert!(e.message.starts_with("The engine stopped unexpectedly"));
+        // A model that fails to load has its own code, so the UI can offer "Open Models".
+        let logs = LogBuffer::default();
+        logs.push_line("[ERROR] main.cpp:91  - new_sd_ctx_t failed");
+        let e = engine_failure(&logs, Some(1));
+        assert_eq!(e.code, "model_load");
+        assert!(e.message.starts_with("This model couldn't be loaded"), "{}", e.message);
+        assert!(e.details.unwrap().contains("new_sd_ctx_t failed"));
     }
 
     #[test]

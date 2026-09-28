@@ -14,7 +14,7 @@ use crate::{AppCore, CoreError, CoreResult};
 /// code (`invalid` for "Built-in styles can't be deleted.", `not_found`, `io`).
 /// Also suitable for keychain errors (`pinhole_store::keychain`).
 pub fn store_err(e: StoreError) -> CoreError {
-    CoreError::new(e.code(), e.user_message())
+    CoreError::from(e)
 }
 
 /// Built-in styles (`builtin:<name>`, read-only) then the user's, each sorted by name.

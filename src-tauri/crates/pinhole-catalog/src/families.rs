@@ -221,7 +221,7 @@ pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext)
 // ------------------------------------------------------------------ VRAM
 
 pub fn need_from(v: &VramGb) -> VramNeed {
-    VramNeed { gb: v.recommended, min_gb: v.min.min(v.recommended), estimate: false }
+    VramNeed { gb: v.recommended, min_gb: v.min.min(v.recommended), estimate: false, on_cpu: false }
 }
 
 /// Registry figure for the family when it has one (measured), else an
@@ -233,8 +233,22 @@ pub fn family_need(registry: &Registry, family: &Family, hw: &HwContext, main_by
     }
 }
 
-pub fn fits_at_all(need: &VramNeed, vram_gb: f32) -> bool {
-    vram::fit(need, vram_gb) != Fit::TooBig
+/// Bytes a model keeps in RAM when it runs on the processor: the main file
+/// plus every required component (VAE, text encoders) for this hardware.
+pub fn cpu_weight_bytes(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> u64 {
+    wiring::required_components(registry, family, hw)
+        .iter()
+        .filter_map(|rc| registry.component(&rc.component_id))
+        .fold(main_bytes, |sum, c| sum.saturating_add(mb_to_bytes(c.size_mb)))
+}
+
+/// "Needs ~X GB" + Fits / Tight / Too big on this machine (SPEC §6.2): the GPU
+/// need against VRAM, or — without a usable GPU ([`HwContext::cpu_only`]) —
+/// the RAM for the main file + components against system RAM
+/// ([`vram::fit_cpu`]: Tight = "runs on the processor — slow").
+pub fn need_and_fit(registry: &Registry, family: &Family, hw: &HwContext, need: VramNeed, main_bytes: u64) -> (VramNeed, Fit) {
+    let weights = if hw.cpu_only() { cpu_weight_bytes(registry, family, hw, main_bytes) } else { main_bytes };
+    vram::need_and_fit(family, need, weights, hw)
 }
 
 // ------------------------------------------------------------------ quants
@@ -333,23 +347,23 @@ pub fn quant_options(spec: &DownloadSpec) -> Vec<QuantOption> {
 
 /// SPEC §6.1: the best quant that fits, starting at the hardware tier's
 /// `prefer_quant` (bf16 → Q8 → Q4). Falls back to any option that fits.
+/// `fit_of` sizes one option on this machine (see [`need_and_fit`]).
 pub fn choose_quant<'a>(
     options: &'a [QuantOption],
     prefer: Option<&str>,
-    vram_gb: f32,
-    need_of: impl Fn(&QuantOption) -> VramNeed,
-) -> Option<(&'a QuantOption, VramNeed)> {
+    fit_of: impl Fn(&QuantOption) -> (VramNeed, Fit),
+) -> Option<(&'a QuantOption, VramNeed, Fit)> {
     let start = prefer.map(quant_rank).unwrap_or(0);
     let preferred = options.iter().filter(|o| quant_rank(&o.quant) >= start);
     let rest = options.iter().filter(|o| quant_rank(&o.quant) < start);
-    preferred.chain(rest).map(|o| (o, need_of(o))).find(|(_, n)| fits_at_all(n, vram_gb))
+    preferred.chain(rest).map(|o| (o, fit_of(o))).find(|(_, (_, f))| *f != Fit::TooBig).map(|(o, (n, f))| (o, n, f))
 }
 
 /// VRAM need of an installed main model: measured peak → registry download
 /// spec for this exact file → family figure → estimate from file size.
 pub fn installed_need(registry: &Registry, family: &Family, file: &InstalledFile, hw: &HwContext) -> VramNeed {
     if let Some(o) = file.observed_vram_gb.filter(|o| o.is_finite() && *o > 0.0) {
-        return VramNeed { gb: o, min_gb: o, estimate: false };
+        return VramNeed { gb: o, min_gb: o, estimate: false, on_cpu: false };
     }
     if let Some(spec) = &family.download {
         let name = file.rel_path.rsplit('/').next().unwrap_or(&file.rel_path);

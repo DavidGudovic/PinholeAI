@@ -40,15 +40,27 @@ impl CoreError {
     }
 }
 
+// Every `From` keeps raw library / OS text out of `message` (plain words,
+// says what to do next) and puts it in `details` for the "Details" toggle.
+
 impl From<pinhole_store::StoreError> for CoreError {
     fn from(e: pinhole_store::StoreError) -> Self {
-        Self::new(e.code(), e.user_message())
+        let details = e.details();
+        let err = Self::new(e.code(), e.user_message());
+        match details {
+            Some(d) => err.with_details(d),
+            None => err,
+        }
     }
 }
 
 impl From<pinhole_registry::RegistryError> for CoreError {
     fn from(e: pinhole_registry::RegistryError) -> Self {
-        Self::new("invalid", format!("The model registry could not be loaded: {e}"))
+        Self::new(
+            "invalid",
+            "Pinhole's list of models couldn't be loaded. If you edited Data/config/overrides.yaml, undo that change; otherwise reinstall Pinhole.",
+        )
+        .with_details(e.to_string())
     }
 }
 
@@ -66,13 +78,40 @@ impl From<pinhole_net::NetError> for CoreError {
 
 impl From<std::io::Error> for CoreError {
     fn from(e: std::io::Error) -> Self {
-        Self::new("io", format!("Disk error: {e}"))
+        Self::new("io", pinhole_store::IO_MESSAGE).with_details(e.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn io_store_and_registry_errors_keep_raw_text_in_details() {
+        let os = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access is denied. (os error 5)");
+        let e = CoreError::from(os);
+        assert_eq!(e.code, "io");
+        assert_eq!(e.message, "Pinhole couldn't read or write a file. Check that the disk isn't full and that Pinhole's Data folder is writable.");
+        assert!(!e.message.contains("os error"));
+        assert_eq!(e.details.as_deref(), Some("Access is denied. (os error 5)"));
+
+        let e = CoreError::from(pinhole_store::StoreError::Io(std::io::Error::other("No space left on device (os error 28)")));
+        assert_eq!((e.code.as_str(), e.message.as_str()), ("io", pinhole_store::IO_MESSAGE));
+        assert!(e.details.unwrap().contains("os error 28"));
+
+        let e = CoreError::from(pinhole_store::StoreError::Parse { path: "/d/Data/config/settings.yaml".into(), msg: "invalid type: map".into() });
+        assert!(e.message.contains("(settings.yaml)"), "{}", e.message);
+        assert!(!e.message.contains("invalid type"), "{}", e.message);
+        assert_eq!(e.details.as_deref(), Some("/d/Data/config/settings.yaml: invalid type: map"));
+        // User-facing store messages carry no details.
+        let e = CoreError::from(pinhole_store::StoreError::Invalid("Built-in styles can't be deleted.".into()));
+        assert_eq!((e.code.as_str(), e.details), ("invalid", None));
+
+        let e = CoreError::from(pinhole_registry::Registry::from_yaml("families: [", None).unwrap_err());
+        assert_eq!(e.code, "invalid");
+        assert!(e.message.starts_with("Pinhole's list of models couldn't be loaded"), "{}", e.message);
+        assert!(e.details.unwrap().contains("models.yaml"));
+    }
 
     #[test]
     fn network_error_keeps_transport_text_in_details() {

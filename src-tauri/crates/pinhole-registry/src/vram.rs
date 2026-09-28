@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::wiring::HwContext;
 use crate::{Family, Registry, VramGb};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +26,10 @@ pub struct VramNeed {
     pub min_gb: f32,
     /// `true` when computed from file sizes rather than measured.
     pub estimate: bool,
+    /// No usable GPU: `gb` / `min_gb` are system RAM the model needs on the
+    /// processor ([`cpu_need`]), and the badge is judged against RAM ([`fit_cpu`]).
+    #[serde(default)]
+    pub on_cpu: bool,
 }
 
 /// Headroom kept free for the desktop / other apps (SPEC §6.2: `X ≤ VRAM − 1 GB`).
@@ -37,13 +42,21 @@ pub const ENGINE_RESERVE_GB: f32 = 0.5;
 /// Share of the main weights that must stay GPU-resident for acceptable speed
 /// when the rest is streamed from RAM by auto-fit / graph-cut execution.
 pub const MIN_RESIDENT_SHARE: f32 = 0.5;
+/// Without a usable GPU: system RAM kept free for the OS and other apps.
+pub const CPU_SPARE_RAM_GB: f32 = 4.0;
+/// Without a usable GPU: models whose weights (main file + every component)
+/// are at most this big still run on the processor in acceptable time; bigger
+/// ones only when the family is `cpu_friendly` (SD 1.5).
+pub const CPU_MAX_WEIGHTS_GB: f32 = 4.0;
 
 const EPS: f32 = 1e-3;
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 /// Fits: `need.gb <= vram - 1`; Tight: `need.min_gb <= vram`; else TooBig.
 /// `vram_gb == 0` (CPU only) → TooBig for everything except explicitly tiny models
-/// (`need.gb <= CPU_TINY_GB`, which are Tight: they run, slowly).
+/// (`need.gb <= CPU_TINY_GB`, which are Tight: they run, slowly). Callers that
+/// know the family and file sizes use [`need_and_fit`], which sizes CPU-only
+/// machines against system RAM instead ([`fit_cpu`]).
 pub fn fit(need: &VramNeed, vram_gb: f32) -> Fit {
     // NaN counts as "no GPU".
     if vram_gb.is_nan() || vram_gb <= 0.0 {
@@ -102,6 +115,7 @@ pub fn estimate(
         gb,
         min_gb,
         estimate: true,
+        on_cpu: false,
     }
 }
 
@@ -113,6 +127,7 @@ pub fn registry_need(family: &Family, quant: Option<&str>) -> Option<VramNeed> {
         gb: v.recommended,
         min_gb: v.min.min(v.recommended),
         estimate: false,
+        on_cpu: false,
     };
     let dl = family.download.as_ref();
     quant
@@ -123,4 +138,47 @@ pub fn registry_need(family: &Family, quant: Option<&str>) -> Option<VramNeed> {
         .or_else(|| dl.and_then(|d| d.vram_gb.as_ref()))
         .or(family.vram_gb.as_ref())
         .map(from)
+}
+
+/// RAM a model needs on the processor (no usable GPU): every weight file —
+/// main file and components all live in RAM — plus the family's
+/// `activation_gb`. Rounded up to 0.1 GB; `on_cpu = true`, `min_gb == gb`.
+pub fn cpu_need(family: &Family, weights_bytes: u64) -> VramNeed {
+    let gb = ceil_tenth(gib(weights_bytes) + family.activation_gb.max(0.0));
+    VramNeed {
+        gb,
+        min_gb: gb,
+        estimate: true,
+        on_cpu: true,
+    }
+}
+
+/// Fit without a usable GPU: **Tight** ("runs on the processor — slow") when
+/// the model is small enough to be worth running there — its family is
+/// `cpu_friendly` or its weights are at most [`CPU_MAX_WEIGHTS_GB`] — and
+/// weights + activation ([`cpu_need`]) leave at least [`CPU_SPARE_RAM_GB`] of
+/// system RAM free; else **TooBig**. Never Fits. `ram_gb <= 0` (RAM not
+/// known yet) skips the RAM check.
+pub fn fit_cpu(family: &Family, weights_bytes: u64, ram_gb: f32) -> Fit {
+    let small = family.cpu_friendly || gib(weights_bytes) <= CPU_MAX_WEIGHTS_GB + EPS;
+    let need = cpu_need(family, weights_bytes).gb;
+    let ram_known = ram_gb.is_finite() && ram_gb > 0.0;
+    let ram_ok = !ram_known || need + CPU_SPARE_RAM_GB <= ram_gb + EPS;
+    if small && ram_ok {
+        Fit::Tight
+    } else {
+        Fit::TooBig
+    }
+}
+
+/// "Needs ~X GB" + badge on this machine. With a GPU: `need` against VRAM
+/// ([`fit`]). Without one ([`HwContext::cpu_only`]): the RAM need of
+/// `weights_bytes` (main file + every component the family loads) against
+/// system RAM ([`cpu_need`], [`fit_cpu`]).
+pub fn need_and_fit(family: &Family, need: VramNeed, weights_bytes: u64, hw: &HwContext) -> (VramNeed, Fit) {
+    if hw.cpu_only() {
+        (cpu_need(family, weights_bytes), fit_cpu(family, weights_bytes, hw.ram_gb))
+    } else {
+        (need, fit(&need, hw.vram_gb))
+    }
 }

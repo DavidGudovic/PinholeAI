@@ -865,15 +865,20 @@ mod tests {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
         let picks = get_recommended(&core).unwrap();
         assert_eq!(picks.iter().map(|p| p.role.as_str()).collect::<Vec<_>>(), ["realistic", "anime", "edit", "describe"]);
-        // Before hardware detection: CPU only → nothing fits except the captioner.
-        assert!(picks[0].unavailable_reason.is_some());
+        // Before hardware detection: CPU only → the small SD 1.5 (runs on the
+        // processor) and the captioner; the big anime / edit models don't fit.
+        assert_eq!(picks[0].family_id.as_deref(), Some("sd15"));
+        assert_eq!(picks[0].fit, Some(pinhole_registry::vram::Fit::Tight));
+        assert!(picks[0].vram.unwrap().on_cpu);
+        assert!(picks[1].unavailable_reason.is_some() && picks[2].unavailable_reason.is_some());
         assert_eq!(picks[3].title.as_deref(), Some("Image describer"));
     }
 
     #[tokio::test]
     async fn install_recommended_errors_are_plain() {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
-        let e = install_recommended(&core, "realistic").await.unwrap_err();
+        // CPU only: no anime model runs acceptably on the processor.
+        let e = install_recommended(&core, "anime").await.unwrap_err();
         assert_eq!(e.code, "vram");
         assert!(e.message.contains("graphics card"), "{}", e.message);
         assert_eq!(install_recommended(&core, "nope").await.unwrap_err().code, "not_found");
@@ -894,6 +899,8 @@ mod tests {
             let mut s = core.settings.write();
             s.vram_override_gb = Some(8.0);
             s.gpu = "auto".into();
+            // The VRAM override only counts with a GPU backend (no hardware detected here).
+            s.engine_backend = "cuda".into();
         }
         let started = install_recommended(&core, "realistic").await.unwrap();
         let status = core.downloads.status();

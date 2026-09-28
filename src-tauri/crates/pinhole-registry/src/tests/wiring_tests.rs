@@ -13,6 +13,7 @@ fn hw(vram: f32) -> HwContext {
         } else {
             "cpu".into()
         },
+        ram_gb: 32.0,
     }
 }
 

@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 
-use pinhole_registry::vram;
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
 use pinhole_store::datadir::ModelKind;
@@ -14,7 +13,9 @@ use crate::view::{DeleteFile, DeletePreview, DeleteReason, InstalledLora, Instal
 
 /// Friendly badge for installed models: the recommended role the family heads
 /// (`realistic` → "Realistic", `anime` → "Anime"), only for files installed from
-/// the registry (CivitAI finetunes of a family can be any style).
+/// the registry (CivitAI finetunes of a family can be any style). "Heads" = the
+/// role's first registry candidate: a last-resort fallback (SD 1.5, whose
+/// finetunes come in every style) gets no badge.
 pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option<String> {
     if file.civitai.is_some() {
         return None;
@@ -24,7 +25,8 @@ pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option
         let heads = registry
             .recommended()
             .get(role)
-            .is_some_and(|c| c.iter().any(|c| c.source.as_deref() == Some("registry") && c.family.as_deref() == Some(family)));
+            .and_then(|c| c.iter().find(|c| c.source.as_deref() == Some("registry")))
+            .is_some_and(|c| c.family.as_deref() == Some(family));
         if heads {
             return Some(label.to_string());
         }
@@ -36,11 +38,11 @@ pub fn installed_model_view(registry: &Registry, index: &InstalledIndex, file: &
     let family = file.family.as_deref().and_then(|id| registry.family(id));
     let (vram, fit, missing, modes, is_edit, family_label, license) = match family {
         Some(f) => {
-            let need = families::installed_need(registry, f, file, hw);
+            let (need, fit) = families::need_and_fit(registry, f, hw, families::installed_need(registry, f, file, hw), file.size_bytes);
             let missing: Vec<String> =
                 families::missing_components(registry, f, hw, index, false).into_iter().map(|(_, c)| families::component_label(c)).collect();
             let is_edit = f.role.as_deref() == Some("edit") || f.modes.iter().any(|m| m == "edit");
-            (Some(need), Some(vram::fit(&need, hw.vram_gb)), missing, f.modes.clone(), is_edit, Some(f.label.clone()), f.license_note.clone())
+            (Some(need), Some(fit), missing, f.modes.clone(), is_edit, Some(f.label.clone()), f.license_note.clone())
         }
         None => (None, None, Vec::new(), Vec::new(), false, None, None),
     };
@@ -134,7 +136,7 @@ pub fn is_safe_rel_path(rel_path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::{component, hw, index, model, registry, with_civitai};
+    use crate::testkit::{component, hw, hw_cpu, index, model, registry, with_civitai};
     use pinhole_registry::vram::Fit;
 
     fn ids(v: Vec<&InstalledFile>) -> Vec<String> {
@@ -232,6 +234,18 @@ mod tests {
         assert_eq!(v.civitai_version_id, Some(7));
         assert_eq!(v.base_model.as_deref(), Some("SDXL 1.0"));
         assert_eq!(v.style_badge, None, "no badge guessed for CivitAI files");
+
+        // No usable GPU: sized against RAM. SD 1.5 runs (slowly), Z-Image does not.
+        let v = installed_model_view(&reg, &idx, &zit, &hw_cpu(32.0));
+        assert_eq!(v.fit, Some(Fit::TooBig));
+        assert!(v.vram.unwrap().on_cpu);
+        let mut sd = model("sd", "sd15", ModelKind::Checkpoint, "dreamshaper_8.safetensors");
+        sd.size_bytes = 2_132_696_762;
+        let v = installed_model_view(&reg, &index(vec![sd.clone()]), &sd, &hw_cpu(8.0));
+        assert_eq!(v.fit, Some(Fit::Tight));
+        assert_eq!(v.vram.unwrap().gb, 3.0);
+        assert_eq!(v.style_badge, None, "SD 1.5 is only a fallback pick, not the Realistic model");
+        assert_eq!(installed_model_view(&reg, &index(vec![sd.clone()]), &sd, &hw(8.0)).fit, Some(Fit::Fits));
 
         // Unknown family → estimate-free, empty.
         let mut u = model("u", "nope", ModelKind::Checkpoint, "u.safetensors");

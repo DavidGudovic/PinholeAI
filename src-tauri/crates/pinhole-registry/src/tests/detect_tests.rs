@@ -215,6 +215,62 @@ fn sd15_checkpoint() {
 }
 
 #[test]
+fn sd1_tiny_unets_are_not_sd15() {
+    // get_sd_version(): an SD1 UNet without the second middle-block ResNet is
+    // SDXS-512 (no output_blocks.7.1 either) or an SD1 tiny UNet — not SD 1.5.
+    let base: Vec<(&str, &str, &[u64])> = vec![
+        (
+            "model.diffusion_model.input_blocks.0.0.weight",
+            "F16",
+            &[320, 4, 3, 3],
+        ),
+        (
+            "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight",
+            "F16",
+            &[49408, 768],
+        ),
+    ];
+    let sdxs = st_header(&base);
+    assert!(candidates(&sdxs).is_empty(), "SDXS-512");
+    let mut tiny = base.clone();
+    tiny.push((
+        "model.diffusion_model.output_blocks.7.1.norm.weight",
+        "F16",
+        &[640],
+    ));
+    assert!(candidates(&st_header(&tiny)).is_empty(), "SD1 tiny UNet");
+
+    // With middle_block.1 it is SD 1.5 again — also in diffusers naming.
+    let mut full = base.clone();
+    full.push((
+        "model.diffusion_model.middle_block.1.proj_in.weight",
+        "F16",
+        &[1280, 1280, 1, 1],
+    ));
+    assert_eq!(candidates(&st_header(&full)), vec!["sd15", "sd15_fast"]);
+    let diffusers = st_header(&[
+        ("unet.down_blocks.0.resnets.0.conv1.weight", "F16", &[320, 320, 3, 3]),
+        ("unet.mid_block.resnets.1.conv1.weight", "F16", &[1280, 1280, 3, 3]),
+        (
+            "te.text_model.embeddings.token_embedding.weight",
+            "F16",
+            &[49408, 768],
+        ),
+    ]);
+    assert_eq!(candidates(&diffusers), vec!["sd15", "sd15_fast"]);
+    let diffusers_tiny = st_header(&[
+        ("unet.down_blocks.0.resnets.0.conv1.weight", "F16", &[320, 320, 3, 3]),
+        ("unet.mid_block.resnets.0.conv1.weight", "F16", &[1280, 1280, 3, 3]),
+        (
+            "te.text_model.embeddings.token_embedding.weight",
+            "F16",
+            &[49408, 768],
+        ),
+    ]);
+    assert!(candidates(&diffusers_tiny).is_empty());
+}
+
+#[test]
 fn sdxl_checkpoint_lists_finetune_families_after_base() {
     let h = st_header(&[
         (

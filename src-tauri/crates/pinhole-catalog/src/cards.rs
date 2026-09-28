@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
-use pinhole_registry::vram::{self, Fit, VramNeed};
+use pinhole_registry::vram::{Fit, VramNeed};
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
 use pinhole_store::InstalledIndex;
@@ -68,7 +68,7 @@ impl CatalogEnv for RegistryEnv<'_> {
     fn vram_for(&self, family_id: &str, main_bytes: u64) -> Option<(VramNeed, Fit)> {
         let f = self.registry.family(family_id)?;
         let need = families::family_need(self.registry, f, &self.hw, main_bytes);
-        Some((need, vram::fit(&need, self.hw.vram_gb)))
+        Some(families::need_and_fit(self.registry, f, &self.hw, need, main_bytes))
     }
 
     fn is_installed(&self, version_id: u64, sha256: Option<&str>) -> bool {
@@ -211,7 +211,7 @@ pub(crate) mod tests {
         }
         fn vram_for(&self, _family: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
             let gb = bytes as f32 / 1e9 + 2.0;
-            let need = VramNeed { gb, min_gb: gb * 0.7, estimate: true };
+            let need = VramNeed { gb, min_gb: gb * 0.7, estimate: true, on_cpu: false };
             let fit = if gb <= self.vram_gb - 1.0 {
                 Fit::Fits
             } else if need.min_gb <= self.vram_gb {

@@ -9,6 +9,7 @@ fn need(gb: f32, min_gb: f32) -> VramNeed {
         gb,
         min_gb,
         estimate: false,
+        on_cpu: false,
     }
 }
 
@@ -66,7 +67,8 @@ fn registry_values_are_not_estimates() {
         Some(VramNeed {
             gb: 16.0,
             min_gb: 12.0,
-            estimate: false
+            estimate: false,
+            on_cpu: false,
         })
     );
     assert_eq!(
@@ -74,7 +76,8 @@ fn registry_values_are_not_estimates() {
         Some(VramNeed {
             gb: 8.0,
             min_gb: 5.0,
-            estimate: false
+            estimate: false,
+            on_cpu: false,
         })
     );
     assert_eq!(registry_need(z, Some("nope")), registry_need(z, None));
@@ -90,6 +93,7 @@ fn gpu_resident_components_follow_te_on_cpu_flags() {
     let hw = HwContext {
         vram_gb: 8.0,
         backend: "cuda".into(),
+        ram_gb: 32.0,
     };
     let reg = shipped();
     assert_eq!(
@@ -105,4 +109,58 @@ fn gpu_resident_components_follow_te_on_cpu_flags() {
     };
     assert_eq!(only_vae("flux1_dev"), vec!["vae"]);
     assert_eq!(only_vae("z_image_turbo"), vec!["vae"]);
+}
+
+#[test]
+fn cpu_fit_uses_system_ram_for_small_models() {
+    let reg = shipped();
+    let sd15 = reg.family("sd15").unwrap();
+    let sdxl = reg.family("sdxl").unwrap();
+    assert!(sd15.cpu_friendly && reg.family("sd15_fast").unwrap().cpu_friendly);
+    assert!(!sdxl.cpu_friendly);
+    // SD 1.5 fp16 (2 132 696 762 bytes ≈ 1.99 GiB) + 1.0 GiB activations.
+    let bytes = 2_132_696_762;
+    let n = cpu_need(sd15, bytes);
+    assert!(n.on_cpu && n.estimate);
+    assert!(approx(n.gb, 3.0), "{n:?}");
+    assert_eq!(n.min_gb, n.gb);
+    // Needs 3.0 + 4 GB spare: an "8 GB" PC (≈7.7 GiB) is enough, 6 GB is not.
+    assert_eq!(fit_cpu(sd15, bytes, 7.7), Fit::Tight);
+    assert_eq!(fit_cpu(sd15, bytes, 7.0), Fit::Tight);
+    assert_eq!(fit_cpu(sd15, bytes, 6.0), Fit::TooBig);
+    assert_eq!(fit_cpu(sd15, bytes, 0.0), Fit::Tight, "RAM unknown → size rule only");
+    // A full-precision SD 1.5 (7.7 GB) is still offered: the family is cpu_friendly.
+    assert_eq!(fit_cpu(sd15, 7_700_000_000, 32.0), Fit::Tight);
+    // Big families: too slow on the processor, however much RAM there is.
+    assert_eq!(fit_cpu(sdxl, 7_105_000_000 + 335_000_000, 64.0), Fit::TooBig);
+    // …unless the whole model is small (≤ 4 GiB of weights).
+    assert_eq!(fit_cpu(sdxl, 3 * GIB, 64.0), Fit::Tight);
+    assert_eq!(fit_cpu(sdxl, 5 * GIB, 64.0), Fit::TooBig);
+    let z = reg.family("z_image_turbo").unwrap();
+    assert_eq!(fit_cpu(z, 3_864_000_000 + 335_000_000 + 8_045_000_000, 64.0), Fit::TooBig);
+}
+
+#[test]
+fn need_and_fit_picks_vram_or_ram() {
+    let reg = shipped();
+    let sd15 = reg.family("sd15").unwrap();
+    let gpu_need = registry_need(sd15, None).unwrap();
+    let hw = |vram_gb: f32, backend: &str| HwContext {
+        vram_gb,
+        backend: backend.into(),
+        ram_gb: 16.0,
+    };
+    // GPU: the registry figure against VRAM.
+    let (n, f) = need_and_fit(sd15, gpu_need, 2 * GIB, &hw(8.0, "cuda"));
+    assert_eq!((n, f), (gpu_need, Fit::Fits));
+    assert_eq!(need_and_fit(sd15, gpu_need, 2 * GIB, &hw(4.0, "vulkan")).1, Fit::Tight);
+    // CPU (backend cpu, or no known VRAM): RAM need against system RAM.
+    for h in [hw(0.0, "cpu"), hw(0.0, "cuda"), hw(8.0, "cpu")] {
+        assert!(h.cpu_only());
+        let (n, f) = need_and_fit(sd15, gpu_need, 2 * GIB, &h);
+        assert!(n.on_cpu, "{n:?}");
+        assert!(approx(n.gb, 3.0), "{n:?}");
+        assert_eq!(f, Fit::Tight);
+    }
+    assert!(!hw(8.0, "cuda").cpu_only());
 }

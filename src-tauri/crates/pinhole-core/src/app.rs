@@ -77,12 +77,15 @@ pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> 
 ///
 /// * GPU: `cpu` (or engine backend `cpu`) → none; `gpu:<index>` → that GPU if
 ///   it exists; otherwise (and for `auto`) the best GPU.
-/// * VRAM: CPU-only → 0; else the manual override, else the GPU's VRAM, else 0.
 /// * Backend: the explicit engine-backend setting, else by GPU vendor
 ///   ([`default_backend`]: NVIDIA → cuda, AMD/Intel → vulkan, none → cpu).
+/// * VRAM: the manual override, else the GPU's VRAM, else 0 — but only with a
+///   GPU backend. Whenever the effective backend is `cpu` there is no GPU and
+///   VRAM is 0 (the override is ignored), so the tier is the lowest profile and
+///   models are sized against RAM (`HwContext::cpu_only`).
 ///
 /// Before detection finishes (`detected == None`) the automatic parts are
-/// "no GPU": vram 0 (unless overridden), backend `cpu` (unless overridden).
+/// "no GPU": backend `cpu` (unless overridden), so vram 0.
 pub fn effective_hardware(settings: &Settings, detected: Option<&HardwareInfo>) -> EffectiveHardware {
     let explicit_backend = match settings.engine_backend.as_str() {
         b @ ("cuda" | "vulkan" | "cpu") => Some(b),
@@ -95,12 +98,16 @@ pub fn effective_hardware(settings: &Settings, detected: Option<&HardwareInfo>) 
     let gpu = detected
         .and_then(|hw| settings.gpu_index().and_then(|i| hw.gpu(i)).or_else(|| hw.best_gpu()))
         .cloned();
+    let backend = explicit_backend.unwrap_or_else(|| default_backend(gpu.as_ref())).to_string();
+    if backend == "cpu" {
+        // No GPU found (or one no engine build supports): a VRAM override means nothing here.
+        return EffectiveHardware { gpu: None, vram_gb: 0.0, backend };
+    }
     let vram_gb = settings
         .vram_override_gb
         .filter(|v| v.is_finite() && *v > 0.0)
         .or_else(|| gpu.as_ref().map(|g| g.vram_gb))
         .unwrap_or(0.0);
-    let backend = explicit_backend.unwrap_or_else(|| default_backend(gpu.as_ref())).to_string();
     EffectiveHardware { gpu, vram_gb, backend }
 }
 
@@ -169,11 +176,15 @@ pub async fn wait_for_hardware(core: &AppCore, timeout: Duration) -> bool {
 }
 
 /// Effective hardware for wiring/VRAM decisions: Settings overrides applied
-/// (GPU pick / force CPU / VRAM override / engine backend). Used by the engine
-/// and catalog areas. Before detection finishes: vram 0, backend "cpu".
+/// (GPU pick / force CPU / VRAM override / engine backend) plus system RAM
+/// (for sizing models when there is no usable GPU). Used by the engine and
+/// catalog areas. Before detection finishes: vram 0, backend "cpu", RAM 0 (unknown).
 pub fn hw_context(core: &AppCore) -> HwContext {
-    let eff = effective(core);
-    HwContext { vram_gb: eff.vram_gb, backend: eff.backend }
+    let settings = core.settings.read().clone();
+    let detected = core.hardware.read().clone();
+    let eff = effective_hardware(&settings, detected.as_ref());
+    let ram_gb = detected.map(|d| d.ram_gb).filter(|r| r.is_finite() && *r > 0.0).unwrap_or(0.0);
+    HwContext { vram_gb: eff.vram_gb, backend: eff.backend, ram_gb }
 }
 
 /// The Data folder ("Open Data folder" in Settings).
@@ -312,6 +323,9 @@ pub(crate) mod tests {
         assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
         let e = effective_hardware(&settings("auto", Some(16.0), "cuda"), None);
         assert_eq!((e.vram_gb, e.backend.as_str()), (16.0, "cuda"));
+        // Automatic backend before detection is "cpu": the override waits for a GPU backend.
+        let e = effective_hardware(&settings("auto", Some(16.0), "auto"), None);
+        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
     }
 
     #[test]
@@ -319,6 +333,36 @@ pub(crate) mod tests {
         let none = HardwareInfo { gpus: vec![], ram_gb: 8.0, cpu_threads: 4, os: "linux".into() };
         let e = effective_hardware(&settings("auto", None, "auto"), Some(&none));
         assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        // A VRAM override without a GPU backend is ignored (was: vram 8 / tier "mid" / backend cpu).
+        let e = effective_hardware(&settings("auto", Some(8.0), "auto"), Some(&none));
+        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        // …but applies once a GPU backend is chosen explicitly (e.g. detection missed the card).
+        let e = effective_hardware(&settings("auto", Some(8.0), "vulkan"), Some(&none));
+        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 8.0, backend: "vulkan".into() });
+        // A GPU no engine build supports (vendor Other) → processor, no VRAM.
+        let other = HardwareInfo { gpus: vec![gpu(0, Vendor::Other, 4.0)], ..none };
+        let e = effective_hardware(&settings("auto", Some(6.0), "auto"), Some(&other));
+        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+    }
+
+    #[tokio::test]
+    async fn cpu_backend_view_and_context_are_consistent() {
+        let rec = Arc::new(Recorder::default());
+        let (_t, core) = test_core(rec);
+        *core.hardware.write() = Some(HardwareInfo { gpus: vec![], ram_gb: 15.6, cpu_threads: 8, os: "linux".into() });
+        let s = Settings { vram_override_gb: Some(12.0), ..get_settings(&core) };
+        set_settings(&core, s).unwrap();
+        let v = hardware_view(&core);
+        assert_eq!((v.backend.as_str(), v.vram_gb, v.tier.as_str(), v.gpu.is_none()), ("cpu", 0.0, "low", true));
+        let hw = hw_context(&core);
+        assert_eq!((hw.backend.as_str(), hw.vram_gb, hw.ram_gb), ("cpu", 0.0, 15.6));
+        assert!(hw.cpu_only());
+        // With an explicit GPU backend the override applies (tier follows it).
+        let s = Settings { engine_backend: "vulkan".into(), ..get_settings(&core) };
+        set_settings(&core, s).unwrap();
+        let v = hardware_view(&core);
+        assert_eq!((v.backend.as_str(), v.vram_gb, v.tier.as_str()), ("vulkan", 12.0, "mid"));
+        assert!(!hw_context(&core).cpu_only());
     }
 
     #[test]

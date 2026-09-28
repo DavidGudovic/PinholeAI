@@ -10,8 +10,14 @@ pub fn registry() -> Registry {
     Registry::from_yaml(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/models.yaml")), None).unwrap()
 }
 
+/// A PC with 16 GB of RAM and `vram_gb` of VRAM (0 = no GPU, CPU backend).
 pub fn hw(vram_gb: f32) -> HwContext {
-    HwContext { vram_gb, backend: if vram_gb > 0.0 { "cuda".into() } else { "cpu".into() } }
+    HwContext { vram_gb, backend: if vram_gb > 0.0 { "cuda".into() } else { "cpu".into() }, ram_gb: 16.0 }
+}
+
+/// No usable GPU, `ram_gb` of system RAM (0 = not known yet).
+pub fn hw_cpu(ram_gb: f32) -> HwContext {
+    HwContext { vram_gb: 0.0, backend: "cpu".into(), ram_gb }
 }
 
 pub fn sha(seed: u8) -> String {

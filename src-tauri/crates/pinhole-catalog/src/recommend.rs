@@ -3,7 +3,7 @@
 //! best quant that fits (starting at the hardware tier's `prefer_quant`).
 //! Download sizes count only missing files; shared components count once.
 
-use pinhole_registry::vram::{self, VramNeed};
+use pinhole_registry::vram::{self, Fit, VramNeed};
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::{CaptionerFile, Family, RecommendedCandidate, Registry};
 use pinhole_store::datadir::ModelKind;
@@ -103,19 +103,41 @@ pub fn recommend_role(registry: &Registry, index: &InstalledIndex, hw: &HwContex
             Err(s) => skips.push(s),
         }
     }
+    // No "go to the Models tab" here: these cards are shown on the Models tab too,
+    // and every place that shows them has its own browse button.
     let reason = if skips.iter().any(|s| matches!(s, Skip::Vram)) {
-        if hw.vram_gb <= 0.0 {
-            "No supported graphics card was found. Pinhole can still run models on the processor, but very slowly — pick one in the Models tab.".to_string()
-        } else {
-            format!(
-                "None of the recommended models fit in {} GB of graphics memory. The Models tab shows smaller ones.",
-                fmt_gb(hw.vram_gb)
-            )
-        }
+        too_big_reason(registry, candidates, role, hw)
     } else {
-        format!("No {} model has been picked for Pinhole yet. Browse the Models tab instead.", role_label(role).to_lowercase())
+        format!("No {} model has been picked for Pinhole yet. You can browse CivitAI for one instead.", role_label(role).to_lowercase())
     };
     Some(PickPlan { pick: empty_pick(role, Some(reason)), action: PickAction::Nothing })
+}
+
+/// Why no candidate of `role` fits this machine.
+fn too_big_reason(registry: &Registry, candidates: &[RecommendedCandidate], role: &str, hw: &HwContext) -> String {
+    if !hw.cpu_only() {
+        return format!(
+            "None of the recommended models fit in {} GB of graphics memory. Smaller ones are available when you browse CivitAI.",
+            fmt_gb(hw.vram_gb)
+        );
+    }
+    // A processor-friendly candidate was skipped too: not enough RAM for it.
+    let small = candidates.iter().filter_map(|c| registry.family(c.family.as_deref()?)).find(|f| f.cpu_friendly);
+    if let Some(f) = small {
+        let size = f.download.as_ref().map(|d| mb_to_bytes(d.size_mb)).unwrap_or(0);
+        let need = vram::cpu_need(f, families::cpu_weight_bytes(registry, f, hw, size)).gb + vram::CPU_SPARE_RAM_GB;
+        return format!(
+            "Pinhole didn't find a graphics card it can use, and this computer doesn't have enough memory to run even the small model on the processor. It needs at least {} GB of RAM.",
+            fmt_gb(need.ceil())
+        );
+    }
+    match role {
+        "edit" => "Editing by description needs a graphics card, and Pinhole didn't find one it can use. Restyle still works with a Create model, slowly, on the processor.".to_string(),
+        _ => format!(
+            "The recommended {} models need a graphics card, and Pinhole didn't find one it can use. Only small models such as Stable Diffusion 1.5 run on the processor, slowly.",
+            role_label(role).to_lowercase()
+        ),
+    }
 }
 
 fn fmt_gb(v: f32) -> String {
@@ -183,7 +205,7 @@ fn registry_pick(
     let comp_bytes: u64 = comps.iter().map(|f| f.size_bytes).sum();
 
     if let Some(m) = installed_of_family(index, family_id) {
-        let need = families::installed_need(registry, fam, m, hw);
+        let (need, fit) = families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes);
         let complete = required_complete(registry, fam, hw, index);
         let quant = m.dtype.clone().unwrap_or_else(|| families::quant_of_file(&m.rel_path));
         return Ok(PickPlan {
@@ -195,7 +217,7 @@ fn registry_pick(
                 good_at: good_at(role),
                 download_bytes: comp_bytes,
                 vram: Some(need),
-                fit: Some(vram::fit(&need, hw.vram_gb)),
+                fit: Some(fit),
                 installed: complete,
                 quant: Some(families::quant_of_file(&quant)).filter(|q| q != "unknown"),
                 license_note: fam.license_note.clone(),
@@ -215,7 +237,8 @@ fn registry_pick(
             .map(families::need_from)
             .unwrap_or_else(|| vram::estimate(registry, fam, o.size_bytes, families::gpu_component_bytes(registry, fam, hw)))
     };
-    let (opt, need) = families::choose_quant(&options, prefer.as_deref(), hw.vram_gb, need_of).ok_or(Skip::Vram)?;
+    let (opt, need, fit) =
+        families::choose_quant(&options, prefer.as_deref(), |o| families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes)).ok_or(Skip::Vram)?;
     let main = FileToGet {
         url: opt.url.clone(),
         file_name: opt.file.clone(),
@@ -241,7 +264,7 @@ fn registry_pick(
             good_at: good_at(role),
             download_bytes: files.iter().map(|f| f.size_bytes).sum(),
             vram: Some(need),
-            fit: Some(vram::fit(&need, hw.vram_gb)),
+            fit: Some(fit),
             installed: false,
             quant: Some(opt.quant.clone()).filter(|q| q != "unknown"),
             license_note: fam.license_note.clone(),
@@ -273,13 +296,19 @@ fn civitai_pick(
     let fam = registry.family(family_id).ok_or(Skip::Broken)?;
     let installed_file = index.models().find(|m| m.civitai.as_ref().is_some_and(|c| c.version_id == version_id));
     let size = cand.size_mb.map(mb_to_bytes);
-    let need = match installed_file {
-        Some(m) => Some(families::installed_need(registry, fam, m, hw)),
-        None => cand.vram_gb.as_ref().or(fam.vram_gb.as_ref()).map(families::need_from).or_else(|| {
-            size.map(|s| vram::estimate(registry, fam, s, families::gpu_component_bytes(registry, fam, hw)))
-        }),
+    let need_fit = match installed_file {
+        Some(m) => Some(families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes)),
+        // Without a GPU the RAM need comes from the file size: unknown size → can't tell.
+        None if hw.cpu_only() && size.is_none() => None,
+        None => cand
+            .vram_gb
+            .as_ref()
+            .or(fam.vram_gb.as_ref())
+            .map(families::need_from)
+            .or_else(|| size.map(|s| vram::estimate(registry, fam, s, families::gpu_component_bytes(registry, fam, hw))))
+            .map(|n| families::need_and_fit(registry, fam, hw, n, size.unwrap_or(0))),
     };
-    if installed_file.is_none() && !need.as_ref().is_some_and(|n| families::fits_at_all(n, hw.vram_gb)) {
+    if installed_file.is_none() && !need_fit.is_some_and(|(_, f)| f != Fit::TooBig) {
         return Err(Skip::Vram);
     }
     let comps = component_files(registry, fam, hw, index);
@@ -293,8 +322,8 @@ fn civitai_pick(
             family_id: Some(family_id.into()),
             good_at: good_at(role),
             download_bytes: if installed_file.is_some() { comp_bytes } else { size.unwrap_or(0) + comp_bytes },
-            vram: need,
-            fit: need.map(|n| vram::fit(&n, hw.vram_gb)),
+            vram: need_fit.map(|(n, _)| n),
+            fit: need_fit.map(|(_, f)| f),
             installed,
             quant: None,
             license_note: fam.license_note.clone(),
@@ -362,8 +391,7 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::{component, hw, index, model, registry, with_civitai};
-    use pinhole_registry::vram::Fit;
+    use crate::testkit::{component, hw, hw_cpu, index, model, registry, with_civitai};
 
     const MB: u64 = 1_000_000;
 
@@ -455,14 +483,39 @@ mod tests {
     }
 
     #[test]
-    fn cpu_only() {
+    fn cpu_only_gets_the_small_sd15_pick() {
         let p = picks(0.0, &index(vec![]));
-        for r in ["realistic", "anime", "edit"] {
+        // Realistic: Z-Image and Juggernaut are too big for the processor → SD 1.5,
+        // sized against RAM (Tight = "runs on the processor — slow").
+        let r = role(&p, "realistic");
+        assert_eq!(summary(r), (Some("sd15"), Some("fp16"), Some(Fit::Tight)));
+        assert_eq!(r.pick.title.as_deref(), Some("Stable Diffusion 1.5 (small, runs on any computer)"));
+        assert_eq!(r.pick.unavailable_reason, None);
+        assert_eq!(r.pick.download_bytes, 2133 * MB, "all-in-one: no components");
+        let v = r.pick.vram.unwrap();
+        assert!(v.on_cpu && v.estimate, "{v:?}");
+        assert_eq!(v.gb, 3.0, "1.99 GiB of weights + 1 GiB activations");
+        match &r.action {
+            PickAction::Download { label, files } => {
+                assert_eq!(label, "Stable Diffusion 1.5 (small, runs on any computer)");
+                assert_eq!(files.len(), 1);
+                assert_eq!(files[0].file_name, "v1-5-pruned-emaonly-fp16.safetensors");
+                assert_eq!(files[0].kind, ModelKind::Checkpoint);
+                assert_eq!(files[0].family.as_deref(), Some("sd15"));
+                assert_eq!(files[0].sha256.as_deref(), Some("e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916"));
+            }
+            other => panic!("{other:?}"),
+        }
+        // Anime / edit: nothing runs acceptably on the processor. No "Models tab" advice.
+        for r in ["anime", "edit"] {
             let pick = &role(&p, r).pick;
             assert_eq!(pick.title, None, "{r}");
-            assert!(pick.unavailable_reason.as_deref().unwrap().contains("No supported graphics card"), "{r}");
+            let why = pick.unavailable_reason.as_deref().unwrap();
+            assert!(why.contains("graphics card"), "{r}: {why}");
+            assert!(!why.contains("Models tab"), "{r}: {why}");
             assert_eq!(role(&p, r).action, PickAction::Nothing);
         }
+        assert!(role(&p, "edit").pick.unavailable_reason.as_deref().unwrap().contains("Restyle"));
         // The small captioner still works on the CPU.
         let d = role(&p, "describe");
         assert_eq!(d.pick.title.as_deref(), Some("Image describer"));
@@ -471,14 +524,55 @@ mod tests {
     }
 
     #[test]
-    fn too_little_vram_message() {
+    fn cpu_only_with_little_ram() {
+        let reg = registry();
+        // 3 GB of weights + activations + 4 GB spare: 6 GB of RAM is not enough, 8 GB (7.7 GiB) is.
+        let r = recommend_role(&reg, &index(vec![]), &hw_cpu(6.0), "realistic").unwrap();
+        assert_eq!(r.pick.title, None);
+        assert_eq!(
+            r.pick.unavailable_reason.as_deref(),
+            Some("Pinhole didn't find a graphics card it can use, and this computer doesn't have enough memory to run even the small model on the processor. It needs at least 7 GB of RAM.")
+        );
+        let r = recommend_role(&reg, &index(vec![]), &hw_cpu(7.7), "realistic").unwrap();
+        assert_eq!(summary(&r), (Some("sd15"), Some("fp16"), Some(Fit::Tight)));
+        // RAM not known yet (detection still running): the size rule alone decides.
+        let r = recommend_role(&reg, &index(vec![]), &hw_cpu(0.0), "realistic").unwrap();
+        assert_eq!(r.pick.family_id.as_deref(), Some("sd15"));
+    }
+
+    #[test]
+    fn small_gpus_fall_back_to_sd15() {
+        // 4 GB: Z-Image Q4 needs 5, Juggernaut 6 → SD 1.5 (min 4) on the GPU.
         let p = picks(4.0, &index(vec![]));
+        let r = role(&p, "realistic");
+        assert_eq!(summary(r), (Some("sd15"), Some("fp16"), Some(Fit::Tight)));
+        assert!(!r.pick.vram.unwrap().on_cpu);
+        assert_eq!(r.pick.vram.unwrap().gb, 6.0, "registry figure, not an estimate");
+        // 6 GB: the better picks come first.
+        assert_eq!(role(&picks(6.0, &index(vec![])), "realistic").pick.family_id.as_deref(), Some("z_image_turbo"));
+    }
+
+    #[test]
+    fn too_little_vram_message() {
+        let p = picks(3.0, &index(vec![]));
         let r = &role(&p, "realistic").pick;
         assert_eq!(r.title, None);
         assert_eq!(
             r.unavailable_reason.as_deref(),
-            Some("None of the recommended models fit in 4 GB of graphics memory. The Models tab shows smaller ones.")
+            Some("None of the recommended models fit in 3 GB of graphics memory. Smaller ones are available when you browse CivitAI.")
         );
+    }
+
+    #[test]
+    fn installed_sd15_on_cpu_is_complete_and_sized_against_ram() {
+        let reg = registry();
+        let mut f = model("sd", "sd15", ModelKind::Checkpoint, "v1-5-pruned-emaonly-fp16.safetensors");
+        f.size_bytes = 2_132_696_762;
+        let r = recommend_role(&reg, &index(vec![f]), &hw_cpu(16.0), "realistic").unwrap();
+        assert!(r.pick.installed);
+        assert_eq!(r.action, PickAction::Nothing);
+        assert_eq!(r.pick.fit, Some(Fit::Tight));
+        assert!(r.pick.vram.unwrap().on_cpu);
     }
 
     #[test]
@@ -490,7 +584,7 @@ mod tests {
         let p = recommend(&reg, &index(vec![]), &hw(16.0));
         let a = &role(&p, "anime").pick;
         assert_eq!(a.title, None);
-        assert_eq!(a.unavailable_reason.as_deref(), Some("No anime model has been picked for Pinhole yet. Browse the Models tab instead."));
+        assert_eq!(a.unavailable_reason.as_deref(), Some("No anime model has been picked for Pinhole yet. You can browse CivitAI for one instead."));
     }
 
     #[test]

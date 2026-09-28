@@ -1,7 +1,6 @@
 //! CivitAI install plans (SPEC §5.4 "Install" steps 1–4) and the file list an
 //! install downloads: safe model file + missing components, family resolved.
 
-use pinhole_registry::vram;
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
 use pinhole_store::datadir::ModelKind;
@@ -121,8 +120,11 @@ pub fn build_plan(
     let total_download_bytes = if main_installed { 0 } else { main_file.size_bytes }
         + components.iter().filter(|c| !c.installed).map(|c| c.size_bytes).sum::<u64>();
 
-    let need = match (&family, is_lora) {
-        (Some(f), false) => env.registry.family(&f.family_id).map(|fam| families::family_need(env.registry, fam, env.hw, main_file.size_bytes)),
+    let need_fit = match (&family, is_lora) {
+        (Some(f), false) => env.registry.family(&f.family_id).map(|fam| {
+            let need = families::family_need(env.registry, fam, env.hw, main_file.size_bytes);
+            families::need_and_fit(env.registry, fam, env.hw, need, main_file.size_bytes)
+        }),
         _ => None,
     };
     let family_id = family.as_ref().map(|f| f.family_id.clone());
@@ -137,8 +139,8 @@ pub fn build_plan(
         total_download_bytes,
         free_disk_bytes,
         enough_disk: free_disk_bytes >= total_download_bytes.saturating_add(DISK_MARGIN_BYTES),
-        vram: need,
-        fit: need.map(|n| vram::fit(&n, env.hw.vram_gb)),
+        vram: need_fit.map(|(n, _)| n),
+        fit: need_fit.map(|(_, f)| f),
         license_note: license_note(env, family_id.as_deref(), model),
         is_lora,
         trained_words: version.trained_words.clone(),

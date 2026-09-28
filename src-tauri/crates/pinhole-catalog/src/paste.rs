@@ -5,7 +5,6 @@
 use std::future::Future;
 
 use pinhole_net::NetError;
-use pinhole_registry::vram;
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
 use pinhole_store::{InstalledFile, InstalledIndex};
@@ -102,7 +101,7 @@ pub struct PasteEnv<'a> {
 
 fn installed_resolved(env: &PasteEnv, r: &PastedResource, f: &InstalledFile, cat: Category) -> ResolvedResource {
     let fit = match (cat, f.family.as_deref().and_then(|id| env.registry.family(id))) {
-        (Category::Checkpoint, Some(fam)) => Some(vram::fit(&families::installed_need(env.registry, fam, f, env.hw), env.hw.vram_gb)),
+        (Category::Checkpoint, Some(fam)) => Some(families::need_and_fit(env.registry, fam, env.hw, families::installed_need(env.registry, fam, f, env.hw), f.size_bytes).1),
         _ => None,
     };
     ResolvedResource {
@@ -135,7 +134,7 @@ fn from_version(env: &PasteEnv, r: &PastedResource, v: &ModelVersion, cat: Categ
     };
     let bytes = picked.as_ref().ok().map(|f| f.size_bytes());
     let fit = match (cat, family_id.as_deref().and_then(|id| env.registry.family(id)), bytes) {
-        (Category::Checkpoint, Some(fam), Some(b)) => Some(vram::fit(&families::family_need(env.registry, fam, env.hw, b), env.hw.vram_gb)),
+        (Category::Checkpoint, Some(fam), Some(b)) => Some(families::need_and_fit(env.registry, fam, env.hw, families::family_need(env.registry, fam, env.hw, b), b).1),
         _ => None,
     };
     let name = v.model.as_ref().map(|m| m.name.trim().to_string()).filter(|n| !n.is_empty());

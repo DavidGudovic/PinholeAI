@@ -152,14 +152,21 @@ families:
     style_template: tags
     vram_gb: { min: 4, recommended: 6 }        # ESTIMATE — measure before release
     activation_gb: 1.0
+    # Small enough to run on the processor when there is no usable GPU
+    # (vram.rs fit_cpu: Tight = "runs on the processor — slow").
+    cpu_friendly: true
     modes: [txt2img, img2img, inpaint]
     detect:
       # get_sd_version(): UNet blocks + a CLIP-L token embedding (ne0 768 → SD1;
       # SD2's OpenCLIP is 1024 and named differently), and no second text encoder
-      # (that makes it SDXL). SVD shares the UNet names.
+      # (that makes it SDXL). SVD shares the UNet names. Without the second
+      # middle-block ResNet (middle_block.1 / mid_block.resnets.1) upstream says
+      # SDXS-512 / SD1 tiny UNet (VERSION_SDXS_512_DS / VERSION_SD1_TINY_UNET),
+      # which are not SD 1.5.
       all_of_any:
         - ["input_blocks.", "unet.down_blocks."]
         - ["text_model.embeddings.token_embedding.weight$"]
+        - ["middle_block.1.", "unet.mid_block.resnets.1."]
       none_tensor: ["conditioner.embedders.1", "cond_stage_model.1", "^te.1.", "input_blocks.8.0.time_mixer.mix_factor"]
       tensor_ne0: { "text_model.embeddings.token_embedding.weight$": 768 }
     civitai_base_models: ["SD 1.5"]
@@ -179,6 +186,13 @@ families:
       cfg_range: [4.0, 11.0]
       cfg_default: 7.0
       hires_at_best: { enabled: true, scale: 1.5, denoising_strength: 0.45 }
+    # The original SD 1.5 (fp16 prune). Old and modest, but small: the one-click
+    # pick for PCs without a usable GPU and cards under 5 GB (recommended.realistic).
+    download:
+      file: v1-5-pruned-emaonly-fp16.safetensors
+      url: https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors
+      sha256: e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916
+      size_mb: 2133                              # 2 132 696 762 bytes
 
   # Few-step SD 1.5 finetunes (Hyper-SD merges): same files, very different defaults.
   sd15_fast:
@@ -490,12 +504,15 @@ families:
 
 # Recommended models per role (SPEC §6.1). Ranked best-first.
 # Pinhole picks the first candidate whose VRAM min fits this GPU, then the best quant that fits.
+# Without a usable GPU a candidate "fits" when it can run on the processor (vram.rs fit_cpu).
 # Nothing here is bundled — every entry is a one-click download.
 # CivitAI size_mb: CivitAI `sizeKB` is KiB → size_mb = sizeKB × 1024 / 1e6.
 recommended:
   realistic:
     - { family: z_image_turbo, source: registry }
     - { family: sdxl, source: civitai, civitai_model_id: 133005, civitai_version_id: 1759168, title: "Juggernaut XL (Ragnarok)", size_mb: 7105, vram_gb: { min: 6, recommended: 10 }, note: "top-rated realistic SDXL finetune, for GPUs < 8 GB" }
+    # Last resort: no usable GPU (fits against RAM, vram.rs fit_cpu) or under 5 GB of VRAM.
+    - { family: sd15, source: registry, title: "Stable Diffusion 1.5 (small, runs on any computer)", note: "older and less detailed, but runs without a graphics card" }
   anime:
     - { family: sdxl_illustrious, source: civitai, civitai_model_id: 376130, civitai_version_id: 2940478, title: "Nova Anime XL (IL v19.0)", size_mb: 6939, vram_gb: { min: 6, recommended: 10 }, note: "top-rated Illustrious checkpoint" }
     - { family: sdxl_pony, source: civitai, civitai_model_id: 257749, civitai_version_id: 290640, title: "Pony Diffusion V6 XL", size_mb: 6938, vram_gb: { min: 6, recommended: 10 } }
@@ -568,7 +585,8 @@ known_files:
   - { sha256: fa486caafc330f133605d3c18b418d183812f14946631c6544bfb28730db6d6f, family: sdxl_illustrious, friendly_name: "Nova Anime XL (IL v19.0)" }
   - { sha256: 67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3, family: sdxl_pony, friendly_name: "Pony Diffusion V6 XL" }
 
-# Small models for CI only (engine smoke test: 256×256 on CPU). Never offered in the UI.
+# Small models for CI (engine smoke test: 256×256 on CPU). Listed here so the smoke test
+# never depends on recommendations; the SD 1.5 file is also `families.sd15.download`.
 test_models:
   sd15:
     family: sd15

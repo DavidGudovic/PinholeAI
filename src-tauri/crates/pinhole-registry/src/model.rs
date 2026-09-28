@@ -88,6 +88,10 @@ pub struct Family {
     pub role: Option<String>,
     #[serde(default)]
     pub edit_priority: Option<u32>,
+    /// Small enough to be worth running on the processor when there is no
+    /// usable GPU, whatever the file size (SD 1.5). See [`crate::vram::fit_cpu`].
+    #[serde(default)]
+    pub cpu_friendly: bool,
     /// `txt2img` | `img2img` | `inpaint` | `edit`
     #[serde(default)]
     pub modes: Vec<String>,

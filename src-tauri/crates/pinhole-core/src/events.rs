@@ -41,7 +41,15 @@ pub struct EngineStatus {
     pub running: bool,
     pub loading: bool,
     pub loaded_model_id: Option<String>,
+    /// Plain-language message of the last engine failure (`CoreError.message`,
+    /// says what to do next); cleared when the next model load starts.
     pub error: Option<String>,
+    /// `CoreError.code` of that failure (`engine_failed`, `model_load`, `vram`…).
+    #[serde(default)]
+    pub error_code: Option<String>,
+    /// Engine output for the "Details" toggle (`CoreError.details`).
+    #[serde(default)]
+    pub error_details: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

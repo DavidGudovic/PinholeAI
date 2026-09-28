@@ -118,7 +118,9 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
         running: flags.running || external,
         loading: flags.loading,
         loaded_model_id: flags.loaded_model_id.clone(),
-        error: flags.error.clone(),
+        error: flags.error.as_ref().map(|e| e.message.clone()),
+        error_code: flags.error.as_ref().map(|e| e.code.clone()),
+        error_details: flags.error.as_ref().and_then(|e| e.details.clone()),
     };
     match selected_build(core, EngineKind::Sd) {
         Ok((cfg, sel)) => {
@@ -142,6 +144,8 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
         Err(e) if !external => {
             if st.error.is_none() {
                 st.error = Some(e.message);
+                st.error_code = Some(e.code);
+                st.error_details = e.details;
             }
         }
         Err(_) => {}
@@ -165,7 +169,7 @@ pub async fn install_engine(core: &Arc<AppCore>) -> CoreResult<EngineStatus> {
         }
         Err(e) => {
             if e.code != "cancelled" {
-                core.gen.flags.lock().error = Some(e.message.clone());
+                core.gen.flags.lock().error = Some(e.clone());
             }
             emit_status(core);
             Err(e)

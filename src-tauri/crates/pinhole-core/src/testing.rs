@@ -502,14 +502,18 @@ mod tests {
         assert!(crate::engine_setup::engine_status(&core).installed);
         let model = register_fake_model(&core, "sd15");
         let err = generate::generate(&core, GenerateRequest::txt2img(model, "a cat")).await.unwrap_err();
-        assert_eq!(err.code, "engine_failed", "{err:?}");
+        assert_eq!(err.code, "model_load", "{err:?}");
         assert!(err.message.contains("couldn't be loaded"), "{}", err.message);
         assert!(err.details.as_deref().unwrap_or("").contains("new_sd_ctx_t failed"), "{:?}", err.details);
         let phases: Vec<GenPhase> = rec.0.lock().iter().filter_map(|e| if let CoreEvent::Generation(p) = e { Some(p.phase) } else { None }).collect();
         assert_eq!(phases.first(), Some(&GenPhase::LoadingModel));
         assert_eq!(phases.last(), Some(&GenPhase::Failed));
+        // The top bar shows the same message, code and engine output.
         let st = crate::engine_setup::engine_status(&core);
-        assert!(!st.running && st.error.is_some());
+        assert!(!st.running);
+        assert_eq!(st.error.as_deref(), Some(err.message.as_str()));
+        assert_eq!(st.error_code.as_deref(), Some("model_load"));
+        assert_eq!(st.error_details, err.details);
     }
 
     /// `install_engine` through the DownloadManager against the real pinned CPU

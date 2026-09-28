@@ -209,6 +209,19 @@ pub struct HwContext {
     pub vram_gb: f32,
     /// `cuda` | `vulkan` | `cpu`
     pub backend: String,
+    /// System RAM in GB (0 = unknown, e.g. before hardware detection finishes).
+    /// Used for Fits / Too big when there is no usable GPU ([`HwContext::cpu_only`]).
+    #[serde(default)]
+    pub ram_gb: f32,
+}
+
+impl HwContext {
+    /// No usable GPU: the engine runs on the processor (backend `cpu`, or no
+    /// known VRAM), so models are sized against system RAM
+    /// ([`crate::vram::fit_cpu`]) instead of VRAM.
+    pub fn cpu_only(&self) -> bool {
+        self.backend == "cpu" || self.vram_gb.is_nan() || self.vram_gb <= 0.0
+    }
 }
 
 /// Extra directories passed at launch.
