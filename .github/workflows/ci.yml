@@ -20,7 +20,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Let a running pipeline finish (installers + smoke results are worth having);
+  # GitHub keeps only the newest pending run queued behind it.
+  cancel-in-progress: false
 
 permissions:
   contents: read

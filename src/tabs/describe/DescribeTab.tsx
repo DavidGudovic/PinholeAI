@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
-import { AutoTextarea, Button, ErrorNotice, Kbd, ProgressBar, Segmented, Spinner } from "../../components/ui";
+import { AutoTextarea, Button, Kbd, ProgressBar, Segmented, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import * as api from "../../lib/api";
 import { formatBytes } from "../../lib/format";
