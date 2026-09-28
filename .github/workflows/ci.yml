@@ -1,5 +1,5 @@
 # Pinhole CI, tiered to keep Actions minutes low (private repo; Windows minutes bill 2x):
-#   every push / PR ........ frontend + privacy lint, Rust tests on Linux        (~4 min)
+#   every push ............. frontend + privacy lint, Rust tests on Linux        (~4 min)
 #   push to main ........... + Rust tests on Windows, engine smoke (Linux +
 #                              Windows), real-app e2e                           (~40 billed min)
 #   Run workflow (manual) .. choose "full" checks and/or "installers"
@@ -11,8 +11,8 @@ on:
   push:
     branches: ["**"]
     paths-ignore: ["**.md", "docs/**", "assets/**", "LICENSE", "THIRD_PARTY_LICENSES"]
-  pull_request:
-    paths-ignore: ["**.md", "docs/**", "assets/**", "LICENSE", "THIRD_PARTY_LICENSES"]
+  # No pull_request trigger: every branch push is already tested, and a PR's head commit
+  # carries those results. Having both ran every check twice on each PR push.
   workflow_dispatch:
     inputs:
       full:
@@ -122,9 +122,9 @@ jobs:
 
   smoke:
     name: Engine smoke test (${{ matrix.os }})
-    needs: rust
     # Real sd-server + SD 1.5 on CPU, plus the app end-to-end test. Full runs only
-    # (push to main / manual "full"), independent of the unit-test result.
+    # (push to main / manual "full"). Runs in parallel with the unit tests (it builds
+    # what it needs itself) so it no longer waits for them.
     if: >-
       ${{ !cancelled() && (
         (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
@@ -189,7 +189,6 @@ jobs:
 
   e2e:
     name: Real-app e2e (WebDriver, Linux)
-    needs: frontend
     if: >-
       ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
           (github.event_name == 'workflow_dispatch' && inputs.full) }}
