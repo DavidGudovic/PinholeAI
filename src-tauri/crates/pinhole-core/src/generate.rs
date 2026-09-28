@@ -57,7 +57,7 @@ pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
 /// sd-server has no authentication and keeps every finished job (base64 images
 /// included) at `GET /sdcpp/v1/jobs/{id}` for 600 s. So once a job ran on a
 /// Pinhole-started engine, the engine is stopped this long after the last
-/// generate / upscale (and on Clear session); the next Generate reloads it.
+/// generate / upscale (and on Reset); the next Generate reloads it.
 pub const IDLE_STOP_AFTER: Duration = Duration::from_secs(5 * 60);
 /// Another process answered on the port we started an engine on.
 pub const PORT_TAKEN_MESSAGE: &str = "Another program is using Pinhole's engine port — try again.";
@@ -281,7 +281,7 @@ pub struct GenState {
     pub(crate) activity: AtomicU64,
     /// [`IDLE_STOP_AFTER`] (tests shorten it).
     pub(crate) idle_stop_after: parking_lot::Mutex<Duration>,
-    /// Clear session happened while a job was running: stop the engine after it.
+    /// Reset happened while a job was running: stop the engine after it.
     pub(crate) clear_pending: AtomicBool,
     /// Automatic memory fallbacks per model id (RAM only, app session).
     pub(crate) mem_fallback: parking_lot::Mutex<HashMap<String, MemFallback>>,
@@ -369,7 +369,7 @@ pub(crate) async fn stop_if_results_cached(core: &AppCore) -> bool {
     true
 }
 
-/// Clear session: stop sd-server so its cached results go with the session.
+/// Reset: stop sd-server so its cached results go with the session.
 /// While a job runs, the stop happens right after it instead.
 pub(crate) async fn clear_engine_results(core: &AppCore) {
     match core.gen.run_lock.try_lock() {
@@ -381,7 +381,7 @@ pub(crate) async fn clear_engine_results(core: &AppCore) {
     }
 }
 
-/// A job just ended (run lock still held): honour a pending Clear session and
+/// A job just ended (run lock still held): honour a pending Reset and
 /// arm the idle stop.
 pub(crate) async fn after_job(core: &Arc<AppCore>, epoch: u64) {
     if core.gen.clear_pending.swap(false, Ordering::SeqCst) {

@@ -122,7 +122,7 @@ unsaved images, logs.
 
 1. No prompt text is ever written to disk, logs, crash dumps, presets, file names, or PNG metadata.
 2. Generated images live in RAM until the user clicks **Save**. Closing the app discards them.
-3. **Clear session** button: drops all in-memory images and prompt fields immediately.
+3. **Reset** button: drops all in-memory images and prompt fields immediately.
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
@@ -488,7 +488,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 engine download + launch of `sd-server`, health check.
 
 **M1 – Generate**: registry loader, header detector, wiring, VRAM estimate, Create tab with
-simple dials and Style field, in-memory results, Save, Cancel, Clear session. First-run
+simple dials and Style field, in-memory results, Save, Cancel, Reset. First-run
 "Recommended for your GPU" screen with one-click download (§6.1).
 
 **M2 – Models tab**: CivitAI browse with all filters (incl. 18+ only, paid hidden by default),
@@ -584,7 +584,7 @@ build is shared.
   answers any CORS `Origin` (with credentials) and keeps every finished job — base64 images
   included — at `GET /sdcpp/v1/jobs/{id}` for 600 s. Another program on this computer, or a web
   page that finds the random port and a job id, could read recent images while the engine runs.
-  Interim mitigations: loopback-only random port; the engine is stopped on **Clear session** and
+  Interim mitigations: loopback-only random port; the engine is stopped on **Reset** and
   5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
   after start-up Pinhole checks that the server on the port is its own child reporting the model
   it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via

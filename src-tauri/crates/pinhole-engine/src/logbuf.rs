@@ -207,7 +207,7 @@ impl LogBuffer {
         self.len() == 0
     }
 
-    /// Drop everything (Clear session / engine restart).
+    /// Drop everything (Reset / engine restart).
     pub fn clear(&self) {
         let mut g = self.inner.lock();
         g.lines.clear();

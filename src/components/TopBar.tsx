@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Download, Eraser, Layers, ScanText, Settings, Sparkles, WandSparkles, X } from "lucide-react";
+import { Download, Layers, RotateCcw, ScanText, Settings, Sparkles, WandSparkles, X } from "lucide-react";
 import * as api from "../lib/api";
 import { formatBytes } from "../lib/format";
 import type { GroupStatus } from "../lib/types";
@@ -64,12 +64,12 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
           variant="ghost"
           size="md"
           onClick={() => void actions.clearSession()}
-          title="Forget every prompt and image in memory right now"
+          title="Start over: clears the prompt fields and every unsaved image"
           className="px-2.5"
         >
-          <Eraser className="h-4 w-4" />
-          <span className="hidden lg:inline">Clear session</span>
-          <span className="sr-only lg:hidden">Clear session</span>
+          <RotateCcw className="h-4 w-4" />
+          <span className="hidden lg:inline">Reset</span>
+          <span className="sr-only lg:hidden">Reset</span>
         </Button>
         <IconButton label="Settings" onClick={onOpenSettings}>
           <Settings className="h-[18px] w-[18px]" />

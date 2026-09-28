@@ -119,7 +119,7 @@ Linux NVIDIA uses Vulkan).
 4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
    engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
    sd-server has no auth and keeps finished jobs (images included) for 600 s, so an engine that
-   ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
+   ran a job is stopped on Reset and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
    Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
