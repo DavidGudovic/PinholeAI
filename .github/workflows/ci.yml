@@ -1,28 +1,33 @@
-# Pinhole CI: frontend + privacy lint, Rust tests on Windows and Ubuntu,
-# installers (Windows NSIS + portable zip, Linux AppImage + deb) and the real
-# engine smoke test. Installers are downloadable from each run's Summary page.
+# Pinhole CI, tiered to keep Actions minutes low (private repo; Windows minutes bill 2x):
+#   every push / PR ........ frontend + privacy lint, Rust tests on Linux        (~4 min)
+#   push to main ........... + Rust tests on Windows, engine smoke (Linux +
+#                              Windows), real-app e2e                           (~40 billed min)
+#   Run workflow (manual) .. choose "full" checks and/or "installers"
+#   installers ............. only on demand here, via Actions → Bundle, or a release
+# Docs-only changes don't run CI at all.
 name: CI
 
 on:
   push:
     branches: ["**"]
+    paths-ignore: ["**.md", "docs/**", "assets/**", "LICENSE", "THIRD_PARTY_LICENSES"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "assets/**", "LICENSE", "THIRD_PARTY_LICENSES"]
   workflow_dispatch:
     inputs:
-      force_bundle:
-        description: "Build installers even if the Rust tests fail"
-        type: boolean
-        default: false
-      smoke:
-        description: "Run the engine smoke test (downloads sd-server + SD 1.5 fp16 ≈ 2 GB, cached)"
+      full:
+        description: "Full checks: Windows tests, engine smoke (Linux + Windows), real-app e2e"
         type: boolean
         default: true
+      installers:
+        description: "Also build the installers (Windows NSIS + portable zip, Linux AppImage + deb)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Let a running pipeline finish (installers + smoke results are worth having);
-  # GitHub keeps only the newest pending run queued behind it.
-  cancel-in-progress: false
+  # A newer push supersedes an older run on branches; runs on main always finish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -74,7 +79,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest]
+        # Windows only on full runs (push to main / manual "full").
+        os: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.full)) && '["ubuntu-22.04","windows-latest"]' || '["ubuntu-22.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -110,18 +116,19 @@ jobs:
   bundle:
     name: Installers
     needs: [frontend, rust]
-    if: ${{ !cancelled() && needs.frontend.result == 'success' && (needs.rust.result == 'success' || inputs.force_bundle == true) }}
+    # Installers only when asked for (manual run with "installers"); releases build their own.
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.installers && needs.frontend.result == 'success' && needs.rust.result == 'success' }}
     uses: ./.github/workflows/bundle.yml
 
   smoke:
     name: Engine smoke test (${{ matrix.os }})
     needs: rust
-    # Real sd-server + SD 1.5 on CPU. Runs on pushes to main/master/claude/* and on demand,
-    # independent of the unit-test result (it proves the engine path end to end).
+    # Real sd-server + SD 1.5 on CPU, plus the app end-to-end test. Full runs only
+    # (push to main / manual "full"), independent of the unit-test result.
     if: >-
       ${{ !cancelled() && (
-        (github.event_name == 'workflow_dispatch' && inputs.smoke == true) ||
-        (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || startsWith(github.ref_name, 'claude/')))
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_dispatch' && inputs.full)
       ) }}
     strategy:
       fail-fast: false
@@ -183,6 +190,9 @@ jobs:
   e2e:
     name: Real-app e2e (WebDriver, Linux)
     needs: frontend
+    if: >-
+      ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && inputs.full) }}
     # upstream Linux sd-server needs glibc 2.38 (Ubuntu 24.04+)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
