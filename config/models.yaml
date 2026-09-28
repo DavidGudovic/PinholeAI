@@ -1,0 +1,381 @@
+# Pinhole model registry
+# ---------------------------------------------------------------------------
+# Everything Pinhole knows about model families lives here. The app loads this
+# file, then deep-merges Data/config/overrides.yaml on top (user wins).
+#
+# STATUS: first draft. Every `url` and every `sha256: TODO` must be verified
+# against the real file before release (see CLAUDE.md → "Registry rules").
+# CivitAI baseModel strings must be checked against the live API enums.
+# ---------------------------------------------------------------------------
+
+schema_version: 1
+
+# Shared components, referenced by id from families below. Downloaded once, reused.
+components:
+  flux_ae:
+    kind: vae
+    file: ae.safetensors
+    url: https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors
+    sha256: TODO
+    size_mb: 335
+  clip_l:
+    kind: clip_l
+    file: clip_l.safetensors
+    url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors
+    sha256: TODO
+    size_mb: 246
+  t5xxl_fp16:
+    kind: t5xxl
+    file: t5xxl_fp16.safetensors
+    url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors
+    sha256: TODO
+    size_mb: 9790
+  t5xxl_fp8:
+    kind: t5xxl
+    file: t5xxl_fp8_e4m3fn.safetensors
+    url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors
+    sha256: TODO
+    size_mb: 4890
+  qwen3_4b:
+    kind: llm
+    file: qwen_3_4b.safetensors
+    url: https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors
+    sha256: TODO
+    size_mb: 8040
+  qwen_image_vae:
+    kind: vae
+    file: qwen_image_vae.safetensors
+    url: https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors
+    sha256: TODO
+    size_mb: 254
+  qwen25_vl_7b_q8:
+    kind: llm
+    file: Qwen2.5-VL-7B-Instruct-Q8_0.gguf
+    url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q8_0.gguf
+    sha256: TODO
+    size_mb: 8100
+  qwen25_vl_7b_mmproj:
+    kind: llm_vision
+    file: Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
+    url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
+    sha256: TODO
+    size_mb: 850
+  sdxl_vae_fp16_fix:
+    kind: vae
+    file: sdxl_vae_fp16_fix.safetensors
+    url: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors
+    sha256: TODO
+    size_mb: 335
+  taesdxl:
+    kind: taesd
+    file: taesdxl.safetensors
+    url: https://huggingface.co/madebyollin/taesdxl/resolve/main/diffusion_pytorch_model.safetensors
+    sha256: TODO
+    size_mb: 10
+  taef1:
+    kind: taesd
+    file: taef1.safetensors
+    url: https://huggingface.co/madebyollin/taef1/resolve/main/diffusion_pytorch_model.safetensors
+    sha256: TODO
+    size_mb: 10
+  realesrgan_x4:
+    kind: upscaler
+    file: RealESRGAN_x4plus.pth
+    url: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+    sha256: TODO
+    size_mb: 64
+    note: ".pth is allowed ONLY for this pinned, hash-verified upscaler; never for user downloads"
+
+# How prompt + style are joined at request time (SPEC §7). Never stored.
+style_templates:
+  natural: "{prompt}. Style: {style}"
+  tags: "{prompt}, {style}"
+
+# Shared dial definitions. Families reference or override these.
+dial_presets:
+  shapes_1024: &shapes_1024
+    square:    [1024, 1024]
+    portrait:  [832, 1216]
+    landscape: [1216, 832]
+    wide:      [1344, 768]
+  shapes_512: &shapes_512
+    square:    [512, 512]
+    portrait:  [512, 768]
+    landscape: [768, 512]
+    wide:      [912, 512]
+
+families:
+
+  # ---------------------------------------------------------------- SD 1.5
+  sd15:
+    label: "Stable Diffusion 1.5"
+    style_template: tags
+    vram_gb: { min: 4, recommended: 6 }        # ESTIMATE — measure before release
+    activation_gb: 1.0
+    modes: [txt2img, img2img, inpaint]
+    detect:
+      any_tensor: ["model.diffusion_model.input_blocks.", "cond_stage_model.transformer."]
+      none_tensor: ["conditioner.embedders.1"]
+    civitai_base_models: ["SD 1.5"]
+    layout: all_in_one
+    components: {}
+    taesd: null
+    uses_negative_prompt: true
+    defaults:
+      sampler: dpm++2m
+      scheduler: karras
+      clip_skip: 1
+      negative_prompt: "lowres, blurry, bad anatomy, extra fingers, watermark, text"
+    dials:
+      shape: *shapes_512
+      quality: { fast: 15, balanced: 25, best: 35 }
+      cfg_range: [4.0, 11.0]
+      cfg_default: 7.0
+      hires_at_best: { enabled: true, scale: 1.5, denoising_strength: 0.45 }
+
+  # ---------------------------------------------------------------- SDXL (base + generic finetunes)
+  sdxl:
+    label: "SDXL"
+    style_template: tags
+    vram_gb: { min: 6, recommended: 10 }       # ESTIMATE (min uses VAE tiling)
+    activation_gb: 2.0
+    modes: [txt2img, img2img, inpaint]
+    detect:
+      all_tensor: ["model.diffusion_model.input_blocks.", "conditioner.embedders.1"]
+    civitai_base_models: ["SDXL 1.0", "SDXL Lightning", "SDXL Hyper"]
+    layout: all_in_one
+    components:
+      vae_override: sdxl_vae_fp16_fix   # avoids black/NaN images in fp16
+    taesd: taesdxl
+    uses_negative_prompt: true
+    defaults:
+      sampler: dpm++2m
+      scheduler: karras
+      clip_skip: 1
+      negative_prompt: "lowres, blurry, bad anatomy, deformed hands, watermark, text"
+    dials:
+      shape: *shapes_1024
+      quality: { fast: 20, balanced: 30, best: 40 }
+      cfg_range: [3.0, 9.0]
+      cfg_default: 6.0
+      hires_at_best: { enabled: false }
+
+  # Pony / Illustrious / NoobAI are SDXL architecture but want different defaults.
+  # Detected via CivitAI baseModel or known hash; header sniffing alone says "sdxl".
+  sdxl_pony:
+    inherits: sdxl
+    label: "SDXL · Pony"
+    civitai_base_models: ["Pony"]
+    detect: { same_as: sdxl }
+    defaults:
+      sampler: euler_a
+      scheduler: discrete
+      clip_skip: 2
+      auto_prompt_prefix: "score_9, score_8_up, score_7_up, "   # added at request time, user can disable
+      negative_prompt: "score_4, score_5, score_6, lowres, bad anatomy"
+    dials:
+      cfg_range: [4.0, 8.0]
+      cfg_default: 6.0
+
+  sdxl_illustrious:
+    inherits: sdxl
+    label: "SDXL · Illustrious / NoobAI"
+    civitai_base_models: ["Illustrious", "NoobAI"]
+    detect: { same_as: sdxl }
+    defaults:
+      sampler: euler_a
+      scheduler: discrete
+      clip_skip: 2
+      auto_prompt_prefix: "masterpiece, best quality, "
+      negative_prompt: "worst quality, low quality, lowres, bad anatomy, bad hands, watermark"
+    dials:
+      cfg_range: [4.0, 8.0]
+      cfg_default: 5.5
+
+  # ---------------------------------------------------------------- FLUX.1
+  flux1_dev:
+    label: "FLUX.1 dev"
+    style_template: natural
+    activation_gb: 2.5                          # no download spec: VRAM estimated from file size (SPEC §6.2)
+    license_note: "Non-commercial license"
+    modes: [txt2img, img2img]
+    detect:
+      any_tensor: ["double_blocks.", "single_transformer_blocks."]
+      ambiguous_with: [flux1_schnell, flux1_kontext]   # same tensors → hash / CivitAI / ask
+    civitai_base_models: ["Flux.1 D"]
+    layout: diffusion_only
+    components: { vae: flux_ae, clip_l: clip_l, t5xxl: { vram_gte_16: t5xxl_fp16, else: t5xxl_fp8 } }
+    taesd: taef1
+    uses_negative_prompt: false
+    flags: ["--clip-on-cpu"]
+    defaults: { sampler: euler, scheduler: simple, guidance: 3.5 }
+    dials:
+      shape: *shapes_1024
+      quality: { fast: 16, balanced: 24, best: 32 }
+      cfg_fixed: 1.0
+      stick_to_prompt_maps_to: guidance
+      guidance_range: [2.0, 5.0]
+
+  flux1_schnell:
+    inherits: flux1_dev
+    label: "FLUX.1 schnell"
+    license_note: "Apache 2.0"
+    civitai_base_models: ["Flux.1 S"]
+    dials:
+      quality: { fast: 2, balanced: 4, best: 6 }
+
+  # ---------------------------------------------------------------- Z-Image
+  z_image_turbo:
+    label: "Z-Image Turbo"
+    style_template: natural
+    activation_gb: 2.0
+    license_note: "Apache 2.0"
+    modes: [txt2img, img2img]
+    detect:
+      any_tensor: ["cap_embedder.0.weight"]
+      ambiguous_with: [z_image_base]
+    civitai_base_models: ["ZImageTurbo"]          # VERIFY exact enum string
+    layout: diffusion_only
+    components: { vae: flux_ae, llm: qwen3_4b }
+    taesd: taef1
+    uses_negative_prompt: false
+    flags: ["--diffusion-fa"]
+    defaults: { sampler: euler, scheduler: simple }
+    dials:
+      shape: *shapes_1024
+      quality: { fast: 6, balanced: 8, best: 10 }
+      cfg_fixed: 1.0
+    download:
+      file: z_image_turbo_bf16.safetensors
+      url: https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors
+      sha256: TODO
+      size_mb: 12300
+      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, text encoder offloaded to CPU
+      alt_quants:        # best quant that fits is picked automatically (bf16 → q8 → q4)
+        q8_0: { url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q8_0.gguf", sha256: TODO, size_mb: 7200, vram_gb: { min: 8, recommended: 12 } }
+        q4_k: { url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf", sha256: TODO, size_mb: 4000, vram_gb: { min: 5, recommended: 8 } }
+
+  z_image_base:
+    inherits: z_image_turbo
+    label: "Z-Image"
+    civitai_base_models: ["ZImageBase"]           # VERIFY
+    uses_negative_prompt: true
+    dials:
+      quality: { fast: 20, balanced: 30, best: 40 }
+      cfg_fixed: null
+      cfg_range: [3.0, 7.0]
+      cfg_default: 5.0
+
+  # ---------------------------------------------------------------- Edit models
+  qwen_image_edit_2511:
+    label: "Qwen Image Edit"
+    style_template: natural
+    activation_gb: 3.0
+    role: edit                     # used by the Edit tab's instruction mode
+    edit_priority: 1               # preferred edit model when it fits
+    modes: [edit]
+    detect:
+      any_tensor: ["transformer_blocks.0.img_mod.1.weight"]
+      ambiguous_with: [qwen_image]  # same tensors → hash / CivitAI / ask
+    civitai_base_models: ["Qwen"]  # VERIFY; CivitAI may not split Image vs Image-Edit
+    layout: diffusion_only
+    components: { vae: qwen_image_vae, llm: qwen25_vl_7b_q8, llm_vision: qwen25_vl_7b_mmproj }
+    uses_negative_prompt: false
+    flags: ["--diffusion-fa", "--model-args", "qwen_image_zero_cond_t=true"]
+    defaults: { sampler: euler, flow_shift: 3.0 }
+    dials:
+      quality: { fast: 12, balanced: 20, best: 30 }
+      cfg_range: [1.5, 4.0]
+      cfg_default: 2.5
+      stay_close_maps_to: cfg      # "Stay close to original" dial
+    download:
+      file: qwen-image-edit-2511-Q4_K_M.gguf
+      url: https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q4_K_M.gguf
+      sha256: TODO
+      size_mb: 13100
+      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, with --offload-to-cpu
+
+  flux1_kontext:
+    label: "FLUX.1 Kontext"
+    style_template: natural
+    activation_gb: 2.5
+    license_note: "Non-commercial license"
+    role: edit
+    edit_priority: 2               # fallback for lower VRAM
+    modes: [edit]
+    detect: { same_as: flux1_dev }
+    civitai_base_models: ["Flux.1 Kontext"]
+    layout: diffusion_only
+    components: { vae: flux_ae, clip_l: clip_l, t5xxl: t5xxl_fp8 }
+    uses_negative_prompt: false
+    flags: ["--clip-on-cpu"]
+    defaults: { sampler: euler, guidance: 2.5 }
+    dials:
+      quality: { fast: 16, balanced: 24, best: 30 }
+      cfg_fixed: 1.0
+      stay_close_maps_to: guidance
+      guidance_range: [1.5, 4.0]
+    download:
+      file: flux1-kontext-dev-Q4_K_M.gguf
+      url: https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q4_K_M.gguf
+      sha256: TODO
+      size_mb: 6900
+      vram_gb: { min: 6, recommended: 10 }     # ESTIMATE
+
+# Recommended models per role (SPEC §6.1). Ranked best-first.
+# Pinhole picks the first candidate whose VRAM min fits this GPU, then the best quant that fits.
+# Nothing here is bundled — every entry is a one-click download.
+recommended:
+  realistic:
+    - { family: z_image_turbo, source: registry }
+    - { family: sdxl, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO, note: "top realistic SDXL finetune, for GPUs < 8 GB" }
+  anime:
+    - { family: sdxl_illustrious, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO, note: "top-rated Illustrious checkpoint" }
+    - { family: sdxl_pony, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO }
+  edit:
+    - { family: qwen_image_edit_2511, source: registry }
+    - { family: flux1_kontext, source: registry }
+  describe:
+    - { captioner: reuse }       # free if Qwen Image Edit is installed
+    - { captioner: default }
+
+# img2text (Describe tab), served by llama-server
+captioner:
+  prefer_reuse: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]   # reuse the edit model's encoder if installed
+  default:
+    model: { file: Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", sha256: TODO, size_mb: 1900 }
+    mmproj: { file: mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", sha256: TODO, size_mb: 850 }
+  idle_shutdown_seconds: 60
+  prompts:
+    sentence: >
+      Describe this image as a single detailed prompt for an image generator.
+      Cover subject, clothing, pose, setting, lighting, camera angle and style.
+      Output only the prompt, no preamble.
+    tags: >
+      List booru-style tags for this image, most important first, comma-separated,
+      lowercase, underscores instead of spaces. Output only the tags.
+
+# VRAM tiers → engine flags and quant choice. Chosen automatically; overridable in Settings.
+hardware_profiles:
+  - name: low        # < 8 GB
+    max_vram_gb: 7.9
+    flags: ["--offload-to-cpu", "--vae-tiling"]
+    prefer_quant: q4_k
+  - name: mid        # 8–12 GB
+    max_vram_gb: 12.9
+    flags: ["--offload-to-cpu", "--vae-tiling"]
+    prefer_quant: q8_0
+  - name: high       # 13–20 GB (e.g. RTX 5070 Ti 16 GB)
+    max_vram_gb: 20.9
+    flags: ["--offload-to-cpu"]
+    prefer_quant: bf16
+  - name: ultra      # 21 GB+
+    max_vram_gb: 999
+    flags: []
+    prefer_quant: bf16
+
+# Exact files we recognise by hash (filled in as models are verified).
+known_files: []
+#  - sha256: "<hash>"
+#    family: z_image_turbo
+#    friendly_name: "Z-Image Turbo (bf16)"

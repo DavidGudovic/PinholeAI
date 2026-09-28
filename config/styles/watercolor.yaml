@@ -1,0 +1,4 @@
+name: "Watercolor"
+positive: "watercolor painting, soft washes, visible paper texture, loose brush strokes"
+negative: "photo, 3d render, harsh outlines"
+families: []

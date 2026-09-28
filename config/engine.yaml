@@ -1,0 +1,32 @@
+# Pinned inference engines. Downloaded once on first run into Data/engine/<version>/.
+# Update by bumping the version + URLs + hashes, then run the engine smoke test.
+
+stable_diffusion_cpp:
+  repo: https://github.com/leejet/stable-diffusion.cpp
+  version: TODO            # pin a release tag that includes sd-server with /sdcpp/v1 API
+  builds:
+    windows_cuda:  { url: TODO, sha256: TODO, note: "CUDA 12.8+ build; must support RTX 50xx (Blackwell)" }
+    windows_vulkan: { url: TODO, sha256: TODO }
+    windows_cpu:   { url: TODO, sha256: TODO }
+    linux_cuda:    { url: TODO, sha256: TODO }
+    linux_vulkan:  { url: TODO, sha256: TODO }
+    linux_cpu:     { url: TODO, sha256: TODO }
+  binary: sd-server
+  launch_defaults: ["--listen-ip", "127.0.0.1", "--log-level", "warn"]
+
+llama_cpp:
+  repo: https://github.com/ggml-org/llama.cpp
+  version: TODO
+  builds:
+    windows_cuda:  { url: TODO, sha256: TODO }
+    windows_vulkan: { url: TODO, sha256: TODO }
+    linux_cuda:    { url: TODO, sha256: TODO }
+    linux_vulkan:  { url: TODO, sha256: TODO }
+  binary: llama-server
+  launch_defaults: ["--host", "127.0.0.1", "--log-disable"]
+
+selection:
+  nvidia: cuda
+  amd: vulkan
+  intel: vulkan
+  none: cpu

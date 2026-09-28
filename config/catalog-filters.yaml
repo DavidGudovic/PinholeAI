@@ -1,0 +1,57 @@
+# Maps the friendly "Look" filter in the Models tab to CivitAI tags.
+# A model matches a Look if it has ANY of the listed tags.
+# Tune freely; no code changes needed.
+
+looks:
+  realistic:
+    label: "Realistic"
+    tags: [photorealistic, realistic, photography, portraits]
+  anime:
+    label: "Anime"
+    tags: [anime, manga, "2d"]
+  illustration:
+    label: "Illustration"
+    tags: [illustration, cartoon, "digital art", comics, painting]
+  three_d:
+    label: "3D"
+    tags: ["3d", render, "3d render"]
+  brand:
+    label: "Brand & product"
+    tags: [product, "product photography", logo, advertising, packaging, commercial]
+    also_require:
+      allowCommercialUse_includes: Image   # brand work must be usable commercially
+
+style_badges:           # badge shown on model cards, first match wins
+  - { look: anime,        badge: "Anime" }
+  - { look: realistic,    badge: "Realistic" }
+  - { look: three_d,      badge: "3D" }
+  - { look: illustration, badge: "Illustration" }
+
+price:
+  free:      { label: "Free" }
+  include:   { label: "Include early access (paid)" }
+  paid_only: { label: "Early access only" }
+  default: free            # paid models hidden by default
+
+content:
+  safe:           { label: "Safe only",   api_nsfw: false }
+  include_18plus: { label: "Include 18+", api_nsfw: true }
+  only_18plus:    { label: "18+ only",    api_nsfw: true, client_filter: "model.nsfw == true" }
+  default: safe
+  confirm_once_per_session: true
+  blur_nsfw_previews_when_safe: true
+
+sort:
+  - { label: "Top rated",       api: "Highest Rated" }
+  - { label: "Most downloaded", api: "Most Downloaded" }
+  - { label: "Newest",          api: "Newest" }
+
+period:
+  - { label: "This week",  api: Week }
+  - { label: "This month", api: Month }
+  - { label: "This year",  api: Year }
+  - { label: "All time",   api: AllTime }
+
+allowed_file_formats: [SafeTensor, GGUF]   # never PickleTensor
+require_scans_success: true                # pickleScanResult and virusScanResult
+page_size: 24

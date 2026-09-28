@@ -1,0 +1,4 @@
+name: "Anime cel shading"
+positive: "anime style, clean line art, cel shading, vibrant colors"
+negative: "photorealistic, 3d render"
+families: [sdxl_illustrious, sdxl_pony, sdxl]
