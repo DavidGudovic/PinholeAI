@@ -308,6 +308,7 @@ families:
     components: {}
     taesd: null
     uses_negative_prompt: true
+    flags: ["--diffusion-fa"]      # memory-efficient attention (docs/performance.md); falls back per op where unsupported
     defaults:
       sampler: dpm++2m
       scheduler: karras
@@ -363,6 +364,7 @@ families:
       vae_override: sdxl_vae_fp16_fix   # avoids black/NaN images in fp16 (docs/sd.md passes --vae too)
     taesd: taesdxl
     uses_negative_prompt: true
+    flags: ["--diffusion-fa"]      # see sd15
     defaults:
       sampler: dpm++2m
       scheduler: karras
@@ -458,7 +460,7 @@ families:
     # No --clip-on-cpu: it is deprecated (common.cpp "use --backend te=cpu") and
     # auto-fit (on by default) already parks T5 in RAM when VRAM is short while
     # still encoding on the GPU, which is much faster than CPU encoding.
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     # `flux` = the engine's own default for Flux (resolution-aware shift,
     # default_scheduler() in src/pipeline/request.cpp).
     defaults: { sampler: euler, scheduler: flux, guidance: 3.5 }
@@ -840,7 +842,7 @@ families:
     components: { vae: flux_ae, t5xxl: { vram_gte_24: t5xxl_fp16, else: t5xxl_fp8 } }   # docs/chroma.md
     taesd: taef1
     uses_negative_prompt: true
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     defaults: { sampler: euler, scheduler: beta }
     dials:
       shape: *shapes_1024
@@ -866,7 +868,7 @@ families:
     layout: all_in_one
     components: { clip_l: clip_l, clip_g: clip_g, t5xxl: { vram_gte_24: t5xxl_fp16, else: t5xxl_fp8 } }
     uses_negative_prompt: true
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     defaults: { sampler: euler }        # ComfyUI template: euler, 20 steps, CFG 4
     dials:
       shape: *shapes_1024
@@ -1046,7 +1048,7 @@ families:
     layout: diffusion_only
     components: { vae: flux_ae, clip_l: clip_l, t5xxl: t5xxl_fp8 }   # docs/kontext.md
     uses_negative_prompt: false
-    flags: []                      # see flux1_dev about --clip-on-cpu
+    flags: ["--diffusion-fa"]      # see flux1_dev about --clip-on-cpu
     defaults: { sampler: euler, scheduler: flux, guidance: 2.5 }
     dials:
       shape: *shapes_1024          # used when no reference size is given
