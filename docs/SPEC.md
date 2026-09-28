@@ -130,7 +130,8 @@ unsaved images, logs.
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
-7. The CivitAI API key (optional) is stored in the OS keychain (`keyring` crate), never in `Data/`.
+7. The CivitAI API key (optional) and the GitHub token (optional, Settings → Updates) are stored in
+   the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
 9. Saved-image metadata: **none** by default. Optional setting "Include generation settings
    (no prompt)" writes model name, seed, steps, dials into a PNG text chunk.
@@ -566,7 +567,11 @@ build is shared.
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
   the next start. While the repository is private, GitHub answers the unauthenticated check with 404:
-  the app says the releases can't be seen yet and offers the release page. The checksum list protects against broken or swapped downloads, not against a
+  the app says the releases can't be seen yet and offers the release page, or a GitHub token field
+  (fine-grained, Contents: read-only on this repository; OS keychain only). With a token the check
+  and the downloads use the API (`/releases`, `/releases/assets/{id}` with `Accept:
+  application/octet-stream`), and the token is sent only in `Authorization` to `api.github.com`
+  (reqwest drops it on the redirect to the release CDN). The checksum list protects against broken or swapped downloads, not against a
   compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
   Prompts are never sent to a server for moderation.
