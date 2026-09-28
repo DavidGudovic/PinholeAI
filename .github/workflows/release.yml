@@ -105,10 +105,15 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Pinhole ${{ needs.check.outputs.version }}
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
+          # Personal test builds only until docs/RELEASE-SPEC.md is done (CLAUDE.md).
+          prerelease: true
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: upload/*
           body: |
+            > **Personal test build.** Not for sharing: no build is shared with anyone until
+            > everything in `docs/RELEASE-SPEC.md` is done.
+
             ## Download
 
             | System | File |
