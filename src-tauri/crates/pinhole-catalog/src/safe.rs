@@ -168,7 +168,7 @@ pub(crate) mod tests {
         let text = match name {
             "month" => include_str!("../tests/fixtures/live_month_top_rated.json"),
             "alltime" => include_str!("../tests/fixtures/live_alltime_most_downloaded.json"),
-            "loras" => include_str!("../tests/fixtures/live_loras_month_top_rated.json"),
+            "loras" => include_str!("../tests/fixtures/live_loras_alltime_most_downloaded.json"),
             _ => unreachable!(),
         };
         serde_json::from_str(text).unwrap()
@@ -271,7 +271,7 @@ pub(crate) mod tests {
         assert!(!s.is_safe_preview(&img(r#"{"url":"u","nsfw":true}"#)));
     }
 
-    /// Live checkpoint sample: the "This month · Top rated" page users saw by default.
+    /// Live checkpoint sample: "This month · Top rated", the page users used to see first.
     #[test]
     fn live_month_sample() {
         let s = &filters().safe;
@@ -280,12 +280,22 @@ pub(crate) mod tests {
         assert_eq!(reason("Babes"), Some(AdultReason::Tag("bimbo".into())));
         assert_eq!(reason("MiaoMiao Harem"), Some(AdultReason::NameWord("harem".into())));
         assert_eq!(reason("REED_XXX"), Some(AdultReason::NameWord("xxx".into())));
+        assert_eq!(reason("Vixon’s Milk Factory"), Some(AdultReason::NameWord("milk factory".into())));
+        assert_eq!(reason("Moody Krea 2 Mix (uncensored)"), Some(AdultReason::NameWord("uncensored".into())));
         assert_eq!(reason("Unholy Desire Mix"), Some(AdultReason::Tag("porn".into())));
+        assert_eq!(reason("Five Stars Illustrious"), Some(AdultReason::SuggestiveTags(vec!["sexy".into(), "babes".into()])));
         assert!(matches!(reason("One obsession"), Some(AdultReason::MatureImages(_))));
         assert!(matches!(reason("Kodoranime"), Some(AdultReason::MatureImages(_))));
         assert_eq!(reason("Big Love"), Some(AdultReason::MarkedNsfw));
-        assert_eq!(reason("DarkBubble"), Some(AdultReason::NoSafeContent), "nsfwLevel 30: no PG bit");
-        for keep in ["CyberRealistic Z-Image Turbo", "RIN AnimePopCute", "Alchemix Illustrious", "LucidDreamer Z", "Screen-chanTV"] {
+        for keep in [
+            "CyberRealistic Z-Image Turbo",
+            "CyberRealistic Krea 2",
+            "RIN AnimePopCute",
+            "Alchemix Illustrious",
+            "LucidDreamer Z",
+            "Screen-chanTV",
+            "AnimaYume",
+        ] {
             assert_eq!(reason(keep), None, "{keep}");
         }
         let kept = page.items.iter().filter(|m| s.adult_reason(m).is_none()).count();
@@ -311,29 +321,31 @@ pub(crate) mod tests {
             "FLUX",
             "Photon",
             "XXMix_9realistic",
+            "Anima",
         ] {
             assert_eq!(s.adult_reason(by_name(&page, keep)), None, "{keep}");
         }
-        for hide in ["Pony Realism", "One obsession", "Babes By Stable Yogi", "Analog Madness", "NTR MIX", "PicX_real", "Uber Realistic"] {
+        for hide in ["Pony Realism", "One obsession", "Babes By Stable Yogi", "Analog Madness", "NTR MIX", "PicX_real", "Uber Realistic", "WAI-illustrious-SDXL"] {
             assert!(s.adult_reason(by_name(&page, hide)).is_some(), "{hide}");
         }
         let kept = page.items.iter().filter(|m| s.adult_reason(m).is_none()).count();
-        assert_eq!(kept, 54);
+        assert_eq!(kept, 52);
     }
 
     #[test]
     fn live_lora_sample() {
-        // Style add-ons CivitAI does NOT flag NSFW, yet most are clothing / pose add-ons
-        // whose sample images are mostly R or above.
+        // Style add-ons ("All time · Most downloaded"): the ones CivitAI doesn't flag
+        // include clothing / pose add-ons whose sample images are mostly R or above.
         let s = &filters().safe;
         let page = live("loras");
         let kept: Vec<&str> = page.items.iter().filter(|m| s.adult_reason(m).is_none()).map(|m| m.name.as_str()).collect();
-        for keep in ["Add Micro Details", "People's Works", "Retro Sci-fi 90's anime", "The Space Marines Warhammer", "Niji oil painting", "Dark Art Style"] {
+        for keep in ["Detail Tweaker XL", "Add More Details", "blindbox", "Studio Ghibli Style LoRA", "Pixel Art XL", "Add Micro Details", "Pony: People's Works"] {
             assert!(kept.iter().any(|k| k.starts_with(keep)), "{keep}");
         }
-        assert_eq!(s.adult_reason(by_name(&page, "AI styles dump")), Some(AdultReason::Tag("ecchi".into())));
-        assert_eq!(s.adult_reason(by_name(&page, "Micro Panties")), Some(AdultReason::NoSafeContent), "nsfwLevel 12: no PG image at all");
-        assert!(matches!(s.adult_reason(by_name(&page, "Krekkov Style")), Some(AdultReason::MatureImages(_))));
-        assert_eq!(kept.len(), 19, "{kept:?}");
+        assert_eq!(s.adult_reason(by_name(&page, "STYLES | PONY & ANIMAGINE")), Some(AdultReason::Tag("sexual".into())));
+        assert_eq!(s.adult_reason(by_name(&page, "FURRY BABES")), Some(AdultReason::NameWord("babes".into())));
+        assert_eq!(s.adult_reason(by_name(&page, "苍铭明月")), Some(AdultReason::NoSafeContent), "nsfwLevel 30: no PG image at all");
+        assert!(matches!(s.adult_reason(by_name(&page, "Hairstyles Collection")), Some(AdultReason::MatureImages(_))));
+        assert_eq!(kept.len(), 45, "{kept:?}");
     }
 }
