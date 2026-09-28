@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, ResultImage } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
-import { applyPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
+import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
 
@@ -321,6 +321,38 @@ describe("presets", () => {
     expect(applyPreset({ ...base, family: "sdxl_pony" }, s.create, { models: s.models!, loras: [], styleIds: [] }).patch.modelId).toBe("m2");
     expect(applyPreset({ ...base, family: "sdxl" }, s.create, { models: s.models!, loras: [], styleIds: [] }).patch.modelId).toBe("m1");
     expect(applyPreset({ ...base, family: null }, s.create, { models: s.models!, loras: [], styleIds: [] }).patch.modelId).toBe("m2");
+  });
+});
+
+describe("choosing None", () => {
+  const base = { id: "b", name: "B", family: null, modelId: null, civitaiVersionId: null, styleId: null, shape: "portrait" as const, quality: "best" as const, stick: 0.8, count: 4 as const, fineTune: { steps: 50 }, loras: [], builtin: true };
+  const opts = (s: ReturnType<typeof withModels>) => ({ models: s.models!, loras: [], styleIds: [] });
+
+  it("clears the preset and restores what it overrode, keeping the user's text", () => {
+    let s = run(withModels(), { type: "patchCreate", patch: { prompt: "keep me", shape: "wide", quality: "fast" } }, { type: "setFineTune", patch: { steps: 12, negativePrompt: "neg" } });
+    const before = s.create;
+    s = run(s, { type: "patchCreate", patch: applyPreset(base, s.create, opts(s)).patch });
+    expect(s.create.presetId).toBe("b");
+    expect(s.create.shape).toBe("portrait");
+    s = run(s, { type: "patchCreate", patch: { fineTune: { ...s.create.fineTune, negativePrompt: "neg2" } } });
+    s = run(s, { type: "patchCreate", patch: clearPreset(s.create) });
+    expect(s.create).toEqual({ ...before, fineTune: { steps: 12, negativePrompt: "neg2" } });
+  });
+
+  it("restores the original settings after hopping between presets", () => {
+    let s = run(withModels(), { type: "patchCreate", patch: { shape: "wide" } });
+    s = run(s, { type: "patchCreate", patch: applyPreset(base, s.create, opts(s)).patch });
+    s = run(s, { type: "patchCreate", patch: applyPreset({ ...base, id: "c", shape: "square" }, s.create, opts(s)).patch });
+    s = run(s, { type: "patchCreate", patch: clearPreset(s.create) });
+    expect(s.create.shape).toBe("wide");
+    expect(s.create.presetId).toBeNull();
+    expect(s.create.presetBase).toBeNull();
+  });
+
+  it("changing the model or pasting settings drops the preset snapshot", () => {
+    let s = run(withModels(), { type: "patchCreate", patch: applyPreset(base, withModels().create, opts(withModels())).patch });
+    s = run(s, { type: "selectModel", modelId: "m1" });
+    expect(s.create.presetBase).toBeNull();
   });
 });
 

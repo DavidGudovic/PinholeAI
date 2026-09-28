@@ -16,7 +16,7 @@ import type {
   ResultImage,
   Settings,
 } from "../types";
-import { CHANGE_STRENGTH, compactFineTune, loraCompatible, type CreateParams, type EditMode, type EditParams, type ImgRef } from "./model";
+import { CHANGE_STRENGTH, compactFineTune, loraCompatible, type CreateParams, type EditMode, type EditParams, type ImgRef, type PresetBase } from "./model";
 
 /** Fine-tune values that may be stored in a preset (never the negative prompt). */
 export const PRESET_FINE_TUNE_KEYS = [
@@ -215,6 +215,21 @@ export interface PresetApplication {
   missingStyle: boolean;
 }
 
+function snapshotBase(c: CreateParams): PresetBase {
+  const { modelId, styleId, shape, quality, stick, count, loras, fineTune } = c;
+  return { modelId, styleId, shape, quality, stick, count, loras, fineTune };
+}
+
+/** Choosing "None": drop the preset and restore what it overrode. Keeps the user's prompt and negative prompt. */
+export function clearPreset(c: CreateParams): Partial<CreateParams> {
+  const base = c.presetBase;
+  if (!base) return { presetId: null, presetBase: null };
+  const fineTune: FineTune = { ...base.fineTune };
+  delete fineTune.negativePrompt;
+  if (c.fineTune.negativePrompt) fineTune.negativePrompt = c.fineTune.negativePrompt;
+  return { ...base, fineTune, presetId: null, presetBase: null };
+}
+
 /** Turn a preset into Create changes. Keeps the user's prompt and negative prompt. */
 export function applyPreset(
   p: Preset,
@@ -253,6 +268,8 @@ export function applyPreset(
   const missingStyle = !!p.styleId && !opts.styleIds.includes(p.styleId);
   const patch: Partial<CreateParams> = {
     presetId: p.id,
+    // Keep the very first snapshot when hopping between presets, so None restores the original settings.
+    presetBase: c.presetBase ?? snapshotBase(c),
     styleId: missingStyle ? c.styleId : p.styleId,
     fineTune,
     loras,

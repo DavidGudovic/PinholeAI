@@ -34,9 +34,13 @@ export interface ImgRef {
   height: number;
 }
 
+export type PresetBase = Pick<CreateParams, "modelId" | "styleId" | "shape" | "quality" | "stick" | "count" | "loras" | "fineTune">;
+
 export interface CreateParams {
   modelId: string | null;
   presetId: string | null;
+  /** Settings the active preset overrode, so choosing None can put them back. Null when no preset is active. */
+  presetBase: PresetBase | null;
   /** prompt-bearing */
   prompt: string;
   styleId: string | null;
@@ -142,6 +146,7 @@ export interface AppState {
 export const initialCreate = (): CreateParams => ({
   modelId: null,
   presetId: null,
+  presetBase: null,
   prompt: "",
   styleId: null,
   shape: "square",
@@ -361,7 +366,7 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         presets: a.presets,
-        create: !s.create.presetId || a.presets.some((p) => p.id === s.create.presetId) ? s.create : { ...s.create, presetId: null },
+        create: !s.create.presetId || a.presets.some((p) => p.id === s.create.presetId) ? s.create : { ...s.create, presetId: null, presetBase: null },
       };
     case "setFamilyUi":
       return { ...s, familyUi: { ...s.familyUi, [a.ui.familyId]: a.ui } };
@@ -382,7 +387,7 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, downloads: s.downloads.filter(isActiveDownload) };
 
     case "patchCreate":
-      return { ...s, create: { ...s.create, ...a.patch } };
+      return { ...s, create: { ...s.create, ...a.patch, ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}) } };
     case "setFineTune": {
       const ft = compactFineTune({ ...s.create.fineTune, ...a.patch });
       return { ...s, create: { ...s.create, fineTune: ft } };
@@ -413,7 +418,7 @@ function inner(s: AppState, a: Action): AppState {
       const models = s.models ?? [];
       const prev = models.find((m) => m.id === s.create.modelId);
       const nextModel = models.find((m) => m.id === a.modelId);
-      let c: CreateParams = { ...s.create, modelId: a.modelId, presetId: null };
+      let c: CreateParams = { ...s.create, modelId: a.modelId, presetId: null, presetBase: null };
       if (prev?.familyId !== nextModel?.familyId) {
         // Family-specific overrides don't carry over; the user's own text and seed do.
         const { negativePrompt, seed, vaeTiling } = c.fineTune;

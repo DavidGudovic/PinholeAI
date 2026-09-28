@@ -6,7 +6,7 @@ import * as api from "../../lib/api";
 import { SHAPE_LABEL } from "../../lib/paste/map";
 import type { CoreError, Preset } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
-import { applyPreset, presetFromCreate, type PresetApplication } from "../../lib/state/request";
+import { applyPreset, clearPreset, presetFromCreate, type PresetApplication } from "../../lib/state/request";
 import { useAppState, useStore } from "../../lib/state/store";
 
 export interface PresetNotice {
@@ -30,6 +30,11 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
     const app = applyPreset(p, s.create, { models: s.models ?? [], loras: s.loras, styleIds: s.styles.map((x) => x.id) });
     store.dispatch({ type: "patchCreate", patch: app.patch });
     onApplied(app.missingModel || app.missingLoras.length || app.missingStyle ? { preset: p, app } : null);
+  };
+
+  const pickNone = () => {
+    store.dispatch({ type: "patchCreate", patch: clearPreset(store.getState().create) });
+    onApplied(null);
   };
 
   const remove = async (p: Preset) => {
@@ -98,6 +103,17 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
       >
         {(close) => (
           <div>
+            <MenuItem
+              selected={!presetId}
+              onClick={() => {
+                pickNone();
+                close();
+              }}
+              right={!presetId ? <Check className="h-4 w-4 text-amber-600" /> : undefined}
+              hint="Your own settings"
+            >
+              None
+            </MenuItem>
             {mine.length > 0 && <MenuLabel>Your presets</MenuLabel>}
             {mine.map((p) => item(p, close))}
             {builtin.length > 0 && <MenuLabel>Built in</MenuLabel>}
