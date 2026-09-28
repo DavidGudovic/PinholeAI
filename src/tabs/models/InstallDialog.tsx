@@ -34,7 +34,8 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
       .then((p) => {
         if (!alive) return;
         setPlan(p);
-        setFamily(p.familyCandidates.length ? null : (p.family?.familyId ?? null));
+        // Keep the kind the user already picked when only the size changed.
+        setFamily((prev) => (p.familyCandidates.length ? (p.familyCandidates.some((c) => c.familyId === prev) ? prev : null) : (p.family?.familyId ?? null)));
       })
       .catch((e) => {
         if (!alive) return;

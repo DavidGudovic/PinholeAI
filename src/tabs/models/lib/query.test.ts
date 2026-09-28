@@ -107,6 +107,8 @@ describe("filtersKey / changedFilterCount", () => {
   it("counts changed filters", () => {
     expect(changedFilterCount(base, base)).toBe(0);
     expect(changedFilterCount({ ...base, look: "anime", query: "x", compatibleOnly: false }, base)).toBe(3);
+    expect(changedFilterCount({ ...base, runsOnMyCard: true }, base)).toBe(1);
+    expect(changedFilterCount({ ...base, kind: "styleAddons", runsOnMyCard: true }, { ...base, kind: "styleAddons" })).toBe(0);
   });
 });
 

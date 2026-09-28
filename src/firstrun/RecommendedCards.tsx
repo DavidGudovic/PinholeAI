@@ -67,7 +67,7 @@ export function RecommendedCards(props: {
     : !roles?.length
       ? picks
       : roles.map((r) => picks.find((p) => p.role === r)).filter((p): p is RecommendedPick => !!p);
-  const offered = shown && offers ? shown.filter((p) => isOffer(p) && (offers === "all" || !!p.replacesInstalled)) : shown;
+  const offered = shown && offers ? shown.filter((p) => isOffer(p) && p.fit === "fits" && (offers === "all" || !!p.replacesInstalled)) : shown;
 
   const get = useCallback(async (role: string) => {
     setErrors((e) => ({ ...e, [role]: null }));
@@ -129,7 +129,7 @@ export function RecommendedCards(props: {
   );
 }
 
-/** A pick the user can still get (not installed, and something fits). */
+/** A pick the user can still get (not installed, and something is available). */
 function isOffer(p: RecommendedPick): boolean {
   return !p.installed && !!p.title && !p.unavailableReason;
 }

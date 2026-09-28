@@ -59,6 +59,12 @@ fn license_note(env: &PlanEnv, family_id: Option<&str>, model: Option<&Model>) -
         .or_else(|| model.filter(|m| !m.allow_commercial_use.allows("Image")).map(|_| "The creator doesn't allow commercial use.".to_string()))
 }
 
+/// Whether a file of another format may stand in for the usual one: only for
+/// diffusion-only families (their text encoders and VAE come separately).
+fn any_format(env: &PlanEnv, family_id: Option<&str>) -> bool {
+    family_id.and_then(|id| env.registry.family(id)).is_some_and(|f| families::main_model_kind(f) == ModelKind::Diffusion)
+}
+
 /// "Needs ~X GB" + badge for a main file of `family_id` of this size.
 fn need_fit(env: &PlanEnv, family_id: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
     let fam = env.registry.family(family_id)?;
@@ -70,7 +76,7 @@ fn need_fit(env: &PlanEnv, family_id: &str, bytes: u64) -> Option<(VramNeed, Fit
 /// `chosen_file` when installable, else a smaller file when the usual one
 /// doesn't fit (`select::select_file_for_machine`). `true` = picked for size.
 pub fn pick_file<'a>(env: &PlanEnv, version: &'a ModelVersion, family_id: Option<&str>, is_lora: bool, chosen_file: Option<u64>) -> Result<(&'a ModelFile, bool), String> {
-    select::select_file_for_machine(&version.files, &env.filters.allowed_file_formats, chosen_file, |f| {
+    select::select_file_for_machine(&version.files, &env.filters.allowed_file_formats, any_format(env, family_id), chosen_file, |f| {
         family_id.filter(|_| !is_lora).and_then(|id| need_fit(env, id, f.size_bytes())).map(|(_, fit)| fit)
     })
 }
@@ -108,7 +114,7 @@ pub fn build_plan(
     };
     let sha = picked.as_ref().ok().and_then(|(f, _)| f.sha256());
     let main_installed = sha.as_deref().is_some_and(|h| env.index.find_by_sha(h).is_some());
-    let file_options: Vec<PlanFileOption> = select::installable_files(&version.files, &env.filters.allowed_file_formats)
+    let file_options: Vec<PlanFileOption> = select::size_choices(&version.files, &env.filters.allowed_file_formats, any_format(env, sized_family.as_deref()))
         .into_iter()
         .map(|f| {
             let nf = sized_family.as_deref().filter(|_| !is_lora).and_then(|id| need_fit(env, id, f.size_bytes()));

@@ -276,7 +276,7 @@ mod tests {
 
     impl CatalogEnv for AllCompatible {
         fn family_for(&self, base: &str, _sha: Option<&str>) -> Option<crate::cards::FamilyInfo> {
-            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None })
+            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None, diffusion_only: false })
         }
         fn vram_for(&self, _family: &str, _bytes: u64) -> Option<(pinhole_registry::vram::VramNeed, pinhole_registry::vram::Fit)> {
             None

@@ -219,6 +219,9 @@ pub const SMALLER_NOTE: &str =
 /// Shown when the installed version is a tight fit and a smaller one fits.
 pub const TIGHT_INSTALLED_NOTE: &str = "The version you have is a tight fit for your graphics card: it runs slower and can run out of memory. This smaller version fits: fine detail is a little softer, and it runs faster and more reliably.";
 
+/// Shown when the installed version is too big for the card and a smaller one fits.
+pub const TOO_BIG_INSTALLED_NOTE: &str = "The version you have is probably too big for your graphics card: it can fail to load or run out of memory. This smaller version fits: fine detail is a little softer, and it runs faster and more reliably.";
+
 /// Registry option a file was downloaded from (by SHA-256, else file name).
 fn option_of<'a>(options: &'a [QuantOption], file: &InstalledFile) -> Option<&'a QuantOption> {
     let name = file.rel_path.rsplit('/').next().unwrap_or(&file.rel_path);
@@ -284,7 +287,7 @@ fn registry_pick(
                 action: if comps.is_empty() { PickAction::Nothing } else { PickAction::Download { label: title, files: comps } },
             });
         }
-        note = Some(TIGHT_INSTALLED_NOTE.to_string());
+        note = Some(if fit == Fit::TooBig { TOO_BIG_INSTALLED_NOTE } else { TIGHT_INSTALLED_NOTE }.to_string());
     }
 
     if options.is_empty() {
@@ -324,7 +327,7 @@ fn registry_pick(
             quant: Some(opt.quant.clone()).filter(|q| q != "unknown"),
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
-            replaces_installed: note.as_deref() == Some(TIGHT_INSTALLED_NOTE),
+            replaces_installed: matches!(note.as_deref(), Some(TIGHT_INSTALLED_NOTE | TOO_BIG_INSTALLED_NOTE)),
             note,
         },
         action: PickAction::Download { label: title, files },

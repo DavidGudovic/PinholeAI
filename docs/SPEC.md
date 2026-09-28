@@ -284,7 +284,9 @@ model in small text.
 1. Pick the best file: primary, `SafeTensor` or GGUF format only. **Never PickleTensor.**
    Require `pickleScanResult == Success` and `virusScanResult == Success`. When that file is
    Tight or Too big for this card (§6.2) and the version has another safe, hashed file that
-   Fits (e.g. an FP8 or Q4 file), pick that one instead (else a Tight one over a Too big one);
+   Fits (e.g. an FP8 or Q4 file), pick that one instead (else a Tight one over a Too big one).
+   All-in-one families (SD 1.5, SDXL) only switch within the same format: their GGUF files hold
+   the diffusion model alone, without the VAE and text encoders;
    the card says "Compact (FP8) version, so it fits your card". When a version has more than
    one installable file, the dialog shows a **Size** choice ("Full quality", "Compact (FP8)",
    "Compact (Q4)"…) with each file's size and VRAM badge and a plain explanation: compact

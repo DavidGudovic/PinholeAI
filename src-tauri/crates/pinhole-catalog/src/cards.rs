@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use pinhole_registry::vram::{Fit, VramNeed};
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
+use pinhole_store::datadir::ModelKind;
 use pinhole_store::InstalledIndex;
 
 use crate::api::{Model, ModelImage, ModelVersion};
@@ -34,6 +35,9 @@ pub struct FamilyInfo {
     pub id: String,
     pub label: String,
     pub license_note: Option<String>,
+    /// The family's main file is the diffusion model alone (VAE and text encoders come
+    /// separately), so a GGUF of it can stand in for a safetensors file.
+    pub diffusion_only: bool,
 }
 
 /// The real environment: registry + effective hardware + installed index.
@@ -63,7 +67,7 @@ impl CatalogEnv for RegistryEnv<'_> {
             _ => return None,
         };
         let f = self.registry.family(&id)?;
-        Some(FamilyInfo { id, label: f.label.clone(), license_note: f.license_note.clone() })
+        Some(FamilyInfo { id, label: f.label.clone(), license_note: f.license_note.clone(), diffusion_only: families::main_model_kind(f) == ModelKind::Diffusion })
     }
 
     fn vram_for(&self, family_id: &str, main_bytes: u64) -> Option<(VramNeed, Fit)> {
@@ -119,7 +123,7 @@ pub fn card_for_version(
     // A smaller file of the version when the usual one doesn't fit this card (SPEC §6.2).
     let (file, smaller) = match (&family, is_lora) {
         (Some(fam), false) => {
-            match select::select_file_for_machine(&v.files, &filters.allowed_file_formats, None, |f| env.vram_for(&fam.id, f.size_bytes()).map(|(_, fit)| fit)) {
+            match select::select_file_for_machine(&v.files, &filters.allowed_file_formats, fam.diffusion_only, None, |f| env.vram_for(&fam.id, f.size_bytes()).map(|(_, fit)| fit)) {
                 Ok((f, smaller)) => (Ok(f), smaller),
                 Err(e) => (Err(e), false),
             }
@@ -268,7 +272,7 @@ pub(crate) mod tests {
                 "Flux.1 D" => ("flux1_dev", "FLUX.1 dev", Some("Non-commercial license")),
                 _ => return None,
             };
-            Some(FamilyInfo { id: id.into(), label: label.into(), license_note: lic.map(Into::into) })
+            Some(FamilyInfo { id: id.into(), label: label.into(), license_note: lic.map(Into::into), diffusion_only: id.starts_with("flux") })
         }
         fn vram_for(&self, _family: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
             let gb = bytes as f32 / 1e9 + 2.0;

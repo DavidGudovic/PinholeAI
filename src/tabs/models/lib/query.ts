@@ -130,7 +130,9 @@ export function filtersKey(f: BrowseFilters): string {
 /** Filters that differ from the defaults (for a "Clear filters" button). */
 export function changedFilterCount(f: BrowseFilters, defaults: BrowseFilters): number {
   const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "runsOnMyCard", "query"];
-  return keys.filter((k) => (k === "query" ? normalizeSearch(f.query) !== normalizeSearch(defaults.query) : f[k] !== defaults[k])).length;
+  // "Runs on my card" is hidden (and not sent) for style add-ons.
+  const shown = f.kind === "models" ? keys : keys.filter((k) => k !== "runsOnMyCard");
+  return shown.filter((k) => (k === "query" ? normalizeSearch(f.query) !== normalizeSearch(defaults.query) : f[k] !== defaults[k])).length;
 }
 
 /** Price badges are only shown when paid models can appear (SPEC §5.4 model card). */

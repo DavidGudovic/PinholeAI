@@ -154,7 +154,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           heading={
             <div>
               <h2 className="text-base font-semibold">A better fit for {machinePlain(hw)}</h2>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">You have a version that only just fits. This smaller one runs more reliably.</p>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">The version you have doesn't fit your graphics card well. This smaller one runs more reliably.</p>
             </div>
           }
         />

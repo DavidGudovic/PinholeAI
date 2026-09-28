@@ -199,12 +199,13 @@ fn best_of<'a>(files: &'a [ModelFile], subset: &[&ModelFile], allowed_formats: &
 pub fn select_file_for_machine<'a>(
     files: &'a [ModelFile],
     allowed_formats: &[String],
+    any_format: bool,
     chosen: Option<u64>,
     fit_of: impl Fn(&ModelFile) -> Option<Fit>,
 ) -> Result<(&'a ModelFile, bool), String> {
     let default = select_file(files, allowed_formats)?;
     if let Some(id) = chosen {
-        if let Some(f) = installable(files, allowed_formats).find(|f| f.id == id) {
+        if let Some(f) = size_choices(files, allowed_formats, any_format).into_iter().find(|f| f.id == id) {
             return Ok((f, false));
         }
     }
@@ -212,7 +213,8 @@ pub fn select_file_for_machine<'a>(
         None | Some(Fit::Fits) => return Ok((default, false)),
         Some(f) => f,
     };
-    let sized: Vec<(&ModelFile, Option<Fit>)> = installable(files, allowed_formats).filter(|f| !same_file(f, default)).map(|f| (f, fit_of(f))).collect();
+    let sized: Vec<(&ModelFile, Option<Fit>)> =
+        size_choices(files, allowed_formats, any_format).into_iter().filter(|f| !same_file(f, default)).map(|f| (f, fit_of(f))).collect();
     let with = |want: Fit| -> Vec<&ModelFile> { sized.iter().filter(|(_, fit)| *fit == Some(want)).map(|(f, _)| *f).collect() };
     if let Some(f) = best_of(files, &with(Fit::Fits), allowed_formats) {
         return Ok((f, true));
@@ -244,6 +246,15 @@ pub fn precision_label(f: &ModelFile) -> String {
 /// Every installable file of a version, for the Install dialog's size choice.
 pub fn installable_files<'a>(files: &'a [ModelFile], allowed_formats: &[String]) -> Vec<&'a ModelFile> {
     installable(files, allowed_formats).collect()
+}
+
+/// The files of a version the user can choose between (Install "Size" choice).
+/// `any_format` = false keeps the usual file's format: a GGUF of an all-in-one
+/// family (SD 1.5, SDXL) holds only the diffusion model, not its VAE and text
+/// encoders, so it can't stand in for the full checkpoint.
+pub fn size_choices<'a>(files: &'a [ModelFile], allowed_formats: &[String], any_format: bool) -> Vec<&'a ModelFile> {
+    let format = select_file(files, allowed_formats).ok().map(file_format);
+    installable(files, allowed_formats).filter(|f| any_format || format.as_deref().is_none_or(|x| file_format(f) == x)).collect()
 }
 
 #[cfg(test)]
@@ -450,21 +461,27 @@ mod tests {
                 })
             }
         };
-        let pick = |vram: f64| select_file_for_machine(&files, &allowed(), None, fit_on(vram)).map(|(f, smaller)| (f.name.clone(), smaller)).unwrap();
+        let pick = |vram: f64| select_file_for_machine(&files, &allowed(), true, None, fit_on(vram)).map(|(f, smaller)| (f.name.clone(), smaller)).unwrap();
         assert_eq!(pick(48.0), ("jib_fp16.safetensors".into(), false), "the full file fits a big card");
         assert_eq!(pick(26.0), ("jib_fp8.safetensors".into(), true), "the best file that Fits");
         assert_eq!(pick(16.0), ("jib-Q4_K_M.gguf".into(), true));
         assert_eq!(pick(10.0), ("jib-Q4_K_M.gguf".into(), true), "too big → a Tight file");
         // Unknown fit (no family, LoRAs): the usual pick.
-        assert_eq!(select_file_for_machine(&files, &allowed(), None, |_| None).unwrap().0.name, "jib_fp16.safetensors");
+        assert_eq!(select_file_for_machine(&files, &allowed(), true, None, |_| None).unwrap().0.name, "jib_fp16.safetensors");
         // The user's own choice wins when it is installable.
         let id = files[1].id;
-        let (f, smaller) = select_file_for_machine(&files, &allowed(), Some(id), fit_on(48.0)).unwrap();
+        let (f, smaller) = select_file_for_machine(&files, &allowed(), true, Some(id), fit_on(48.0)).unwrap();
         assert_eq!((f.name.as_str(), smaller), ("jib_fp8.safetensors", false));
-        assert_eq!(select_file_for_machine(&files, &allowed(), Some(999), fit_on(48.0)).unwrap().0.name, "jib_fp16.safetensors");
+        assert_eq!(select_file_for_machine(&files, &allowed(), true, Some(999), fit_on(48.0)).unwrap().0.name, "jib_fp16.safetensors");
         assert_eq!(precision_label(&files[0]), "Full quality");
         assert_eq!(precision_label(&files[1]), "Compact (FP8)");
         assert_eq!(precision_label(&files[2]), "Compact (Q4)");
         assert_eq!(installable_files(&files, &allowed()).len(), 3);
+        // All-in-one families (SDXL, SD 1.5) keep the usual format: no GGUF stand-in.
+        let same = |vram: f64| select_file_for_machine(&files, &allowed(), false, None, fit_on(vram)).unwrap().0.name.clone();
+        assert_eq!(same(16.0), "jib_fp8.safetensors", "Tight fp8, never the diffusion-only GGUF");
+        assert_eq!(size_choices(&files, &allowed(), false).len(), 2);
+        let gguf_id = files[2].id;
+        assert_eq!(select_file_for_machine(&files, &allowed(), false, Some(gguf_id), fit_on(48.0)).unwrap().0.name, "jib_fp16.safetensors");
     }
 }
