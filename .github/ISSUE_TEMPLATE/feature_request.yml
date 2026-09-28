@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an improvement or a new capability.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The situation and why today's Pinhole falls short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should Pinhole do?
+      description: The behaviour you want, in plain words. Mock-ups welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Create, Edit, Describe, Models (browse/install), New model family, First run, Settings, Engine / performance, Packaging / install, Docs, Other]
+    validations:
+      required: true
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Fits Pinhole's principles (docs/SPEC.md §1)
+      options:
+        - label: Keeps prompts and images on the computer (no telemetry, no new network calls beyond CivitAI / Hugging Face / GitHub downloads)
+        - label: Keeps the default UI simple (advanced options belong in Fine-tune)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / examples elsewhere
+      description: Other apps that do this, workarounds you use today.

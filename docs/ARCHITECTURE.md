@@ -33,35 +33,30 @@ Why a workspace of small crates: each area compiles and tests independently
 (`cargo test -p pinhole-net`), dependencies are explicit, and the privacy-critical
 pieces (net, store) are small enough to audit.
 
-## 2. Ownership (parallel build)
+## 2. Where things live (by area)
 
-| Area | Owns | Depends on |
+| Area | Files | Depends on |
 |---|---|---|
-| **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (detect rules, schema) | — |
-| **net** | `crates/pinhole-net/**`, `crates/pinhole-core/src/downloads.rs`, `src-tauri/src/commands/downloads.rs` | — |
-| **store** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/app.rs`, `core/src/library.rs`, `commands/app.rs`, `commands/library.rs`, `config/presets/**` | — |
-| **engine** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
-| **catalog** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
-| **frontend A** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/paste/**`, `src/lib/mock/{generate,library,describe}.ts`, `src/lib/state/**` | api.ts |
-| **frontend B** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**`, `src/lib/mock/{app,models,catalog}.ts` | api.ts |
-| **ci** | `.github/**`, `scripts/**`, `tests/**`, `THIRD_PARTY_LICENSES`, `README.md` | everything (read) |
-| **orchestrator** | root manifests, `src-tauri/src/{lib.rs,commands/mod.rs}`, `core/src/{lib,error,events}.rs`, `src/lib/{api,types}.ts`, `src/lib/mock/index.ts`, docs | — |
+| **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (families, components, detect rules) | — |
+| **net** | `crates/pinhole-net/**`, `core/src/downloads.rs`, `commands/downloads.rs` | — |
+| **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
+| **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
+| **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
+| **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |
+| **UI Models/Settings/First run** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**` | api.ts |
+| **IPC contract** | `src/lib/{api,types}.ts` ↔ Rust serde types (camelCase), `src/lib/mock/**` (browser mock backend, must mirror Rust behaviour) | — |
+| **app shell (Rust)** | `src-tauri/src/{lib.rs,commands/mod.rs}`, `core/src/{lib,error,events}.rs` | all |
+| **CI / tests / packaging** | `.github/**`, `scripts/**`, `tests/**`, `THIRD_PARTY_LICENSES` | all |
 
-Rules for agents:
-- Edit only files you own. Need something from another area? Code against the
-  contract (stub signatures / api.ts), and list the request in your final report.
-- Stub signatures in the crates are the cross-crate contract. Implement them; you
-  may add items; do not rename/remove/re-type existing public items.
-- Do not `git commit`/`push` (the orchestrator integrates). Do not run `npm install`
-  (dependencies are fixed; ask in your report). Rust deps: add to your own crate's
-  `Cargo.toml`; prefer `workspace = true` entries that already exist.
-- The build dir is shared: `cargo test -p <your-crate>` may wait on a file lock — that's fine.
-- The upstream stable-diffusion.cpp source is checked out read-only at
-  `/home/user/leejet/stable-diffusion.cpp` (server API: `examples/server/api.md`,
-  flags: `examples/common/common.cpp`, detection: `src/model_loader.cpp`).
-- huggingface.co and civitai.com are NOT reachable from this dev container; github.com
-  git and crates.io/npm are. Write code + tests with fixtures/mocks; real-network checks
-  run in CI (`.github/workflows/verify-pins.yml`).
+Conventions across areas:
+- Public items in the crates are the cross-crate contract: extend freely, don't rename/remove/re-type
+  without updating every caller. IPC changes update `types.ts`, the Rust type and the mocks together.
+- Rust deps go in the crate's own `Cargo.toml`, preferring existing `workspace = true` entries.
+- The upstream stable-diffusion.cpp source for the pinned engine is at `$SD_CPP_SRC` in Claude Code
+  sessions (cloned by `.claude/hooks/session-start.sh`; server API `examples/server/api.md`, flags
+  `examples/common/common.cpp`, detection `src/model_loader.cpp`, per-model `docs/*.md`).
+- Session containers can't reach huggingface.co / civitai.com: write code + tests with fixtures, and
+  check live data with the **API probe** workflow (see CLAUDE.md "Working in a Claude Code session").
 
 ## 3. Commands & events
 

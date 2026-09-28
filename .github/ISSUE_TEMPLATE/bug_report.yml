@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in Pinhole doesn't work as expected.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! Please **don't paste private prompts** — describe them instead (Pinhole never puts your
+        prompt in the error Details, but double-check anything you paste). Screenshots must be safe for
+        work with fictional subjects (see CLAUDE.md wording rules).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Create, pick Z-Image Turbo
+        2. Quality: Balanced, Shape: Square
+        3. Press Generate
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Error message and Details
+      description: The message Pinhole showed and the text behind its "Details" toggle (engine output).
+      render: text
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Create, Edit, Describe, Models (browse/install), First run, Settings, Engine / generation, Downloads, Installer / startup, Other]
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: Pinhole build
+      description: Version (e.g. 0.1.0) and where you got it (release, CI run link, installer or portable).
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: OS + version, GPU + VRAM, engine backend (Settings shows it), RAM.
+      placeholder: Windows 11 24H2, RTX 5070 Ti 16 GB, CUDA, 32 GB RAM
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model(s) involved
+      description: Name, family and size/quant if relevant (e.g. "Z-Image Turbo bf16").
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Other apps using the GPU at the time, screenshots, how often it happens.
