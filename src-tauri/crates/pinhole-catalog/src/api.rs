@@ -90,6 +90,12 @@ pub struct Model {
     pub allow_commercial_use: CommercialUse,
     #[serde(deserialize_with = "lenient::strings")]
     pub tags: Vec<String>,
+    /// Every version's base model (newer responses), e.g. `["SD 1.5 Hyper", "SD 1.5"]`.
+    #[serde(deserialize_with = "lenient::strings")]
+    pub base_models: Vec<String>,
+    /// Some version is behind paid access right now (newer responses).
+    #[serde(deserialize_with = "lenient::bool")]
+    pub has_active_paid_access: bool,
     #[serde(deserialize_with = "lenient::opt_obj")]
     pub creator: Option<Creator>,
     #[serde(deserialize_with = "lenient::obj")]
@@ -174,6 +180,9 @@ pub struct ModelVersion {
     /// Newer responses: `{ timeframe, chargeForDownload, downloadPrice, … }`.
     #[serde(deserialize_with = "lenient::opt_obj")]
     pub early_access_config: Option<Value>,
+    /// Newer responses: `null` for public versions, an object while paid.
+    #[serde(deserialize_with = "lenient::opt_obj")]
+    pub paid_access: Option<Value>,
     /// Some versions require a signed-in user to download (unverified field).
     #[serde(deserialize_with = "lenient::bool")]
     pub require_auth: bool,
@@ -196,10 +205,15 @@ pub struct ModelVersion {
 
 impl ModelVersion {
     /// Early access (paid) right now. Checks, in order: `availability ==
-    /// "EarlyAccess"`, a future `earlyAccessEndsAt` / `earlyAccessDeadline`,
-    /// and the older `earlyAccessTimeFrame` (days after `publishedAt`).
+    /// "EarlyAccess"`, a non-null `paidAccess`, a future `earlyAccessEndsAt` /
+    /// `earlyAccessDeadline`, and the older `earlyAccessTimeFrame` (days after
+    /// `publishedAt`). `earlyAccessConfig` alone is not decisive: it can stay
+    /// set after early access ended.
     pub fn is_early_access(&self, now: DateTime<Utc>) -> bool {
         if self.availability.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("EarlyAccess")) {
+            return true;
+        }
+        if self.paid_access.as_ref().is_some_and(|p| !matches!(p, Value::Null | Value::Bool(false))) {
             return true;
         }
         for end in [&self.early_access_ends_at, &self.early_access_deadline] {
@@ -518,7 +532,8 @@ mod tests {
         assert_eq!(page.next_cursor().as_deref(), Some("2|1718000000000"));
 
         let rv = &page.items[0];
-        assert_eq!(rv.id, 4201);
+        assert_eq!(rv.id, 139562);
+        assert_eq!(rv.base_models, vec!["SDXL 1.0"]);
         assert_eq!(rv.kind, "Checkpoint");
         assert!(!rv.nsfw);
         assert!(rv.allow_commercial_use.allows("Image"));
@@ -528,12 +543,14 @@ mod tests {
         let v = &rv.model_versions[0];
         assert_eq!(v.base_model, "SDXL 1.0");
         assert_eq!(v.files.len(), 2);
-        let f = &v.files[0];
-        assert_eq!(f.size_bytes(), 6_938_041_050);
+        assert!(!v.files[0].primary, "`primary` is absent on non-primary files");
+        let f = &v.files[1];
+        assert_eq!(f.size_bytes(), 6_938_065_160);
         assert_eq!(f.metadata.format.as_deref(), Some("SafeTensor"));
-        assert_eq!(f.sha256().unwrap().len(), 64);
-        assert_eq!(f.hash("autov2"), Some("699B68EAB2"));
+        assert_eq!(f.sha256().unwrap(), "6a35a7855770ae9820a3c931d4964c3817b6d9e3c6f9c4dabb5b3a94e5643b80");
+        assert_eq!(f.hash("autov2"), Some("6A35A78557"));
         assert!(f.primary);
+        assert!(v.paid_access.is_none());
         assert!(!v.images[0].is_nsfw());
         assert!(v.images[1].is_nsfw());
 
@@ -568,6 +585,10 @@ mod tests {
         assert!(v.is_early_access(now));
         let v = ModelVersion { early_access_time_frame: Some(1), published_at: Some("2026-09-20T00:00:00Z".into()), ..Default::default() };
         assert!(!v.is_early_access(now));
+        let v: ModelVersion = serde_json::from_str(r#"{"id":1,"availability":"Public","paidAccess":{"price":300}}"#).unwrap();
+        assert!(v.is_early_access(now), "paidAccess object");
+        let v: ModelVersion = serde_json::from_str(r#"{"id":1,"availability":"Public","paidAccess":null,"earlyAccessConfig":{"timeframe":3}}"#).unwrap();
+        assert!(!v.is_early_access(now), "a leftover earlyAccessConfig alone is not early access");
     }
 
     #[test]
@@ -578,7 +599,8 @@ mod tests {
         assert_eq!(v.base_model, "SDXL 1.0");
         assert_eq!(v.model.as_ref().unwrap().kind, "Checkpoint");
         assert_eq!(v.model.as_ref().unwrap().name, "Juggernaut XL");
-        assert_eq!(v.files[0].size_bytes(), 7_105_351_496);
+        assert_eq!(v.files[0].size_bytes(), 7_105_349_736);
+        assert_eq!(v.name, "Ragnarok");
         assert!(v.download_url.as_deref().unwrap().starts_with("https://civitai.com/api/download/models/"));
 
         let h: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();

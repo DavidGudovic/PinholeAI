@@ -1,0 +1,162 @@
+// One CivitAI model card in Browse (SPEC §5.4 "Model card").
+import { memo, useRef, type ReactNode } from "react";
+import { Check, Download, EyeOff, Film, HardDrive, ImageOff, RotateCw, ShieldAlert, ThumbsUp } from "lucide-react";
+import type { CatalogCard, ContentMode } from "../../lib/types";
+import { formatBytes, formatCount } from "../../lib/format";
+import { Badge, Button, VramBadge } from "../../components/ui";
+import { GroupProgress } from "./controls";
+import { cancelGroup, useTaggedGroup } from "./lib/downloads";
+import { useNearViewport, usePreviewBlob } from "./lib/preview";
+import { shouldBlurPreview } from "./lib/query";
+import { isActive, ratioPercent } from "./lib/words";
+
+function Overlay({ tone = "dark", children }: { tone?: "dark" | "amber" | "green"; children: ReactNode }) {
+  const tones = {
+    dark: "bg-black/55 text-white",
+    amber: "bg-amber-400 text-neutral-950",
+    green: "bg-emerald-500 text-white",
+  };
+  return <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium backdrop-blur-sm ${tones[tone]}`}>{children}</span>;
+}
+
+function Placeholder({ icon, text }: { icon: ReactNode; text: string }) {
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-xs text-neutral-500 dark:text-neutral-400">
+      {icon}
+      {text}
+    </div>
+  );
+}
+
+export const CatalogCardView = memo(function CatalogCardView({
+  card,
+  content,
+  showPrice,
+  installed,
+  onInstall,
+}: {
+  card: CatalogCard;
+  content: ContentMode;
+  showPrice: boolean;
+  installed: boolean;
+  onInstall: (card: CatalogCard) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const near = useNearViewport(ref);
+  const blur = shouldBlurPreview(card, content);
+  const preview = usePreviewBlob(card.previewIsVideo ? null : card.previewUrl, near);
+  const group = useTaggedGroup(`civitai:${card.versionId}`);
+  const downloading = !!group && isActive(group);
+  const isLora = card.type.toUpperCase() === "LORA";
+  const ratio = ratioPercent(card.thumbsUpRatio);
+
+  let action: ReactNode;
+  if (card.blockedReason)
+    action = (
+      <p className="flex items-start gap-1.5 rounded-lg bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/40 dark:text-red-300">
+        <ShieldAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+        {card.blockedReason}
+      </p>
+    );
+  else if (downloading && group) action = <GroupProgress group={group} compact onCancel={() => void cancelGroup(group.groupId)} />;
+  else if (installed)
+    action = (
+      <div className="flex h-8 items-center justify-center gap-1.5 rounded-lg bg-emerald-50 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+        <Check className="h-3.5 w-3.5" /> Installed
+      </div>
+    );
+  else if (group?.state === "failed")
+    action = (
+      <div className="space-y-1.5">
+        <p className="line-clamp-2 text-xs text-red-600 dark:text-red-400">{group.error ?? "The download failed."}</p>
+        <Button size="sm" className="w-full" onClick={() => onInstall(card)}>
+          <RotateCw className="h-3.5 w-3.5" /> Try again
+        </Button>
+      </div>
+    );
+  else
+    action = (
+      <Button variant="primary" size="sm" className="h-8 w-full" onClick={() => onInstall(card)} aria-label={`Install ${card.name}`}>
+        <Download className="h-3.5 w-3.5" /> Install
+      </Button>
+    );
+
+  return (
+    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+      <div ref={ref} className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
+        {preview.src ? (
+          <img src={preview.src} alt="" draggable={false} className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
+        ) : card.previewIsVideo ? (
+          <Placeholder icon={<Film className="h-6 w-6" />} text="Video preview" />
+        ) : preview.failed || !card.previewUrl ? (
+          <Placeholder icon={<ImageOff className="h-6 w-6" />} text="No preview" />
+        ) : (
+          <div className="absolute inset-0 animate-pulse bg-neutral-200 dark:bg-neutral-800" />
+        )}
+        {blur && preview.src && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
+              <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
+            </span>
+          </div>
+        )}
+        <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+          {card.styleBadge && <Overlay>{card.styleBadge}</Overlay>}
+          {isLora && <Overlay>Style add-on</Overlay>}
+        </div>
+        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+          {showPrice && card.earlyAccess && <Overlay tone="amber">Early access · paid</Overlay>}
+          {installed && (
+            <Overlay tone="green">
+              <Check className="h-3 w-3" /> Installed
+            </Overlay>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-2 p-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-50" title={card.name}>
+            {card.name}
+          </h3>
+          <p className="truncate text-[11px] text-neutral-500" title={`${card.baseModel} · ${card.versionName}`}>
+            {card.baseModel} · {card.versionName}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
+          {ratio && (
+            <span className="inline-flex items-center gap-1" title="Share of thumbs-up ratings">
+              <ThumbsUp className="h-3.5 w-3.5" /> {ratio}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1" title="Downloads">
+            <Download className="h-3.5 w-3.5" /> {formatCount(card.downloadCount)}
+          </span>
+          {card.downloadBytes != null && (
+            <span className="inline-flex items-center gap-1" title="Download size">
+              <HardDrive className="h-3.5 w-3.5" /> {formatBytes(card.downloadBytes)}
+            </span>
+          )}
+        </div>
+
+        {card.vram ? (
+          <VramBadge vram={card.vram} fit={card.fit} />
+        ) : isLora ? (
+          <span className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</span>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-1">
+          {card.commercialOk ? <Badge tone="green">OK for client work</Badge> : <Badge>Not for client work</Badge>}
+        </div>
+        {card.licenseNote && (
+          <p className="truncate text-[11px] text-neutral-500" title={card.licenseNote}>
+            License: {card.licenseNote}
+          </p>
+        )}
+
+        <div className="mt-auto pt-1">{action}</div>
+      </div>
+    </article>
+  );
+});

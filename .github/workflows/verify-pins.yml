@@ -1,0 +1,55 @@
+# Checks every URL + SHA-256 in config/models.yaml and config/engine.yaml against the
+# real servers (Hugging Face / GitHub APIs, no multi-GB downloads where avoidable),
+# the CivitAI baseModel strings against the live enum, suggests CivitAI candidates for
+# TODO `recommended` entries, and lists recent engine releases with the assets we need.
+# Report: job Summary + job log (Markdown) + `pins-report` artifact (JSON).
+name: Verify pins
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "config/**"
+      - "scripts/verify-pins.mjs"
+      - ".github/workflows/verify-pins.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-pins-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify URLs, hashes, CivitAI enums, engine releases
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the YAML parser into a scratch dir (package.json untouched)
+        run: npm i --no-save --no-package-lock --no-audit --no-fund --prefix "$RUNNER_TEMP/tools" yaml@2
+
+      - name: Verify pins
+        env:
+          PINHOLE_TOOLS_DIR: ${{ runner.temp }}/tools
+          GITHUB_TOKEN: ${{ github.token }}
+          CIVITAI_API_KEY: ${{ secrets.CIVITAI_API_KEY }}
+        run: node scripts/verify-pins.mjs --out pins-report.json
+
+      - name: Upload pins-report.json
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pins-report
+          path: pins-report.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -15,7 +15,8 @@
 # Update procedure: bump `version`, rewrite asset names, run the CI "verify pins" job (downloads
 # every URL, checks size + SHA-256), then run the engine smoke test (PINHOLE_SMOKE=1).
 #
-# Verified 2026-09-28 by downloading every asset below and hashing it (sha256sum).
+# Verified 2026-09-28: every size + SHA-256 below was checked against the GitHub release
+# (downloaded and hashed, and cross-checked with the digests GitHub publishes for the assets).
 
 schema_version: 1
 
@@ -28,7 +29,9 @@ stable_diffusion_cpp:
   binary: sd-server
   # Added by the engine manager in addition to the per-model wiring args. The port is
   # chosen at launch (random free port on 127.0.0.1). Never listen on 0.0.0.0.
-  launch_defaults: ["--listen-ip", "127.0.0.1", "--log-level", "warn"]
+  # --disable-image-metadata: server-wide default off, on top of Pinhole always sending
+  # "embed_image_metadata": false per request (defense in depth).
+  launch_defaults: ["--listen-ip", "127.0.0.1", "--log-level", "warn", "--disable-image-metadata"]
   builds:
     windows_cuda:
       # CUDA 12.8.1, CMAKE_CUDA_ARCHITECTURES 61;70;75;80;86;89;90;100;120 → includes RTX 50xx
@@ -100,7 +103,18 @@ llama_cpp:
       sha256: 223911b76efe83aae03adbc1890e4d1b5004d13697a98a7258b7ffdfeb7b9bad
       size_bytes: 19157926
       size_mb: 19
-    # Linux llama.cpp builds are .tar.gz with a top-level `llama-<tag>/` folder (glibc 2.34+).
+    # Linux llama.cpp builds are .tar.gz with a top-level `llama-<tag>/` folder (glibc 2.34+);
+    # the installer flattens that folder so runtime libraries sit next to llama-server.
+    linux_cuda:
+      url: https://github.com/ggml-org/llama.cpp/releases/download/b11235/llama-b11235-bin-ubuntu-cuda-12.8-x64.tar.gz
+      sha256: e5d3bbb3db80df25d0a3d8fa072115b6cb1eae23ad12b8707d1a058ca05b504e
+      size_bytes: 172239918
+      size_mb: 172
+      extra:
+        - url: https://github.com/ggml-org/llama.cpp/releases/download/b11235/cudart-llama-b11235-bin-ubuntu-cuda-12.8-x64.tar.gz
+          sha256: 2d72d9bd5c36a07cc60e0b57eac2c2c067ced3de4b057aea5769314abfa6f02c
+          size_bytes: 594377730
+          size_mb: 594
     linux_vulkan:
       url: https://github.com/ggml-org/llama.cpp/releases/download/b11235/llama-b11235-bin-ubuntu-vulkan-x64.tar.gz
       sha256: 98c4181d3441d59e1e43052e9781a6a34bd24bb1c39df074b1fcada725b39d74

@@ -10,7 +10,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::files::{self, builtin_stem, BUILTIN_PREFIX};
-use crate::{is_valid_slug, slugify, write_atomic, DataDir, StoreError};
+use crate::{slugify, write_atomic, DataDir, StoreError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -101,7 +101,7 @@ pub fn save(dir: &DataDir, preset: Preset) -> Result<Preset, StoreError> {
     let (id, fresh) = if id.is_empty() {
         (files::reserve_unique(&presets_dir, &slugify(&preset.name))?, true)
     } else {
-        if !is_valid_slug(&id) || !presets_dir.join(format!("{id}.yaml")).is_file() {
+        if !files::is_safe_stem(&id) || !presets_dir.join(format!("{id}.yaml")).is_file() {
             return Err(StoreError::NotFound("Preset".into()));
         }
         (id, false)
@@ -124,7 +124,7 @@ pub fn delete(dir: &DataDir, id: &str) -> Result<(), StoreError> {
     if builtin_stem(id).is_some() {
         return Err(StoreError::Invalid("Built-in presets can't be deleted.".into()));
     }
-    if !is_valid_slug(id) {
+    if !files::is_safe_stem(id) {
         return Err(StoreError::NotFound("Preset".into()));
     }
     match std::fs::remove_file(dir.presets().join(format!("{id}.yaml"))) {
@@ -140,7 +140,7 @@ pub fn get(builtin_dir: &Path, dir: &DataDir, id: &str) -> Result<Preset, StoreE
         Some(stem) => (builtin_dir.to_path_buf(), stem, true),
         None => (dir.presets(), id, false),
     };
-    if !is_valid_slug(stem) {
+    if !files::is_safe_stem(stem) {
         return Err(StoreError::NotFound("Preset".into()));
     }
     read_one(&folder.join(format!("{stem}.yaml")), stem, builtin)

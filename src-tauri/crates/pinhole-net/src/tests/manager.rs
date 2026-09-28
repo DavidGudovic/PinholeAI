@@ -204,3 +204,33 @@ fn manager_created_and_used_outside_a_runtime() {
     let got = rt.block_on(m.wait(&id)).unwrap();
     assert_eq!(std::fs::read(&got[0].path).unwrap(), b"hi");
 }
+
+#[test]
+fn dropped_runtime_does_not_wedge_the_queue() {
+    let srv_rt = tokio::runtime::Runtime::new().unwrap();
+    let srv = srv_rt.block_on(MockServer::start(|req| match req.path.as_str() {
+        "/stall" => MockResponse::ok(vec![1u8; 1000]).stall_after(10),
+        _ => MockResponse::ok("ok"),
+    }));
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager();
+    let mut stalled_spec = file(&srv, "/stall", dir.path(), b"");
+    stalled_spec.sha256 = None;
+    stalled_spec.size_bytes = None;
+
+    let rt1 = tokio::runtime::Runtime::new().unwrap();
+    let stalled = rt1.block_on(async {
+        let id = m.enqueue("Stalled".into(), vec![stalled_spec]);
+        wait_for_state(&m, &id, DownloadState::Downloading).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        id
+    });
+    drop(rt1); // the worker task dies with its runtime
+
+    let rt2 = tokio::runtime::Runtime::new().unwrap();
+    rt2.block_on(async {
+        assert_eq!(m.wait_detailed(&stalled).await.unwrap_err().code, "internal");
+        let id = m.enqueue("After".into(), vec![file(&srv, "/ok", dir.path(), b"ok")]);
+        m.wait(&id).await.unwrap();
+    });
+}

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_yaml::{Mapping, Value};
 
-use crate::{is_valid_slug, StoreError};
+use crate::StoreError;
 
 /// Id prefix of read-only items shipped in `config/` (`builtin:<file-stem>`).
 pub(crate) const BUILTIN_PREFIX: &str = "builtin:";
@@ -15,12 +15,24 @@ pub(crate) const BUILTIN_PREFIX: &str = "builtin:";
 /// Library files are small; anything bigger is not ours (defensive cap).
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
+/// Ids of user items are file stems. New ones are slugs, but hand-made files
+/// ("Portrait.yaml") are accepted too, as long as the stem can't escape the
+/// folder or confuse a file system: no separators, no leading dot, no reserved
+/// characters, no control characters.
+pub(crate) fn is_safe_stem(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 200
+        && !s.starts_with(['.', ' '])
+        && !s.ends_with(['.', ' '])
+        && !s.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+}
+
 /// `builtin:<stem>` → `Some(stem)`.
 pub(crate) fn builtin_stem(id: &str) -> Option<&str> {
     id.strip_prefix(BUILTIN_PREFIX)
 }
 
-/// `*.yaml` files in `dir` whose stem is a valid slug, sorted by stem.
+/// `*.yaml` files in `dir` whose stem is a safe id (see [`is_safe_stem`]), sorted by stem.
 /// A missing directory is empty; other I/O errors are reported.
 pub(crate) fn yaml_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, StoreError> {
     let entries = match fs::read_dir(dir) {
@@ -35,7 +47,7 @@ pub(crate) fn yaml_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, StoreErro
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
-        if !is_valid_slug(stem) || !path.is_file() {
+        if !is_safe_stem(stem) || !path.is_file() {
             continue;
         }
         out.push((stem.to_string(), path));
@@ -151,6 +163,17 @@ mod tests {
     }
 
     #[test]
+    fn safe_stems() {
+        for ok in ["film-photo", "Portrait", "My Style 2", "水彩画", "a.b"] {
+            assert!(is_safe_stem(ok), "{ok}");
+        }
+        for bad in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x", "c:x", "builtin:x", "x.", " x", "a\u{0}b", "a?b", "a|b"] {
+            assert!(!is_safe_stem(bad), "{bad:?}");
+        }
+        assert!(!is_safe_stem(&"x".repeat(201)));
+    }
+
+    #[test]
     fn reserve_unique_counts_up() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(reserve_unique(tmp.path(), "a").unwrap(), "a");
@@ -166,7 +189,7 @@ mod tests {
         }
         fs::create_dir(tmp.path().join("d.yaml")).unwrap();
         let stems: Vec<_> = yaml_files(tmp.path()).unwrap().into_iter().map(|(s, _)| s).collect();
-        assert_eq!(stems, vec!["a", "b"]);
+        assert_eq!(stems, vec!["Bad Name", "a", "b"]);
         assert!(yaml_files(&tmp.path().join("missing")).unwrap().is_empty());
     }
 }

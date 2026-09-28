@@ -65,6 +65,8 @@ export const CHANGE_STRENGTH: Record<ChangeAmount, number> = { subtle: 0.35, med
 export interface EditNode {
   imageId: string;
   label: string;
+  /** Settings of the edit that produced this node (null for the original). */
+  meta: ResultImage | null;
 }
 
 export interface EditParams {
@@ -224,7 +226,7 @@ export type Action =
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
   | { type: "editLoad"; ref: ImgRef }
-  | { type: "editPush"; ref: ImgRef }
+  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null }
   | { type: "editGoto"; index: number }
   | { type: "editClear" }
   | { type: "patchEdit"; patch: Partial<EditParams> }
@@ -471,12 +473,12 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: withRefs(s.images, [a.ref]),
-        edit: { ...s.edit, chain: [{ imageId: a.ref.id, label: "Original" }], index: 0 },
+        edit: { ...s.edit, chain: [{ imageId: a.ref.id, label: "Original", meta: null }], index: 0 },
       };
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
       const kept = s.edit.chain.slice(0, s.edit.index + 1);
-      const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}` }];
+      const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }
     case "editGoto": {

@@ -3,9 +3,103 @@
 /* System font stack only: no remote fonts (privacy rule 4). */
 @theme {
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", "Ubuntu Mono", Menlo, Consolas, monospace;
 }
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 html, body, #root { height: 100%; }
-body { @apply bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased; }
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+body {
+  @apply bg-neutral-100 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+  font-size: 14px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection { @apply bg-amber-200 text-neutral-950; }
+
+/* Calm, thin scrollbars that follow the theme. */
+* { scrollbar-width: thin; scrollbar-color: rgb(163 163 163 / 0.5) transparent; }
+.dark * { scrollbar-color: rgb(82 82 82 / 0.7) transparent; }
+
+/* Range input: amber thumb, neutral track, visible keyboard focus. */
+.pinhole-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 9999px;
+}
+.pinhole-range:disabled { cursor: not-allowed; }
+.pinhole-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-neutral-300);
+}
+.dark .pinhole-range::-webkit-slider-runnable-track { background: var(--color-neutral-700); }
+.pinhole-range::-moz-range-track { height: 4px; border-radius: 9999px; background: var(--color-neutral-300); }
+.dark .pinhole-range::-moz-range-track { background: var(--color-neutral-700); }
+.pinhole-range::-moz-range-progress { height: 4px; border-radius: 9999px; background: var(--color-amber-500); }
+.pinhole-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: white;
+  border: 2px solid var(--color-amber-500);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+.pinhole-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  background: white;
+  border: 2px solid var(--color-amber-500);
+}
+
+/* Motion (respects reduced-motion). */
+@keyframes pinhole-indeterminate {
+  0% { left: -35%; }
+  100% { left: 100%; }
+}
+.pinhole-indeterminate { animation: pinhole-indeterminate 1.3s ease-in-out infinite; }
+@keyframes pinhole-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pinhole-pop-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes pinhole-slide-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes pinhole-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.pinhole-fade { animation: pinhole-fade-in 120ms ease-out; }
+.pinhole-pop { animation: pinhole-pop-in 140ms ease-out; }
+.pinhole-slide { animation: pinhole-slide-in 180ms ease-out; }
+.pinhole-shimmer {
+  background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.55) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: pinhole-shimmer 1.6s linear infinite;
+}
+.dark .pinhole-shimmer { background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.06) 50%, transparent 100%); }
+@media (prefers-reduced-motion: reduce) {
+  .pinhole-indeterminate, .pinhole-fade, .pinhole-pop, .pinhole-slide, .pinhole-shimmer { animation: none; }
+}
+
+/* Subtle checkerboard behind images (shows transparency, frames letterboxing). */
+.pinhole-checker {
+  background-color: var(--color-neutral-200);
+  background-image:
+    linear-gradient(45deg, var(--color-neutral-100) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-neutral-100) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-neutral-100) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-neutral-100) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.dark .pinhole-checker {
+  background-color: var(--color-neutral-900);
+  background-image:
+    linear-gradient(45deg, var(--color-neutral-800) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-neutral-800) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-neutral-800) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-neutral-800) 75%);
+}

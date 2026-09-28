@@ -1,4 +1,80 @@
-// OWNER: frontend B. Stub so the shell compiles; keep this export signature.
+// OWNER: frontend B. Models tab: Browse (CivitAI) · Installed, plus the downloads list.
+// Keep this export signature.
+import { useEffect, useState } from "react";
+import { getSettings, listLoras, listModels, onModelsChanged } from "../../lib/api";
+import type { Settings } from "../../lib/types";
+import { Segmented, Spinner } from "../../components/ui";
+import { onSettingsChanged } from "../../settings/events";
+import { BrowseView } from "./BrowseView";
+import { DownloadsPanel } from "./DownloadsPanel";
+import { InstalledView } from "./InstalledView";
+import { useTauriEvent } from "./lib/hooks";
+import { getLastView, rememberView } from "./lib/session";
+
+type View = "browse" | "installed";
+
 export function ModelsTab() {
-  return <div className="p-6 text-sm text-neutral-500">Models</div>;
+  const [view, setViewState] = useState<View>(() => getLastView() ?? "browse");
+  const [settings, setLocalSettings] = useState<Settings | null>(null);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const [installedCount, setInstalledCount] = useState<number | null>(null);
+
+  const setView = (v: View) => {
+    rememberView(v);
+    setViewState(v);
+  };
+
+  useEffect(() => {
+    getSettings()
+      .then(setLocalSettings)
+      .catch(() => undefined)
+      .finally(() => setSettingsReady(true));
+    return onSettingsChanged(setLocalSettings);
+  }, []);
+
+  const countInstalled = () =>
+    Promise.all([listModels(), listLoras()])
+      .then(([m, l]) => setInstalledCount(m.length + l.length))
+      .catch(() => undefined);
+  useEffect(() => {
+    void countInstalled();
+  }, []);
+  useTauriEvent(onModelsChanged, () => void countInstalled());
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-7xl space-y-4 px-6 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Models</h1>
+            <p className="text-sm text-neutral-500">
+              {view === "browse" ? "Find models and style add-ons on CivitAI. Everything downloads to this computer." : "Everything on this computer, ready to use offline."}
+            </p>
+          </div>
+          <Segmented
+            options={[
+              { value: "browse" as View, label: "Browse" },
+              { value: "installed" as View, label: installedCount != null ? `Installed (${installedCount})` : "Installed" },
+            ]}
+            value={view}
+            onChange={setView}
+          />
+        </div>
+
+        <DownloadsPanel />
+
+        {view === "browse" ? (
+          settingsReady ? (
+            <BrowseView settings={settings} onShowInstalled={() => setView("installed")} />
+          ) : (
+            <div className="flex justify-center py-16">
+              <Spinner className="h-5 w-5 text-neutral-400" />
+            </div>
+          )
+        ) : (
+          <InstalledView onBrowse={() => setView("browse")} />
+        )}
+      </div>
+    </div>
+  );
 }

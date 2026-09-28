@@ -402,7 +402,9 @@ function describeModel(model, baseModel) {
     thumbsUp: model.stats?.thumbsUpCount, downloads: model.stats?.downloadCount, commercial,
     downloadUrl: f.downloadUrl,
   };
-  d.eligible = format === "SafeTensor" && d.pickle === "Success" && d.virus === "Success" && !d.earlyAccess && !d.nsfw;
+  // The API sometimes returns models whose versions are for other base models: require a match.
+  d.baseMatch = !baseModel || d.baseModel === baseModel;
+  d.eligible = d.baseMatch && format === "SafeTensor" && d.pickle === "Success" && d.virus === "Success" && !d.earlyAccess && !d.nsfw;
   return d;
 }
 

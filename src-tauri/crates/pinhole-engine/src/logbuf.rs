@@ -103,6 +103,11 @@ impl LogBuffer {
             Self::push_segment(&mut g, seg);
             rest = &rest[pos + 1..];
         }
+        // sd.cpp starts each progress update with `\r`, so the newest bar is the
+        // unterminated tail: read progress from it right away.
+        if let Some((kind, step, total)) = parse_progress(strip_control(rest).trim()) {
+            g.progress = Some(StepProgress { kind, step, total, at: Instant::now() });
+        }
         // Cap an unterminated segment so a runaway line can't grow forever.
         let keep: String = rest.chars().take(8 * MAX_LINE_CHARS).collect();
         g.partial = keep;

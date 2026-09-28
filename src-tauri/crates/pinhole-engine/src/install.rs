@@ -161,29 +161,22 @@ pub fn unpack_build(
     }
     fs::create_dir_all(&tmp)?;
     let result = (|| -> Result<InstallMarker, EngineError> {
-        for (spec, path, _) in downloaded {
-            extract_archive(path, &tmp).map_err(|e| match e {
+        // Each archive is unpacked into its own staging folder; a single top-level
+        // folder (`llama-b11235/`, `cudart-…/`) is flattened away and the content
+        // merged into one folder, so runtime libraries (cudart DLLs / .so) always
+        // sit next to the server binary.
+        for (i, (spec, path, _)) in downloaded.iter().enumerate() {
+            let stage = tmp.join(format!(".stage-{i}"));
+            fs::create_dir_all(&stage)?;
+            extract_archive(path, &stage).map_err(|e| match e {
                 EngineError::Archive(m) => EngineError::Archive(format!("{}: {m}", spec.file_name())),
                 other => other,
             })?;
+            let src = single_subdir(&stage).unwrap_or_else(|| stage.clone());
+            merge_move(&src, &tmp)?;
+            let _ = fs::remove_dir_all(&stage);
         }
         let exe = find_binary(&tmp, &pin.binary).ok_or_else(|| EngineError::BinaryMissing(exe_name(&pin.binary)))?;
-        let exe_dir = exe.parent().unwrap_or(&tmp).to_path_buf();
-        // Windows CUDA: runtime DLLs must sit next to the exe. If an extra archive
-        // unpacked at the top level while the exe is in a sub-folder, move them.
-        if exe_dir != tmp {
-            for entry in fs::read_dir(&tmp)? {
-                let p = entry?.path();
-                if p.is_file() {
-                    if let Some(name) = p.file_name() {
-                        let dest = exe_dir.join(name);
-                        if !dest.exists() {
-                            fs::rename(&p, &dest)?;
-                        }
-                    }
-                }
-            }
-        }
         make_executable(&exe)?;
         let rel = exe.strip_prefix(&tmp).map_err(|_| EngineError::BinaryMissing(pin.binary.clone()))?;
         let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
@@ -211,6 +204,45 @@ pub fn unpack_build(
     }
     fs::rename(&tmp, &final_dir)?;
     find_installed(engine_root, kind, &pin.version, &sel.backend).ok_or_else(|| EngineError::BinaryMissing(pin.binary.clone()))
+}
+
+/// `Some(dir/only_child)` when `dir` contains exactly one entry and it is a real directory.
+fn single_subdir(dir: &Path) -> Option<PathBuf> {
+    let mut it = fs::read_dir(dir).ok()?.filter_map(|e| e.ok());
+    let first = it.next()?;
+    if it.next().is_some() {
+        return None;
+    }
+    let ft = first.file_type().ok()?;
+    (ft.is_dir() && !ft.is_symlink()).then(|| first.path())
+}
+
+/// Move every entry of `src` into `dst` (files replace, directories merge).
+fn merge_move(src: &Path, dst: &Path) -> io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() && !ft.is_symlink() {
+            if to.is_dir() {
+                merge_move(&from, &to)?;
+                continue;
+            }
+            if fs::symlink_metadata(&to).is_ok() {
+                fs::remove_file(&to)?;
+            }
+        } else if let Ok(meta) = fs::symlink_metadata(&to) {
+            if meta.is_dir() {
+                fs::remove_dir_all(&to)?;
+            } else {
+                fs::remove_file(&to)?;
+            }
+        }
+        fs::rename(&from, &to)?;
+    }
+    Ok(())
 }
 
 /// Remove downloaded archives after a successful unpack (best effort).
@@ -548,13 +580,14 @@ mod tests {
         let sel = SelectedBuild { key: "linux_cpu".into(), backend: "cpu".into(), build: build.clone() };
         let spec = build.archives()[0].clone();
         let got = unpack_build(&root, EngineKind::Llama, &pin, &sel, &[(spec.clone(), tgz.clone(), "abc".into())]).unwrap();
-        assert!(got.exe.ends_with(Path::new("llama-b1").join(&exe)));
+        // The single top-level `llama-b1/` folder is flattened away.
+        assert_eq!(got.exe, got.dir.join(&exe));
         assert_eq!(got.dir, install_dir(&root, EngineKind::Llama, "b1", "cpu"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert!(fs::metadata(&got.exe).unwrap().permissions().mode() & 0o111 != 0);
-            assert!(fs::symlink_metadata(got.dir.join("llama-b1/libllama.so")).unwrap().file_type().is_symlink());
+            assert!(fs::symlink_metadata(got.dir.join("libllama.so")).unwrap().file_type().is_symlink());
         }
         assert_eq!(find_installed(&root, EngineKind::Llama, "b1", "cpu"), Some(got.clone()));
         assert_eq!(find_installed(&root, EngineKind::Llama, "b2", "cpu"), None);
@@ -597,6 +630,35 @@ mod tests {
         let marker: InstallMarker = serde_json::from_str(&fs::read_to_string(got.dir.join(MARKER_FILE)).unwrap()).unwrap();
         assert_eq!(marker.build, "windows_cuda");
         assert_eq!(marker.archives.len(), 2);
+    }
+
+    #[test]
+    fn tar_extras_with_their_own_top_folder_land_next_to_the_binary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("engine");
+        let exe = exe_name("llama-server");
+        let main = tmp.path().join("llama-b9-bin-ubuntu-cuda-12.8-x64.tar.gz");
+        let exe_path = format!("llama-b9/{exe}");
+        make_tgz(&main, &[(exe_path.as_str(), b"bin"), ("llama-b9/LICENSE", b"mit")], &[]);
+        let rt = tmp.path().join("cudart-llama-b9-bin-ubuntu-cuda-12.8-x64.tar.gz");
+        make_tgz(&rt, &[("cudart-llama-b9/libcudart.so.12", b"rt"), ("cudart-llama-b9/libcublas.so.12", b"blas")], &[]);
+        let pin = EnginePin { repo: "r".into(), version: "b9".into(), commit: None, binary: "llama-server".into(), launch_defaults: vec![], backend_override: Default::default(), builds: Default::default() };
+        let build = BuildSpec {
+            url: "https://github.com/x/releases/download/b9/main.tar.gz".into(),
+            sha256: "TODO".into(),
+            size_bytes: None,
+            size_mb: None,
+            extra: vec![ArchiveSpec { url: "https://github.com/x/releases/download/b9/rt.tar.gz".into(), sha256: "TODO".into(), size_bytes: None, size_mb: None }],
+            note: None,
+            min_glibc: None,
+        };
+        let sel = SelectedBuild { key: "linux_cuda".into(), backend: "cuda".into(), build: build.clone() };
+        let a = build.archives();
+        let got = unpack_build(&root, EngineKind::Llama, &pin, &sel, &[(a[0].clone(), main, "x".into()), (a[1].clone(), rt, "y".into())]).unwrap();
+        assert_eq!(got.exe, got.dir.join(&exe));
+        assert!(got.dir.join("libcudart.so.12").is_file());
+        assert!(got.dir.join("libcublas.so.12").is_file());
+        assert!(got.dir.join("LICENSE").is_file());
     }
 
     #[test]

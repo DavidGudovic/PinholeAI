@@ -115,16 +115,22 @@ pub fn add_text_chunk(bytes: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>
     if keyword.is_empty() || keyword.chars().count() > 79 || keyword.chars().any(|c| (c as u32) < 32 || (c as u32) > 255) {
         return Err(PngError::BadKeyword);
     }
-    let chunks = chunks(bytes)?;
     let mut data: Vec<u8> = keyword.chars().map(|c| c as u32 as u8).collect();
     data.push(0);
     data.extend(text.chars().map(|c| if (c as u32) <= 255 && c != '\0' { c as u32 as u8 } else { b'?' }));
+    insert_chunk(bytes, b"tEXt", &data)
+}
+
+/// Insert an arbitrary chunk before the first IDAT (or IEND). Used by
+/// [`add_text_chunk`] and by the test mocks to simulate engine metadata.
+pub fn insert_chunk(bytes: &[u8], kind: &[u8; 4], data: &[u8]) -> Result<Vec<u8>, PngError> {
+    let chunks = chunks(bytes)?;
     let mut out = Vec::with_capacity(bytes.len() + data.len() + 12);
     out.extend_from_slice(&SIGNATURE);
     let mut inserted = false;
     for c in &chunks {
         if !inserted && (&c.kind == b"IDAT" || &c.kind == b"IEND") {
-            write_chunk(&mut out, b"tEXt", &data);
+            write_chunk(&mut out, kind, data);
             inserted = true;
         }
         write_chunk(&mut out, &c.kind, c.data);

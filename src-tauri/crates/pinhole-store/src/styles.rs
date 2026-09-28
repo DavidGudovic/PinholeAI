@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::files::{self, builtin_stem, BUILTIN_PREFIX};
-use crate::{is_valid_slug, slugify, write_atomic, DataDir, StoreError};
+use crate::{slugify, write_atomic, DataDir, StoreError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -61,7 +61,7 @@ pub fn save(dir: &DataDir, style: Style) -> Result<Style, StoreError> {
     let (id, fresh) = if id.is_empty() {
         (files::reserve_unique(&styles_dir, &slugify(&style.name))?, true)
     } else {
-        if !is_valid_slug(&id) || !styles_dir.join(format!("{id}.yaml")).is_file() {
+        if !files::is_safe_stem(&id) || !styles_dir.join(format!("{id}.yaml")).is_file() {
             return Err(StoreError::NotFound("Style".into()));
         }
         (id, false)
@@ -84,7 +84,7 @@ pub fn delete(dir: &DataDir, id: &str) -> Result<(), StoreError> {
     if builtin_stem(id).is_some() {
         return Err(StoreError::Invalid("Built-in styles can't be deleted.".into()));
     }
-    if !is_valid_slug(id) {
+    if !files::is_safe_stem(id) {
         return Err(StoreError::NotFound("Style".into()));
     }
     let path = dir.styles().join(format!("{id}.yaml"));
@@ -107,7 +107,7 @@ pub fn get(builtin_dir: &Path, dir: &DataDir, id: &str) -> Result<Style, StoreEr
         Some(stem) => (builtin_dir.to_path_buf(), stem, true),
         None => (dir.styles(), id, false),
     };
-    if !is_valid_slug(stem) {
+    if !files::is_safe_stem(stem) {
         return Err(StoreError::NotFound("Style".into()));
     }
     read_one(&folder.join(format!("{stem}.yaml")), stem, builtin)
@@ -327,6 +327,20 @@ mod tests {
         let s = get(&builtin, &data, "hand-made").unwrap();
         assert_eq!(s.id, "hand-made");
         assert!(!s.builtin);
+    }
+
+    #[test]
+    fn hand_named_file_is_listed_and_manageable() {
+        let (_t, builtin, data) = setup();
+        std::fs::write(data.styles().join("Portrait Look.yaml"), "name: Portrait look\npositive: soft light\n").unwrap();
+        let all = list(&builtin, &data).unwrap();
+        let s = all.iter().find(|s| s.id == "Portrait Look").expect("hand-named style listed");
+        let mut edited = s.clone();
+        edited.positive = "hard light".into();
+        assert_eq!(save(&data, edited).unwrap().id, "Portrait Look");
+        assert_eq!(get(&builtin, &data, "Portrait Look").unwrap().positive, "hard light");
+        delete(&data, "Portrait Look").unwrap();
+        assert!(!data.styles().join("Portrait Look.yaml").exists());
     }
 
     #[test]

@@ -1,11 +1,39 @@
 # Pinhole model registry
 # ---------------------------------------------------------------------------
 # Everything Pinhole knows about model families lives here. The app loads this
-# file, then deep-merges Data/config/overrides.yaml on top (user wins).
+# file, then deep-merges Data/config/overrides.yaml on top (maps merge, user
+# wins, scalars and lists replace). No code change is needed for a new
+# finetune of a known family.
 #
-# STATUS: first draft. Every `url` and every `sha256: TODO` must be verified
-# against the real file before release (see CLAUDE.md → "Registry rules").
-# CivitAI baseModel strings must be checked against the live API enums.
+# Engine: stable-diffusion.cpp master-929-3f8527a (config/engine.yaml). Detect
+# rules, flags, sampler/scheduler names and defaults below were checked against
+# that source (file references in the comments).
+#
+# STATUS
+# * sha256 / size of every Hugging Face file: verified 2026-09-28 by the CI
+#   probe (LFS oid + size). `size_mb` = round(bytes / 1_000_000), decimal MB.
+# * `sha256: TODO` = not verified yet (only the .pth upscaler on github.com).
+# * CivitAI baseModel strings: checked against the live /api/v1/enums.
+# * `vram_gb` values are ESTIMATES until measured on 8/12/16 GB cards (SPEC §14).
+#
+# Family keys
+#   inherits: <family>   deep-merge that family first (multi-level). A parent's
+#                        `download` and `civitai_base_models` are not inherited.
+#   detect:              header-sniffing rules (SPEC §6 step 3), mirroring
+#                        get_sd_version() in src/model_loader.cpp:
+#     any_tensor / all_tensor / none_tensor / all_of_any (AND of OR-lists)
+#     tensor_ne0: { pattern: n }  tensors matching `pattern` must have ne[0] == n
+#                                 (ggml order = last PyTorch dim)
+#     decisive_tensor:  a match makes this family win over look-alikes
+#     same_as: <family> copy that family's rules (still a separate family)
+#     ambiguous_with:   look-alike families (hash / CivitAI / ask the user)
+#   Patterns are substrings of the tensor name, tried with and without the
+#   `model.diffusion_model.` prefix the loader adds to standalone diffusion
+#   files; `^` anchors at the start, `$` at the end.
+#   flags:               extra sd-server arguments for this family.
+#   dials.size_multiple: width/height multiple (UNet 64 = vae 8 × unet 8;
+#                        DiT 16 = vae 8 × 2×2 patches). See
+#                        get_diffusion_model_down_factor(), diffusion_engine.cpp.
 # ---------------------------------------------------------------------------
 
 schema_version: 1
@@ -15,68 +43,71 @@ components:
   flux_ae:
     kind: vae
     file: ae.safetensors
-    url: https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors
-    sha256: TODO
+    # black-forest-labs/FLUX.1-schnell is gated (HF login) → identical ungated copy.
+    url: https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors
+    sha256: afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38
     size_mb: 335
   clip_l:
     kind: clip_l
     file: clip_l.safetensors
     url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors
-    sha256: TODO
+    sha256: 660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd
     size_mb: 246
   t5xxl_fp16:
     kind: t5xxl
     file: t5xxl_fp16.safetensors
     url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors
-    sha256: TODO
-    size_mb: 9790
+    sha256: 6e480b09fae049a72d2a8c5fbccb8d3e92febeb233bbe9dfe7256958a9167635
+    size_mb: 9788
   t5xxl_fp8:
     kind: t5xxl
     file: t5xxl_fp8_e4m3fn.safetensors
     url: https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors
-    sha256: TODO
-    size_mb: 4890
+    sha256: 7d330da4816157540d6bb7838bf63a0f02f573fc48ca4d8de34bb0cbfd514f09
+    size_mb: 4894
   qwen3_4b:
     kind: llm
     file: qwen_3_4b.safetensors
     url: https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors
-    sha256: TODO
-    size_mb: 8040
+    sha256: 6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a
+    size_mb: 8045
   qwen_image_vae:
     kind: vae
     file: qwen_image_vae.safetensors
     url: https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors
-    sha256: TODO
+    sha256: a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f
     size_mb: 254
   qwen25_vl_7b_q8:
     kind: llm
     file: Qwen2.5-VL-7B-Instruct-Q8_0.gguf
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.Q8_0.gguf
-    sha256: TODO
-    size_mb: 8100
+    sha256: 577bfb3e41f93f00414e594c56a38bbe91207b3b636ab7faf343e34a20aa73ca
+    size_mb: 8099
   qwen25_vl_7b_mmproj:
+    # Vision tower for --llm_vision (the GGUF LLM above has no vision weights),
+    # as in docs/qwen_image_edit.md (2509 example).
     kind: llm_vision
     file: Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
-    sha256: TODO
-    size_mb: 850
+    sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
+    size_mb: 853
   sdxl_vae_fp16_fix:
     kind: vae
     file: sdxl_vae_fp16_fix.safetensors
     url: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/resolve/main/sdxl.vae.safetensors
-    sha256: TODO
+    sha256: 235745af8d86bf4a4c1b5b4f529868b37019a10f7c0b2e79ad0abca3a22bc6e1
     size_mb: 335
   taesdxl:
     kind: taesd
     file: taesdxl.safetensors
     url: https://huggingface.co/madebyollin/taesdxl/resolve/main/diffusion_pytorch_model.safetensors
-    sha256: TODO
+    sha256: ff4824aca94dd6111e0340fa749347fb74101060d9712cb5ef1ca8f1cf17502f
     size_mb: 10
   taef1:
     kind: taesd
     file: taef1.safetensors
     url: https://huggingface.co/madebyollin/taef1/resolve/main/diffusion_pytorch_model.safetensors
-    sha256: TODO
+    sha256: 47a6c2bff850da04b267cab70fe3553fef57255eb9a8e76852baa0a87850e54d
     size_mb: 10
   realesrgan_x4:
     kind: upscaler
@@ -85,6 +116,15 @@ components:
     sha256: TODO
     size_mb: 64
     note: ".pth is allowed ONLY for this pinned, hash-verified upscaler; never for user downloads"
+
+# What the pinned sd-server can do that changes wiring.
+engine_features:
+  # sd-server builds its context with tae_preview_only = false
+  # (examples/server/main.cpp: ctx_params.to_sd_ctx_params_t(false)), so
+  # `--taesd` would REPLACE the VAE for the final image, and the server API has
+  # no preview stream. Keep false until the server gains preview-only TAESD;
+  # the `taesd:` entries below stay so turning this on needs no other change.
+  taesd_preview: false
 
 # How prompt + style are joined at request time (SPEC §7). Never stored.
 style_templates:
@@ -102,7 +142,7 @@ dial_presets:
     square:    [512, 512]
     portrait:  [512, 768]
     landscape: [768, 512]
-    wide:      [912, 512]
+    wide:      [896, 512]     # multiple of 64 (UNet); 912 would be re-aligned by the engine
 
 families:
 
@@ -114,8 +154,14 @@ families:
     activation_gb: 1.0
     modes: [txt2img, img2img, inpaint]
     detect:
-      any_tensor: ["model.diffusion_model.input_blocks.", "cond_stage_model.transformer."]
-      none_tensor: ["conditioner.embedders.1"]
+      # get_sd_version(): UNet blocks + a CLIP-L token embedding (ne0 768 → SD1;
+      # SD2's OpenCLIP is 1024 and named differently), and no second text encoder
+      # (that makes it SDXL). SVD shares the UNet names.
+      all_of_any:
+        - ["input_blocks.", "unet.down_blocks."]
+        - ["text_model.embeddings.token_embedding.weight$"]
+      none_tensor: ["conditioner.embedders.1", "cond_stage_model.1", "^te.1.", "input_blocks.8.0.time_mixer.mix_factor"]
+      tensor_ne0: { "text_model.embeddings.token_embedding.weight$": 768 }
     civitai_base_models: ["SD 1.5"]
     layout: all_in_one
     components: {}
@@ -128,10 +174,26 @@ families:
       negative_prompt: "lowres, blurry, bad anatomy, extra fingers, watermark, text"
     dials:
       shape: *shapes_512
+      size_multiple: 64
       quality: { fast: 15, balanced: 25, best: 35 }
       cfg_range: [4.0, 11.0]
       cfg_default: 7.0
       hires_at_best: { enabled: true, scale: 1.5, denoising_strength: 0.45 }
+
+  # Few-step SD 1.5 finetunes (Hyper-SD merges): same files, very different defaults.
+  sd15_fast:
+    inherits: sd15
+    label: "SD 1.5 · Hyper"
+    civitai_base_models: ["SD 1.5 Hyper"]
+    detect: { same_as: sd15 }
+    defaults:
+      sampler: euler_a
+      scheduler: sgm_uniform
+    dials:
+      quality: { fast: 4, balanced: 6, best: 8 }
+      cfg_range: [1.0, 2.5]
+      cfg_default: 1.5
+      hires_at_best: { enabled: false }
 
   # ---------------------------------------------------------------- SDXL (base + generic finetunes)
   sdxl:
@@ -141,11 +203,16 @@ families:
     activation_gb: 2.0
     modes: [txt2img, img2img, inpaint]
     detect:
-      all_tensor: ["model.diffusion_model.input_blocks.", "conditioner.embedders.1"]
-    civitai_base_models: ["SDXL 1.0", "SDXL Lightning", "SDXL Hyper"]
+      # get_sd_version(): is_unet && has_multiple_encoders → SDXL (incl. the
+      # distilled SSD-1B / Vega and inpaint variants, which run the same way).
+      all_of_any:
+        - ["input_blocks.", "unet.down_blocks."]
+        - ["conditioner.embedders.1", "cond_stage_model.1", "^te.1."]
+      none_tensor: ["input_blocks.8.0.time_mixer.mix_factor"]   # SVD
+    civitai_base_models: ["SDXL 1.0", "SDXL Distilled"]
     layout: all_in_one
     components:
-      vae_override: sdxl_vae_fp16_fix   # avoids black/NaN images in fp16
+      vae_override: sdxl_vae_fp16_fix   # avoids black/NaN images in fp16 (docs/sd.md passes --vae too)
     taesd: taesdxl
     uses_negative_prompt: true
     defaults:
@@ -155,6 +222,7 @@ families:
       negative_prompt: "lowres, blurry, bad anatomy, deformed hands, watermark, text"
     dials:
       shape: *shapes_1024
+      size_multiple: 64
       quality: { fast: 20, balanced: 30, best: 40 }
       cfg_range: [3.0, 9.0]
       cfg_default: 6.0
@@ -165,7 +233,7 @@ families:
   sdxl_pony:
     inherits: sdxl
     label: "SDXL · Pony"
-    civitai_base_models: ["Pony"]
+    civitai_base_models: ["Pony"]              # NOT "Pony V7" (different architecture)
     detect: { same_as: sdxl }
     defaults:
       sampler: euler_a
@@ -192,6 +260,22 @@ families:
       cfg_range: [4.0, 8.0]
       cfg_default: 5.5
 
+  # Few-step SDXL finetunes (Lightning / Hyper / Turbo merges). With the plain
+  # SDXL defaults (30 steps, CFG 6) these burn out, so they get their own entry.
+  # ("SDXL 1.0 LCM" is left out: it needs the lcm sampler + LCM LoRA workflow.)
+  sdxl_fast:
+    inherits: sdxl
+    label: "SDXL · Lightning / Hyper / Turbo"
+    civitai_base_models: ["SDXL Lightning", "SDXL Hyper", "SDXL Turbo"]
+    detect: { same_as: sdxl }
+    defaults:
+      sampler: euler
+      scheduler: sgm_uniform
+    dials:
+      quality: { fast: 4, balanced: 6, best: 8 }
+      cfg_range: [1.0, 2.5]
+      cfg_default: 1.5
+
   # ---------------------------------------------------------------- FLUX.1
   flux1_dev:
     label: "FLUX.1 dev"
@@ -200,19 +284,39 @@ families:
     license_note: "Non-commercial license"
     modes: [txt2img, img2img]
     detect:
+      # get_sd_version(): `double_blocks.` / `single_transformer_blocks.` → Flux,
+      # unless it is FLUX.2, Chroma(-Radiance), Ovis, Fill/Controls/Flex.2 (img_in
+      # width 384/128/196) or LongCat (txt_in width 3584). dev and Kontext are
+      # guidance-distilled (`guidance_in`, flux.hpp guidance_embed); schnell is not.
       any_tensor: ["double_blocks.", "single_transformer_blocks."]
-      ambiguous_with: [flux1_schnell, flux1_kontext]   # same tensors → hash / CivitAI / ask
+      all_of_any:
+        - ["guidance_in.in_layer.weight", "time_text_embed.guidance_embedder."]
+      none_tensor:
+        - "double_stream_modulation_img.lin.weight"   # FLUX.2
+        - "distilled_guidance_layer."                 # Chroma (model_builders.cpp)
+        - "nerf_final_layer_conv."                    # Chroma Radiance
+        - "double_blocks.0.img_mlp.gate_proj.weight"  # Ovis-Image
+      tensor_ne0:
+        "^img_in.weight$": 64
+        "^txt_in.weight$": 4096
+      ambiguous_with: [flux1_kontext]   # same tensors → hash / CivitAI / ask
     civitai_base_models: ["Flux.1 D"]
     layout: diffusion_only
     components: { vae: flux_ae, clip_l: clip_l, t5xxl: { vram_gte_16: t5xxl_fp16, else: t5xxl_fp8 } }
     taesd: taef1
     uses_negative_prompt: false
-    flags: ["--clip-on-cpu"]
-    defaults: { sampler: euler, scheduler: simple, guidance: 3.5 }
+    # No --clip-on-cpu: it is deprecated (common.cpp "use --backend te=cpu") and
+    # auto-fit (on by default) already parks T5 in RAM when VRAM is short while
+    # still encoding on the GPU, which is much faster than CPU encoding.
+    flags: []
+    # `flux` = the engine's own default for Flux (resolution-aware shift,
+    # default_scheduler() in src/pipeline/request.cpp).
+    defaults: { sampler: euler, scheduler: flux, guidance: 3.5 }
     dials:
       shape: *shapes_1024
+      size_multiple: 16
       quality: { fast: 16, balanced: 24, best: 32 }
-      cfg_fixed: 1.0
+      cfg_fixed: 1.0                            # docs/flux.md: --cfg-scale 1.0
       stick_to_prompt_maps_to: guidance
       guidance_range: [2.0, 5.0]
 
@@ -221,8 +325,22 @@ families:
     label: "FLUX.1 schnell"
     license_note: "Apache 2.0"
     civitai_base_models: ["Flux.1 S"]
+    detect:
+      # Same as dev but WITHOUT the guidance embedder.
+      all_of_any: []
+      none_tensor:
+        - "double_stream_modulation_img.lin.weight"
+        - "distilled_guidance_layer."
+        - "nerf_final_layer_conv."
+        - "double_blocks.0.img_mlp.gate_proj.weight"
+        - "guidance_in."
+        - "time_text_embed.guidance_embedder."
+      ambiguous_with: []
+    defaults: { guidance: null }                # not guidance-distilled
     dials:
-      quality: { fast: 2, balanced: 4, best: 6 }
+      quality: { fast: 2, balanced: 4, best: 6 } # docs/flux.md: --steps 4
+      stick_to_prompt_maps_to: null
+      guidance_range: null
 
   # ---------------------------------------------------------------- Z-Image
   z_image_turbo:
@@ -232,68 +350,114 @@ families:
     license_note: "Apache 2.0"
     modes: [txt2img, img2img]
     detect:
+      # get_sd_version(): `cap_embedder.0.weight` → Z-Image, unless the file also
+      # carries Ming-Image's LLM connector.
       any_tensor: ["cap_embedder.0.weight"]
+      none_tensor: ["text_encoders.llm.connector.layers.0.self_attn.q_proj.weight"]
       ambiguous_with: [z_image_base]
-    civitai_base_models: ["ZImageTurbo"]          # VERIFY exact enum string
+    civitai_base_models: ["ZImageTurbo"]
     layout: diffusion_only
-    components: { vae: flux_ae, llm: qwen3_4b }
+    components: { vae: flux_ae, llm: qwen3_4b }   # docs/z_image.md
     taesd: taef1
     uses_negative_prompt: false
-    flags: ["--diffusion-fa"]
+    flags: ["--diffusion-fa"]                     # docs/z_image.md
     defaults: { sampler: euler, scheduler: simple }
     dials:
       shape: *shapes_1024
-      quality: { fast: 6, balanced: 8, best: 10 }
-      cfg_fixed: 1.0
+      size_multiple: 16
+      quality: { fast: 6, balanced: 8, best: 10 } # docs/z_image.md: --steps 8
+      cfg_fixed: 1.0                              # docs/z_image.md: --cfg-scale 1.0
     download:
       file: z_image_turbo_bf16.safetensors
       url: https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors
-      sha256: TODO
-      size_mb: 12300
-      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, text encoder offloaded to CPU
+      sha256: 2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6
+      size_mb: 12310
+      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, text encoder offloaded to RAM by auto-fit
       alt_quants:        # best quant that fits is picked automatically (bf16 → q8 → q4)
-        q8_0: { url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q8_0.gguf", sha256: TODO, size_mb: 7200, vram_gb: { min: 8, recommended: 12 } }
-        q4_k: { url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf", sha256: TODO, size_mb: 4000, vram_gb: { min: 5, recommended: 8 } }
+        q8_0: { file: z_image_turbo-Q8_0.gguf, url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q8_0.gguf", sha256: df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1, size_mb: 6577, vram_gb: { min: 8, recommended: 12 } }
+        q4_k: { file: z_image_turbo-Q4_K.gguf, url: "https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/main/z_image_turbo-Q4_K.gguf", sha256: 14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd, size_mb: 3864, vram_gb: { min: 5, recommended: 8 } }
 
   z_image_base:
     inherits: z_image_turbo
     label: "Z-Image"
-    civitai_base_models: ["ZImageBase"]           # VERIFY
+    civitai_base_models: ["ZImageBase"]
+    detect:
+      ambiguous_with: [z_image_turbo]
     uses_negative_prompt: true
     dials:
       quality: { fast: 20, balanced: 30, best: 40 }
       cfg_fixed: null
       cfg_range: [3.0, 7.0]
-      cfg_default: 5.0
+      cfg_default: 5.0                            # docs/z_image.md: --cfg-scale 5.0
+
+  # ---------------------------------------------------------------- Qwen-Image
+  # Qwen-Image (txt2img) and Qwen-Image-Edit share every tensor name
+  # (VERSION_QWEN_IMAGE for both); CivitAI files both under "Qwen".
+  qwen_image:
+    label: "Qwen-Image"
+    style_template: natural
+    activation_gb: 3.0
+    license_note: "Apache 2.0"
+    modes: [txt2img, img2img]
+    detect:
+      # get_sd_version(): `transformer_blocks.0.img_mod.1.weight` → Qwen-Image,
+      # except Mage-Flow (img_in width 128), Qwen-Image-Layered (addition_t_embedding),
+      # Lens (img_mlp.w1) and Qwen-Image 2.1 (txt_in.text_norm).
+      any_tensor: ["transformer_blocks.0.img_mod.1.weight"]
+      none_tensor:
+        - "time_text_embed.addition_t_embedding.weight"
+        - "transformer_blocks.0.img_mlp.w1.weight"
+        - "^txt_in.text_norm.weight$"
+      tensor_ne0: { "^img_in.weight$": 64 }
+      ambiguous_with: [qwen_image_edit_2511]
+    civitai_base_models: ["Qwen"]
+    layout: diffusion_only
+    components: { vae: qwen_image_vae, llm: qwen25_vl_7b_q8 }   # docs/qwen_image.md
+    uses_negative_prompt: true
+    flags: ["--diffusion-fa"]                     # docs/qwen_image.md
+    defaults: { sampler: euler, flow_shift: 3.0 } # docs/qwen_image.md: --flow-shift 3
+    dials:
+      shape: *shapes_1024
+      size_multiple: 16
+      quality: { fast: 12, balanced: 20, best: 30 }
+      cfg_range: [1.5, 4.0]
+      cfg_default: 2.5                            # docs/qwen_image.md: --cfg-scale 2.5
 
   # ---------------------------------------------------------------- Edit models
   qwen_image_edit_2511:
-    label: "Qwen Image Edit"
+    label: "Qwen Image Edit 2511"
     style_template: natural
     activation_gb: 3.0
+    license_note: "Apache 2.0"
     role: edit                     # used by the Edit tab's instruction mode
     edit_priority: 1               # preferred edit model when it fits
     modes: [edit]
     detect:
-      any_tensor: ["transformer_blocks.0.img_mod.1.weight"]
-      ambiguous_with: [qwen_image]  # same tensors → hash / CivitAI / ask
-    civitai_base_models: ["Qwen"]  # VERIFY; CivitAI may not split Image vs Image-Edit
+      same_as: qwen_image
+      # ComfyUI's 2511 files carry this marker; qwen_image.hpp then turns on
+      # zero_cond_t by itself.
+      decisive_tensor: ["__index_timestep_zero__"]
+    civitai_base_models: ["Qwen"]  # CivitAI does not split Image vs Image-Edit
     layout: diffusion_only
     components: { vae: qwen_image_vae, llm: qwen25_vl_7b_q8, llm_vision: qwen25_vl_7b_mmproj }
     uses_negative_prompt: false
+    # docs/qwen_image_edit.md: 2511 "must" run with qwen_image_zero_cond_t=true or
+    # edit quality degrades badly (parsed in qwen_image.hpp QwenImageRunner).
     flags: ["--diffusion-fa", "--model-args", "qwen_image_zero_cond_t=true"]
-    defaults: { sampler: euler, flow_shift: 3.0 }
+    defaults: { sampler: euler, flow_shift: 3.0 } # docs/qwen_image_edit.md
     dials:
+      shape: *shapes_1024          # used when no reference size is given
+      size_multiple: 16
       quality: { fast: 12, balanced: 20, best: 30 }
       cfg_range: [1.5, 4.0]
-      cfg_default: 2.5
-      stay_close_maps_to: cfg      # "Stay close to original" dial
+      cfg_default: 2.5             # docs/qwen_image_edit.md: --cfg-scale 2.5
+      stay_close_maps_to: cfg      # "Stay close to original" dial (strict = lower CFG)
     download:
       file: qwen-image-edit-2511-Q4_K_M.gguf
       url: https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q4_K_M.gguf
-      sha256: TODO
-      size_mb: 13100
-      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, with --offload-to-cpu
+      sha256: 8677bac90627adbbc11efab87b1870e701c4eb3689ee865a3de8ab81b705a723
+      size_mb: 13245
+      vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, weights partly in RAM (auto-fit)
 
   flux1_kontext:
     label: "FLUX.1 Kontext"
@@ -306,32 +470,35 @@ families:
     detect: { same_as: flux1_dev }
     civitai_base_models: ["Flux.1 Kontext"]
     layout: diffusion_only
-    components: { vae: flux_ae, clip_l: clip_l, t5xxl: t5xxl_fp8 }
+    components: { vae: flux_ae, clip_l: clip_l, t5xxl: t5xxl_fp8 }   # docs/kontext.md
     uses_negative_prompt: false
-    flags: ["--clip-on-cpu"]
-    defaults: { sampler: euler, guidance: 2.5 }
+    flags: []                      # see flux1_dev about --clip-on-cpu
+    defaults: { sampler: euler, scheduler: flux, guidance: 2.5 }
     dials:
+      shape: *shapes_1024          # used when no reference size is given
+      size_multiple: 16
       quality: { fast: 16, balanced: 24, best: 30 }
-      cfg_fixed: 1.0
-      stay_close_maps_to: guidance
+      cfg_fixed: 1.0               # docs/kontext.md: --cfg-scale 1
+      stay_close_maps_to: guidance # strict = lower guidance
       guidance_range: [1.5, 4.0]
     download:
       file: flux1-kontext-dev-Q4_K_M.gguf
       url: https://huggingface.co/QuantStack/FLUX.1-Kontext-dev-GGUF/resolve/main/flux1-kontext-dev-Q4_K_M.gguf
-      sha256: TODO
-      size_mb: 6900
+      sha256: ebd4e92c44c47f104ad64e4353692f37addf06eb99420c9b459334d871c8b750
+      size_mb: 6932
       vram_gb: { min: 6, recommended: 10 }     # ESTIMATE
 
 # Recommended models per role (SPEC §6.1). Ranked best-first.
 # Pinhole picks the first candidate whose VRAM min fits this GPU, then the best quant that fits.
 # Nothing here is bundled — every entry is a one-click download.
+# CivitAI size_mb: CivitAI `sizeKB` is KiB → size_mb = sizeKB × 1024 / 1e6.
 recommended:
   realistic:
     - { family: z_image_turbo, source: registry }
-    - { family: sdxl, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO, note: "top realistic SDXL finetune, for GPUs < 8 GB" }
+    - { family: sdxl, source: civitai, civitai_model_id: 133005, civitai_version_id: 1759168, title: "Juggernaut XL (Ragnarok)", size_mb: 7105, vram_gb: { min: 6, recommended: 10 }, note: "top-rated realistic SDXL finetune, for GPUs < 8 GB" }
   anime:
-    - { family: sdxl_illustrious, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO, note: "top-rated Illustrious checkpoint" }
-    - { family: sdxl_pony, source: civitai, civitai_model_id: TODO, civitai_version_id: TODO }
+    - { family: sdxl_illustrious, source: civitai, civitai_model_id: 376130, civitai_version_id: 2940478, title: "Nova Anime XL (IL v19.0)", size_mb: 6939, vram_gb: { min: 6, recommended: 10 }, note: "top-rated Illustrious checkpoint" }
+    - { family: sdxl_pony, source: civitai, civitai_model_id: 257749, civitai_version_id: 290640, title: "Pony Diffusion V6 XL", size_mb: 6938, vram_gb: { min: 6, recommended: 10 } }
   edit:
     - { family: qwen_image_edit_2511, source: registry }
     - { family: flux1_kontext, source: registry }
@@ -343,8 +510,8 @@ recommended:
 captioner:
   prefer_reuse: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]   # reuse the edit model's encoder if installed
   default:
-    model: { file: Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", sha256: TODO, size_mb: 1900 }
-    mmproj: { file: mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", sha256: TODO, size_mb: 850 }
+    model: { file: Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", sha256: d02fe9b69ad8cadbbd228e387667af66612c44bed29ffc8eb1e7caf9ac486c12, size_mb: 1930 }
+    mmproj: { file: mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf, url: "https://huggingface.co/ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", sha256: 980c9b2f78c04e6cff93d277ada09e768394f112d75db3b4e9dea8a69f9fb904, size_mb: 845 }
   idle_shutdown_seconds: 60
   prompts:
     sentence: >
@@ -356,26 +523,56 @@ captioner:
       lowercase, underscores instead of spaces. Output only the tags.
 
 # VRAM tiers → engine flags and quant choice. Chosen automatically; overridable in Settings.
+#
+# No --offload-to-cpu: sd-server's auto-fit is ON by default (common.cpp
+# `--auto-fit`, docs/backend.md "Automatic placement") and already places each
+# module's weights on the GPU, else in RAM, else on disk, keeping as much
+# resident on the GPU as fits. `--offload-to-cpu` prepends `*=cpu` to
+# --params-backend (common.cpp prepare_backend_assignments), which DISABLES
+# auto-fit (diffusion_engine.cpp: auto_fit_enabled = auto_fit && params_backend
+# empty) and forces every weight into RAM — worse on low-RAM PCs. `--max-vram`
+# only lowers auto-fit's budget; the default (free VRAM − 512 MiB) is fine.
+# VAE tiling stays for small cards: decode retries with tiles on OOM by itself,
+# but img2img/edit *encoding* does not (docs/performance.md).
 hardware_profiles:
   - name: low        # < 8 GB
     max_vram_gb: 7.9
-    flags: ["--offload-to-cpu", "--vae-tiling"]
+    flags: ["--vae-tiling"]
     prefer_quant: q4_k
   - name: mid        # 8–12 GB
     max_vram_gb: 12.9
-    flags: ["--offload-to-cpu", "--vae-tiling"]
+    flags: ["--vae-tiling"]
     prefer_quant: q8_0
   - name: high       # 13–20 GB (e.g. RTX 5070 Ti 16 GB)
     max_vram_gb: 20.9
-    flags: ["--offload-to-cpu"]
+    flags: []
     prefer_quant: bf16
   - name: ultra      # 21 GB+
     max_vram_gb: 999
     flags: []
     prefer_quant: bf16
 
-# Exact files we recognise by hash (filled in as models are verified).
-known_files: []
-#  - sha256: "<hash>"
-#    family: z_image_turbo
-#    friendly_name: "Z-Image Turbo (bf16)"
+# Exact files we recognise by hash (lowercase sha256).
+known_files:
+  - { sha256: 2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6, family: z_image_turbo, friendly_name: "Z-Image Turbo (bf16)" }   # also CivitAI model 2168935
+  - { sha256: df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1, family: z_image_turbo, friendly_name: "Z-Image Turbo (Q8_0)" }
+  - { sha256: 14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd, family: z_image_turbo, friendly_name: "Z-Image Turbo (Q4_K)" }
+  - { sha256: 8677bac90627adbbc11efab87b1870e701c4eb3689ee865a3de8ab81b705a723, family: qwen_image_edit_2511, friendly_name: "Qwen Image Edit 2511 (Q4_K_M)" }
+  - { sha256: ebd4e92c44c47f104ad64e4353692f37addf06eb99420c9b459334d871c8b750, family: flux1_kontext, friendly_name: "FLUX.1 Kontext dev (Q4_K_M)" }
+  - { sha256: e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916, family: sd15, friendly_name: "Stable Diffusion 1.5 (fp16)" }
+  - { sha256: d08fb5d68026c0d87325f9a7b3ad6454061113a2bc73cc883114dae172937ae7, family: qwen_image, friendly_name: "Qwen-Image (bf16)" }
+  - { sha256: 98763a127701eb6fb59096f7742cb3aa7d64ed510b9f4e882d8351f8176e3ce3, family: qwen_image, friendly_name: "Qwen-Image (fp8)" }
+  - { sha256: cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075, family: qwen_image, friendly_name: "Qwen-Image 2512 (bf16)" }
+  - { sha256: 5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b, family: qwen_image, friendly_name: "Qwen-Image 2512 (fp8)" }
+  - { sha256: dd08fa32f98d05a2443ca1419e46df1575a0811f6e3b246d9dd47ff20f5eb66a, family: sdxl, friendly_name: "Juggernaut XL (Ragnarok)" }
+  - { sha256: fa486caafc330f133605d3c18b418d183812f14946631c6544bfb28730db6d6f, family: sdxl_illustrious, friendly_name: "Nova Anime XL (IL v19.0)" }
+  - { sha256: 67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3, family: sdxl_pony, friendly_name: "Pony Diffusion V6 XL" }
+
+# Small models for CI only (engine smoke test: 256×256 on CPU). Never offered in the UI.
+test_models:
+  sd15:
+    family: sd15
+    file: v1-5-pruned-emaonly-fp16.safetensors
+    url: https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors
+    sha256: e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916
+    size_mb: 2133

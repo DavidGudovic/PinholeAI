@@ -1,0 +1,176 @@
+# Pinhole CI: frontend + privacy lint, Rust tests on Windows and Ubuntu,
+# installers (Windows NSIS + portable zip, Linux AppImage + deb) and the real
+# engine smoke test. Installers are downloadable from each run's Summary page.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      force_bundle:
+        description: "Build installers even if the Rust tests fail"
+        type: boolean
+        default: false
+      smoke:
+        description: "Run the engine smoke test (downloads sd-server + SD 1.5 fp16 ≈ 2 GB, cached)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  frontend:
+    name: Frontend + privacy lint
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        id: npmci
+        run: npm ci
+
+      - name: Unit tests (vitest)
+        if: ${{ !cancelled() && steps.npmci.outcome == 'success' }}
+        run: npm test -- --passWithNoTests
+
+      - name: Typecheck + build (tsc -b && vite build)
+        if: ${{ !cancelled() && steps.npmci.outcome == 'success' }}
+        run: npm run build
+
+      - name: Privacy lint self-test (every rule fires on its fixtures)
+        if: ${{ !cancelled() }}
+        run: node scripts/privacy-lint.mjs --self-test
+
+      - name: Privacy lint (CLAUDE.md static check)
+        if: ${{ !cancelled() }}
+        run: node scripts/privacy-lint.mjs
+
+  rust:
+    name: Rust tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev patchelf libssl-dev libxdo-dev libdbus-1-dev pkg-config \
+            build-essential file
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tauri::generate_context!() embeds ../dist, so the frontend must exist first.
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: cargo test --workspace (privacy + offline tests included; smoke test skipped)
+        run: cargo test --workspace --locked --no-fail-fast
+
+  bundle:
+    name: Installers
+    needs: [frontend, rust]
+    if: ${{ !cancelled() && needs.frontend.result == 'success' && (needs.rust.result == 'success' || inputs.force_bundle == true) }}
+    uses: ./.github/workflows/bundle.yml
+
+  smoke:
+    name: Engine smoke test (${{ matrix.os }})
+    needs: rust
+    # Real sd-server + SD 1.5 on CPU. Runs on pushes to main/master/claude/* and on demand,
+    # independent of the unit-test result (it proves the engine path end to end).
+    if: >-
+      ${{ !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.smoke == true) ||
+        (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'master' || startsWith(github.ref_name, 'claude/')))
+      ) }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Upstream Linux sd-server builds are made on Ubuntu 24.04 (glibc 2.38+).
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      PINHOLE_SMOKE: "1"
+      PINHOLE_SMOKE_CACHE: ${{ github.workspace }}/.smoke-cache
+      PINHOLE_SMOKE_OUT: ${{ github.workspace }}/smoke-out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libssl-dev libdbus-1-dev pkg-config libgomp1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: smoke
+
+      - name: Smoke cache key
+        id: smokekey
+        run: node scripts/smoke-cache-key.mjs | tee -a "$GITHUB_OUTPUT"
+
+      - name: Restore engine + model cache
+        uses: actions/cache@v4
+        with:
+          path: .smoke-cache
+          key: smoke-${{ runner.os }}-${{ steps.smokekey.outputs.model }}-${{ steps.smokekey.outputs.engine }}
+          restore-keys: |
+            smoke-${{ runner.os }}-${{ steps.smokekey.outputs.model }}-
+
+      - name: Engine smoke test (256×256, 4 steps, CPU)
+        run: cargo test -p pinhole-tests --test engine_smoke --release --locked -- --nocapture
+
+      - name: Upload smoke image
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-image-${{ runner.os }}
+          path: smoke-out/
+          if-no-files-found: ignore
+          retention-days: 7
