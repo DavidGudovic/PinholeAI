@@ -674,6 +674,28 @@ mod tests {
         assert_eq!(specs[0].size_bytes, Some(337915440));
     }
 
+    /// Full download → SHA-256 verify → unpack of the pinned CPU build through the
+    /// real allow-listed client, then `sd-server --version`. Network: only when
+    /// `PINHOLE_NET_INSTALL=1`.
+    #[tokio::test]
+    async fn install_direct_real_release_if_enabled() {
+        if std::env::var("PINHOLE_NET_INSTALL").ok().as_deref() != Some("1") {
+            return;
+        }
+        let cfg = EngineConfig::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml")).unwrap();
+        let client = pinhole_net::HttpClient::new(pinhole_net::OfflineFlag::new(false)).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let got = install_direct(&client, tmp.path(), &cfg, EngineKind::Sd, crate::pins::current_os(), "cpu", &cancel).await.unwrap();
+        assert!(got.exe.is_file());
+        assert!(fs::read_dir(download_dir(tmp.path())).unwrap().next().is_none(), "archives cleaned up");
+        let out = std::process::Command::new(&got.exe).arg("--version").current_dir(&got.dir).output().unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains(cfg.stable_diffusion_cpp.commit.as_deref().unwrap_or("x").get(..7).unwrap()));
+        // Second call is a no-op (marker found).
+        let again = install_direct(&client, tmp.path(), &cfg, EngineKind::Sd, crate::pins::current_os(), "cpu", &cancel).await.unwrap();
+        assert_eq!(again, got);
+    }
+
     /// Unpack a real upstream archive when `PINHOLE_ENGINE_ARCHIVE` points at one
     /// (e.g. sd-master-…-bin-Linux-Ubuntu-24.04-x86_64.zip); skipped otherwise.
     #[test]

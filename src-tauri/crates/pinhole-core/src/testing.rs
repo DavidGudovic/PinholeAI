@@ -500,6 +500,25 @@ mod tests {
         assert!(!st.running && st.error.is_some());
     }
 
+    /// `install_engine` through the DownloadManager against the real pinned CPU
+    /// release. Network: only when `PINHOLE_NET_INSTALL=1`.
+    #[tokio::test]
+    async fn install_engine_real_release_if_enabled() {
+        if std::env::var("PINHOLE_NET_INSTALL").ok().as_deref() != Some("1") {
+            return;
+        }
+        let (_tmp, core, rec) = new_core();
+        core.settings.write().engine_backend = "cpu".into();
+        let st = crate::engine_setup::install_engine(&core).await.expect("install_engine");
+        assert!(st.installed && !st.installing, "{st:?}");
+        assert_eq!(st.backend.as_deref(), Some("cpu"));
+        let exe = crate::engine_setup::installed_engine(&core, pinhole_engine::install::EngineKind::Sd).unwrap().exe;
+        assert!(exe.is_file());
+        let engine_events = rec.0.lock().iter().filter(|e| matches!(e, CoreEvent::Engine(_))).count();
+        assert!(engine_events >= 2, "installing → installed events");
+        assert!(core.downloads.status().iter().any(|g| g.label.starts_with("Image engine")));
+    }
+
     #[tokio::test]
     async fn engine_status_and_captioner_status_without_engine() {
         let (_tmp, core, _rec) = new_core();

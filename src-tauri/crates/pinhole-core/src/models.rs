@@ -141,6 +141,28 @@ pub fn register_download(core: &AppCore, file: &DownloadedFile, reg: Registratio
     Ok(entry)
 }
 
+/// Main model files: record what the header says (all-in-one checkpoint vs
+/// diffusion-only file, dtype) instead of assuming the family's layout — e.g.
+/// CivitAI "Flux" checkpoints are sometimes full files with VAE + encoders.
+fn refine_main_registration(registry: &pinhole_registry::Registry, path: &Path, mut reg: Registration) -> Registration {
+    if reg.component_id.is_some() || !matches!(reg.kind, ModelKind::Checkpoint | ModelKind::Diffusion) {
+        return reg;
+    }
+    if let Ok(header) = detect::read_header(path) {
+        let d = detect::detect(registry, &header);
+        if !d.is_lora && d.is_component.is_none() && (!d.candidates.is_empty() || d.has_vae || d.has_text_encoders) {
+            reg.kind = match d.layout {
+                pinhole_registry::Layout::AllInOne => ModelKind::Checkpoint,
+                pinhole_registry::Layout::DiffusionOnly => ModelKind::Diffusion,
+            };
+        }
+        if reg.dtype.is_none() && !d.dtype.is_empty() {
+            reg.dtype = Some(d.dtype);
+        }
+    }
+    reg
+}
+
 fn snapshot(core: &AppCore) -> pinhole_store::InstalledIndex {
     core.installed.lock().clone()
 }
@@ -306,8 +328,14 @@ pub(crate) async fn start_install(
             let same_len = files.len() == planned.len();
             for (i, (dest, _, reg)) in planned.into_iter().enumerate() {
                 let file = files.iter().find(|f| f.path == dest).or_else(|| files.get(i).filter(|_| same_len));
-                if let Some(file) = file {
-                    let _ = register_download(&task_core, file, reg);
+                if let Some(file) = file.cloned() {
+                    let registry = task_core.registry();
+                    let path = file.path.clone();
+                    let fallback = reg.clone();
+                    let reg = tokio::task::spawn_blocking(move || refine_main_registration(&registry, &path, reg))
+                        .await
+                        .unwrap_or(fallback);
+                    let _ = register_download(&task_core, &file, reg);
                 }
             }
         }
@@ -770,6 +798,28 @@ mod tests {
         }
         delete_model(&core, "evil").await.unwrap();
         assert!(outside.exists());
+    }
+
+    #[test]
+    fn main_files_keep_their_real_layout() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        let p = tmp.path().join("sdxl.safetensors");
+        safetensors(&p, SDXL_TENSORS);
+        let reg = Registration {
+            kind: ModelKind::Diffusion,
+            friendly_name: "x".into(),
+            family: Some("sdxl".into()),
+            component_id: None,
+            civitai: None,
+            dtype: None,
+        };
+        let out = refine_main_registration(&core.registry(), &p, reg.clone());
+        assert_eq!(out.kind, ModelKind::Checkpoint, "SDXL files with text encoders are all-in-one");
+        assert!(out.dtype.is_some());
+        // Components and unreadable files are left alone.
+        let comp = Registration { component_id: Some("flux_ae".into()), ..reg.clone() };
+        assert_eq!(refine_main_registration(&core.registry(), &p, comp).kind, ModelKind::Diffusion);
+        assert_eq!(refine_main_registration(&core.registry(), &tmp.path().join("missing"), reg).kind, ModelKind::Diffusion);
     }
 
     #[test]
