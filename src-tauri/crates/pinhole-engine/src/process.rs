@@ -384,8 +384,13 @@ mod tests {
 
     #[test]
     fn free_port_is_loopback_bindable() {
-        let port = free_port().unwrap();
-        assert!(port > 0);
-        TcpListener::bind(("127.0.0.1", port)).unwrap();
+        // Tests run in parallel and other tests bind ephemeral ports too, so a
+        // port can be taken between `free_port` and our bind: retry a few times.
+        let bound = (0..5).any(|_| {
+            let port = free_port().unwrap();
+            assert!(port > 0);
+            TcpListener::bind(("127.0.0.1", port)).is_ok()
+        });
+        assert!(bound, "free_port never returned a bindable loopback port");
     }
 }
