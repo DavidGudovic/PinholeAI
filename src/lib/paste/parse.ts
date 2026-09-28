@@ -541,6 +541,18 @@ function toVersionId(v: unknown): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
+/**
+ * A CivitAI AIR (`urn:air:sdxl:checkpoint:civitai:827184@1190596`), which some
+ * CivitAI exports put in "Civitai resources" instead of `modelVersionId`.
+ * Only CivitAI sources count; the version is the part after `@`.
+ */
+function parseAir(v: unknown): { type: string; versionId: number } | null {
+  if (typeof v !== "string") return null;
+  const m = /^(?:urn:air:[^:]+:([^:]+):)?civitai:\d+@(\d+)(?:[.:].*)?$/i.exec(v.trim());
+  const versionId = m ? toVersionId(m[2]) : null;
+  return versionId == null ? null : { type: m![1] ?? "", versionId };
+}
+
 function toWeight(v: unknown): number | null {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number.parseFloat(v) : NaN;
   return Number.isFinite(n) ? n : null;
@@ -568,9 +580,10 @@ function buildResources(src: {
     for (const item of src.civitaiResources) {
       if (!item || typeof item !== "object") continue;
       const o = item as Record<string, unknown>;
+      const air = parseAir(o.air);
       const r: PastedResource = {
-        type: normType(o.type),
-        modelVersionId: toVersionId(o.modelVersionId ?? o.versionId ?? o.id),
+        type: normType(o.type ?? air?.type),
+        modelVersionId: toVersionId(o.modelVersionId ?? o.versionId ?? o.id) ?? air?.versionId ?? null,
         modelName: str(o.modelName) ?? str(o.name),
         modelVersionName: str(o.modelVersionName) ?? str(o.versionName),
         hash: typeof o.hash === "string" ? cleanHash(o.hash) : null,

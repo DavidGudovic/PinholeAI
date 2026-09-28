@@ -184,6 +184,16 @@ describe("parseGenerationData", () => {
     const p = parseGenerationData('x\nSteps: 1, Model hash: abcdef1234, Civitai resources: [{"type":"checkpoint","modelVersionId":9}]')!;
     expect(p.resources).toEqual([{ type: "checkpoint", modelVersionId: 9, modelName: null, modelVersionName: null, hash: "abcdef1234", weight: null }]);
   });
+
+  it("reads CivitAI AIRs when there is no modelVersionId", () => {
+    const p = parseGenerationData(
+      'x\nSteps: 1, Civitai resources: [{"air":"urn:air:sdxl:checkpoint:civitai:827184@1190596"},{"type":"lora","weight":0.8,"air":"urn:air:sdxl:lora:civitai:12@34"},{"air":"urn:air:sdxl:checkpoint:huggingface:a/b@c"}]',
+    )!;
+    expect(p.resources).toEqual([
+      { type: "checkpoint", modelVersionId: 1190596, modelName: null, modelVersionName: null, hash: null, weight: null },
+      { type: "lora", modelVersionId: 34, modelName: null, modelVersionName: null, hash: null, weight: 0.8 },
+    ]);
+  });
 });
 
 describe("looksLikeGenerationData", () => {
