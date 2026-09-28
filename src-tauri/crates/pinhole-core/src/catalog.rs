@@ -5,9 +5,12 @@
 //! send it as an `Authorization` header to civitai.com only. The key lives in
 //! the OS keychain and in RAM, never in `Data/`, logs or errors.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use pinhole_catalog::api::CivitaiClient;
+use pinhole_catalog::browse::BrowseError;
+use pinhole_catalog::cache::{CachedSource, PageCache};
 use pinhole_catalog::cards::RegistryEnv;
 use pinhole_catalog::families::{self, FamilyResolution};
 use pinhole_catalog::plan::{self, PlanEnv};
@@ -94,10 +97,43 @@ pub fn catalog_filters(core: &AppCore) -> CoreResult<CatalogFilterOptions> {
     Ok(filters(core)?.options())
 }
 
-/// One Browse page. Offline mode: no request, `offline: true`.
+/// The RAM cache of CivitAI answers (sized by `catalog-filters.yaml`).
+fn page_cache(core: &AppCore, filters: &CatalogFilters) -> Arc<PageCache> {
+    core.models.page_cache.get_or_init(|| Arc::new(PageCache::new(filters.cache_ttl, filters.cache_pages))).clone()
+}
+
+/// Drop expired cache entries once they are stale, so idle RAM goes back down.
+fn schedule_cache_purge(core: &AppCore, cache: &Arc<PageCache>) {
+    if cache.is_empty() || core.models.cache_purge_pending.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        core.models.cache_purge_pending.store(false, Ordering::SeqCst);
+        return;
+    };
+    let cache = cache.clone();
+    let ttl = cache.ttl();
+    let pending = core.models.cache_purge_pending.clone();
+    rt.spawn(async move {
+        tokio::time::sleep(ttl + std::time::Duration::from_secs(1)).await;
+        cache.purge_expired();
+        pending.store(false, Ordering::SeqCst);
+    });
+}
+
+/// Drop cached CivitAI answers (Offline mode switched, installed models changed…).
+pub fn clear_browse_cache(core: &AppCore) {
+    if let Some(c) = core.models.page_cache.get() {
+        c.clear();
+    }
+}
+
+/// One Browse page. Offline mode: no request, `offline: true`. A request that a
+/// newer Browse request replaced stops paging and answers `cancelled`.
 pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage> {
+    let generation = core.models.browse_gen.fetch_add(1, Ordering::SeqCst) + 1;
     if core.offline.get() {
-        return Ok(BrowsePage { items: Vec::new(), next_cursor: query.cursor, offline: true, partial: false });
+        return Ok(BrowsePage::offline(query.cursor));
     }
     let filters = filters(core)?;
     let registry = core.registry();
@@ -106,8 +142,16 @@ pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage
     let env = RegistryEnv::new(&registry, hw, &index);
     // Browsing is anonymous: no API key.
     let client = CivitaiClient::new(core.http.clone(), None);
+    let cache = page_cache(core, &filters);
+    let source = CachedSource { inner: &client, cache: &cache };
     let base_models = registry.all_civitai_base_models();
-    browse_mod::browse(&client, &filters, &query, &base_models, &env, chrono::Utc::now()).await.map_err(net_error)
+    let current = || core.models.browse_gen.load(Ordering::SeqCst) == generation;
+    let out = browse_mod::browse(&source, &filters, &query, &base_models, &env, chrono::Utc::now(), current).await;
+    schedule_cache_purge(core, &cache);
+    out.map_err(|e| match e {
+        BrowseError::Net(e) => net_error(e),
+        BrowseError::Superseded => CoreError::new("cancelled", "Replaced by a newer search."),
+    })
 }
 
 /// Preview image bytes (the WebView makes no network calls). Only https

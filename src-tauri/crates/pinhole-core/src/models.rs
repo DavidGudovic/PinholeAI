@@ -10,10 +10,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use pinhole_catalog::cache::PageCache;
 use pinhole_catalog::families::{self, FamilyResolution};
 use pinhole_catalog::recommend::{self, FileToGet, PickAction};
 use pinhole_catalog::{inventory, local, paste, CatalogFilters};
@@ -40,6 +42,12 @@ pub struct ModelsState {
     pub(crate) api_key: Mutex<Option<Option<String>>>,
     /// `catalog-filters.yaml`, loaded once.
     pub(crate) filters: OnceLock<Arc<CatalogFilters>>,
+    /// Recent CivitAI `/models` answers (RAM only; see `pinhole_catalog::cache`).
+    pub(crate) page_cache: OnceLock<Arc<PageCache>>,
+    /// Bumped by every Browse request; an older one still paging stops early.
+    pub(crate) browse_gen: AtomicU64,
+    /// A purge of expired cache entries is scheduled.
+    pub(crate) cache_purge_pending: Arc<AtomicBool>,
 }
 
 /// A file copied into `Data/models/` whose family the user still has to pick.

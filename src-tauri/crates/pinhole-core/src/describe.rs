@@ -360,6 +360,7 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
         old.proc.stop().await;
     }
     engine_setup::ensure_runtime(core, &engine)?;
+    engine_setup::sweep_orphans(core).await;
     let cfg = engine_setup::engine_config(core)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
     let mut args: Vec<String> = cfg.llama_cpp.launch_defaults.iter().filter(|a| *a != "--host" && *a != "127.0.0.1").cloned().collect();
@@ -416,6 +417,22 @@ pub fn start_idle_watchdog(core: &Arc<AppCore>) {
             }
         }
     });
+}
+
+/// Stop llama-server unless it is describing right now (it holds graphics
+/// memory the image engine is about to need). Returns whether it was stopped.
+pub(crate) async fn stop_if_idle(core: &AppCore) -> bool {
+    if core.describe.busy.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Ok(mut slot) = core.describe.slot.try_lock() else { return false };
+    match slot.take() {
+        Some(s) => {
+            s.proc.stop().await;
+            true
+        }
+        None => false,
+    }
 }
 
 pub async fn shutdown(core: &AppCore) {

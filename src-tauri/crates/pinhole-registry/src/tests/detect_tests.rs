@@ -355,7 +355,7 @@ fn flux_variants() {
         .collect();
     assert_eq!(candidates(&st_header(&schnell)), vec!["flux1_schnell"]);
 
-    // Fill (img_in 384), LongCat (txt_in 3584), Chroma, FLUX.2 → not FLUX.1.
+    // Fill (img_in 384), LongCat (txt_in 3584), FLUX.2 → not FLUX.1; Chroma is its own family.
     let with = |name: &'static str, shape: &'static [u64]| {
         let mut v: Vec<(&str, &str, &[u64])> =
             dev.iter().filter(|t| t.0 != name).cloned().collect();
@@ -364,11 +364,14 @@ fn flux_variants() {
     };
     assert!(candidates(&st_header(&with("img_in.weight", &[3072, 384]))).is_empty());
     assert!(candidates(&st_header(&with("txt_in.weight", &[3072, 3584]))).is_empty());
-    assert!(candidates(&st_header(&with(
-        "distilled_guidance_layer.in_proj.weight",
-        &[5120, 64]
-    )))
-    .is_empty());
+    // The distilled guidance layer makes it Chroma (model_builders.cpp is_chroma).
+    assert_eq!(
+        candidates(&st_header(&with(
+            "distilled_guidance_layer.in_proj.weight",
+            &[5120, 64]
+        ))),
+        vec!["chroma"]
+    );
     assert!(candidates(&st_header(&with(
         "double_stream_modulation_img.lin.weight",
         &[18432, 3072]
@@ -499,7 +502,11 @@ fn qwen_image_vs_edit() {
             }
         })
         .collect();
-    assert!(candidates(&st_header(&mage)).is_empty());
+    assert_eq!(
+        candidates(&st_header(&mage)),
+        vec!["mage_flow", "mage_flow_turbo"],
+        "img_in 128 → Mage-Flow"
+    );
 
     let mut lens = q.to_vec();
     lens.push(("transformer_blocks.0.img_mlp.w1.weight", "BF16", &[8, 8]));

@@ -82,10 +82,27 @@ fn required_components_resolve_vram_choices() {
         vec![("vae", "sdxl_vae_fp16_fix")]
     );
     assert!(required_components(reg, fam("sd15"), &hw(8.0)).is_empty());
-    assert_eq!(
-        comps(&required_components(reg, fam("z_image_turbo"), &hw(16.0))),
-        vec![("vae", "flux_ae"), ("llm", "qwen3_4b")]
-    );
+    // Z-Image text encoder by VRAM: bf16 only at 20 GB+ (a 16 GB card ran out
+    // of VRAM encoding the prompt with bf16 + bf16), GGUF Q8 from 10 GB, Q4_K_M below.
+    for (vram, te) in [
+        (24.0, "qwen3_4b"),
+        (20.0, "qwen3_4b"),
+        (16.0, "qwen3_4b_q8"),
+        (15.9, "qwen3_4b_q8"),
+        (12.0, "qwen3_4b_q8"),
+        (10.0, "qwen3_4b_q8"),
+        (8.0, "qwen3_4b_q4km"),
+        (0.0, "qwen3_4b_q4km"),
+    ] {
+        for f in ["z_image_turbo", "z_image_base", "flux2_klein_4b"] {
+            let want = if f == "flux2_klein_4b" { "flux2_vae" } else { "flux_ae" };
+            assert_eq!(
+                comps(&required_components(reg, fam(f), &hw(vram))),
+                vec![("vae", want), ("llm", te)],
+                "{f} at {vram} GB"
+            );
+        }
+    }
     assert_eq!(
         comps(&required_components(
             reg,

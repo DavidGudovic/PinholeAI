@@ -225,8 +225,12 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).
     if (loadedModel !== model.id) {
       const tensors = 1130;
+      // Rust measures other programs' graphics memory (nvidia-smi) before a launch.
+      const note = mockFlags().busyGpu
+        ? "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). If pictures fail, close them and try again."
+        : null;
       for (let i = 0; i <= 8; i++) {
-        progress({ phase: "loadingModel", modelLabel: model.friendlyName, step: Math.round((tensors * i) / 8), totalSteps: tensors }, started);
+        progress({ phase: "loadingModel", modelLabel: model.friendlyName, step: Math.round((tensors * i) / 8), totalSteps: tensors, note }, started);
         await sleep(200);
         await checkCancel(started);
       }

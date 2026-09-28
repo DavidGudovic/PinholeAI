@@ -205,6 +205,8 @@ mod tests {
         if orphan.try_wait().unwrap().is_some() {
             // `sleep` is a multi-call binary here (busybox): can't run under another name.
             let _ = stranger.kill();
+            let _ = stranger.wait();
+            managed.kill().await;
             return;
         }
 

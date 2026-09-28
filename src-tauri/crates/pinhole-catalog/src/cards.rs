@@ -10,7 +10,8 @@ use pinhole_store::InstalledIndex;
 
 use crate::api::{Model, ModelImage, ModelVersion};
 use crate::families::{self, FamilyResolution, OTHER_BASE_MODEL};
-use crate::filters::{BrowseQuery, CatalogFilters, ContentMode};
+use crate::filters::{BrowseQuery, CatalogFilters, ContentMode, Hidden};
+use crate::safe::SafeFilter;
 use crate::select;
 use crate::view::CatalogCard;
 
@@ -85,12 +86,17 @@ pub struct CardContext<'a> {
 
 /// Build the card for one `/models` item, or `None` if a filter drops it.
 pub fn build_card(ctx: &CardContext, env: &dyn CatalogEnv, m: &Model) -> Option<CatalogCard> {
+    card_or_hidden(ctx, env, m).ok()
+}
+
+/// The card for one `/models` item, or why a filter drops it.
+pub fn card_or_hidden(ctx: &CardContext, env: &dyn CatalogEnv, m: &Model) -> Result<CatalogCard, Hidden> {
     let f = ctx.filters;
-    if !f.keep_model(ctx.query, m) {
-        return None;
+    if let Some(hidden) = f.hidden_by(ctx.query, m) {
+        return Err(hidden);
     }
-    let version = f.pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now)?;
-    Some(card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now))
+    let version = f.pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now).ok_or(Hidden::Other)?;
+    Ok(card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now))
 }
 
 /// Card for a specific version (also used by install plans and paste lookups).
@@ -118,7 +124,7 @@ pub fn card_for_version(
         (Some(fam), Some(bytes)) if !is_lora => env.vram_for(&fam.id, bytes),
         _ => None,
     };
-    let preview = pick_preview(&v.images, content);
+    let preview = pick_preview(m, v, content, &filters.safe);
     let commercial_ok = m.allow_commercial_use.allows("Image");
     CatalogCard {
         model_id: m.id,
@@ -148,21 +154,31 @@ pub fn card_for_version(
     }
 }
 
-/// First preview image of the version. In Safe mode a safe still image is
-/// preferred; otherwise still images beat videos. The UI blurs `previewNsfw`.
-pub fn pick_preview(images: &[ModelImage], content: ContentMode) -> Option<&ModelImage> {
+/// The card's preview image. "Safe only" uses only images rated PG (the
+/// shipped `max_preview_level`): a still one of the shown version, then of
+/// another version, then a video; none → no preview. Other modes: the
+/// version's first still image, else its first video, else another version's
+/// still image. The UI blurs `previewNsfw` when 18+ is off.
+pub fn pick_preview<'a>(m: &'a Model, v: &'a ModelVersion, content: ContentMode, safe: &SafeFilter) -> Option<&'a ModelImage> {
     let usable = |i: &&ModelImage| !i.url.trim().is_empty();
     let still = |i: &&ModelImage| !i.is_video();
-    let sfw = |i: &&ModelImage| !i.is_nsfw();
+    let others = || m.model_versions.iter().filter(|o| o.id != v.id).flat_map(|o| o.images.iter());
     if content == ContentMode::Safe {
-        if let Some(i) = images.iter().filter(usable).find(|i| still(i) && sfw(i)) {
-            return Some(i);
-        }
-        if let Some(i) = images.iter().filter(usable).find(sfw) {
-            return Some(i);
-        }
+        let ok = |i: &&ModelImage| usable(i) && safe.is_safe_preview(i);
+        return v
+            .images
+            .iter()
+            .filter(ok)
+            .find(still)
+            .or_else(|| others().filter(ok).find(still))
+            .or_else(|| v.images.iter().find(ok));
     }
-    images.iter().filter(usable).find(still).or_else(|| images.iter().find(usable))
+    v.images
+        .iter()
+        .filter(usable)
+        .find(still)
+        .or_else(|| v.images.iter().find(usable))
+        .or_else(|| others().filter(usable).find(still))
 }
 
 /// Ask CivitAI's image CDN for a small rendition: replace the `width=…` /
@@ -312,14 +328,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn safe_mode_prefers_safe_preview() {
-        let imgs: Vec<ModelImage> = serde_json::from_str(
-            r#"[{"url":"https://image.civitai.com/x/a/width=450/1.jpeg","nsfwLevel":8},{"url":"https://image.civitai.com/x/b/width=450/2.jpeg","nsfwLevel":2}]"#,
-        )
+    fn safe_mode_uses_pg_previews_only() {
+        let f = filters();
+        let m: Model = serde_json::from_value(serde_json::json!({ "id": 1, "modelVersions": [
+            { "id": 11, "images": [
+                { "url": "https://image.civitai.com/x/a/original=true/1.jpeg", "nsfwLevel": 8 },
+                { "url": "https://image.civitai.com/x/b/original=true/2.jpeg", "nsfwLevel": 2 },
+                { "url": "https://image.civitai.com/x/c/original=true/3.mp4", "nsfwLevel": 1 } ] },
+            { "id": 12, "images": [
+                { "url": "https://image.civitai.com/x/d/original=true/4.jpeg", "nsfwLevel": 1 } ] },
+            { "id": 13, "images": [
+                { "url": "https://image.civitai.com/x/e/original=true/5.jpeg", "nsfwLevel": 4 } ] } ] }))
         .unwrap();
-        assert!(pick_preview(&imgs, ContentMode::Safe).unwrap().url.ends_with("2.jpeg"));
-        assert!(pick_preview(&imgs, ContentMode::Include18Plus).unwrap().url.ends_with("1.jpeg"));
-        assert!(pick_preview(&[], ContentMode::Safe).is_none());
+        let v = |i: usize| &m.model_versions[i];
+        let pick = |i: usize, c| pick_preview(&m, v(i), c, &f.safe).map(|img| img.url.rsplit('/').next().unwrap().to_string());
+        assert_eq!(pick(0, ContentMode::Safe).as_deref(), Some("4.jpeg"), "a PG still of another version beats a PG video");
+        assert_eq!(pick(0, ContentMode::Include18Plus).as_deref(), Some("1.jpeg"));
+        assert_eq!(pick(1, ContentMode::Safe).as_deref(), Some("4.jpeg"));
+        assert_eq!(pick(2, ContentMode::Safe).as_deref(), Some("4.jpeg"), "never the R image in Safe");
+        assert_eq!(pick(2, ContentMode::Only18Plus).as_deref(), Some("5.jpeg"));
+        let only_video: Model =
+            serde_json::from_value(serde_json::json!({ "id": 2, "modelVersions": [{ "id": 21, "images": [{ "url": "https://image.civitai.com/x/v.mp4", "nsfwLevel": 1 }] }] }))
+                .unwrap();
+        assert!(pick_preview(&only_video, &only_video.model_versions[0], ContentMode::Safe, &f.safe).unwrap().is_video());
+        let none: Model = serde_json::from_value(serde_json::json!({ "id": 3, "modelVersions": [{ "id": 31, "images": [{ "url": "u", "nsfwLevel": 2 }] }] })).unwrap();
+        assert!(pick_preview(&none, &none.model_versions[0], ContentMode::Safe, &f.safe).is_none(), "PG-13 only → no preview");
     }
 
     #[test]

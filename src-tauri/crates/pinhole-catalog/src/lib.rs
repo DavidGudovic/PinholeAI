@@ -13,6 +13,7 @@
 
 pub mod api;
 pub mod browse;
+pub mod cache;
 pub mod cards;
 pub mod families;
 pub mod filters;
@@ -22,6 +23,7 @@ pub mod local;
 pub mod paste;
 pub mod plan;
 pub mod recommend;
+pub mod safe;
 pub mod select;
 #[cfg(test)]
 pub(crate) mod testkit;

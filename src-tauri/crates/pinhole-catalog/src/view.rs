@@ -33,6 +33,9 @@ pub struct CatalogFilterOptions {
     pub price: Vec<KeyLabel>,
     pub default_content: ContentMode,
     pub default_price: PriceMode,
+    /// Opening sort / time (`api` values from `sorts` / `periods`).
+    pub default_sort: String,
+    pub default_period: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,6 +76,22 @@ pub struct BrowsePage {
     pub next_cursor: Option<String>,
     pub offline: bool,
     pub partial: bool,
+    /// CivitAI models looked at for this page.
+    #[serde(default)]
+    pub checked: u32,
+    /// …of which the Content mode hid (made for adults in "Safe only").
+    #[serde(default)]
+    pub hidden_by_content: u32,
+    /// …of which Look, price, commercial use, kind or compatibility hid.
+    #[serde(default)]
+    pub hidden_by_filters: u32,
+}
+
+impl BrowsePage {
+    /// Offline mode: no request; the cursor is handed back unchanged.
+    pub fn offline(cursor: Option<String>) -> Self {
+        Self { items: Vec::new(), next_cursor: cursor, offline: true, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0 }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

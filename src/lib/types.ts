@@ -43,6 +43,10 @@ export interface Settings {
   firstRunDone: boolean;
   /** auto | cuda | vulkan | cpu */
   engineBackend: string;
+  /** Where the text encoder (reads the prompt) runs on a graphics-card engine:
+   *  auto = graphics card, moved to the processor for a model (this app session)
+   *  after it runs out of graphics memory; on = always the processor; off = always the card. */
+  textEncoderOnCpu: "auto" | "on" | "off";
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";
@@ -87,6 +91,9 @@ export interface EngineStatus {
   errorCode: string | null;
   /** Engine output for the "Details" toggle. */
   errorDetails: string | null;
+  /** Plain-language note about the running engine (e.g. prompt read on the processor
+   *  after running out of graphics memory; other programs using a lot of it). */
+  note?: string | null;
 }
 
 // ---------------------------------------------------------------- downloads
@@ -317,6 +324,9 @@ export interface GenerationProgress {
   step: number | null;
   totalSteps: number | null;
   elapsedMs: number;
+  /** Plain-language note for this job (other programs using graphics memory, an
+   *  automatic retry with memory-saving settings). */
+  note?: string | null;
 }
 
 /** prompt-bearing. */

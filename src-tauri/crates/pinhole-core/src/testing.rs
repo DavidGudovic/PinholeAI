@@ -385,7 +385,8 @@ mod tests {
         let m2 = register_fake_model(&core2, "sdxl");
         let err = generate::generate(&core2, GenerateRequest::txt2img(m2.clone(), "x")).await.unwrap_err();
         assert_eq!(err.code, "vram");
-        assert_eq!(err.message, "Not enough VRAM — try the Fast setting or the smaller version of this model");
+        // No hardware detected in tests → CPU engine → it's the computer's memory.
+        assert_eq!(err.message, generate::RAM_MESSAGE);
 
         // Missing components → plain "download them" message, before any engine work.
         let (_tmp3, core3, _) = new_core();
@@ -405,6 +406,136 @@ mod tests {
         assert_eq!(err.code, "not_found");
         let err = generate::generate(&core3, GenerateRequest::txt2img(m2, "   ")).await.unwrap_err();
         assert_eq!(err.code, "invalid");
+    }
+
+    /// The field report: Z-Image Turbo on a 16 GB NVIDIA card with ~9 GB taken by
+    /// another program. The engine answers "generate_image returned no results"
+    /// and its output says the text encoder ran out of memory.
+    const TE_OOM: &str = "generate_image returned no results\n\
+        [WARN] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 518.58 MB device / 6.58 MB budget, available 0.00 MB device / 7044.91 MB budget\n\
+        [ERROR] ggml_runner.cpp:899 - qwen3 segment 1/1 (graph) failed during workspace capacity check\n\
+        [ERROR] conditioner.hpp:2224 - LLM prompt encoding failed\n\
+        [ERROR] image.cpp:448 - failed to encode prompt";
+
+    /// A core that plans for a 16 GB CUDA card (no real detection in tests).
+    fn gpu_core() -> (tempfile::TempDir, Arc<AppCore>, Arc<Recorder>) {
+        let (tmp, core, rec) = new_core();
+        {
+            let mut s = core.settings.write();
+            s.engine_backend = "cuda".into();
+            s.vram_override_gb = Some(16.0);
+        }
+        (tmp, core, rec)
+    }
+
+    fn te_on_cpu(args: &[String]) -> bool {
+        args.windows(2).any(|w| w[0] == "--backend" && w[1].split(',').any(|p| p == "te=cpu"))
+    }
+
+    #[tokio::test]
+    async fn text_encoder_out_of_memory_retries_on_the_processor_and_is_remembered() {
+        let (_tmp, core, rec) = gpu_core();
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some(TE_OOM.into()), fail_first: 1, ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+
+        let res = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.expect("retried on the processor");
+        assert_eq!(res.images.len(), 1);
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 2, "{launches:?}");
+        assert!(!te_on_cpu(&launches[0]), "{:?}", launches[0]);
+        assert!(te_on_cpu(&launches[1]), "{:?}", launches[1]);
+        assert_eq!(mock.requests().len(), 2, "the same request was sent again");
+        // The UI saw a "loading" step with a plain note, never the prompt.
+        let notes: Vec<(GenPhase, String)> =
+            rec.0.lock().iter().filter_map(|e| if let CoreEvent::Generation(p) = e { p.note.clone().map(|n| (p.phase, n)) } else { None }).collect();
+        assert!(notes.iter().any(|(ph, n)| *ph == GenPhase::LoadingModel && n.contains("on the processor")), "{notes:?}");
+        assert!(notes.iter().all(|(_, n)| !n.contains(SENTINEL)));
+
+        // Remembered for this model: the next run starts on the processor, no retry.
+        rec.0.lock().clear();
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 3);
+        assert!(te_on_cpu(&launches[2]));
+        assert!(rec.0.lock().iter().all(|e| !matches!(e, CoreEvent::Generation(p) if p.note.is_some())));
+        // …and visible on the engine status while that model is loaded.
+        {
+            let mut f = core.gen.flags.lock();
+            f.running = true;
+            f.loaded_model_id = Some(model.clone());
+        }
+        let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
+        assert!(note.contains("processor") && note.contains("Settings"), "{note}");
+
+        // Settings "off" overrides the remembered choice (and the note goes away).
+        core.settings.write().text_encoder_on_cpu = "off".into();
+        assert!(crate::engine_setup::engine_status(&core).note.is_none());
+        generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        assert!(!te_on_cpu(core.gen.external_launches.lock().last().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn text_encoder_setting_on_and_off() {
+        let (_tmp, core, _) = gpu_core();
+        let always = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some(TE_OOM.into()), ..Default::default() }).await;
+        use_external_engine(&core, &always.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+
+        // Off: no automatic retry; the message says where to change it.
+        core.settings.write().text_encoder_on_cpu = "off".into();
+        let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.unwrap_err();
+        assert_eq!(err.code, "vram");
+        assert_eq!(err.message, generate::TE_ON_GPU_MESSAGE);
+        assert_eq!(core.gen.external_launches.lock().len(), 1);
+        let details = err.details.unwrap_or_default();
+        assert!(details.contains("failed to encode prompt") && !details.contains(SENTINEL), "{details}");
+
+        // On: the first launch already has the text encoder on the processor;
+        // running out of memory there means the computer's memory.
+        core.settings.write().text_encoder_on_cpu = "on".into();
+        let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
+        assert!(te_on_cpu(core.gen.external_launches.lock().last().unwrap()));
+        assert_eq!(err.code, "vram");
+        assert_eq!(err.message, generate::RAM_MESSAGE);
+        assert_eq!(core.gen.external_launches.lock().len(), 2, "no retry");
+    }
+
+    #[tokio::test]
+    async fn out_of_memory_is_never_the_generic_message() {
+        let (_tmp, core, _) = gpu_core();
+        let msg = "[WARN] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 900.00 MB device\n\
+                   [ERROR] image.cpp:904 - sampling for image 1/1 failed after 3.20s";
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some(msg.into()), ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+        // Other programs held 9 GB when the engine started (nvidia-smi).
+        *core.gen.gpu_others.lock() = Some(pinhole_hardware::OtherGpuUse {
+            gpu_index: 0,
+            total_mib: 16275,
+            others_mib: 9216,
+            processes: vec![pinhole_hardware::GpuProcess { pid: 4242, name: "python.exe".into(), used_mib: Some(9114) }],
+        });
+        let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
+        assert_eq!(err.code, "vram");
+        assert_eq!(
+            err.message,
+            "Your graphics card ran out of memory. Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). Close them and try again, or pick the smaller version of this model in Models."
+        );
+        assert_ne!(err.message, generate::UNKNOWN_JOB_MESSAGE);
+        // Diffusion ran out: one retry with VAE tiling (the 16 GB profile has none).
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 2);
+        assert!(!launches[0].contains(&"--vae-tiling".to_string()) && launches[1].contains(&"--vae-tiling".to_string()), "{launches:?}");
+
+        // A failure that isn't about memory keeps the generic message.
+        let (_tmp2, core2, _) = gpu_core();
+        let odd = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some("generate_image returned no results".into()), ..Default::default() }).await;
+        use_external_engine(&core2, &odd.base_url());
+        let m2 = register_fake_model(&core2, "z_image_turbo");
+        let err = generate::generate(&core2, GenerateRequest::txt2img(m2, "x")).await.unwrap_err();
+        assert_eq!((err.code.as_str(), err.message.as_str()), ("engine_failed", generate::UNKNOWN_JOB_MESSAGE));
+        assert_eq!(core2.gen.external_launches.lock().len(), 1);
     }
 
     #[tokio::test]
