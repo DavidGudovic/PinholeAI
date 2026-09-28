@@ -179,3 +179,41 @@ jobs:
           path: smoke-out/
           if-no-files-found: ignore
           retention-days: 7
+
+  e2e:
+    name: Real-app e2e (WebDriver, Linux)
+    needs: frontend
+    # upstream Linux sd-server needs glibc 2.38 (Ubuntu 24.04+)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux deps + WebKitWebDriver + Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libssl-dev libxdo-dev \
+            libdbus-1-dev pkg-config build-essential libgomp1 webkit2gtk-driver xvfb xdotool
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+      - name: Build the app (debug, embedded frontend)
+        run: npm ci && npm run build && cargo build -p pinhole --features tauri/custom-protocol --locked
+      - name: Install tauri-driver
+        run: cargo install tauri-driver --locked
+      - name: Real-app e2e (engine download, UI flows, zero-weight SD 1.5 generate + save, privacy scan)
+        env:
+          PINHOLE_E2E_MODEL: zero
+        run: xvfb-run -a -s "-screen 0 1440x960x24" node tests/e2e/run.mjs
+      - name: Upload e2e screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: target/e2e/
+          retention-days: 7

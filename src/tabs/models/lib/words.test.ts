@@ -37,7 +37,7 @@ describe("lastUsedText", () => {
 
 describe("download progress", () => {
   it("computes the fraction and text", () => {
-    const g = { downloadedBytes: 1024 ** 3, totalBytes: 4 * 1024 ** 3, state: "downloading" as const };
+    const g = { downloadedBytes: 1e9, totalBytes: 4e9, state: "downloading" as const };
     expect(groupFraction(g)).toBe(0.25);
     expect(progressText(g)).toBe("1.0 GB of 4.0 GB · 25%");
   });

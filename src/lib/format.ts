@@ -2,11 +2,12 @@
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "—";
-  const gb = bytes / 1024 ** 3;
+  // Decimal units, matching how download sizes are published (HF, CivitAI, disks).
+  const gb = bytes / 1e9;
   if (gb >= 1) return `${gb >= 10 ? gb.toFixed(0) : gb.toFixed(1)} GB`;
-  const mb = bytes / 1024 ** 2;
+  const mb = bytes / 1e6;
   if (mb >= 1) return `${mb.toFixed(0)} MB`;
-  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }
 
 export function formatGb(gb: number | null | undefined): string {
