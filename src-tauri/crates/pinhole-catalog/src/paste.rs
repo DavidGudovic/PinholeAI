@@ -74,6 +74,10 @@ fn ignored_problem(kind: &str) -> String {
     }
 }
 
+/// A pasted resource with a name but no CivitAI version id or file hash.
+pub const NO_REFERENCE: &str =
+    "Not installed. The pasted settings only name this model, without a CivitAI version or file hash, so Pinhole can't look it up. Find it in Models → Browse.";
+
 /// CivitAI lookups (the real client, or a fake in tests).
 pub trait VersionLookup {
     fn version(&self, id: u64) -> impl Future<Output = Result<ModelVersion, NetError>> + Send;
@@ -169,6 +173,11 @@ async fn resolve_one<L: VersionLookup>(env: &PasteEnv<'_>, lookup: Option<&L>, r
         fit: None,
         problem: Some(problem.to_string()),
     };
+    let hash = r.hash.as_deref().map(str::trim).filter(|h| !h.is_empty());
+    if r.model_version_id.is_none() && hash.is_none() {
+        // Only a name (e.g. ComfyUI images): nothing CivitAI can look up.
+        return unresolved(NO_REFERENCE);
+    }
     let Some(lookup) = lookup else {
         return unresolved("Not installed. Turn off Offline mode to look it up on CivitAI.");
     };
@@ -180,7 +189,7 @@ async fn resolve_one<L: VersionLookup>(env: &PasteEnv<'_>, lookup: Option<&L>, r
             Err(_) => network_error = true,
         }
     }
-    if let Some(h) = r.hash.as_deref().map(str::trim).filter(|h| !h.is_empty()) {
+    if let Some(h) = hash {
         match lookup.by_hash(h).await {
             Ok(Some(v)) => return from_version(env, r, &v, cat),
             Ok(None) => {}
@@ -432,5 +441,20 @@ mod resolve_tests {
         let l = lookup(true);
         let out = resolve_resources(&env, Some(&l), &[res("checkpoint", Some(1759168), None)]).await;
         assert!(out.checkpoint.unwrap().problem.unwrap().contains("Couldn't reach CivitAI"));
+    }
+
+    #[tokio::test]
+    async fn name_only_resources_say_why_they_cannot_be_looked_up() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let named = PastedResource { kind: "checkpoint".into(), model_name: Some("juggernautXL_v9".into()), ..Default::default() };
+        for l in [None, Some(&lookup(false))] {
+            let c = resolve_resources(&env, l, std::slice::from_ref(&named)).await.checkpoint.unwrap();
+            assert_eq!(c.problem.as_deref(), Some(NO_REFERENCE));
+            assert_eq!(c.display_name, "juggernautXL_v9");
+        }
     }
 }

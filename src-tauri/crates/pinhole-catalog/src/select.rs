@@ -20,8 +20,12 @@ const PICKLE_EXTENSIONS: &[&str] = &["ckpt", "pt", "pth", "bin", "pkl", "pickle"
 /// torchao/int8, SVDQuant int4, NVFP4…). GGUF quants are all fine.
 const UNSUPPORTED_SAFETENSORS_FP: &[&str] = &["nf4", "int8", "int4", "fp4", "nvfp4", "svdq", "mxfp4"];
 
-/// CivitAI file types that hold model weights.
-const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model"];
+/// CivitAI file types that hold the model's own weights. Newer uploads (Flux,
+/// Qwen-Image, Z-Image, Krea…) list a standalone diffusion model as
+/// `Diffusion Model` or `UNet`; the family's other parts (VAE, text encoders)
+/// come from the registry, as for any standalone diffusion file. Other types
+/// (`VAE`, `Text Encoder`, `Training Data`, `Config`…) are never the model.
+const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model", "diffusion model", "unet"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Verdict {
@@ -280,8 +284,26 @@ mod tests {
         vae.kind = "VAE".into();
         let model = file("m.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 6e6);
         assert_eq!(select_file(&[zip, vae, model], &allowed()).unwrap().name, "m.safetensors");
+        let mut te = file("t5xxl.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 9e6);
+        te.kind = "Text Encoder".into();
+        assert_eq!(select_file(std::slice::from_ref(&te), &allowed()).unwrap_err(), NO_FILE_REASON);
         let diffusers = file("m.zip", Some("Diffusers"), None, None, true, 1.0);
         assert!(select_file(&[diffusers], &allowed()).unwrap_err().contains(".safetensors or .gguf"));
+    }
+
+    #[test]
+    fn standalone_diffusion_model_files_are_weights() {
+        // Flux / Qwen-Image / Z-Image uploads: the main file's type is
+        // "Diffusion Model" (or "UNet"), next to optional VAE / text encoders.
+        for kind in ["Diffusion Model", "UNet", "diffusion model"] {
+            let mut dm = file("flux_dev_fp8.safetensors", Some("SafeTensor"), Some("fp8"), None, true, 11e6);
+            dm.kind = kind.into();
+            let mut vae = file("ae.safetensors", Some("SafeTensor"), None, None, false, 3e5);
+            vae.kind = "VAE".into();
+            let mut te = file("t5xxl_fp16.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 9e6);
+            te.kind = "Text Encoder".into();
+            assert_eq!(select_file(&[vae, te, dm], &allowed()).unwrap().name, "flux_dev_fp8.safetensors", "{kind}");
+        }
     }
 
     #[test]
