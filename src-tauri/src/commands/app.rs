@@ -53,25 +53,37 @@ fn open_folder(handle: &AppHandle, dir: &Path) -> Result<(), CoreError> {
     })
 }
 
+/// The app's own version (tauri.conf.json, which the release workflow checks
+/// against the tag).
+fn app_version(handle: &AppHandle) -> String {
+    handle.package_info().version.to_string()
+}
+
 /// Settings → "Check for updates". Only ever runs on that button press.
 #[tauri::command]
-pub async fn check_for_updates(core: State<'_, Arc<AppCore>>) -> Result<UpdateCheck, CoreError> {
-    update::check_for_updates(&core).await
+pub async fn check_for_updates(handle: AppHandle, core: State<'_, Arc<AppCore>>) -> Result<UpdateCheck, CoreError> {
+    update::check_for_updates(&core, &app_version(&handle)).await
 }
 
 /// Download + verify `version`, put it in place, stop the engines, then run the
-/// installer / relaunch and quit. Only returns on failure (nothing is changed then).
+/// installer / relaunch and quit. Returns only on failure: before anything was
+/// replaced, or (`update_restart`) when the new files are in place but the new
+/// version couldn't be started.
 #[tauri::command]
 pub async fn install_update(handle: AppHandle, core: State<'_, Arc<AppCore>>, version: String) -> Result<(), CoreError> {
     let core = core.inner().clone();
-    let prepared = update::install_update(&core, &version).await?;
+    let prepared = update::install_update(&core, &app_version(&handle), &version).await?;
     core.shutdown().await;
     let started = match &prepared {
         Prepared::RunInstaller(path) => std::process::Command::new(path).args(update::INSTALLER_ARGS).spawn(),
         Prepared::Relaunch(exe) => std::process::Command::new(exe).spawn(),
     };
     if let Err(e) = started {
-        return Err(CoreError::new("io", "The update is downloaded but couldn't be started. Restart Pinhole and try again.").with_details(e.to_string()));
+        let message = match prepared {
+            Prepared::RunInstaller(_) => "The update is downloaded but its installer couldn't be started. Close Pinhole, open it again and try again.",
+            Prepared::Relaunch(_) => "Pinhole was updated but couldn't restart itself. Close Pinhole and open it again to finish.",
+        };
+        return Err(CoreError::new("update_restart", message).with_details(e.to_string()));
     }
     handle.exit(0);
     Ok(())

@@ -11,10 +11,11 @@ import { cancelGroup, useTaggedGroup } from "../tabs/models/lib/downloads";
 
 type Phase = "idle" | "checking" | "checked" | "installing" | "restarting";
 
+const RESTART = " Save your pictures first: Pinhole closes and reopens, and unsaved pictures are lost.";
 const HOW: Record<string, string> = {
-  installer: "Pinhole downloads the new installer, checks it, closes and reopens by itself.",
-  portable: "Pinhole downloads the new version, checks it and swaps it in. Your Data folder is not touched.",
-  appImage: "Pinhole downloads the new AppImage, checks it, replaces this one and reopens.",
+  installer: "Pinhole downloads the new installer, checks it and runs it." + RESTART,
+  portable: "Pinhole downloads the new version, checks it and swaps it in. Your Data folder is not touched." + RESTART,
+  appImage: "Pinhole downloads the new AppImage, checks it and replaces this one." + RESTART,
   manual: "This copy can't update itself. Download the new version from the release page.",
 };
 
@@ -23,6 +24,8 @@ export function UpdateSection({ offline }: { offline: boolean }) {
   const [result, setResult] = useState<UpdateCheck | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
   const group = useTaggedGroup("app-update", (g) => g.kind === "appUpdate");
+  // Settings was closed and reopened while an update downloads: keep showing it.
+  const running = phase === "installing" || (phase === "idle" && group != null);
 
   const check = async () => {
     setError(null);
@@ -46,13 +49,15 @@ export function UpdateSection({ offline }: { offline: boolean }) {
     } catch (e) {
       const err = asCoreError(e);
       if (err.code !== "cancelled") setError(err);
-      setPhase("checked");
+      // update_restart: the new files are already in place, only a restart is missing.
+      if (err.code === "update_restart") setResult((r) => (r ? { ...r, update: null } : r));
+      setPhase(err.code === "update_restart" ? "idle" : "checked");
     }
   };
 
   const openPage = (version: string | null) => void openReleasePage(version).catch((e) => setError(asCoreError(e)));
   const update = result?.update ?? null;
-  const busy = phase === "checking" || phase === "installing" || phase === "restarting";
+  const busy = phase === "checking" || running || phase === "restarting";
 
   return (
     <div className="space-y-3">
@@ -68,10 +73,14 @@ export function UpdateSection({ offline }: { offline: boolean }) {
             <span className="text-neutral-700 dark:text-neutral-300">Pinhole never checks by itself.</span>
           )}
           <p className="text-xs text-neutral-500">
-            {update ? HOW[update.installMode] : offline ? "Turn off Offline mode to check." : "Asks GitHub once for the newest release. Nothing about you is sent."}
+            {update
+              ? HOW[update.installMode]
+              : offline
+                ? "Turn off Offline mode to check."
+                : "Only when you press this, Pinhole asks GitHub for its newest release. Your prompts, pictures and settings are not sent."}
           </p>
         </div>
-        {!update && (
+        {!update && !running && (
           <Button size="sm" disabled={busy || offline} onClick={() => void check()}>
             {phase === "checking" ? <Spinner className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}
             Check for updates
@@ -79,7 +88,7 @@ export function UpdateSection({ offline }: { offline: boolean }) {
         )}
       </div>
 
-      {update && phase !== "installing" && phase !== "restarting" && (
+      {update && !running && phase !== "restarting" && (
         <div className="flex flex-wrap gap-1.5">
           {update.installMode !== "manual" ? (
             <Button size="sm" variant="primary" disabled={offline} onClick={() => void install(update.version)}>
@@ -98,7 +107,7 @@ export function UpdateSection({ offline }: { offline: boolean }) {
         </div>
       )}
 
-      {phase === "installing" &&
+      {running &&
         (group ? (
           <GroupProgress group={group} onCancel={() => void cancelGroup(group.groupId)} />
         ) : (

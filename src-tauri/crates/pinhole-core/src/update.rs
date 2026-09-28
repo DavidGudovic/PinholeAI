@@ -18,7 +18,8 @@
 //! the release's `SHA256SUMS.txt`. That catches corrupted or swapped CDN downloads,
 //! not a compromised GitHub account; signed updates are RELEASE-SPEC work.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use pinhole_net::download::{DownloadKind, DownloadSpec};
@@ -34,9 +35,13 @@ const MAX_SUMS_BYTES: usize = 64 * 1024;
 /// Staging folder name (next to the app for portable / AppImage, in the OS temp
 /// dir for the Windows installer). Removed on the next start.
 pub const STAGING_DIR: &str = ".pinhole-update";
-/// Upper bound for everything unpacked from a portable zip.
-const MAX_UNPACKED_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// Staging folder for the Windows installer, inside the OS temp dir.
+const INSTALLER_STAGING_DIR: &str = "pinhole-update";
 const PRODUCT: &str = "Pinhole";
+
+/// One update per app run: set when an install starts, cleared if it fails (then
+/// nothing was replaced). The UI can be closed and reopened meanwhile.
+static UPDATING: AtomicBool = AtomicBool::new(false);
 
 /// How this copy of Pinhole can update itself. `UpdateInstallMode` in `src/lib/types.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -155,7 +160,7 @@ pub fn detect_target_with(env: &Environment) -> Target {
     match env.os {
         "windows" => {
             if env.exe_dir.join("uninstall.exe").is_file() {
-                Target::Installer { staging: env.temp_dir.join("pinhole-update") }
+                Target::Installer { staging: env.temp_dir.join(INSTALLER_STAGING_DIR) }
             } else if env.portable_data && env.exe_dir.join(format!("{PRODUCT}.exe")).is_file() {
                 Target::Portable { app_dir: env.exe_dir.clone() }
             } else {
@@ -207,12 +212,45 @@ fn tag_version(tag: &str) -> Option<semver::Version> {
 /// Newest published (non-draft) release newer than `current`. Pre-releases count:
 /// every build is a pre-release until RELEASE-SPEC is done.
 fn newest_release<'a>(releases: &'a [GhRelease], current: &semver::Version) -> Option<(&'a GhRelease, semver::Version)> {
+    newest_matching(releases, current, |_, _| true)
+}
+
+fn newest_matching<'a>(
+    releases: &'a [GhRelease],
+    current: &semver::Version,
+    ok: impl Fn(&GhRelease, &semver::Version) -> bool,
+) -> Option<(&'a GhRelease, semver::Version)> {
     releases
         .iter()
         .filter(|r| !r.draft)
         .filter_map(|r| tag_version(&r.tag_name).map(|v| (r, v)))
-        .filter(|(_, v)| v > current)
+        .filter(|(r, v)| v > current && ok(r, v))
         .max_by(|a, b| a.1.cmp(&b.1))
+}
+
+/// The update to offer: the newest release that has this copy's file (and a
+/// checksum list), so a release missing one platform's build doesn't hide an
+/// installable one; otherwise the newest release, installed by hand.
+fn pick_update(releases: &[GhRelease], current: &semver::Version, target: &Target) -> Option<UpdateInfo> {
+    let installable = newest_matching(releases, current, |r, v| {
+        let has = |name: &str| r.assets.iter().any(|a| a.name == name);
+        target.asset_name(&v.to_string()).is_some_and(|n| has(&n)) && has(SUMS_FILE)
+    });
+    if let Some((r, v)) = installable {
+        let name = target.asset_name(&v.to_string()).unwrap_or_default();
+        return Some(UpdateInfo {
+            version: v.to_string(),
+            published_at: r.published_at.clone(),
+            install_mode: target.mode(),
+            size_bytes: r.assets.iter().find(|a| a.name == name).map(|a| a.size),
+        });
+    }
+    newest_release(releases, current).map(|(r, v)| UpdateInfo {
+        version: v.to_string(),
+        published_at: r.published_at.clone(),
+        install_mode: InstallMode::Manual,
+        size_bytes: None,
+    })
 }
 
 /// Download URLs are built from our repo + a tag that parsed as semver + an asset
@@ -241,8 +279,10 @@ fn sum_for(sums: &str, name: &str) -> Option<String> {
     })
 }
 
-fn current_version() -> semver::Version {
-    semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version is semver")
+/// The running app's version. The Tauri shell passes its own (tauri.conf.json,
+/// which the release workflow matches against the tag); tests use the crate's.
+pub fn parse_current(version: &str) -> CoreResult<semver::Version> {
+    semver::Version::parse(version).map_err(|_| CoreError::internal("Pinhole couldn't read its own version.").with_details(version.to_string()))
 }
 
 async fn fetch_releases(core: &AppCore) -> CoreResult<Vec<GhRelease>> {
@@ -257,29 +297,51 @@ async fn fetch_releases(core: &AppCore) -> CoreResult<Vec<GhRelease>> {
 }
 
 /// "Check for updates": one request to the GitHub releases API.
-pub async fn check_for_updates(core: &AppCore) -> CoreResult<UpdateCheck> {
-    let current = current_version();
+pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreResult<UpdateCheck> {
+    let current = parse_current(current_version)?;
     let releases = fetch_releases(core).await?;
     let target = detect_target_with(&Environment::current(core));
-    let update = newest_release(&releases, &current).map(|(r, v)| {
-        let version = v.to_string();
-        let size_bytes = target
-            .asset_name(&version)
-            .and_then(|name| r.assets.iter().find(|a| a.name == name).map(|a| a.size));
-        // A release without the file this copy needs can only be installed by hand.
-        let install_mode = if size_bytes.is_some() { target.mode() } else { InstallMode::Manual };
-        UpdateInfo { version, published_at: r.published_at.clone(), install_mode, size_bytes }
-    });
-    Ok(UpdateCheck { current_version: current.to_string(), update })
+    Ok(UpdateCheck { current_version: current.to_string(), update: pick_update(&releases, &current, &target) })
+}
+
+/// Refuse while a picture is being made or other downloads are running: the
+/// update ends by restarting Pinhole, which would lose them.
+pub fn ensure_idle(core: &AppCore, own_group: Option<&str>) -> CoreResult<()> {
+    if core.gen.run_lock.try_lock().is_err() {
+        return Err(CoreError::invalid("Pinhole is making a picture. Wait for it to finish (or cancel it), then update."));
+    }
+    let busy = core
+        .downloads
+        .status()
+        .iter()
+        .any(|g| !g.state.is_finished() && Some(g.group_id.as_str()) != own_group);
+    if busy {
+        return Err(CoreError::invalid("Downloads are still running. Wait for them to finish (or cancel them), then update."));
+    }
+    Ok(())
 }
 
 /// Download `version`, verify it and put it in place. The caller (Tauri shell)
-/// then stops the engines and runs / relaunches what [`Prepared`] says.
-pub async fn install_update(core: &Arc<AppCore>, version: &str) -> CoreResult<Prepared> {
+/// then stops the engines and runs / relaunches what [`Prepared`] says. Only one
+/// update runs per app run.
+pub async fn install_update(core: &Arc<AppCore>, current_version: &str, version: &str) -> CoreResult<Prepared> {
+    let current = parse_current(current_version)?;
+    if UPDATING.swap(true, Ordering::SeqCst) {
+        return Err(CoreError::invalid("An update is already under way."));
+    }
+    let result = install_inner(core, &current, version).await;
+    if result.is_err() {
+        UPDATING.store(false, Ordering::SeqCst);
+    }
+    result
+}
+
+async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: &str) -> CoreResult<Prepared> {
     let wanted = semver::Version::parse(version).map_err(|_| CoreError::invalid("That isn't a Pinhole version."))?;
-    if wanted <= current_version() {
+    if &wanted <= current {
         return Err(CoreError::invalid("This version is already installed."));
     }
+    ensure_idle(core, None)?;
     let target = detect_target_with(&Environment::current(core));
     let (Some(name), Some(staging)) = (target.asset_name(&wanted.to_string()), target.staging()) else {
         return Err(CoreError::invalid("This copy of Pinhole can't update itself. Open the download page and install the new version from there."));
@@ -312,7 +374,8 @@ pub async fn install_update(core: &Arc<AppCore>, version: &str) -> CoreResult<Pr
         ..Default::default()
     };
     let group = core.downloads.enqueue_kind(format!("{PRODUCT} {wanted}"), DownloadKind::AppUpdate, vec![spec]);
-    let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
+    let files = crate::downloads::wait(core, &group).await?;
+    ensure_idle(core, Some(&group))?;
     let downloaded = files
         .into_iter()
         .next()
@@ -416,55 +479,38 @@ fn rollback(app_dir: &Path, old_dir: &Path, done: &[(std::ffi::OsString, bool)])
     }
 }
 
+/// Unpack with the engine installer's hardened zip reader (safe paths, size caps,
+/// no symlinks) into `out`, then keep only `Pinhole/…` minus `Pinhole/Data/`.
 fn unpack_portable(zip_path: &Path, out: &Path) -> CoreResult<()> {
-    let bad = |e: &dyn std::fmt::Display| CoreError::new("invalid", "The downloaded update couldn't be unpacked. Try again.").with_details(e.to_string());
-    let file = std::fs::File::open(zip_path).map_err(update_failed)?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| bad(&e))?;
-    let mut total: u64 = 0;
-    for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| bad(&e))?;
-        let Some(path) = entry.enclosed_name() else {
-            return Err(bad(&"unsafe path in zip"));
-        };
-        let Some(rel) = portable_relative(&path) else { continue };
-        let dest = out.join(&rel);
-        if entry.is_dir() {
-            std::fs::create_dir_all(&dest).map_err(update_failed)?;
-            continue;
-        }
-        total = total.saturating_add(entry.size());
-        if total > MAX_UNPACKED_BYTES {
-            return Err(bad(&"zip too large"));
-        }
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent).map_err(update_failed)?;
-        }
-        let mut f = std::fs::File::create(&dest).map_err(update_failed)?;
-        std::io::copy(&mut entry, &mut f).map_err(update_failed)?;
+    let raw = out.with_extension("zip-contents");
+    if raw.exists() {
+        std::fs::remove_dir_all(&raw).map_err(update_failed)?;
     }
+    std::fs::create_dir_all(&raw).map_err(update_failed)?;
+    pinhole_engine::install::extract_zip(zip_path, &raw).map_err(|e| {
+        CoreError::new("invalid", "The downloaded update couldn't be unpacked. Try again.").with_details(e.to_string())
+    })?;
+    let root = raw.join(PRODUCT);
+    if root.is_dir() {
+        for entry in std::fs::read_dir(&root).map_err(update_failed)? {
+            let entry = entry.map_err(update_failed)?;
+            if entry.file_name().eq_ignore_ascii_case("Data") {
+                continue;
+            }
+            std::fs::rename(entry.path(), out.join(entry.file_name())).map_err(update_failed)?;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&raw);
     Ok(())
-}
-
-/// `Pinhole/config/models.yaml` → `config/models.yaml`. Entries outside `Pinhole/`
-/// and anything under `Pinhole/Data/` (the user's data) → `None`.
-fn portable_relative(path: &Path) -> Option<PathBuf> {
-    let mut comps = path.components();
-    match comps.next() {
-        Some(Component::Normal(first)) if first == PRODUCT => {}
-        _ => return None,
-    }
-    let rel: PathBuf = comps.collect();
-    let top = rel.components().next()?;
-    if matches!(top, Component::Normal(t) if t.eq_ignore_ascii_case("Data")) {
-        return None;
-    }
-    Some(rel)
 }
 
 /// Remove leftovers of a finished (or abandoned) update. Best effort: the old exe
 /// of a portable update may still be exiting; the next start tries again.
 pub fn cleanup_after_update(exe_dir: &Path) {
-    let mut dirs = vec![exe_dir.join(STAGING_DIR), std::env::temp_dir().join("pinhole-update")];
+    let mut dirs = vec![exe_dir.join(STAGING_DIR)];
+    if cfg!(windows) {
+        dirs.push(std::env::temp_dir().join(INSTALLER_STAGING_DIR));
+    }
     if let Some(parent) = std::env::var_os("APPIMAGE").as_ref().and_then(|p| Path::new(p).parent().map(Path::to_path_buf)) {
         dirs.push(parent.join(STAGING_DIR));
     }
@@ -504,6 +550,26 @@ mod tests {
         assert_eq!((r.tag_name.as_str(), v.to_string().as_str()), ("v0.10.0-rc.1", "0.10.0-rc.1"));
         assert!(newest_release(&list[4..5], &current).is_none(), "same version is not an update");
         assert!(newest_release(&list[..1], &current).is_none(), "drafts are ignored");
+    }
+
+    #[test]
+    fn offers_the_newest_release_this_copy_can_install() {
+        let current = semver::Version::parse("0.2.0").unwrap();
+        let setup = |v: &str| format!("Pinhole-{v}-windows-x64-setup.exe");
+        let (s3, s4) = (setup("0.3.0"), setup("0.4.0-rc.1"));
+        let list = vec![
+            rel("v0.4.0-rc.1", false, &[("Pinhole-0.4.0-rc.1-linux-x86_64.AppImage", 1), ("SHA256SUMS.txt", 1)]),
+            rel("v0.3.0", false, &[(s3.as_str(), 7), ("SHA256SUMS.txt", 1)]),
+        ];
+        let win = Target::Installer { staging: PathBuf::from("t") };
+        let u = pick_update(&list, &current, &win).unwrap();
+        assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.3.0", InstallMode::Installer, Some(7)));
+        // No checksum list → not installable, offered by hand.
+        let bare = vec![rel("v0.4.0-rc.1", false, &[(s4.as_str(), 9)])];
+        let u = pick_update(&bare, &current, &win).unwrap();
+        assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.4.0-rc.1", InstallMode::Manual, None));
+        assert_eq!(pick_update(&list, &current, &Target::Manual).unwrap().version, "0.4.0-rc.1");
+        assert!(pick_update(&list, &semver::Version::parse("0.4.0").unwrap(), &win).is_none());
     }
 
     #[test]
@@ -621,6 +687,11 @@ mod tests {
         assert!(apply_portable(&zip, &app).is_err());
         assert_eq!(std::fs::read(app.join("Pinhole.exe")).unwrap(), b"old exe");
         assert!(!app.join("config").exists());
+        // Zip-slip entries are refused by the shared zip reader.
+        write_zip(&zip, &[("Pinhole/Pinhole.exe", b"new exe"), ("../escape.txt", b"x")]);
+        assert!(apply_portable(&zip, &app).is_err());
+        assert_eq!(std::fs::read(app.join("Pinhole.exe")).unwrap(), b"old exe");
+        assert!(!tmp.path().join("escape.txt").exists());
     }
 
     #[cfg(unix)]

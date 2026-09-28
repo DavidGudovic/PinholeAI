@@ -487,7 +487,9 @@ build is shared.
   `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (pre-releases
   included while every build is a test build). Download URLs are built from the repo, the tag and the
   expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
-  the release's `SHA256SUMS.txt`, or nothing is installed. Windows installer: the engines stop and the
+  the release's `SHA256SUMS.txt`, or nothing is installed. The newest release that has this copy's
+  file is offered; one without it is offered as "Open download page". Updating is refused while a
+  picture is being made or other downloads run (the restart would lose them). Windows installer: the engines stop and the
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
