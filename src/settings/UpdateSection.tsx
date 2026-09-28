@@ -120,7 +120,16 @@ export function UpdateSection({ offline }: { offline: boolean }) {
           <Spinner className="h-3 w-3" /> Restarting Pinhole…
         </span>
       )}
-      {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+      {error?.code === "updates_unavailable" ? (
+        <div className="space-y-2 rounded-lg bg-neutral-100 p-3 text-xs text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-400" role="note">
+          <p>{error.message}</p>
+          <Button size="sm" onClick={() => openPage(null)}>
+            <ExternalLink className="h-3.5 w-3.5" /> Open release page
+          </Button>
+        </div>
+      ) : (
+        error && <ErrorNotice error={error} onDismiss={() => setError(null)} />
+      )}
     </div>
   );
 }
