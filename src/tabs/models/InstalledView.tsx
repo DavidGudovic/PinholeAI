@@ -49,11 +49,10 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, l, h, f] = await Promise.all([listModels(), listLoras(), listHelpers(), modelsFolderInfo()]);
+      const [m, l, h] = await Promise.all([listModels(), listLoras(), listHelpers()]);
       setModels(m);
       setLoras(l);
       setHelpers(h);
-      setFolder(f);
       setError(null);
     } catch (e) {
       setError(asCoreError(e));
@@ -63,6 +62,12 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  // Once per visit: checking a picked folder writes a tiny probe file to it.
+  useEffect(() => {
+    modelsFolderInfo()
+      .then(setFolder)
+      .catch(() => undefined);
+  }, []);
   useTauriEvent(onModelsChanged, () => void refresh());
 
   const handleResult = useCallback(

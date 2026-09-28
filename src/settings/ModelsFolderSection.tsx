@@ -150,7 +150,7 @@ export function ModelsFolderSection() {
                     models you both have aren't copied twice.
                   </p>
                 )}
-                {preview.isDefault && <p>If Pinhole on your other operating system uses the current folder, it won't find these models any more.</p>}
+                {info?.custom && <p>If Pinhole on your other operating system uses the current folder, it won't find these models there any more.</p>}
                 <p className="text-xs text-neutral-500">
                   Deleting a model in a shared folder removes it for every Pinhole that uses the folder. Save your pictures first: Pinhole restarts when the move is
                   done, and unsaved pictures are lost.

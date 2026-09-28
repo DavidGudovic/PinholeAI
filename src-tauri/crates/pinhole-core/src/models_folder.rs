@@ -143,8 +143,14 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
     if core.gen.active.lock().is_some() || core.describe.busy.load(std::sync::atomic::Ordering::SeqCst) {
         return Err(CoreError::invalid("Wait for the current pictures to finish, then change the Models folder."));
     }
+    let _folder = core
+        .models
+        .folder_lock
+        .try_write()
+        .map_err(|_| CoreError::invalid("Wait for Pinhole to finish adding or deleting a model, then change the Models folder."))?;
     crate::generate::shutdown(core).await;
     crate::describe::shutdown(core).await;
+    crate::models::discard_pending(core);
 
     let core2 = core.clone();
     tokio::task::spawn_blocking(move || move_all(&core2, to))
@@ -200,8 +206,14 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
             steps.push(Step { action: Action::Missing, entry: f.clone(), old_id: f.id.clone(), src: src.clone(), dest: src });
             continue;
         }
-        // `models/<sub>/<name>` → same sub-folder in the target, name made unique.
-        let wanted = to.resolve_rel(&f.rel_path);
+        // `models/<sub>/<name>` → same sub-folder in the target, name made
+        // unique. Entries registered elsewhere in Data go to their kind's folder.
+        let in_models = f.rel_path.split(['/', '\\']).next() == Some("models");
+        let wanted = if in_models {
+            to.resolve_rel(&f.rel_path)
+        } else {
+            to.models(f.kind).join(src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("model")))
+        };
         let dir = wanted.parent().map(Path::to_path_buf).unwrap_or_else(|| to.models_root());
         let name = wanted.file_name().and_then(|n| n.to_str()).unwrap_or("model").to_string();
         let dest = local::unique_path(&dir, &name, |p| taken.contains(p) || p.exists() || local::part_path(p).exists());
@@ -249,17 +261,33 @@ enum Done {
     Copied { dest: PathBuf },
 }
 
-fn rollback(done: &[Done]) {
+/// Undo the moves; `false` if something couldn't be put back.
+#[must_use]
+fn rollback(done: &[Done]) -> bool {
+    let mut ok = true;
     for d in done.iter().rev() {
-        match d {
-            Done::Renamed { src, dest } => {
-                let _ = std::fs::rename(dest, src);
-            }
-            Done::Copied { dest } => {
-                let _ = std::fs::remove_file(dest);
-            }
-        }
+        ok &= match d {
+            Done::Renamed { src, dest } => std::fs::rename(dest, src).is_ok(),
+            Done::Copied { dest } => std::fs::remove_file(dest).is_ok() || !dest.exists(),
+        };
     }
+    ok
+}
+
+/// `e`, or — when rolling back failed — an error that says where files are.
+fn after_rollback(e: CoreError, clean: bool, from: &Path, to: &Path) -> CoreError {
+    if clean {
+        return e;
+    }
+    CoreError::new(
+        "io",
+        format!(
+            "Moving your models failed and Pinhole couldn't put every file back. Some model files may be in {} instead of {}. Move them back by hand, then restart Pinhole.",
+            to.display(),
+            from.display()
+        ),
+    )
+    .with_details(e.details.clone().unwrap_or(e.message))
 }
 
 /// Plain message for a failed move (the OS error goes to details).
@@ -318,6 +346,12 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
             if !copy_needed && std::fs::rename(&s.src, &s.dest).is_ok() {
                 return Ok(Done::Renamed { src: s.src.clone(), dest: s.dest.clone() });
             }
+            if !copy_needed {
+                // Same drive but the rename failed (e.g. a bind mount): copy instead.
+                check_free_space(s.dest.parent().unwrap_or(&s.dest), s.entry.size_bytes).map_err(|_| {
+                    CoreError::new("disk_space", "There isn't enough free space in that folder for your models. Free some space or pick another folder.")
+                })?;
+            }
             let base = done_bytes;
             let mut copied = 0u64;
             let (sha, _) = local::copy_and_hash_with(&s.src, &s.dest, |n| {
@@ -338,8 +372,8 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
         match res {
             Ok(d) => done.push(d),
             Err(e) => {
-                rollback(&done);
-                return Err(e);
+                let clean = rollback(&done);
+                return Err(after_rollback(e, clean, &from.models_root(), &to.models_root()));
             }
         }
         done_bytes += s.entry.size_bytes;
@@ -364,8 +398,8 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
         }
     };
     if let Err(e) = merged.save_to(&to, &target_file) {
-        rollback(&done);
-        return Err(e.into());
+        let clean = rollback(&done);
+        return Err(after_rollback(e.into(), clean, &from.models_root(), &to.models_root()));
     }
 
     // 3. Settings (this is what makes the next start use the new folder).
@@ -375,8 +409,8 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
         next.models_folder = to.models_home.as_ref().map(|p| p.display().to_string());
         if let Err(e) = pinhole_store::settings::save(&core.data, &next) {
             restore_target();
-            rollback(&done);
-            return Err(e.into());
+            let clean = rollback(&done);
+            return Err(after_rollback(e.into(), clean, &from.models_root(), &to.models_root()));
         }
         *settings = next;
     }
@@ -387,8 +421,15 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
     if !remap.is_empty() {
         if let Ok(presets) = pinhole_store::presets::list(&core.shipped.presets(), &core.data) {
             for mut p in presets.into_iter().filter(|p| !p.builtin) {
-                if let Some(new_id) = p.model_id.as_deref().and_then(|id| remap.get(id)) {
-                    p.model_id = Some((*new_id).to_string());
+                let mut changed = false;
+                let ids = std::iter::once(&mut p.model_id).chain(p.loras.iter_mut().map(|l| &mut l.lora_id));
+                for id in ids {
+                    if let Some(new_id) = id.as_deref().and_then(|old| remap.get(old)) {
+                        *id = Some((*new_id).to_string());
+                        changed = true;
+                    }
+                }
+                if changed {
                     let _ = pinhole_store::presets::save(&core.data, p);
                 }
             }
@@ -470,6 +511,27 @@ mod tests {
         theirs.upsert(a2);
         theirs.save(&other).unwrap();
 
+        // A preset of this install that uses `a` as its model and as an add-on.
+        let preset = pinhole_store::presets::save(
+            &core.data,
+            pinhole_store::presets::Preset {
+                id: String::new(),
+                name: "Mine".into(),
+                family: Some("sd15".into()),
+                model_id: Some(a.id.clone()),
+                civitai_version_id: None,
+                style_id: None,
+                shape: None,
+                quality: None,
+                stick: None,
+                count: None,
+                fine_tune: Default::default(),
+                loras: vec![pinhole_store::presets::PresetLora { lora_id: Some(a.id.clone()), civitai_version_id: None, name: "x".into(), weight: 1.0 }],
+                builtin: false,
+            },
+        )
+        .unwrap();
+
         let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
         assert_eq!((p.files, p.bytes, p.existing_models, p.is_default), (1, 0, 2, false));
 
@@ -482,6 +544,10 @@ mod tests {
         assert_eq!(core.settings.read().models_folder.as_deref(), Some(shared.path().to_str().unwrap()));
         let saved = pinhole_store::settings::load(&core.data).unwrap();
         assert!(saved.models_folder.is_some());
+        // The preset now points at the shared folder's entry for the same file.
+        let p = pinhole_store::presets::get(&core.shipped.presets(), &core.data, &preset.id).unwrap();
+        assert_eq!(p.model_id.as_deref(), Some("a-other"));
+        assert_eq!(p.loras[0].lora_id.as_deref(), Some("a-other"));
     }
 
     #[tokio::test]
@@ -537,6 +603,28 @@ mod tests {
         assert!(preview(&core, Some(default.to_str().unwrap())).is_err());
         assert!(preview(&core, Some("relative/path")).is_err());
         assert!(preview(&core, Some("/definitely/not/here/pinhole")).is_err());
+    }
+
+    #[test]
+    fn entries_outside_models_go_to_their_kind_folder() {
+        let (_tmp, core) = test_core();
+        let a = add(&core, "outputs/odd.safetensors", b"aaaa");
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
+        let steps = plan(&core.data, &core.installed.lock().clone(), &to, &InstalledIndex::new());
+        assert_eq!(steps[0].dest, shared.path().join("checkpoints").join("odd.safetensors"));
+        assert_eq!(steps[0].entry.rel_path, "models/checkpoints/odd.safetensors");
+        assert_eq!(steps[0].old_id, a.id);
+    }
+
+    #[tokio::test]
+    async fn refused_while_a_file_is_being_added() {
+        let (_tmp, core) = test_core();
+        let shared = tempfile::tempdir().unwrap();
+        let guard = core.models.folder_lock.try_read().unwrap();
+        let e = change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap_err();
+        assert!(e.message.contains("adding or deleting"), "{}", e.message);
+        drop(guard);
     }
 
     #[test]

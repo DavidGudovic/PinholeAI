@@ -48,6 +48,28 @@ pub struct ModelsState {
     pub(crate) browse_gen: AtomicU64,
     /// A purge of expired cache entries is scheduled.
     pub(crate) cache_purge_pending: Arc<AtomicBool>,
+    /// Adding / deleting files holds a read lock; moving the Models folder
+    /// takes the write lock, so neither starts while the other runs.
+    pub(crate) folder_lock: tokio::sync::RwLock<()>,
+}
+
+/// Read side of [`ModelsState::folder_lock`]: fails fast while the models move.
+pub(crate) fn folder_read(core: &AppCore) -> CoreResult<tokio::sync::RwLockReadGuard<'_, ()>> {
+    core.models.folder_lock.try_read().map_err(|_| CoreError::invalid("Pinhole is moving your models. Try again when it has restarted."))
+}
+
+/// `DataDir::models_dir_for_write`, refused while the Models folder moves.
+pub(crate) fn models_dir_for_write(core: &AppCore, kind: ModelKind) -> CoreResult<PathBuf> {
+    drop(folder_read(core)?);
+    Ok(core.data.models_dir_for_write(kind)?)
+}
+
+/// Drop "Add a file" copies still waiting for a family choice (the Models
+/// folder is about to move; the app restarts afterwards).
+pub(crate) fn discard_pending(core: &AppCore) {
+    for (_, p) in core.models.pending.lock().drain() {
+        remove_copy(&p);
+    }
 }
 
 /// A file copied into `Data/models/` whose family the user still has to pick.
@@ -246,35 +268,34 @@ pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
     Ok(out)
 }
 
-/// Delete a helper's files (the Describe model's llama-server is stopped first).
+/// Delete a helper's files. Refused while it's in use; the engine that has it
+/// open is stopped first (Windows can't delete an open file).
 pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
+    let _folder = folder_read(core)?;
     if helper_files(&snapshot(core), helper_id).is_empty() {
         return Err(CoreError::not_found("That helper isn't installed any more."));
     }
-    crate::describe::shutdown(core).await;
-    let mut failed = false;
+    if helper_id == DESCRIBE_HELPER_ID {
+        if core.describe.busy.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(CoreError::invalid("Wait for the picture description to finish, then delete the Describe model."));
+        }
+        crate::describe::shutdown(core).await;
+    } else {
+        if core.gen.active.lock().is_some() {
+            return Err(CoreError::invalid("Wait for the current pictures to finish, then delete it."));
+        }
+        crate::generate::shutdown(core).await;
+    }
+    let failed;
     {
         let mut index = core.installed.lock();
-        let files: Vec<InstalledFile> = helper_files(&index, helper_id).into_iter().cloned().collect();
-        for f in files {
-            if inventory::is_safe_rel_path(&f.rel_path) {
-                let abs = index.abs_path(&core.data, &f);
-                match std::fs::remove_file(&abs) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => {
-                        failed = true;
-                        continue;
-                    }
-                }
-            }
-            index.remove(&f.id);
-        }
+        let ids: Vec<String> = helper_files(&index, helper_id).into_iter().map(|f| f.id.clone()).collect();
+        failed = remove_entries(core, &mut index, &ids);
         index.save(&core.data)?;
     }
     core.emit(CoreEvent::ModelsChanged);
-    if failed {
-        return Err(CoreError::new("io", "Couldn't delete every file. Close any program using them and try again."));
+    if !failed.is_empty() {
+        return Err(CoreError::new("io", format!("Couldn't delete {}. Close any program using it and try again.", failed.join(", "))));
     }
     Ok(())
 }
@@ -384,13 +405,13 @@ pub(crate) async fn start_install(
             return Err(CoreError::invalid("This is already downloading."));
         }
         let total: u64 = items.iter().map(|(f, _)| f.size_bytes).sum();
-        let models_root = core.data.models_dir_for_write(ModelKind::Checkpoint).map(|_| core.data.models_root())?;
+        let models_root = models_dir_for_write(core, ModelKind::Checkpoint).map(|_| core.data.models_root())?;
         check_free_space(&models_root, total).map_err(|e| disk_space_error(e, &items[0].0.url))?;
 
         let mut specs = Vec::new();
         let mut planned: Vec<(PathBuf, String, Registration)> = Vec::new();
         for (f, civitai) in items {
-            let dir = core.data.models_dir_for_write(f.kind)?;
+            let dir = models_dir_for_write(core, f.kind)?;
             // Never overwrite a registered file (or one planned in this group).
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
@@ -499,6 +520,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 /// moved or changed), then resolve the family: known hash → CivitAI by-hash
 /// (online only, failures ignored) → header sniffing → ask (`needsChoice`).
 pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddFileResult> {
+    let _folder = folder_read(core)?;
     let src = PathBuf::from(path.trim());
     let ext = local::allowed_extension(&src).ok_or_else(|| {
         CoreError::invalid("Only .safetensors and .gguf files can be added. Older .ckpt/.pt files can hide harmful code.")
@@ -538,13 +560,15 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     let data_root = core.data.root.canonicalize().unwrap_or_else(|_| core.data.root.clone());
     let models_root = core.data.models_root().canonicalize().unwrap_or_else(|_| core.data.models_root());
     let src_canon = src.canonicalize().unwrap_or_else(|_| src.clone());
-    let in_place = src_canon.starts_with(&data_root) || src_canon.starts_with(&models_root);
+    // With a picked Models folder only files already in it count as in place;
+    // anything else (even a leftover in Data/models) is copied into it.
+    let in_place = src_canon.starts_with(&models_root) || (core.data.models_home.is_none() && src_canon.starts_with(&data_root));
     let (dest, sha256, size_bytes) = if in_place {
         let p = src_canon.clone();
         let (sha, size) = blocking(move || local::hash_file(&p)).await??;
         (src_canon, sha, size)
     } else {
-        let dir = core.data.models_dir_for_write(kind)?;
+        let dir = core.data.models_dir_for_write(kind)?; // folder lock held above
         check_free_space(&dir, header.file_size).map_err(|e| disk_space_error(e, ""))?;
         let name = local::sanitize_file_name(src.file_name().and_then(|n| n.to_str()).unwrap_or("model"), ext);
         let dest = local::unique_path(&dir, &name, |p| p.exists());
@@ -657,10 +681,11 @@ pub fn preview_delete(core: &AppCore, model_id: &str) -> CoreResult<DeletePrevie
 /// Delete a model and the components no other installed model needs. The
 /// engine unloads it first.
 pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
+    let _folder = folder_read(core)?;
     preview_delete(core, model_id)?;
     crate::generate::unload_model(core, model_id).await;
     let registry = core.registry();
-    let mut failed: Vec<String> = Vec::new();
+    let failed;
     {
         let mut index = core.installed.lock();
         let Some(preview) = inventory::delete_preview(&registry, &index, model_id) else {
@@ -671,22 +696,7 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
             .iter()
             .filter_map(|df| index.files.iter().find(|f| f.rel_path == df.rel_path).map(|f| f.id.clone()))
             .collect();
-        for id in ids {
-            let Some(f) = index.get(&id).cloned() else { continue };
-            if inventory::is_safe_rel_path(&f.rel_path) {
-                let abs = index.abs_path(&core.data, &f);
-                match std::fs::remove_file(&abs) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(_) => {
-                        failed.push(f.friendly_name.clone());
-                        continue;
-                    }
-                }
-                let _ = std::fs::remove_file(local::part_path(&abs));
-            }
-            index.remove(&id);
-        }
+        failed = remove_entries(core, &mut index, &ids);
         index.save(&core.data)?;
     }
     core.emit(CoreEvent::ModelsChanged);
@@ -697,6 +707,30 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
         ));
     }
     Ok(())
+}
+
+/// Delete the files of these index entries (and their `.part` leftovers) and
+/// drop the entries; returns the names of files that couldn't be deleted
+/// (their entries stay). The caller saves the index.
+fn remove_entries(core: &AppCore, index: &mut pinhole_store::InstalledIndex, ids: &[String]) -> Vec<String> {
+    let mut failed = Vec::new();
+    for id in ids {
+        let Some(f) = index.get(id).cloned() else { continue };
+        if inventory::is_safe_rel_path(&f.rel_path) {
+            let abs = index.abs_path(&core.data, &f);
+            match std::fs::remove_file(&abs) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    failed.push(f.friendly_name.clone());
+                    continue;
+                }
+            }
+            let _ = std::fs::remove_file(local::part_path(&abs));
+        }
+        index.remove(id);
+    }
+    failed
 }
 
 // ------------------------------------------------------------------ paste from CivitAI
