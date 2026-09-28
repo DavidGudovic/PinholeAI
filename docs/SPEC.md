@@ -477,6 +477,17 @@ test, packaging, README with screenshots.
 - **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
+- **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,
+  answers any CORS `Origin` (with credentials) and keeps every finished job — base64 images
+  included — at `GET /sdcpp/v1/jobs/{id}` for 600 s. Another program on this computer, or a web
+  page that finds the random port and a job id, could read recent images while the engine runs.
+  Interim mitigations: loopback-only random port; the engine is stopped on **Clear session** and
+  5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
+  after start-up Pinhole checks that the server on the port is its own child reporting the model
+  it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via
+  `LLAMA_API_KEY` and only `/health` stays public. **Real fix (follow-up):** ship a patched
+  `sd-server` build that rejects any request carrying an `Origin` header and requires a
+  per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
 
 ## 14. Open questions
 

@@ -323,7 +323,7 @@ fn new_api_key() -> String {
 /// After `wait_ready`: our child must still be running and the server on the
 /// port must report the model we launched it with (`GET /v1/models`, which also
 /// needs our API key) — otherwise another program holds the port.
-async fn verify_llama_identity(proc: &mut EngineProcess, client: &LlamaClient, model: &std::path::Path) -> CoreResult<()> {
+pub(crate) async fn verify_llama_identity(proc: &mut EngineProcess, client: &LlamaClient, model: &std::path::Path) -> CoreResult<()> {
     let taken = || CoreError::new("engine_failed", crate::generate::PORT_TAKEN_MESSAGE);
     if !proc.is_running() {
         return Err(taken().with_details("the describe engine exited while another program answered on its port"));
@@ -428,6 +428,14 @@ pub async fn shutdown(core: &AppCore) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_keys_are_random_per_launch() {
+        let (a, b) = (new_api_key(), new_api_key());
+        assert_eq!(a.len(), 64);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(a, b);
+    }
 
     #[test]
     fn describe_style_parses_like_types_ts() {

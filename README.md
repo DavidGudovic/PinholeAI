@@ -47,6 +47,12 @@ Honest limitations:
 - On Windows, the WebView2 runtime that draws Pinhole's window keeps its own browser cache under
   `%LOCALAPPDATA%\app.pinhole.desktop` (also in portable mode). Pinhole never puts prompts or
   images there.
+- The image engine (`sd-server`, from stable-diffusion.cpp) has no password on its local port and
+  keeps recently finished images for up to 10 minutes. While it runs, another program on your
+  computer — or, in theory, a web page that guesses the port — could fetch them. Pinhole limits
+  this: the engine listens on `127.0.0.1` only, on a random port, and is shut down when you click
+  **Clear session** and 5 minutes after your last image. A proper fix (an engine build that
+  requires a per-launch password) is planned. The Describe engine already uses one.
 
 ## Install
 

@@ -12,8 +12,10 @@
 //   PINHOLE_E2E_OUT      screenshots + report (default target/e2e)
 //   PINHOLE_E2E_DATA     Data folder to use (default: fresh temp folder; kept if set)
 //   PINHOLE_E2E_ENGINE   "1" (default) downloads the real CPU engine from GitHub; "0" skips it
+//   PINHOLE_E2E_MODEL    real generation: SD 1.5 .safetensors path, or "zero" (synthesized)
 //   PINHOLE_E2E_ONLY     regex: run only matching steps (state from skipped steps is missing!)
 //   PINHOLE_E2E_DEPS     where to npm-install selenium-webdriver (default <tmp>/pinhole-e2e-deps)
+//   PINHOLE_E2E_PORT     tauri-driver port (default 4444; WebKitWebDriver uses +1)
 //   TAURI_DRIVER         tauri-driver binary (default: on PATH / ~/.cargo/bin)
 //
 // PRIVACY: the sentinel prompt typed below must never reach Data/ — the last step
@@ -117,10 +119,6 @@ async function waitText(text, timeout = 15000) {
     const t = await bodyText();
     return re ? re.test(t) : t.includes(text);
   }, timeout, `text not shown: ${text}`);
-}
-
-async function waitNoText(text, timeout = 15000) {
-  await driver.wait(async () => !(await bodyText()).includes(text), timeout, `text still shown: ${text}`);
 }
 
 /** First visible element matching the XPath. */
@@ -275,14 +273,9 @@ async function toggleByLabel(label) {
   return click(`//div[div[normalize-space(.)=${lit(label)}]]/following-sibling::div//button[@role='switch'] | //label[.//span[normalize-space(.)=${lit(label)}]]/button[@role='switch']`);
 }
 
-async function switchState(label) {
-  const el = await visible(`//label[.//span[normalize-space(.)=${lit(label)}]]/button[@role='switch']`);
-  return (await el.getAttribute("aria-checked")) === "true";
-}
-
 // ------------------------------------------------------------------ fixtures
 
-/** A PNG with no chunks but IHDR/IDAT/IEND (solid gradient), for Edit/Describe imports. */
+/** A minimal PNG (IHDR/IDAT/IEND, a colour gradient) for the Edit/Describe imports. */
 function writeTestPng(file, w = 96, h = 64) {
   const crcTable = Array.from({ length: 256 }, (_, n) => {
     let c = n;
@@ -549,7 +542,9 @@ try {
     await waitText(/Recommended for your/);
     await sleep(1500);
     const recs = await invoke("get_recommended");
-    note(`get_recommended: ${recs.map((r) => `${r.role}=${r.title ?? r.modelTitle ?? r.id ?? "?"}${r.fit ? `(${r.fit})` : ""}`).join(", ")}`);
+    note(`get_recommended: ${recs.map((r) => `${r.role}=${r.title ? `${r.title} (${(r.downloadBytes / 1e9).toFixed(1)} GB${r.fit ? `, ${r.fit}` : ""})` : "none"}`).join("; ")}`);
+    const why = [...new Set(recs.filter((r) => !r.title).map((r) => r.unavailableReason))];
+    if (why.length) note(`no pick because: ${why.join(" | ")}`);
     await shot("04-firstrun-recommended");
   });
 

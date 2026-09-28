@@ -574,6 +574,147 @@ mod tests {
         assert_eq!(err.code, "not_found");
     }
 
+    /// A long-running child standing in for a Pinhole-started engine.
+    #[cfg(unix)]
+    fn fake_engine(dir: &std::path::Path, body: &str) -> pinhole_engine::EngineProcess {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(format!("fake-engine-{}.sh", uuid::Uuid::new_v4()));
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        pinhole_engine::EngineProcess::spawn(&p, &[], 1, Arc::new(pinhole_engine::LogBuffer::default())).unwrap()
+    }
+
+    #[cfg(unix)]
+    async fn put_engine(core: &AppCore, proc: pinhole_engine::EngineProcess, results_cached: bool) {
+        *core.gen.slot.lock().await = generate::EngineSlot { proc: Some(proc), args: vec![], model_id: Some("m".into()), results_cached };
+    }
+
+    #[cfg(unix)]
+    async fn engine_running(core: &AppCore) -> bool {
+        core.gen.slot.lock().await.proc.is_some()
+    }
+
+    /// sd-server keeps finished results (unauthenticated) for 600 s: Clear session
+    /// and the idle timer stop a Pinhole-started engine once it ran a job.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn clear_session_and_idle_stop_engines_that_hold_results() {
+        use std::sync::atomic::Ordering;
+        let (tmp, core, _rec) = new_core();
+
+        // No job ran yet: Clear session leaves the loaded model alone.
+        put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), false).await;
+        session::clear(&core).await;
+        assert!(engine_running(&core).await);
+        // After a job: stopped.
+        core.gen.slot.lock().await.results_cached = true;
+        session::clear(&core).await;
+        assert!(!engine_running(&core).await);
+        assert!(!crate::engine_setup::engine_status(&core).running);
+
+        // Idle stop: not while a newer job started, yes once nothing did.
+        *core.gen.idle_stop_after.lock() = Duration::from_millis(100);
+        put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), true).await;
+        let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
+        generate::arm_idle_stop(&core, epoch);
+        core.gen.activity.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(engine_running(&core).await, "a newer job started: keep the engine");
+        generate::arm_idle_stop(&core, core.gen.activity.load(Ordering::SeqCst));
+        for _ in 0..100 {
+            if !engine_running(&core).await {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(!engine_running(&core).await, "idle engine with results is stopped");
+
+        // Clear session while a job runs: the engine stops right after the job.
+        put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), true).await;
+        let run = core.gen.run_lock.lock().await;
+        session::clear(&core).await;
+        assert!(engine_running(&core).await && core.gen.clear_pending.load(Ordering::SeqCst));
+        drop(run);
+        generate::after_job(&core, core.gen.activity.load(Ordering::SeqCst)).await;
+        assert!(!engine_running(&core).await);
+    }
+
+    #[tokio::test]
+    async fn external_engines_are_never_stopped() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        *core.gen.idle_stop_after.lock() = Duration::from_millis(50);
+        let model = register_fake_model(&core, "sdxl");
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "a boat")).await.unwrap();
+        assert!(core.gen.slot.lock().await.results_cached, "a submitted job marks the engine");
+        session::clear(&core).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(core.gen.external.lock().as_deref(), Some(mock.base_url().as_str()));
+        generate::generate(&core, GenerateRequest::txt2img(model, "a boat")).await.unwrap();
+        assert_eq!(mock.requests().len(), 2);
+    }
+
+    /// Port squatting: after `wait_ready`, the server on the port must be our
+    /// live child and report the model we launched.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn engine_port_answered_by_someone_else_is_refused() {
+        let (tmp, core, _rec) = new_core();
+        let squatter = MockSdServer::start().await; // reports /mock/mock.safetensors
+        let client = pinhole_engine::SdClient::new(core.local.clone(), squatter.base_url());
+        let mut ours = fake_engine(tmp.path(), "exec sleep 30");
+        let real = tmp.path().join("model.safetensors");
+        std::fs::write(&real, b"x").unwrap();
+        let args = vec!["--model".to_string(), real.to_string_lossy().into_owned()];
+        let err = generate::verify_engine_identity(&mut ours, &client, &args).await.unwrap_err();
+        assert_eq!((err.code.as_str(), err.message.as_str()), ("engine_failed", generate::PORT_TAKEN_MESSAGE));
+        let args = vec!["--diffusion-model".to_string(), "/mock/mock.safetensors".to_string()];
+        generate::verify_engine_identity(&mut ours, &client, &args).await.unwrap();
+        ours.stop().await;
+
+        let mut dead = fake_engine(tmp.path(), "exit 0");
+        for _ in 0..100 {
+            if !dead.is_running() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let err = generate::verify_engine_identity(&mut dead, &client, &args).await.unwrap_err();
+        assert_eq!(err.message, generate::PORT_TAKEN_MESSAGE, "our child died: whoever answered isn't us");
+
+        // llama-server: /v1/models (needs our API key) must report our model.
+        let llama = MockLlamaServer::start_with_key("x", 0, Some("k-1")).await;
+        let keyed = pinhole_engine::llama::LlamaClient::new(core.local.clone(), llama.base_url()).with_api_key("k-1");
+        let mut ours = fake_engine(tmp.path(), "exec sleep 30");
+        let model = std::path::Path::new(pinhole_engine::testutil::MOCK_LLAMA_MODEL);
+        describe::verify_llama_identity(&mut ours, &keyed, model).await.unwrap();
+        let err = describe::verify_llama_identity(&mut ours, &keyed, std::path::Path::new("/other/another-model.gguf")).await.unwrap_err();
+        assert_eq!(err.message, generate::PORT_TAKEN_MESSAGE);
+        let anon = pinhole_engine::llama::LlamaClient::new(core.local.clone(), llama.base_url());
+        assert!(describe::verify_llama_identity(&mut ours, &anon, model).await.is_err(), "no key → 401 → not ours");
+        ours.stop().await;
+    }
+
+    /// Imported JPEG/WebP are re-encoded as PNG: EXIF / XMP (GPS, camera) never
+    /// reach the session, the engines or a saved file.
+    #[tokio::test]
+    async fn imported_jpeg_loses_its_exif() {
+        let (_tmp, core, _rec) = new_core();
+        let jpeg = pinhole_engine::image::jpeg_with_exif(8, 4, "GPS 52.52N PINHOLE_EXIF_SECRET");
+        assert!(has(&jpeg, "PINHOLE_EXIF_SECRET"));
+        let img = session::import_image(&core, jpeg).unwrap();
+        assert_eq!((img.width, img.height), (4, 8), "EXIF orientation applied before it is dropped");
+        let bytes = session::get(&core, &img.id).unwrap();
+        assert!(pinhole_engine::png::is_png(&bytes));
+        assert!(!has(&bytes, "PINHOLE_EXIF_SECRET"));
+        assert_eq!(pinhole_engine::png::dimensions(&bytes), Some((4, 8)));
+        let saved = session::save_image(&core, &img.id).unwrap();
+        assert!(saved.path.ends_with("_import.png"), "{}", saved.path);
+        assert!(!has(&std::fs::read(&saved.path).unwrap(), "PINHOLE_EXIF_SECRET"));
+        assert_eq!(session::import_image(&core, b"not an image".to_vec()).unwrap_err().code, "invalid");
+    }
+
     #[tokio::test]
     async fn engine_status_and_captioner_status_without_engine() {
         let (_tmp, core, _rec) = new_core();

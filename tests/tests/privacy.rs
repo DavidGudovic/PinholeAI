@@ -5,6 +5,7 @@
 //! chunks) and the OS temp dir's Pinhole entries:
 //!   * the prompt and negative sentinels must appear nowhere;
 //!   * the style sentinel may appear only under `Data/styles/`.
+//!
 //! Also checks the engine request: `embed_image_metadata: false` and the prompt +
 //! style were combined in memory and actually reached the engine.
 
@@ -113,7 +114,7 @@ async fn sentinel_prompt_never_reaches_disk() {
     assert!(!bodies.is_empty(), "the mock sd-server received no img_gen request");
     for body in &bodies {
         assert_eq!(body.get("embed_image_metadata"), Some(&json!(false)), "img_gen must send \"embed_image_metadata\": false");
-        assert!(body.get("lora").map_or(true, |l| l.is_array()), "LoRAs go in the structured `lora` array");
+        assert!(body.get("lora").is_none_or(|l| l.is_array()), "LoRAs go in the structured `lora` array");
     }
     let prompt_sent = bodies[0]["prompt"].as_str().unwrap_or_default();
     assert!(prompt_sent.contains(&s.prompt), "the prompt did not reach the engine");

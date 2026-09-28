@@ -318,7 +318,7 @@ pub(crate) async fn clear_engine_results(core: &AppCore) {
 
 /// A job just ended (run lock still held): honour a pending Clear session and
 /// arm the idle stop.
-async fn after_job(core: &Arc<AppCore>, epoch: u64) {
+pub(crate) async fn after_job(core: &Arc<AppCore>, epoch: u64) {
     if core.gen.clear_pending.swap(false, Ordering::SeqCst) {
         stop_if_results_cached(core).await;
     }
@@ -327,7 +327,7 @@ async fn after_job(core: &Arc<AppCore>, epoch: u64) {
 
 /// After [`IDLE_STOP_AFTER`] without a new generate / upscale, stop sd-server
 /// if it holds finished results.
-fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
+pub(crate) fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
     let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
     let after = *core.gen.idle_stop_after.lock();
     let weak = Arc::downgrade(core);
@@ -353,7 +353,8 @@ pub(crate) fn launched_model_path(args: &[String]) -> Option<&str> {
 }
 
 /// Same file? Exact string, canonical paths, or (when the reported path can't
-/// be resolved, e.g. re-encoded by the engine) the same file name.
+/// be resolved) the same file name: on Windows sd-server's `std::filesystem`
+/// round trip can garble non-ASCII folder names (e.g. `C:\Users\José`).
 pub(crate) fn same_file_path(reported: &str, expected: &str) -> bool {
     let (reported, expected) = (reported.trim(), expected.trim());
     if reported.is_empty() || expected.is_empty() {
@@ -1315,6 +1316,31 @@ mod tests {
         let (w, h) = size_like(1920, 1080, 1024 * 1024, 64);
         assert_eq!((w % 64, h % 64), (0, 0));
         assert_eq!(size_like(10, 10, 1, 64), (256, 256));
+    }
+
+    #[test]
+    fn launched_model_path_mirrors_the_engine() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(launched_model_path(&a(&["--diffusion-model", "/d", "--model", "/m"])), Some("/m"));
+        assert_eq!(launched_model_path(&a(&["--vae", "/v", "--diffusion-model", "/d"])), Some("/d"));
+        assert_eq!(launched_model_path(&a(&["--vae", "/v"])), None);
+    }
+
+    #[test]
+    fn same_file_path_compares_strings_canonical_paths_and_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("model.safetensors");
+        let g = tmp.path().join("other.safetensors");
+        std::fs::write(&f, b"x").unwrap();
+        std::fs::write(&g, b"y").unwrap();
+        let fs = f.to_string_lossy().into_owned();
+        assert!(same_file_path(&fs, &fs));
+        let dotted = tmp.path().join(".").join("model.safetensors");
+        assert!(same_file_path(&dotted.to_string_lossy(), &fs));
+        assert!(!same_file_path(&g.to_string_lossy(), &fs), "a different existing file");
+        assert!(same_file_path("/unresolvable/elsewhere/MODEL.safetensors", &fs), "re-encoded path: same name");
+        assert!(!same_file_path("/mock/mock.safetensors", &fs));
+        assert!(!same_file_path("", &fs) && !same_file_path(&fs, ""));
     }
 
     #[test]

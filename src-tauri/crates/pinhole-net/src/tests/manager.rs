@@ -260,3 +260,41 @@ async fn group_status_json_carries_kind() {
         assert_eq!(serde_json::to_value(kind).unwrap(), s);
     }
 }
+
+#[tokio::test]
+async fn content_check_failure_fails_the_group_with_its_message() {
+    let body = data(5_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager();
+    let mut bad = file(&srv, "/a.safetensors", dir.path(), &body);
+    bad.content_check = Some(Arc::new(|_: &std::path::Path| Err("The downloaded file isn't a valid model file, so Pinhole removed it.".into())));
+    let second = file(&srv, "/b.safetensors", dir.path(), &body);
+    let id = m.enqueue("Model".into(), vec![bad, second]);
+    let err = m.wait_detailed(&id).await.unwrap_err();
+    assert_eq!(err.code, "invalid");
+    assert_eq!(err.message, "The downloaded file isn't a valid model file, so Pinhole removed it.");
+    let st = m.status().into_iter().find(|s| s.group_id == id).unwrap();
+    assert_eq!(st.state, DownloadState::Failed);
+    assert_eq!(st.error.as_deref(), Some(err.message.as_str()));
+    assert!(!dir.path().join("a.safetensors").exists(), "rejected file removed");
+    assert!(!dir.path().join("b.safetensors").exists(), "the group stops at the rejected file");
+}
+
+#[tokio::test]
+async fn approximate_sizes_feed_the_group_total() {
+    let dir = tempfile::tempdir().unwrap();
+    let m = DownloadManager::new(HttpClient::new_for_tests(OfflineFlag::new(true), true).unwrap());
+    let spec = |name: &str, approx: u64| DownloadSpec {
+        url: format!("http://127.0.0.1:9/{name}"),
+        dest: dir.path().join(name),
+        approx_size_bytes: Some(approx),
+        label: name.into(),
+        ..Default::default()
+    };
+    let id = m.enqueue("Two files".into(), vec![spec("a", 1_000_000), spec("b", 2_000_000)]);
+    let st = m.status().into_iter().find(|s| s.group_id == id).unwrap();
+    assert_eq!(st.total_bytes, 3_000_000);
+    let _ = m.wait(&id).await;
+}

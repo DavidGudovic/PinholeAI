@@ -326,3 +326,97 @@ async fn api_key_header_reaches_origin_but_not_the_cdn() {
     // DownloadSpec never serializes its headers.
     assert!(!serde_json::to_string(&s).unwrap().contains("SECRET_KEY"));
 }
+
+#[test]
+fn size_limit_allows_one_percent_plus_one_mib() {
+    use crate::download::{size_limit, MAX_UNKNOWN_SIZE_BYTES};
+    assert_eq!(size_limit(Some(0)), 1024 * 1024);
+    assert_eq!(size_limit(Some(1_000_000_000)), 1_000_000_000 + 10_000_000 + 1024 * 1024);
+    assert_eq!(size_limit(None), MAX_UNKNOWN_SIZE_BYTES);
+    assert_eq!(size_limit(Some(u64::MAX)), u64::MAX);
+}
+
+#[tokio::test]
+async fn larger_than_expected_content_length_is_refused() {
+    let body = data(3 * 1024 * 1024);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("m.safetensors");
+    // Expected 1 MB: 3 MiB is more than 1 % + 1 MiB over.
+    let s = spec(srv.url("/m"), &dest, None, Some(1_000_000));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::TooLarge), "{e:?}");
+    assert_eq!(e.code(), "too_large");
+    assert!(e.user_message("").starts_with("The download was larger than expected"));
+    assert!(!dest.exists() && !part_path(&dest).exists());
+    assert_eq!(srv.requests().len(), 1, "not retried");
+    // Within the tolerance it's fine (the hash still decides).
+    let ok = spec(srv.url("/m"), &dest, Some(sha(&body)), Some(body.len() as u64 - 1000));
+    download_file(&client(), &ok, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+}
+
+#[tokio::test]
+async fn larger_than_expected_stream_is_cut_off() {
+    // No Content-Length: the bound is enforced while bytes arrive.
+    let body = data(3 * 1024 * 1024);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone()).without_content_length()).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("m.gguf");
+    let s = spec(srv.url("/m"), &dest, None, Some(100_000));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::TooLarge), "{e:?}");
+    assert!(!dest.exists() && !part_path(&dest).exists(), "partial data is deleted");
+}
+
+#[tokio::test]
+async fn approximate_size_is_only_a_hint() {
+    // A rounded size (e.g. `size_mb`) must not truncate, restart or bound the download.
+    let body = data(250_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |req| MockResponse::ranged(req, &b)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("vae.safetensors");
+    // A resumable part already longer than the rounded-down estimate.
+    std::fs::write(part_path(&dest), &body[..220_000]).unwrap();
+    let mut s = spec(srv.url("/vae"), &dest, Some(sha(&body)), None);
+    s.approx_size_bytes = Some(200_000);
+    assert_eq!(s.size_hint(), Some(200_000));
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+    assert_eq!(got.size_bytes, body.len() as u64);
+    assert_eq!(srv.requests()[0].header("range"), Some("bytes=220000-"), "the part was resumed, not discarded");
+}
+
+#[tokio::test]
+async fn content_check_rejects_and_deletes_the_file() {
+    let srv = MockServer::start(|_| MockResponse::ok("<html>not a model</html>")).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("m.safetensors");
+    let mut s = spec(srv.url("/m"), &dest, None, None);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let seen2 = seen.clone();
+    s.content_check = Some(Arc::new(move |p: &Path| {
+        seen2.lock().push(std::fs::read(p).unwrap_or_default());
+        Err("The downloaded file isn't a valid model file, so Pinhole removed it.".to_string())
+    }));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::Rejected(_)), "{e:?}");
+    assert_eq!(e.code(), "invalid");
+    assert_eq!(e.user_message(&s.url), "The downloaded file isn't a valid model file, so Pinhole removed it.");
+    assert_eq!(seen.lock().as_slice(), [b"<html>not a model</html>".to_vec()], "checked the finished file at dest");
+    assert!(!dest.exists() && !part_path(&dest).exists());
+    assert!(format!("{s:?}").contains("content_check: true"));
+
+    // A file that is already there (verified by hash) is checked too.
+    std::fs::write(&dest, b"cached").unwrap();
+    s.sha256 = Some(sha(b"cached"));
+    assert!(download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.is_err());
+    assert!(!dest.exists());
+
+    // Passing check → normal result.
+    s.sha256 = None;
+    s.content_check = Some(Arc::new(|_: &Path| Ok(())));
+    download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+    assert!(dest.exists());
+}

@@ -81,6 +81,12 @@ Events (`pinhole_core::events::CoreEvent` → `TauriSink` → event name + paylo
 `download-progress` (GroupStatus), `generation-progress` (GenerationProgress),
 `engine-status` (EngineStatus), `models-changed` (no payload), `hardware-ready`.
 
+Tagged payloads (so the UI never matches on labels):
+- `GroupStatus.kind`: `engine` | `model` | `captioner` | `upscaler` (`null` only for groups
+  queued without a kind) — e.g. the first-run screen finds the engine group by `kind`.
+- `ResultImage.kind`: `generated` (txt2img / img2img / edit) | `upscaled` (`upscale_image`;
+  model/seed/sampling copied from the source image, empty model id and seed 0 for an import).
+
 Errors: every failure is a `CoreError { code, message, details }`. `message` says what to do
 next ("Not enough VRAM — try the Fast setting or the smaller version of this model");
 engine output goes in `details` (UI shows it behind a "Details" toggle).
@@ -117,6 +123,10 @@ Linux NVIDIA uses Vulkan).
    structured `lora: [{path, multiplier}]`, `seed` (random if not locked; results get seed+i).
 4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
    engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
+   sd-server has no auth and keeps finished jobs (images included) for 600 s, so an engine that
+   ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
+   generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
+   and our child must be alive (else "Another program is using Pinhole's engine port").
 5. Decode base64 → strip every PNG text chunk (tEXt/zTXt/iTXt) defensively → store in
    `Session` (RAM) → return `ResultImage`s. Nothing touches disk until `save_image`.
 
@@ -161,8 +171,14 @@ what was skipped.
   any logging macro, `println!/eprintln!/dbg!`, or into `CoreError`.
 - No `log`/`tracing` crates. No `console.*` in `src/` except `console.error` of CoreError `code`.
 - Engine stdout/stderr → in-memory ring buffer (~200 lines) only; lines containing the prompt
-  or anything after `-p`/`prompt` are redacted before storage.
+  (or any of its lines / comma-separated parts of 8+ characters) or anything after
+  `-p`/`prompt` are redacted before storage.
 - `LocalClient` only talks to `127.0.0.1`; `HttpClient` is the only internet client.
+- llama-server gets a random per-launch API key through its environment (`LLAMA_API_KEY`, never
+  argv) and every request sends `Authorization: Bearer <key>`. sd-server has no auth (see §4).
+- Downloads: `DownloadSpec.size_bytes` is exact or `None` (rounded `size_mb`/`sizeKB` go in
+  `approx_size_bytes`); every download is bounded (exact size + 1 % + 1 MiB, else 64 GiB);
+  CivitAI files must pass `content_check` (safetensors/GGUF header parses) or are deleted.
 - The WebView makes no network calls: CSP `connect-src ipc: http://ipc.localhost`, images are
   `blob:` URLs from bytes returned by Rust.
 
@@ -193,4 +209,8 @@ Core service functions the `tests/` crate calls (names fixed):
 `core::session::save_image(&AppCore, id) -> CoreResult<SavedImage>`,
 `core::library::save_style(&AppCore, Style) -> CoreResult<Style>`,
 `core::library::save_preset(&AppCore, Preset) -> CoreResult<Preset>`.
-Rust request/response types mirror `src/lib/types.ts` field-for-field (serde camelCase).
+Rust request/response types mirror `src/lib/types.ts` field-for-field (serde camelCase),
+including the contract-audit additions `GroupStatus.kind` (`DownloadKind`:
+`engine|model|captioner|upscaler`, set via `DownloadManager::enqueue_kind`) and
+`ResultImage.kind` (`ResultKind`: `generated|upscaled`) — see §3.
+`core::session::clear(&AppCore)` is `async` (it may stop sd-server, see §4 Generate).

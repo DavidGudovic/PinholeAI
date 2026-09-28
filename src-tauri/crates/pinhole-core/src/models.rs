@@ -820,6 +820,25 @@ mod tests {
     }
 
     #[test]
+    fn downloaded_model_files_must_parse() {
+        let (tmp, _core) = test_core(Arc::new(Recorder::default()));
+        let check = model_file_check();
+        let good = tmp.path().join("good.safetensors");
+        safetensors(&good, SDXL_TENSORS);
+        assert_eq!(check(&good), Ok(()));
+        // An HTML error page, a pickle, an empty header, a missing file.
+        let html = tmp.path().join("page.safetensors");
+        std::fs::write(&html, b"<!DOCTYPE html><html>Please log in</html>").unwrap();
+        let pickle = tmp.path().join("m.safetensors");
+        std::fs::write(&pickle, b"\x80\x02}q\x00(X\x05\x00\x00\x00model").unwrap();
+        let empty = tmp.path().join("empty.safetensors");
+        safetensors(&empty, &[]);
+        for bad in [&html, &pickle, &empty, &tmp.path().join("missing.gguf")] {
+            assert_eq!(check(bad), Err(INVALID_MODEL_FILE.to_string()), "{}", bad.display());
+        }
+    }
+
+    #[test]
     fn main_files_keep_their_real_layout() {
         let (tmp, core) = test_core(Arc::new(Recorder::default()));
         let p = tmp.path().join("sdxl.safetensors");
@@ -881,6 +900,8 @@ mod tests {
         let g = status.iter().find(|g| g.group_id == started.group_id).unwrap();
         assert_eq!(g.label, "Z-Image Turbo");
         assert_eq!(g.file_count, 3, "model + VAE + text encoder");
+        // Registry sizes are rounded: they only feed the UI total (not `size_bytes`).
+        assert_eq!(g.total_bytes, 3_000_000);
         // A second click returns the same running group.
         let again = install_recommended(&core, "realistic").await;
         if let Ok(again) = again {
