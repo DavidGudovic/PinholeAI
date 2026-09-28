@@ -42,7 +42,7 @@ describe("parseGenerationData", () => {
     expect(p.sampler).toBe("Euler a");
     expect(p.seed).toBe(987654321);
     expect(p.resources).toEqual([
-      { type: "checkpoint", modelVersionId: 1190596, modelName: "WAI-NSFW-illustrious-SDXL", modelVersionName: "v11.0", hash: null, weight: null },
+      { type: "checkpoint", modelVersionId: 1190596, modelName: "WAI-illustrious-SDXL", modelVersionName: "v11.0", hash: null, weight: null },
       { type: "lora", modelVersionId: 456789, modelName: "Detailer, Illustrious", modelVersionName: "v1.0", hash: null, weight: 0.8 },
       { type: "embed", modelVersionId: 222, modelName: "lazyneg", modelVersionName: "v1", hash: null, weight: 1 },
     ]);

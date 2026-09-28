@@ -80,8 +80,8 @@ const SEEDS: Seed[] = [
   { name: "Fresh Upload XL", versionName: "v0.9", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["illustration"], creator: "newbie_42", thumbsUpRatio: 0.84, downloadCount: 310, mainMb: 6617, blockedReason: "CivitAI hasn't finished its safety scan for this file yet. Try again later.", createdDaysAgo: 1 },
   { name: "Hyper Realism Pro", versionName: "v7 Early Access", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "prolens", thumbsUpRatio: 0.97, downloadCount: 9_800, mainMb: 6617, earlyAccess: true, needsKey: true, createdDaysAgo: 3 },
   { name: "Cinematic Frames XL", versionName: "v2 Early Access", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "reelmaker", thumbsUpRatio: 0.94, downloadCount: 5_300, mainMb: 6617, earlyAccess: true, needsKey: true, createdDaysAgo: 6 },
-  { name: "After Dark XL", versionName: "v3", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "noctis", thumbsUpRatio: 0.93, downloadCount: 250_000, mainMb: 6617, modelNsfw: true, previewNsfw: true },
-  { name: "Anime After Dark", versionName: "v5", type: "Checkpoint", baseModel: "Illustrious", looks: ["anime"], creator: "noctis", thumbsUpRatio: 0.92, downloadCount: 180_000, mainMb: 6938, modelNsfw: true, previewNsfw: true },
+  { name: "Noir Portrait XL", versionName: "v3", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "noctis", thumbsUpRatio: 0.93, downloadCount: 250_000, mainMb: 6617, modelNsfw: true, previewNsfw: true },
+  { name: "Anime Noir", versionName: "v5", type: "Checkpoint", baseModel: "Illustrious", looks: ["anime"], creator: "noctis", thumbsUpRatio: 0.92, downloadCount: 180_000, mainMb: 6938, modelNsfw: true, previewNsfw: true },
   { name: "Stable Diffusion 3.5 Large", versionName: "Large", type: "Checkpoint", baseModel: "SD 3.5 Large", looks: ["realistic", "illustration"], creator: "Stability AI", thumbsUpRatio: 0.82, downloadCount: 95_000, mainMb: 16_000, blockedReason: "Pinhole can't run this kind of model yet (SD 3.5).", licenseNote: "Stability Community License" },
   { name: "HiDream I1 Full", versionName: "fp8", type: "Checkpoint", baseModel: "HiDream", looks: ["realistic"], creator: "HiDream.ai", thumbsUpRatio: 0.86, downloadCount: 41_000, mainMb: 17_000, blockedReason: "Pinhole can't run this kind of model yet (HiDream)." },
   // Style add-ons (LoRAs)
@@ -95,7 +95,7 @@ const SEEDS: Seed[] = [
   { name: "Retro Poster Art", versionName: "v1", type: "LORA", baseModel: "SDXL 1.0", looks: ["illustration"], creator: "poster_press", thumbsUpRatio: 0.92, downloadCount: 19_500, mainMb: 218, trainedWords: ["retro poster"] },
   { name: "Z-Image Portrait Boost", versionName: "v1", type: "LORA", baseModel: "ZImageTurbo", looks: ["realistic"], creator: "lumen_lab", thumbsUpRatio: 0.9, downloadCount: 6_200, mainMb: 162, trainedWords: [], createdDaysAgo: 5 },
   { name: "Relight (Qwen Edit)", versionName: "v1", type: "LORA", baseModel: "Qwen", looks: ["realistic", "brand"], creator: "studio_q", thumbsUpRatio: 0.91, downloadCount: 8_800, mainMb: 295, trainedWords: ["relight"], createdDaysAgo: 12 },
-  { name: "Figure Study", versionName: "v2", type: "LORA", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "atelier", thumbsUpRatio: 0.9, downloadCount: 60_000, mainMb: 218, modelNsfw: true, previewNsfw: true, trainedWords: ["figure study"] },
+  { name: "Pose Study", versionName: "v2", type: "LORA", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "atelier", thumbsUpRatio: 0.9, downloadCount: 60_000, mainMb: 218, modelNsfw: true, previewNsfw: true, trainedWords: ["pose study"] },
   { name: "Neon Cyberpunk", versionName: "v4", type: "LORA", baseModel: "SDXL 1.0", looks: ["illustration", "three_d"], creator: "neonrain", thumbsUpRatio: 0.93, downloadCount: 73_000, mainMb: 218, trainedWords: ["neon cyberpunk"], previewIsVideo: true },
 ];
 

@@ -13,7 +13,7 @@ export const PONY_A1111 = [
 export const ILLUSTRIOUS_CIVITAI = [
   "masterpiece, best quality, 1girl, red hair, forest, dappled sunlight",
   "Negative prompt: worst quality, low quality, watermark",
-  'Steps: 28, CFG scale: 5.5, Sampler: Euler a, Seed: 987654321, workflow: txt2img, Size: 832x1216, draft: false, Clip skip: 2, Created Date: 2024-11-02T10:11:12.1234567Z, Civitai resources: [{"type":"checkpoint","modelVersionId":1190596,"modelName":"WAI-NSFW-illustrious-SDXL","modelVersionName":"v11.0"},{"type":"lora","weight":0.8,"modelVersionId":456789,"modelName":"Detailer, Illustrious","modelVersionName":"v1.0"},{"type":"embed","weight":1,"modelVersionId":222,"modelName":"lazyneg","modelVersionName":"v1"}], Civitai metadata: {"remixOfId":12345}',
+  'Steps: 28, CFG scale: 5.5, Sampler: Euler a, Seed: 987654321, workflow: txt2img, Size: 832x1216, draft: false, Clip skip: 2, Created Date: 2024-11-02T10:11:12.1234567Z, Civitai resources: [{"type":"checkpoint","modelVersionId":1190596,"modelName":"WAI-illustrious-SDXL","modelVersionName":"v11.0"},{"type":"lora","weight":0.8,"modelVersionId":456789,"modelName":"Detailer, Illustrious","modelVersionName":"v1.0"},{"type":"embed","weight":1,"modelVersionId":222,"modelName":"lazyneg","modelVersionName":"v1"}], Civitai metadata: {"remixOfId":12345}',
 ].join("\n");
 
 export const FLUX_CIVITAI = [

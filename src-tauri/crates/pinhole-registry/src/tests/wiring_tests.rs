@@ -270,6 +270,7 @@ fn launch_args_flux1_dev_8gb() {
             "/c/clip_l.safetensors",
             "--t5xxl",
             "/c/t5xxl_fp8_e4m3fn.safetensors",
+            "--diffusion-fa",
             "--vae-tiling",
         ]
     );
@@ -320,6 +321,7 @@ fn launch_args_other_families_and_overrides() {
             "/m/juggernaut.safetensors",
             "--vae",
             "/c/fix",
+            "--diffusion-fa",
             "--vae-tiling"
         ]
     );
@@ -329,7 +331,7 @@ fn launch_args_other_families_and_overrides() {
     };
     assert_eq!(
         launch_args(reg, &x, &hw(6.0), &no_tiling),
-        vec!["--model", "/m/juggernaut.safetensors", "--vae", "/c/fix"]
+        vec!["--model", "/m/juggernaut.safetensors", "--vae", "/c/fix", "--diffusion-fa"]
     );
     let tiling = LaunchExtras {
         vae_tiling: Some(true),
@@ -346,7 +348,7 @@ fn launch_args_other_families_and_overrides() {
     let s = files("sd15", Layout::AllInOne, "/m/sd15.safetensors", &[]);
     assert_eq!(
         launch_args(reg, &s, &hw(0.0), &LaunchExtras::default()),
-        vec!["--model", "/m/sd15.safetensors", "--vae-tiling"]
+        vec!["--model", "/m/sd15.safetensors", "--diffusion-fa", "--vae-tiling"]
     );
 
     // Profile flags merge with family flags: bools de-dup, list options comma-merge.
@@ -1005,6 +1007,7 @@ fn launch_args_other_new_families() {
             "/c/clip_g",
             "--t5xxl",
             "/c/t5xxl_fp8",
+            "--diffusion-fa",
         ]
     );
     // Chroma: T5 only, no CLIP-L.
@@ -1017,6 +1020,7 @@ fn launch_args_other_new_families() {
             "/c/flux_ae",
             "--t5xxl",
             "/c/t5xxl_fp16",
+            "--diffusion-fa",
         ]
     );
     // HiDream-O1: one file, --model, nothing else.
@@ -1059,4 +1063,14 @@ fn minimax_h3_is_not_wired() {
     let reg = shipped();
     assert!(reg.families_for_base_model("MiniMax H3").is_empty());
     assert!(!reg.all_civitai_base_models().contains(&"MiniMax H3".to_string()));
+}
+
+#[test]
+fn weight_file_flags_cover_every_component_flag() {
+    for f in WEIGHT_FILE_FLAGS {
+        assert!(is_known_flag(f), "{f}");
+    }
+    for (_, f) in COMPONENT_FLAGS {
+        assert!(WEIGHT_FILE_FLAGS.contains(f), "{f}");
+    }
 }

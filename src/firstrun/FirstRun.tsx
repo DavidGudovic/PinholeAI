@@ -157,11 +157,11 @@ export function FirstRun(props: { onDone: () => void }) {
               <p className="mt-3 text-lg text-neutral-600 dark:text-neutral-400">Make images with AI on your own computer. No account, no cloud.</p>
               <p className="mx-auto mt-6 flex max-w-lg items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-500/10 dark:text-emerald-200">
                 <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />
-                Nothing leaves your computer except the downloads you start. Your prompts are never saved.
+                Your prompts and images stay on your computer. Pinhole only goes online for downloads you start.
               </p>
               <ul className="mx-auto mt-8 grid max-w-lg gap-4 text-left text-sm text-neutral-600 dark:text-neutral-400">
-                <Feature icon={<Lock className="h-4 w-4" />} title="Private by design">
-                  Pictures stay in memory until you save them. Closing the app forgets everything else.
+                <Feature icon={<Lock className="h-4 w-4" />} title="You choose what gets saved">
+                  New pictures are kept in memory until you click Save.
                 </Feature>
                 <Feature icon={<Sparkles className="h-4 w-4" />} title="No expert knowledge needed">
                   Pinhole picks the right models and settings for your computer.

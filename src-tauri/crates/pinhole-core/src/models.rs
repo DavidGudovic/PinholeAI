@@ -571,8 +571,17 @@ pub fn preview_delete(core: &AppCore, model_id: &str) -> CoreResult<DeletePrevie
 /// Delete a model and the components no other installed model needs. The
 /// engine unloads it first.
 pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
-    preview_delete(core, model_id)?;
-    crate::generate::unload_model(core, model_id).await;
+    let preview = preview_delete(core, model_id)?;
+    let paths: Vec<PathBuf> = {
+        let index = core.installed.lock();
+        preview
+            .files
+            .iter()
+            .filter_map(|df| index.files.iter().find(|f| f.rel_path == df.rel_path))
+            .map(|f| index.abs_path(&core.data, f))
+            .collect()
+    };
+    crate::generate::unload_model(core, model_id, &paths).await;
     let registry = core.registry();
     let mut failed: Vec<String> = Vec::new();
     {
