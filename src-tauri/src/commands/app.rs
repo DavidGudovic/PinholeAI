@@ -89,6 +89,22 @@ pub async fn install_update(handle: AppHandle, core: State<'_, Arc<AppCore>>, ve
     Ok(())
 }
 
+/// Optional GitHub token for updates while the repository is private (keychain only).
+#[tauri::command]
+pub async fn has_github_token() -> Result<bool, CoreError> {
+    Ok(update::has_github_token().await)
+}
+
+#[tauri::command]
+pub async fn set_github_token(token: String) -> Result<(), CoreError> {
+    update::set_github_token(token).await
+}
+
+#[tauri::command]
+pub async fn clear_github_token() -> Result<(), CoreError> {
+    update::clear_github_token().await
+}
+
 /// Open the GitHub release page in the system browser (the WebView never navigates).
 #[tauri::command]
 pub async fn open_release_page(handle: AppHandle, version: Option<String>) -> Result<(), CoreError> {
@@ -109,5 +125,8 @@ super::area_commands![
     open_outputs_folder,
     check_for_updates,
     install_update,
-    open_release_page
+    open_release_page,
+    has_github_token,
+    set_github_token,
+    clear_github_token
 ];

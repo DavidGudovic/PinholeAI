@@ -47,7 +47,7 @@ pub fn net_error(e: NetError) -> CoreError {
     }
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> CoreResult<T> {
+pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> CoreResult<T> {
     tokio::task::spawn_blocking(f).await.map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))
 }
 
