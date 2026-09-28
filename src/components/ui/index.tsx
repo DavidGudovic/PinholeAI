@@ -113,8 +113,11 @@ export function VramBadge({ vram, fit, compact = false }: { vram: VramNeed | nul
   const label = fit === "fits" ? "Fits" : fit === "tight" ? "Tight" : fit === "tooBig" ? "Too big" : null;
   const tone = fit === "fits" ? "green" : fit === "tight" ? "amber" : "red";
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400">
-      {compact ? `~${formatGb(vram.gb)}` : `Needs ~${formatGb(vram.gb)} VRAM${vram.estimate ? " (estimate)" : ""}`}
+    <span
+      className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
+      title={`Needs ~${formatGb(vram.gb)} VRAM${vram.estimate ? " (estimate)" : ""}`}
+    >
+      {compact ? `~${formatGb(vram.gb)} VRAM` : `Needs ~${formatGb(vram.gb)} VRAM${vram.estimate ? " (estimate)" : ""}`}
       {label && <Badge tone={tone}>{label}</Badge>}
     </span>
   );

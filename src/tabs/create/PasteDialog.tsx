@@ -262,7 +262,17 @@ export function PasteSummary({ outcome, onDismiss, onOutcome }: { outcome: Paste
           <div className="font-medium">
             Settings applied{outcome.modelName ? ` for ${outcome.modelName}` : ""}
           </div>
-          <p className="mt-0.5 text-xs leading-relaxed text-neutral-600 dark:text-neutral-400">{outcome.applied.join(" · ") || "Nothing to apply"}</p>
+          {outcome.applied.length ? (
+            <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Applied">
+              {outcome.applied.map((a) => (
+                <li key={a} className="rounded-md bg-white/80 px-1.5 py-0.5 text-[11px] leading-4 text-neutral-700 ring-1 ring-emerald-200 ring-inset dark:bg-neutral-900/60 dark:text-neutral-300 dark:ring-emerald-900/60">
+                  {a}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-0.5 text-xs text-neutral-500">Nothing to apply</p>
+          )}
         </div>
         <IconButton label="Dismiss summary" size="sm" onClick={onDismiss} className="-mt-1 -mr-1">
           <X className="h-4 w-4" />

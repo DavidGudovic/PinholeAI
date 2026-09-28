@@ -7,8 +7,9 @@ export function useFitBox(container: RefObject<HTMLElement | null>, naturalW: nu
     const el = container.current;
     if (!el || !naturalW || !naturalH) return;
     const measure = () => {
-      const cw = el.clientWidth;
-      const ch = el.clientHeight;
+      const cs = getComputedStyle(el);
+      const cw = el.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+      const ch = el.clientHeight - (parseFloat(cs.paddingTop) || 0) - (parseFloat(cs.paddingBottom) || 0);
       const scale = Math.min(cw / naturalW, ch / naturalH, 2);
       const width = Math.max(1, Math.floor(naturalW * scale));
       const height = Math.max(1, Math.floor(naturalH * scale));

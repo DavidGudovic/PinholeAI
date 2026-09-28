@@ -373,7 +373,7 @@ export function EditTab() {
               erase={erase}
               onPainted={setPainted}
             />
-            {node?.meta && <p className="shrink-0 pb-1 text-center text-xs text-neutral-500 tabular-nums">{settingsSummary(node.meta)}</p>}
+            {node?.meta && <p className="-mt-3 shrink-0 pb-3 text-center text-xs text-neutral-500 tabular-nums">{settingsSummary(node.meta)}</p>}
 
             <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">
               <ol className="flex items-center gap-1.5 overflow-x-auto pb-1" aria-label="Edit history">

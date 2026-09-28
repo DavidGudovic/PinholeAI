@@ -517,6 +517,49 @@ mod tests {
         let engine_events = rec.0.lock().iter().filter(|e| matches!(e, CoreEvent::Engine(_))).count();
         assert!(engine_events >= 2, "installing → installed events");
         assert!(core.downloads.status().iter().any(|g| g.label.starts_with("Image engine")));
+
+        // The describe engine (llama.cpp .tar.gz with symlinks) installs and runs too.
+        let llama = crate::engine_setup::install_kind(&core, pinhole_engine::install::EngineKind::Llama).await.expect("llama install");
+        let out = std::process::Command::new(&llama.exe).arg("--version").current_dir(&llama.dir).output().unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(text.contains("11235"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn layout_follows_installed_kind_for_all_in_one_flux() {
+        let (_tmp, core, _) = new_core();
+        let reg = core.registry();
+        let fam = reg.family("flux1_dev").unwrap().clone();
+        let hw = crate::app::hw_context(&core);
+        let (rel, size) = write_dummy(&core, ModelKind::Checkpoint, "flux-aio.safetensors");
+        let aio = InstalledFile {
+            id: "aio".into(),
+            rel_path: rel,
+            kind: ModelKind::Checkpoint,
+            sha256: "1".repeat(64),
+            size_bytes: size,
+            family: Some("flux1_dev".into()),
+            component_id: None,
+            friendly_name: "Flux AIO".into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+        };
+        // No shared components installed: fine for an all-in-one checkpoint…
+        let files = crate::generate::model_files(&core, &aio, &fam, &hw).unwrap();
+        assert_eq!(files.layout, pinhole_registry::Layout::AllInOne);
+        let args = pinhole_registry::wiring::launch_args(&reg, &files, &hw, &Default::default());
+        assert!(args.iter().any(|a| a == "--model" || a == "-m"), "{args:?}");
+        assert!(!args.iter().any(|a| a == "--diffusion-model"), "{args:?}");
+        // …but a diffusion-only file of the same family must have them.
+        let mut dif = aio.clone();
+        dif.kind = ModelKind::Diffusion;
+        let (rel, _) = write_dummy(&core, ModelKind::Diffusion, "flux-dit.safetensors");
+        dif.rel_path = rel;
+        let err = crate::generate::model_files(&core, &dif, &fam, &hw).unwrap_err();
+        assert_eq!(err.code, "not_found");
     }
 
     #[tokio::test]

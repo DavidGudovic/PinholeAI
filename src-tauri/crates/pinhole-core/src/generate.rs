@@ -24,7 +24,7 @@ use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
 use pinhole_engine::sdapi::{ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, JobStatus, LoraRef, SampleParams, SdClient, UpscaleRequest, VaeTilingRequest};
 use pinhole_registry::style::FinalPrompt;
 use pinhole_registry::wiring::{self, Dials, FamilyUi, FineTune, GenMode, HwContext, LaunchExtras, ModelFiles, Quality, Shape};
-use pinhole_registry::Family;
+use pinhole_registry::{Family, Layout};
 use pinhole_store::datadir::ModelKind;
 use pinhole_store::InstalledFile;
 use serde::{Deserialize, Serialize};
@@ -406,8 +406,18 @@ fn component_label(kind: &str) -> &'static str {
     }
 }
 
-/// Main file + installed components for `family` on this hardware.
-fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwContext) -> CoreResult<ModelFiles> {
+/// Main file + installed components for `family` on this hardware. The layout
+/// comes from how the file is installed (Checkpoint → all-in-one `--model`,
+/// Diffusion → `--diffusion-model`): CivitAI all-in-one Flux files are
+/// checkpoints of a diffusion-only family and carry their own VAE/encoders, so
+/// for those, missing shared components are not an error.
+pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwContext) -> CoreResult<ModelFiles> {
+    let layout = match model.kind {
+        ModelKind::Checkpoint => Layout::AllInOne,
+        ModelKind::Diffusion => Layout::DiffusionOnly,
+        _ => family.layout,
+    };
+    let components_optional = layout == Layout::AllInOne && family.layout == Layout::DiffusionOnly;
     let reg = core.registry();
     let required = wiring::required_components(&reg, family, hw);
     let idx = core.installed.lock();
@@ -422,6 +432,7 @@ fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwCo
             Some(f) if idx.abs_path(&core.data, f).is_file() => {
                 components.insert(rc.kind.clone(), idx.abs_path(&core.data, f));
             }
+            _ if components_optional => {}
             _ => {
                 let file = reg.component(&rc.component_id).map(|c| c.file.clone()).unwrap_or_else(|| rc.component_id.clone());
                 missing.push(format!("{} ({file})", component_label(&rc.kind)));
@@ -435,7 +446,7 @@ fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwCo
             if missing.len() == 1 { "it" } else { "them" }
         )));
     }
-    Ok(ModelFiles { family_id: family.id.clone(), main, layout: family.layout, components })
+    Ok(ModelFiles { family_id: family.id.clone(), main, layout, components })
 }
 
 // ================================================================ engine lifecycle
