@@ -24,3 +24,8 @@ parking_lot = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }
+
+[features]
+# Exposes `testutil::MockSdServer` (a fake sd-server that embeds the prompt in
+# PNG text chunks) for privacy/integration tests.
+test-util = []

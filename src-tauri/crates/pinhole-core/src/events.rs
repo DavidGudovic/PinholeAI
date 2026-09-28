@@ -76,3 +76,10 @@ pub struct NullSink;
 impl EventSink for NullSink {
     fn emit(&self, _event: CoreEvent) {}
 }
+
+/// Returned by install commands; progress arrives as `download-progress` for `group_id`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstallStarted {
+    pub group_id: String,
+}

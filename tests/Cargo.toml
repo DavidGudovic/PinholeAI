@@ -10,11 +10,11 @@ description = "Workspace-level integration tests: privacy sentinel scan, offline
 path = "lib.rs"
 
 [dependencies]
-pinhole-core = { workspace = true }
-pinhole-net = { workspace = true }
+pinhole-core = { workspace = true, features = ["test-util"] }
+pinhole-net = { workspace = true, features = ["test-util"] }
 pinhole-store = { workspace = true }
 pinhole-registry = { workspace = true }
-pinhole-engine = { workspace = true }
+pinhole-engine = { workspace = true, features = ["test-util"] }
 tokio = { workspace = true }
 tempfile = { workspace = true }
 serde_json = { workspace = true }

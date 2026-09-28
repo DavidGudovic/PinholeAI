@@ -173,3 +173,24 @@ what was skipped.
   PNG tEXt chunk (proves scrubbing + no disk writes), offline-mode test, engine smoke test
   (`PINHOLE_SMOKE=1`, real sd-server + tiny model, 256×256 on CPU) run in CI.
 - Frontend: vitest for `src/lib/**` logic (paste parser, dial math), `npm run build` must pass.
+
+## 7. Cross-area hooks (stubbed in code — implement, don't rename)
+| Function | Implemented by | Used by |
+|---|---|---|
+| `core::app::hw_context(core) -> HwContext` | store | engine, catalog |
+| `core::models::register_download(core, &DownloadedFile, Registration)` | catalog | engine (captioner, upscaler, engine files are NOT registered) |
+| `core::describe::install_captioner(core)` | engine | catalog (recommended "describe" role) |
+| `core::generate::unload_model(core, model_id)` | engine | catalog (delete) |
+| `core::testing::{use_external_engine, register_fake_model}` (feature `test-util`) | engine | ci (`tests/`) |
+| `pinhole_engine::testutil::MockSdServer` (feature `test-util`): `start().await`, `base_url()`, `requests()` | engine | ci (`tests/`) |
+| `pinhole_net::HttpClient::new_for_tests(offline, allow_loopback_http)` (feature `test-util`) | net | ci, engine, catalog tests |
+| `src/firstrun/RecommendedCards.tsx` `RecommendedCards({roles, compact, showGetAll})` | frontend B | frontend A |
+| `src/tabs/models/ModelsTab.tsx`, `src/settings/SettingsSheet.tsx`, `src/firstrun/FirstRun.tsx` | frontend B | frontend A (shell) |
+| `src/components/ui/*` primitives | frontend A | frontend B (import only) |
+
+Core service functions the `tests/` crate calls (names fixed):
+`core::generate::generate(&Arc<AppCore>, GenerateRequest) -> CoreResult<GenerateResult>`,
+`core::session::save_image(&AppCore, id) -> CoreResult<SavedImage>`,
+`core::library::save_style(&AppCore, Style) -> CoreResult<Style>`,
+`core::library::save_preset(&AppCore, Preset) -> CoreResult<Preset>`.
+Rust request/response types mirror `src/lib/types.ts` field-for-field (serde camelCase).

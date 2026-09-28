@@ -19,6 +19,8 @@ pub mod generate;
 pub mod library;
 pub mod models;
 pub mod session;
+#[cfg(feature = "test-util")]
+pub mod testing;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,7 +33,7 @@ use pinhole_registry::Registry;
 use pinhole_store::{DataDir, InstalledIndex, Settings};
 
 pub use error::{CoreError, CoreResult};
-pub use events::{CoreEvent, EventSink, NullSink};
+pub use events::{CoreEvent, EventSink, InstallStarted, NullSink};
 
 /// Paths to read-only shipped files (Tauri resources in release, repo `config/` in dev).
 #[derive(Debug, Clone)]
