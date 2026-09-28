@@ -39,9 +39,28 @@ export function createDials(c: CreateParams, ui: FamilyUi | null): Dials {
   return { shape: c.shape, quality: c.quality, stick: c.stick ?? defaultStickPosition(ui), count: c.count };
 }
 
+// Rust types: steps/width/height u32, clipSkip i32, seed i64. A value serde can't
+// parse (typed "-5", "2.5") would fail the whole IPC call with a raw serde error.
+const UINT_KEYS = ["steps", "width", "height"] as const;
+const INT_KEYS = ["clipSkip", "seed"] as const;
+
+/** Drop numbers the Rust side can't deserialize (= use the registry default). */
+function dropInvalidNumbers<T extends PresetFineTune>(ft: T): T {
+  const out = { ...ft };
+  for (const k of UINT_KEYS) {
+    const v = out[k];
+    if (v != null && !(Number.isInteger(v) && v >= 0)) delete out[k];
+  }
+  for (const k of INT_KEYS) {
+    const v = out[k];
+    if (v != null && !Number.isSafeInteger(v)) delete out[k];
+  }
+  return out;
+}
+
 /** Drop overrides the family can't use. */
 export function effectiveFineTune(ft: FineTune, ui: FamilyUi | null): FineTune {
-  const out = compactFineTune(ft);
+  const out = dropInvalidNumbers(compactFineTune(ft));
   if (ui && !ui.usesNegativePrompt) delete out.negativePrompt;
   if (out.negativePrompt != null && !out.negativePrompt.trim()) delete out.negativePrompt;
   if (ui && !ui.autoPromptPrefix) delete out.autoPromptPrefix;
@@ -141,11 +160,12 @@ export function presetFromCreate(
   c: CreateParams,
   opts: { model: InstalledModel | null; loras: InstalledLora[]; id?: string },
 ): Preset {
-  const fineTune: PresetFineTune = {};
+  let fineTune: PresetFineTune = {};
   for (const k of PRESET_FINE_TUNE_KEYS) {
     const v = c.fineTune[k];
     if (v !== undefined && v !== null) (fineTune as Record<string, unknown>)[k] = v;
   }
+  fineTune = dropInvalidNumbers(fineTune);
   const loras: PresetLora[] = c.loras.map((u) => {
     const l = opts.loras.find((x) => x.id === u.loraId);
     return { loraId: u.loraId, civitaiVersionId: l?.civitaiVersionId ?? null, name: l?.friendlyName ?? u.loraId, weight: u.weight };
@@ -230,6 +250,12 @@ export function applyPreset(
 
 /** One-line settings summary for a result card (never the prompt). */
 export function settingsSummary(r: ResultImage): string {
+  if (r.kind === "upscaled") {
+    // Rust copies model/seed/sampling from the source (empty model id + seed 0 for an imported image).
+    const parts = ["Upscaled", `${r.width}×${r.height}`];
+    if (r.modelId) parts.push(`from ${r.modelLabel}`, `seed ${r.seed}`);
+    return parts.join(" · ");
+  }
   const parts = [r.modelLabel, `${r.width}×${r.height}`];
   if (r.steps > 0) parts.push(`${r.steps} steps`);
   if (r.guidance != null) parts.push(`guidance ${fmt(r.guidance)}`);

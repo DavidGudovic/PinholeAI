@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import { styleById } from "./library";
+import { touchLastUsed } from "./models";
 import { FAMILY_UI } from "../state/familyFixtures";
 import type {
   CoreError,
@@ -28,6 +29,8 @@ interface SessionImage {
   width: number;
   height: number;
   seed: number;
+  /** Generated/upscaled images only (imported ones have none), like Rust. */
+  meta?: ResultImage;
 }
 const session = new Map<string, SessionImage>();
 let idSeq = 0;
@@ -248,9 +251,9 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
         c = paintScene(w, h, seed, familyId);
       }
       const id = newId();
-      session.set(id, { bytes: await toPng(c), width: w, height: h, seed });
-      images.push({
+      const meta: ResultImage = {
         id,
+        kind: "generated",
         width: w,
         height: h,
         seed,
@@ -263,8 +266,11 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
         sampler: req.fineTune.sampler ?? ui.defaultSampler,
         scheduler: req.fineTune.scheduler ?? ui.defaultScheduler,
         parentId: src ? (req.refImageIds?.[0] ?? req.initImageId ?? null) : null,
-      });
+      };
+      session.set(id, { bytes: await toPng(c), width: w, height: h, seed, meta });
+      images.push(meta);
     }
+    touchLastUsed(model.id);
     progress({ phase: "done" }, started);
     return { images };
   } finally {
@@ -376,25 +382,26 @@ const table: MockTable = {
       g.imageSmoothingQuality = "high";
       g.drawImage(bmp, 0, 0, w, h);
       const id = newId();
-      session.set(id, { bytes: await toPng(c), width: w, height: h, seed: im.seed });
-      progress({ phase: "done" }, started);
-      const models = await invoke<InstalledModel[]>("list_models").catch(() => []);
-      const m = models.find((x) => x.id === loadedModel);
-      return {
-        id,
-        width: w,
-        height: h,
-        seed: im.seed,
-        modelId: m?.id ?? "upscaler",
-        modelLabel: `Upscaled ${factor}×`,
-        familyId: m?.familyId ?? "",
+      // Like Rust: copy the source image's settings; an imported source has none.
+      const base: ResultImage = im.meta ?? {
+        id: "",
+        width: 0,
+        height: 0,
+        seed: 0,
+        modelId: "",
+        modelLabel: "Upscaled image",
+        familyId: "",
         steps: 0,
         cfg: 0,
         guidance: null,
         sampler: null,
         scheduler: null,
-        parentId: String(a.id),
-      } satisfies ResultImage;
+        parentId: null,
+      };
+      const meta: ResultImage = { ...base, id, kind: "upscaled", width: w, height: h, parentId: String(a.id) };
+      session.set(id, { bytes: await toPng(c), width: w, height: h, seed: base.seed, meta });
+      progress({ phase: "done" }, started);
+      return meta;
     } finally {
       running = false;
     }

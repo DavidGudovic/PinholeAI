@@ -9,6 +9,7 @@ import type {
   AddFileResult,
   CoreError,
   DeletePreview,
+  DownloadKind,
   FamilyChoice,
   Fit,
   GroupStatus,
@@ -102,6 +103,8 @@ interface LoraRow extends InstalledLora {
 
 const HOUR = 3600_000;
 const now = Date.now();
+/** `lastUsed` is Unix SECONDS, as Rust sends it (installed.json). */
+const secsAgo = (ms: number) => Math.floor((now - ms) / 1000);
 
 const seedModels: ModelRow[] = [
   {
@@ -114,7 +117,7 @@ const seedModels: ModelRow[] = [
     isEditModel: false,
     sizeBytes: 12300 * MB,
     vram: { gb: 16, minGb: 12, estimate: false },
-    lastUsed: now - 2 * HOUR,
+    lastUsed: secsAgo(2 * HOUR),
     licenseNote: "Apache 2.0",
     civitaiModelId: null,
     civitaiVersionId: null,
@@ -131,7 +134,7 @@ const seedModels: ModelRow[] = [
     isEditModel: false,
     sizeBytes: 6776 * MB,
     vram: { gb: 9.5, minGb: 6, estimate: true },
-    lastUsed: now - 3 * 24 * HOUR,
+    lastUsed: secsAgo(3 * 24 * HOUR),
     licenseNote: "CreativeML Open RAIL++-M",
     civitaiModelId: 133005,
     civitaiVersionId: 782002,
@@ -165,7 +168,7 @@ const seedModels: ModelRow[] = [
     isEditModel: false,
     sizeBytes: 12110 * MB,
     vram: { gb: 14, minGb: 10, estimate: true },
-    lastUsed: now - 40 * 24 * HOUR,
+    lastUsed: secsAgo(40 * 24 * HOUR),
     licenseNote: "Non-commercial license",
     civitaiModelId: 618692,
     civitaiVersionId: 691639,
@@ -256,6 +259,12 @@ export function registerLora(row: Omit<LoraRow, "id">): InstalledLora {
 
 export const modelsChanged = () => mockEmit("models-changed", null);
 
+/** Rust sets `lastUsed` (Unix seconds) after every successful generation. */
+export function touchLastUsed(modelId: string) {
+  const m = state().models.find((x) => x.id === modelId);
+  if (m) m.lastUsed = Math.floor(Date.now() / 1000);
+}
+
 // ---------------------------------------------------------------- download simulator (shared with app.ts / catalog.ts)
 export interface MockFile {
   name: string;
@@ -263,6 +272,8 @@ export interface MockFile {
 }
 
 interface DownloadOpts {
+  /** GroupStatus.kind, as Rust tags it. Default "model". */
+  kind?: DownloadKind;
   /** Total simulated time. Default scales mildly with size (8–16 s). */
   durationMs?: number;
   /** Fail when this fraction is reached (0…1). */
@@ -292,6 +303,7 @@ export function startMockDownload(label: string, files: MockFile[], opts: Downlo
   let g: GroupStatus = {
     groupId,
     label,
+    kind: opts.kind ?? "model",
     state: "queued",
     currentFile: files[0]?.name ?? null,
     fileIndex: 0,
@@ -526,10 +538,11 @@ async function installRecommended(role: string) {
   if (pick.installed) throw err("invalid", "This model is already installed.");
   if (pick.unavailableReason) throw err("vram", pick.unavailableReason);
   if (role === "describe") {
-    const groupId = startMockDownload("Qwen2.5-VL 3B describer", [
+    const groupId = startMockDownload("Describe model", [
       { name: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", bytes: 1900 * MB },
       { name: "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", bytes: 850 * MB },
     ], {
+      kind: "captioner",
       onDone: () => {
         captionerInstalled = true;
         modelsChanged();

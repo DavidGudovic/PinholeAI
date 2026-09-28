@@ -1,7 +1,7 @@
 // OWNER: frontend B. Settings sheet (SPEC §8). Every change is saved immediately.
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, CircleCheck, Download, FolderOpen, KeyRound, RotateCw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Check, CircleCheck, Download, FolderOpen, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   appInfo,
   asCoreError,
@@ -184,7 +184,9 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
 
   const st = engine.status;
   const wantBackend = hw?.backend ?? null;
-  const backendMismatch = !!st?.installed && !!wantBackend && !!st.backend && st.backend !== wantBackend;
+  // engine_status always describes the build for the CURRENT backend (st.backend): after
+  // switching backend it reports "not installed" until that build is downloaded, and
+  // install_engine is a no-op for a build that is already installed (no "Reinstall").
 
   return (
     <div className="-mt-1 divide-y divide-neutral-200 dark:divide-neutral-800">
@@ -292,24 +294,19 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
-                  <TriangleAlert className="h-4 w-4" /> Not installed
+                  <TriangleAlert className="h-4 w-4" /> Not installed{st.backend ? ` · ${backendShort(st.backend)}` : ""}
                 </span>
               )}
               {st?.installed && st.version && <div className="text-xs text-neutral-500">Version {st.version}</div>}
               {st && !st.installed && !engine.busy && <div className="text-xs text-neutral-500">Pinhole can't make pictures until the engine is installed.</div>}
             </div>
-            {st && !engine.busy && (
-              <Button size="sm" variant={!st.installed || backendMismatch ? "primary" : "secondary"} onClick={() => void engine.install()}>
-                {st.installed ? <RotateCw className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
-                {st.installed ? "Reinstall" : "Install engine"}
+            {st && !st.installed && !engine.busy && (
+              <Button size="sm" variant="primary" onClick={() => void engine.install()}>
+                <Download className="h-3.5 w-3.5" />
+                Install engine
               </Button>
             )}
           </div>
-          {backendMismatch && !engine.busy && (
-            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-              You picked {backendShort(wantBackend)}, but the installed engine is {backendShort(st?.backend)}. Reinstall to switch.
-            </p>
-          )}
           {engine.busy && (
             <div className="mt-3">
               {engine.group ? (

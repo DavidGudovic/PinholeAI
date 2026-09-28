@@ -261,7 +261,11 @@ async fn download_and_unpack(core: &Arc<AppCore>, kind: EngineKind, cfg: &Arc<En
         EngineKind::Sd => format!("Image engine ({})", backend_label(&sel.backend)),
         EngineKind::Llama => format!("Describe engine ({})", backend_label(&sel.backend)),
     };
-    let group = core.downloads.enqueue(label, specs);
+    let kind_tag = match kind {
+        EngineKind::Sd => pinhole_net::download::DownloadKind::Engine,
+        EngineKind::Llama => pinhole_net::download::DownloadKind::Captioner,
+    };
+    let group = core.downloads.enqueue_kind(label, kind_tag, specs);
     let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
     unpack_downloaded(core, kind, cfg, sel, files).await
 }

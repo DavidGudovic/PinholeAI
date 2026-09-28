@@ -42,6 +42,14 @@ fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// WebDriver e2e runs (`tests/e2e`, tauri-driver sets `TAURI_WEBVIEW_AUTOMATION=true`).
+/// On Linux wry gives an incognito webview its own ephemeral WebKit context with
+/// automation switched off, so WebKitWebDriver could never attach. Debug builds
+/// only: a release build is always incognito.
+fn under_webdriver() -> bool {
+    cfg!(debug_assertions) && std::env::var("TAURI_WEBVIEW_AUTOMATION").as_deref() == Ok("true")
+}
+
 /// The main window is built here rather than in tauri.conf.json so it can be
 /// private: incognito means the WebView keeps no cookies, cache or storage on
 /// disk, and in portable mode its profile folder lives inside `Data/` instead
@@ -52,7 +60,7 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
         .inner_size(1280.0, 860.0)
         .min_inner_size(900.0, 640.0)
         .disable_drag_drop_handler()
-        .incognito(true);
+        .incognito(!under_webdriver());
     if let Some(dir) = webview_dir {
         builder = builder.data_directory(dir);
     }
@@ -70,7 +78,8 @@ pub fn run() {
             let handle = app.handle().clone();
             let shipped = shipped_paths(&handle);
             let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
-            let webview_dir = data.portable.then(|| data.root.join("webview"));
+            // Under WebDriver the (non-incognito) profile stays inside the test's Data/.
+            let webview_dir = (data.portable || under_webdriver()).then(|| data.root.join("webview"));
             let core = AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone()))).map_err(|e| e.message)?;
             create_main_window(&handle, webview_dir)?;
             {

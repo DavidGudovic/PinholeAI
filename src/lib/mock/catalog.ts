@@ -248,7 +248,8 @@ const PAGE = 24;
 
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
-  if (mockSettings().offline) return { items: [], nextCursor: null, offline: true, partial: false };
+  // Rust: no request; the cursor is handed back unchanged.
+  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false };
   if (q.query.toLowerCase() === "fail")
     throw err(
       "network",

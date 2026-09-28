@@ -182,6 +182,13 @@ describe("requests", () => {
     expect(req.addTriggerWords).toBe(true);
   });
 
+  it("drops numbers Rust can't deserialize (u32 steps/size, integer seed/clip skip)", () => {
+    const create = { ...withModels().create, prompt: "p", fineTune: { steps: -5, width: 832.5, height: 1216, clipSkip: 1.5, seed: -1, cfg: 4.5 } };
+    const req = buildCreateRequest(create, { ui: FAMILY_UI.sdxl, loras: [], model: model("m1", "sdxl"), settings: null });
+    expect(req.fineTune).toEqual({ height: 1216, seed: -1, cfg: 4.5 });
+    expect(presetFromCreate("P", create, { model: null, loras: [] }).fineTune).toEqual({ height: 1216, seed: -1, cfg: 4.5 });
+  });
+
   it("filters LoRAs that don't match the model's architecture", () => {
     let s = run(withModels(), { type: "selectModel", modelId: "m1" });
     s = run(s, { type: "patchCreate", patch: { loras: [{ loraId: "p", weight: 0.8 }, { loraId: "x", weight: 1 }, { loraId: "gone", weight: 1 }] } });
@@ -299,6 +306,14 @@ describe("settingsSummary", () => {
     expect(settingsSummary(result("a", 42))).toBe("Model One · 1024×1024 · 30 steps · CFG 6 · dpm++2m karras · seed 42");
     expect(settingsSummary(result("a", 1, { guidance: 3.5, cfg: 1, sampler: "euler", scheduler: null }))).toBe(
       "Model One · 1024×1024 · 30 steps · guidance 3.5 · euler · seed 1",
+    );
+  });
+
+  it("labels upscales instead of repeating the source's sampling settings", () => {
+    expect(settingsSummary(result("u", 42, { kind: "upscaled", width: 2048, height: 2048 }))).toBe("Upscaled · 2048×2048 · from Model One · seed 42");
+    // Upscale of an imported image: Rust sends an empty model id and seed 0.
+    expect(settingsSummary(result("u", 0, { kind: "upscaled", modelId: "", modelLabel: "Upscaled image", steps: 0, cfg: 0, sampler: null, scheduler: null }))).toBe(
+      "Upscaled · 1024×1024",
     );
   });
 });

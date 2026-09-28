@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { GroupStatus } from "../../../lib/types";
-import { getTagged, hideFinished, knownGroupIds, newestGroupSince, tagGroup, upsertGroup } from "./downloads";
+import { getTagged, hideFinished, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, upsertGroup } from "./downloads";
 
-const g = (groupId: string, label: string, state: GroupStatus["state"] = "downloading"): GroupStatus => ({
+const g = (groupId: string, label: string, state: GroupStatus["state"] = "downloading", kind: GroupStatus["kind"] = "model"): GroupStatus => ({
   groupId,
   label,
+  kind,
   state,
   currentFile: null,
   fileIndex: 0,
@@ -23,14 +24,20 @@ describe("downloads store", () => {
     expect(getTagged("rec:missing")).toBeNull();
   });
 
-  it("finds the group a call started without returning its id (engine)", () => {
+  it("finds the group a call started without returning its id (engine, by kind)", () => {
     const before = knownGroupIds();
+    const isEngine = (x: GroupStatus) => x.kind === "engine";
     upsertGroup(g("x1", "Some model"));
-    upsertGroup(g("x2", "Image engine (CUDA)"));
+    upsertGroup(g("x2", "Image engine (NVIDIA CUDA)", "downloading", "engine"));
     upsertGroup(g("x3", "Another model"));
-    expect(newestGroupSince(before, /engine/i)?.groupId).toBe("x2");
-    expect(newestGroupSince(before)?.groupId).toBe("x3");
-    expect(newestGroupSince(knownGroupIds(), /engine/i)).toBeNull();
+    // The Describe engine lives in a "captioner" group: never mistaken for the image engine.
+    upsertGroup(g("x4", "Describe engine (Vulkan)", "downloading", "captioner"));
+    expect(newestGroupSince(before, isEngine)?.groupId).toBe("x2");
+    expect(newestGroupSince(before)?.groupId).toBe("x4");
+    expect(newestGroupSince(knownGroupIds(), isEngine)).toBeNull();
+    expect(newestActiveOfKind("engine")?.groupId).toBe("x2");
+    upsertGroup(g("x2", "Image engine (NVIDIA CUDA)", "done", "engine"));
+    expect(newestActiveOfKind("engine")).toBeNull();
   });
 
   it("can hide finished groups without touching active ones", () => {

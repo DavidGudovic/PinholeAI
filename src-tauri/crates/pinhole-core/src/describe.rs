@@ -202,7 +202,7 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
     let parts = missing_parts(core)?;
     let (specs, roles): (Vec<DownloadSpec>, Vec<Part>) = parts.into_iter().unzip();
     std::fs::create_dir_all(core.data.models(ModelKind::Captioner))?;
-    let group_id = core.downloads.enqueue("Describe model".into(), specs);
+    let group_id = core.downloads.enqueue_kind("Describe model".into(), pinhole_net::download::DownloadKind::Captioner, specs);
     *core.describe.last_error.lock() = None;
     let core2 = core.clone();
     let gid = group_id.clone();

@@ -233,6 +233,7 @@ mod tests {
     fn meta(id: &str) -> ResultImage {
         ResultImage {
             id: id.into(),
+            kind: crate::generate::ResultKind::Generated,
             width: 4,
             height: 4,
             seed: 1234,

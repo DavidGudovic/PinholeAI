@@ -541,12 +541,30 @@ impl DownloadState {
     }
 }
 
+/// What a group downloads, so the UI can find e.g. the engine group without
+/// matching on its label. `DownloadKind` in `src/lib/types.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadKind {
+    /// The image engine (sd-server).
+    Engine,
+    /// A model / LoRA plus the components it needs.
+    Model,
+    /// The Describe model (and the llama.cpp engine it runs on).
+    Captioner,
+    /// The Real-ESRGAN upscaler.
+    Upscaler,
+}
+
 /// Progress of a group (what the UI shows as one row).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GroupStatus {
     pub group_id: String,
     pub label: String,
+    /// `None` for groups queued with plain [`DownloadManager::enqueue`].
+    #[serde(default)]
+    pub kind: Option<DownloadKind>,
     pub state: DownloadState,
     /// Label of the file currently downloading.
     pub current_file: Option<String>,
@@ -625,10 +643,20 @@ impl DownloadManager {
     /// Queue a group. Returns its id immediately; completion is observable via
     /// [`DownloadManager::subscribe`] or [`DownloadManager::wait`].
     pub fn enqueue(&self, label: String, files: Vec<DownloadSpec>) -> String {
+        self.enqueue_group(label, None, files)
+    }
+
+    /// [`DownloadManager::enqueue`] with a [`DownloadKind`] the UI can match on.
+    pub fn enqueue_kind(&self, label: String, kind: DownloadKind, files: Vec<DownloadSpec>) -> String {
+        self.enqueue_group(label, Some(kind), files)
+    }
+
+    fn enqueue_group(&self, label: String, kind: Option<DownloadKind>, files: Vec<DownloadSpec>) -> String {
         let group_id = uuid::Uuid::new_v4().to_string();
         let status = GroupStatus {
             group_id: group_id.clone(),
             label,
+            kind,
             state: DownloadState::Queued,
             current_file: None,
             file_index: 0,

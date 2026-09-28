@@ -110,8 +110,12 @@ function uniqueId(base: string, taken: string[]): string {
   return id;
 }
 
+/** Rust order: built-ins by name, then the user's by name. */
+const byName = <T extends { name: string; id: string }>(list: T[]) =>
+  list.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id.localeCompare(b.id));
+
 export function allStyles(): Style[] {
-  return [...userStyles, ...BUILTIN_STYLES];
+  return [...byName(BUILTIN_STYLES), ...byName(userStyles)];
 }
 
 export function styleById(id: string | null | undefined): Style | null {
@@ -129,6 +133,8 @@ const table: MockTable = {
     if (!st?.name?.trim() || !st.positive?.trim()) throw err("invalid", "Give the style a name and describe the look.");
     if (st.builtin || BUILTIN_STYLES.some((b) => b.id === st.id)) throw err("invalid", "Built-in styles can't be changed. Duplicate it to make your own.");
     const existing = userStyles.find((s) => s.id === st.id);
+    // Rust: a non-empty id must name an existing user style.
+    if (st.id?.trim() && !existing) throw err("not_found", "Style was not found. It may have been deleted.");
     const saved: Style = {
       ...st,
       id: existing ? existing.id : uniqueId(slug(st.name), allStyles().map((s) => s.id)),
@@ -146,7 +152,7 @@ const table: MockTable = {
   },
   list_presets: async () => {
     await sleep(60);
-    return [...userPresets, ...BUILTIN_PRESETS];
+    return [...byName(BUILTIN_PRESETS), ...byName(userPresets)];
   },
   save_preset: async (a) => {
     await sleep(120);
@@ -159,6 +165,7 @@ const table: MockTable = {
     void _s;
     void _d;
     const existing = userPresets.find((x) => x.id === p.id);
+    if (p.id?.trim() && !existing) throw err("not_found", "Preset was not found. It may have been deleted.");
     const saved: Preset = {
       ...p,
       fineTune,

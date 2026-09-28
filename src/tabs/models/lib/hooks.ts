@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { asCoreError, engineStatus, installEngine, onEngine } from "../../../lib/api";
 import type { CoreError, EngineStatus, GroupStatus } from "../../../lib/types";
-import { getTagged, knownGroupIds, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
+import { getTagged, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
 
 /** Subscribe to a Tauri event helper from api.ts for the component's lifetime. */
 export function useTauriEvent<A extends unknown[]>(subscribe: (cb: (...args: A) => void) => Promise<UnlistenFn>, cb: (...args: A) => void) {
@@ -34,7 +34,9 @@ export function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
-/** Engine status + install with progress (the engine group is found by its label / novelty). */
+const isEngineGroup = (g: GroupStatus) => g.kind === "engine";
+
+/** Engine status + install with progress (the engine group is the newest group with kind "engine"). */
 export function useEngine() {
   const [status, setStatus] = useState<EngineStatus | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
@@ -71,7 +73,9 @@ export function useEngine() {
   }, [refresh]);
 
   let group: GroupStatus | null = null;
-  if (busy && before.current) group = newestGroupSince(before.current, /engine/i);
+  if (busy && before.current) group = newestGroupSince(before.current, isEngineGroup);
+  // Started elsewhere (Top bar, error "Set up engine" button, another screen).
+  if (!group && status?.installing) group = newestActiveOfKind("engine");
   if (!group) {
     const tagged = getTagged("engine");
     if (tagged && (busy || status?.installing || tagged.state === "failed")) group = tagged;

@@ -304,7 +304,7 @@ pub(crate) async fn start_install(
             };
             planned.push((dest, inflight_key(&f), reg));
         }
-        let group_id = core.downloads.enqueue(label, specs);
+        let group_id = core.downloads.enqueue_kind(label, pinhole_net::download::DownloadKind::Model, specs);
         for (_, key, _) in &planned {
             inflight.insert(key.clone(), group_id.clone());
         }

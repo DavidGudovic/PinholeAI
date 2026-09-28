@@ -58,12 +58,12 @@ const table: MockTable = {
   install_captioner: async () => {
     await sleep(200);
     const groupId = startMockDownload(
-      "Qwen2.5-VL 3B describer",
+      "Describe model",
       [
         { name: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", bytes: 1900 * MB },
         { name: "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", bytes: 850 * MB },
       ],
-      { durationMs: 5000, onDone: () => (installed = true) },
+      { kind: "captioner", durationMs: 5000, onDone: () => (installed = true) },
     );
     return { groupId };
   },

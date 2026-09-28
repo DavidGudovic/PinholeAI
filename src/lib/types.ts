@@ -85,9 +85,14 @@ export interface EngineStatus {
 // ---------------------------------------------------------------- downloads
 export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
 
+/** What a download group fetches (match on this, never on the label). */
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler";
+
 export interface GroupStatus {
   groupId: string;
   label: string;
+  /** engine = image engine (installEngine); captioner = Describe model (+ its engine). null = untagged. */
+  kind?: DownloadKind | null;
   state: DownloadState;
   currentFile: string | null;
   fileIndex: number;
@@ -120,6 +125,7 @@ export interface InstalledModel {
   sizeBytes: number;
   vram: VramNeed | null;
   fit: Fit | null;
+  /** Unix time in SECONDS of the last generation with this model. */
   lastUsed: number | null;
   /** Components the family needs that are not installed (labels). Empty = ready. */
   missingComponents: string[];
@@ -266,8 +272,12 @@ export interface GenerateRequest {
   maskImageId?: string | null;
 }
 
+/** generated = txt2img/img2img/edit; upscaled = upscaleImage (model/seed/sampling copied from the source image). */
+export type ResultKind = "generated" | "upscaled";
+
 export interface ResultImage {
   id: string;
+  kind?: ResultKind;
   width: number;
   height: number;
   seed: number;

@@ -56,13 +56,20 @@ export function mockSettings(): Settings {
   return settings;
 }
 
-function validateSettings(s: Settings): Settings {
-  const allowedGpu = s.gpu === "auto" || s.gpu === "cpu" || /^gpu:\d+$/.test(s.gpu);
-  if (!allowedGpu) throw err("invalid", "That graphics card setting isn't valid. Pick one from the list.");
-  if (!["auto", "cuda", "vulkan", "cpu"].includes(s.engineBackend)) throw err("invalid", "Unknown engine backend.");
-  if (s.vramOverrideGb != null && (s.vramOverrideGb < 1 || s.vramOverrideGb > 192))
-    throw err("invalid", "Graphics memory must be between 1 and 192 GB.");
-  return s;
+/** Mirrors Rust `Settings::normalized`: unknown values fall back to defaults (never an error). */
+function normalizeSettings(s: Settings): Settings {
+  const gpu = String(s.gpu ?? "").trim().toLowerCase();
+  const pick = <T extends string>(v: T, allowed: readonly string[], d: T): T => (allowed.includes(v) ? v : d);
+  const vram = s.vramOverrideGb;
+  return {
+    ...s,
+    gpu: gpu === "auto" || gpu === "cpu" || /^gpu:\d+$/.test(gpu) ? gpu : "auto",
+    vramOverrideGb: vram != null && Number.isFinite(vram) && vram > 0 ? Math.min(vram, 1024) : null,
+    contentMode: pick(s.contentMode, ["safe", "include_18plus", "only_18plus"], "safe"),
+    savedMetadata: pick(s.savedMetadata, ["none", "settings"], "none"),
+    theme: pick(s.theme, ["system", "light", "dark"], "system"),
+    engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),
+  };
 }
 
 // ---------------------------------------------------------------- hardware
@@ -77,22 +84,25 @@ function gpus(): GpuInfo[] {
 let hwReady = false;
 let hwTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Rust effective_hardware: "Force CPU" or engine backend cpu → no GPU at all. */
+const cpuOnly = () => mockSettings().gpu === "cpu" || mockSettings().engineBackend === "cpu";
+
 function selectedGpu(): GpuInfo | null {
   const s = mockSettings();
   const list = gpus();
-  if (s.gpu === "cpu") return null;
+  if (cpuOnly()) return null;
+  const best = list.slice().sort((a, b) => b.vramGb - a.vramGb)[0] ?? null;
   if (s.gpu.startsWith("gpu:")) {
     const idx = Number(s.gpu.slice(4));
-    return list.find((g) => g.index === idx) ?? null;
+    return list.find((g) => g.index === idx) ?? best; // unknown index → best GPU (like Rust)
   }
-  return list.slice().sort((a, b) => b.vramGb - a.vramGb)[0] ?? null;
+  return best;
 }
 
 /** Effective VRAM after overrides (0 = CPU only). Used by the models/catalog mocks for Fits/Tight/Too big. */
 export function effectiveVramGb(): number {
-  const g = selectedGpu();
-  if (!g) return 0;
-  return mockSettings().vramOverrideGb ?? g.vramGb;
+  if (cpuOnly()) return 0;
+  return mockSettings().vramOverrideGb ?? selectedGpu()?.vramGb ?? 0;
 }
 
 function tierFor(vram: number): string {
@@ -105,6 +115,7 @@ function tierFor(vram: number): string {
 
 function backendFor(g: GpuInfo | null): string {
   const s = mockSettings();
+  if (cpuOnly()) return "cpu";
   if (s.engineBackend !== "auto") return s.engineBackend;
   if (!g) return "cpu";
   return g.vendor === "nvidia" ? "cuda" : "vulkan";
@@ -134,40 +145,56 @@ export function hardwareView(): HardwareView {
 }
 
 // ---------------------------------------------------------------- engine
+// Mirrors Rust engine_status: one engine build per backend. `backend` and
+// `version` always name the build for the CURRENT backend (Settings / GPU), and
+// `installed` says whether that build is on disk — switching backend in
+// Settings reports "not installed" until it is downloaded. install_engine is a
+// no-op when that build is already installed.
 const ENGINE_VERSION = "master-3a9b1c2";
-let engine: EngineStatus | null = null;
+let installedBackends: Set<string> | null = null;
+let engineFlags: Pick<EngineStatus, "installing" | "running" | "loading" | "loadedModelId" | "error"> = {
+  installing: false,
+  running: false,
+  loading: false,
+  loadedModelId: null,
+  error: null,
+};
 let failEngineOnce: boolean | null = null;
 
-function engineState(): EngineStatus {
-  if (!engine) {
-    const installed = mockFlags().skipFirstRun;
-    engine = {
-      installed,
-      installing: false,
-      version: installed ? ENGINE_VERSION : null,
-      backend: installed ? backendFor(selectedGpu()) : null,
-      running: false,
-      loading: false,
-      loadedModelId: null,
-      error: null,
-    };
-  }
-  return engine;
+function backends(): Set<string> {
+  if (!installedBackends) installedBackends = new Set(mockFlags().skipFirstRun ? [backendFor(selectedGpu())] : []);
+  return installedBackends;
 }
 
-function setEngine(e: EngineStatus) {
-  engine = e;
-  mockEmit("engine-status", e);
+function engineState(): EngineStatus {
+  const backend = backendFor(selectedGpu());
+  return { ...engineFlags, installed: backends().has(backend), version: ENGINE_VERSION, backend };
+}
+
+function setEngine(flags: Partial<typeof engineFlags>) {
+  engineFlags = { ...engineFlags, ...flags };
+  mockEmit("engine-status", engineState());
 }
 
 const MB = 1024 * 1024;
 
+let pendingInstall: Promise<EngineStatus> | null = null;
+
+/** Like Rust: a second call waits for the running install (then retries if it failed). */
 async function installEngine(): Promise<EngineStatus> {
   await sleep(300);
-  if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to download the engine.");
-  if (engineState().installing) throw err("invalid", "The engine is already downloading.");
-  if (failEngineOnce == null) failEngineOnce = mockFlags().failEngine;
+  while (pendingInstall) await pendingInstall.catch(() => undefined);
   const backend = backendFor(selectedGpu());
+  if (backends().has(backend)) return engineState();
+  if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to browse or download.");
+  pendingInstall = downloadEngine(backend).finally(() => {
+    pendingInstall = null;
+  });
+  return pendingInstall;
+}
+
+function downloadEngine(backend: string): Promise<EngineStatus> {
+  if (failEngineOnce == null) failEngineOnce = mockFlags().failEngine;
   const files =
     backend === "cuda"
       ? [
@@ -177,25 +204,27 @@ async function installEngine(): Promise<EngineStatus> {
       : backend === "vulkan"
         ? [{ name: `sd-${ENGINE_VERSION}-bin-win-vulkan-x64.zip`, bytes: 31 * MB }]
         : [{ name: `sd-${ENGINE_VERSION}-bin-win-cpu-x64.zip`, bytes: 9 * MB }];
-  const label = `Image engine (${backend === "cuda" ? "CUDA" : backend === "vulkan" ? "Vulkan" : "CPU"})`;
-  setEngine({ ...engineState(), installing: true, error: null });
+  const label = `Image engine (${backend === "cuda" ? "NVIDIA CUDA" : backend === "vulkan" ? "Vulkan" : "CPU"})`;
+  setEngine({ installing: true, error: null });
   const fail = failEngineOnce;
   failEngineOnce = false;
   return new Promise<EngineStatus>((resolve, reject) => {
     startMockDownload(label, files, {
+      kind: "engine",
       durationMs: 7000,
       failAt: fail ? 0.45 : undefined,
       onDone: () => {
-        setEngine({ ...engineState(), installed: true, installing: false, version: ENGINE_VERSION, backend, error: null });
+        backends().add(backend);
+        setEngine({ installing: false, error: null });
         resolve(engineState());
       },
       onFail: (e) => {
-        setEngine({ ...engineState(), installing: false, error: e.message });
+        setEngine({ installing: false, error: e.message });
         reject(e);
       },
       onCancel: () => {
-        setEngine({ ...engineState(), installing: false });
-        reject(err("cancelled", "Engine download cancelled."));
+        setEngine({ installing: false });
+        reject(err("cancelled", "Cancelled"));
       },
     });
   });
@@ -220,7 +249,7 @@ const table: MockTable = {
   get_settings: async () => ({ ...mockSettings() }),
   set_settings: async (a) => {
     await sleep(60);
-    const next = validateSettings({ ...(a.settings as Settings) });
+    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings) });
     settings = next;
     return { ...next };
   },

@@ -119,13 +119,16 @@ export function knownGroupIds(): Set<string> {
   return new Set(order);
 }
 
-/** Newest group not in `before`, preferring one whose label mentions `hint`. */
-export function newestGroupSince(before: Set<string>, hint?: RegExp): GroupStatus | null {
-  const fresh = snapshot.filter((g) => !before.has(g.groupId));
-  if (!fresh.length) return null;
-  const hinted = hint ? fresh.filter((g) => hint.test(g.label)) : [];
-  const list = hinted.length ? hinted : fresh;
-  return list[list.length - 1];
+/** Newest group not in `before` (only groups matching `match` when given). */
+export function newestGroupSince(before: Set<string>, match?: (g: GroupStatus) => boolean): GroupStatus | null {
+  const fresh = snapshot.filter((g) => !before.has(g.groupId) && (!match || match(g)));
+  return fresh.length ? fresh[fresh.length - 1] : null;
+}
+
+/** Newest active group of `kind` (e.g. the engine download started from another screen). */
+export function newestActiveOfKind(kind: NonNullable<GroupStatus["kind"]>): GroupStatus | null {
+  for (let i = snapshot.length - 1; i >= 0; i--) if (snapshot[i].kind === kind && isActive(snapshot[i])) return snapshot[i];
+  return null;
 }
 
 export { useVersion as useDownloadsVersion };

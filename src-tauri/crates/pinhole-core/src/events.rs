@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use pinhole_net::download::GroupStatus;
+pub use pinhole_net::download::{DownloadKind, GroupStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -234,3 +234,29 @@ fn dropped_runtime_does_not_wedge_the_queue() {
         m.wait(&id).await.unwrap();
     });
 }
+
+/// The IPC shape the UI reads (`GroupStatus` / `DownloadKind` in src/lib/types.ts).
+#[tokio::test]
+async fn group_status_json_carries_kind() {
+    let m = manager();
+    let plain = m.enqueue("Nothing".into(), vec![]);
+    let engine = m.enqueue_kind("Image engine (CPU)".into(), crate::download::DownloadKind::Engine, vec![]);
+    m.wait(&engine).await.unwrap();
+    m.wait(&plain).await.unwrap();
+    let all = m.status();
+    let find = |id: &str| serde_json::to_value(all.iter().find(|s| s.group_id == id).unwrap()).unwrap();
+    let e = find(&engine);
+    assert_eq!(e["kind"], "engine");
+    assert_eq!(e["groupId"], engine.as_str());
+    for k in ["label", "state", "currentFile", "fileIndex", "fileCount", "downloadedBytes", "totalBytes", "error"] {
+        assert!(e.get(k).is_some(), "{k}");
+    }
+    assert!(find(&plain)["kind"].is_null());
+    for (kind, s) in [
+        (crate::download::DownloadKind::Model, "model"),
+        (crate::download::DownloadKind::Captioner, "captioner"),
+        (crate::download::DownloadKind::Upscaler, "upscaler"),
+    ] {
+        assert_eq!(serde_json::to_value(kind).unwrap(), s);
+    }
+}

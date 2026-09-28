@@ -109,11 +109,25 @@ impl std::fmt::Debug for GenerateRequest {
     }
 }
 
+/// `ResultKind`: how a session image was made.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResultKind {
+    /// txt2img / img2img / edit output.
+    #[default]
+    Generated,
+    /// Output of `upscale_image`. Model / seed / sampling fields are copied from
+    /// the source image (empty model id and seed 0 for an imported source).
+    Upscaled,
+}
+
 /// `ResultImage`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ResultImage {
     pub id: String,
+    #[serde(default)]
+    pub kind: ResultKind,
     pub width: u32,
     pub height: u32,
     pub seed: i64,
@@ -892,6 +906,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),
+            kind: ResultKind::Generated,
             width: w,
             height: h,
             seed: seed + i as i64,
@@ -1027,6 +1042,7 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
     let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((src.width * factor, src.height * factor));
     let mut meta = src.meta.clone().unwrap_or(ResultImage {
         id: String::new(),
+        kind: ResultKind::Upscaled,
         width: 0,
         height: 0,
         seed: 0,
@@ -1041,6 +1057,7 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
         parent_id: None,
     });
     meta.id = uuid::Uuid::new_v4().to_string();
+    meta.kind = ResultKind::Upscaled;
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
@@ -1103,7 +1120,7 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         label: "Upscaler (Real-ESRGAN 4×)".into(),
         headers: vec![],
     };
-    let group = core.downloads.enqueue("Upscaler (Real-ESRGAN 4×)".into(), vec![spec]);
+    let group = core.downloads.enqueue_kind("Upscaler (Real-ESRGAN 4×)".into(), pinhole_net::download::DownloadKind::Upscaler, vec![spec]);
     let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
     let file = files.into_iter().next().ok_or_else(|| CoreError::internal("The upscaler download is incomplete. Try again."))?;
     let reg_file = crate::models::register_download(
@@ -1180,6 +1197,7 @@ mod tests {
     fn result_image_serializes_camel_case() {
         let r = ResultImage {
             id: "a".into(),
+            kind: ResultKind::Upscaled,
             width: 1,
             height: 2,
             seed: 3,
@@ -1194,8 +1212,10 @@ mod tests {
             parent_id: None,
         };
         let v = serde_json::to_value(&r).unwrap();
-        for k in ["id", "width", "height", "seed", "modelId", "modelLabel", "familyId", "steps", "cfg", "guidance", "sampler", "scheduler", "parentId"] {
+        for k in ["id", "kind", "width", "height", "seed", "modelId", "modelLabel", "familyId", "steps", "cfg", "guidance", "sampler", "scheduler", "parentId"] {
             assert!(v.get(k).is_some(), "{k}");
         }
+        assert_eq!(v["kind"], "upscaled");
+        assert_eq!(serde_json::to_value(ResultKind::Generated).unwrap(), "generated");
     }
 }

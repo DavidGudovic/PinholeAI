@@ -96,7 +96,8 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
       if (id !== reqId.current) return;
       setOffline(page.offline);
       setItems((prev) => (cursor ? mergePage(prev, page.items) : page.items));
-      setNextCursor(page.nextCursor);
+      // Offline pages echo the request cursor (Rust): don't keep paging against it.
+      setNextCursor(page.offline ? null : page.nextCursor);
       setPartial(page.partial);
     } catch (e) {
       if (id === reqId.current) setError(asCoreError(e));

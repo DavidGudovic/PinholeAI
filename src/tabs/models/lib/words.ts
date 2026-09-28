@@ -98,10 +98,10 @@ export function progressText(g: Pick<GroupStatus, "downloadedBytes" | "totalByte
   return `${formatBytes(g.downloadedBytes)} of ${formatBytes(g.totalBytes)} · ${Math.floor(groupFraction(g) * 100)}%`;
 }
 
-/** Relative "last used" in plain words. `now` injectable for tests. Timestamps are ms since epoch. */
+/** Relative "last used" in plain words. `now` (ms) injectable for tests. Rust sends Unix seconds; ms also accepted. */
 export function lastUsedText(ts: number | null | undefined, now: number = Date.now()): string {
   if (ts == null || !Number.isFinite(ts) || ts <= 0) return "Never";
-  // Accept seconds as well as milliseconds (Rust may send either).
+  // Rust sends seconds (InstalledModel.lastUsed); milliseconds are accepted too.
   const ms = ts < 1e12 ? ts * 1000 : ts;
   const diff = now - ms;
   if (diff < 0) return "Just now";
