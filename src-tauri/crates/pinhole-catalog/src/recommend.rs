@@ -173,6 +173,7 @@ fn empty_pick(role: &str, unavailable_reason: Option<String>) -> RecommendedPick
         quant: None,
         license_note: None,
         unavailable_reason,
+        note: None,
     }
 }
 
@@ -198,8 +199,16 @@ fn required_complete(registry: &Registry, family: &Family, hw: &HwContext, index
     families::missing_components(registry, family, hw, index, false).is_empty()
 }
 
-fn installed_of_family<'a>(index: &'a InstalledIndex, family_id: &str) -> Option<&'a InstalledFile> {
-    index.models().find(|m| m.family.as_deref() == Some(family_id))
+/// Shown on a pick that is a smaller version of the model, chosen so it fits.
+pub const SMALLER_NOTE: &str =
+    "Smaller version, picked so it fits your graphics card. Pictures keep their size; fine detail is a little softer. It runs at about the same speed.";
+/// Shown when the installed version is a tight fit and a smaller one fits.
+pub const TIGHT_INSTALLED_NOTE: &str = "The version you have is a tight fit for your graphics card: it runs slower and can run out of memory. This smaller version fits: fine detail is a little softer, and it runs faster and more reliably.";
+
+/// Registry option a file was downloaded from (by SHA-256, else file name).
+fn option_of<'a>(options: &'a [QuantOption], file: &InstalledFile) -> Option<&'a QuantOption> {
+    let name = file.rel_path.rsplit('/').next().unwrap_or(&file.rel_path);
+    options.iter().find(|o| o.sha256.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(&file.sha256)) || o.file.eq_ignore_ascii_case(name))
 }
 
 fn registry_pick(
@@ -214,42 +223,62 @@ fn registry_pick(
     let title = cand.title.clone().unwrap_or_else(|| fam.label.clone());
     let comps = component_files(registry, fam, hw, index);
     let comp_bytes: u64 = comps.iter().map(|f| f.size_bytes).sum();
-
-    if let Some(m) = installed_of_family(index, family_id) {
-        let (need, fit) = families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes);
-        let complete = required_complete(registry, fam, hw, index);
-        let quant = m.dtype.clone().unwrap_or_else(|| families::quant_of_file(&m.rel_path));
-        return Ok(PickPlan {
-            pick: RecommendedPick {
-                role: role.into(),
-                role_label: role_label(role),
-                title: Some(title.clone()),
-                family_id: Some(family_id.into()),
-                good_at: good_at(role),
-                download_bytes: comp_bytes,
-                vram: Some(need),
-                fit: Some(fit),
-                installed: complete,
-                quant: Some(families::quant_of_file(&quant)).filter(|q| q != "unknown"),
-                license_note: fam.license_note.clone(),
-                unavailable_reason: None,
-            },
-            action: if comps.is_empty() { PickAction::Nothing } else { PickAction::Download { label: title, files: comps } },
-        });
-    }
-
-    let spec = fam.download.as_ref().ok_or(Skip::Broken)?;
-    let options = families::quant_options(spec);
+    let options = fam.download.as_ref().map(families::quant_options).unwrap_or_default();
     let prefer = registry.hardware_profile(hw.vram_gb).prefer_quant.clone();
     let need_of = |o: &QuantOption| -> VramNeed {
-        o.vram
-            .as_ref()
-            .or(fam.vram_gb.as_ref())
-            .map(families::need_from)
-            .unwrap_or_else(|| vram::estimate(registry, fam, o.size_bytes, families::gpu_component_bytes(registry, fam, hw)))
+        o.vram.as_ref().or(fam.vram_gb.as_ref()).map(families::need_from).unwrap_or_else(|| families::estimate_need(registry, fam, hw, o.size_bytes))
     };
-    let (opt, need, fit) =
-        families::choose_quant(&options, prefer.as_deref(), |o| families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes)).ok_or(Skip::Vram)?;
+    let chosen = families::choose_quant(&options, prefer.as_deref(), |o| families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes));
+
+    // Installed versions of this family, best fit first.
+    let mut installed: Vec<(&InstalledFile, VramNeed, Fit)> = index
+        .models()
+        .filter(|m| m.family.as_deref() == Some(family_id))
+        .map(|m| {
+            let (n, f) = families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes);
+            (m, n, f)
+        })
+        .collect();
+    installed.sort_by_key(|(_, _, f)| fit_rank(*f));
+    let mut note = None;
+    if let Some((m, need, fit)) = installed.first().cloned() {
+        // A tight installed version, and a smaller registry version that Fits isn't installed yet:
+        // offer that one instead (the installed file stays; both show in the model picker).
+        let smaller = chosen.as_ref().filter(|(o, _, f)| {
+            fit != Fit::Fits && *f == Fit::Fits && !installed.iter().any(|(i, _, _)| option_of(&options, i).is_some_and(|io| io.file == o.file))
+        });
+        if smaller.is_none() {
+            let complete = required_complete(registry, fam, hw, index);
+            let quant = m.dtype.clone().unwrap_or_else(|| families::quant_of_file(&m.rel_path));
+            return Ok(PickPlan {
+                pick: RecommendedPick {
+                    role: role.into(),
+                    role_label: role_label(role),
+                    title: Some(title.clone()),
+                    family_id: Some(family_id.into()),
+                    good_at: good_at(role),
+                    download_bytes: comp_bytes,
+                    vram: Some(need),
+                    fit: Some(fit),
+                    installed: complete,
+                    quant: Some(families::quant_of_file(&quant)).filter(|q| q != "unknown"),
+                    license_note: fam.license_note.clone(),
+                    unavailable_reason: None,
+                    note: None,
+                },
+                action: if comps.is_empty() { PickAction::Nothing } else { PickAction::Download { label: title, files: comps } },
+            });
+        }
+        note = Some(TIGHT_INSTALLED_NOTE.to_string());
+    }
+
+    if options.is_empty() {
+        return Err(Skip::Broken);
+    }
+    let (opt, need, fit) = chosen.ok_or(Skip::Vram)?;
+    if note.is_none() && options.first().is_some_and(|best| best.file != opt.file) {
+        note = Some(SMALLER_NOTE.to_string());
+    }
     let main = FileToGet {
         url: opt.url.clone(),
         file_name: opt.file.clone(),
@@ -280,9 +309,18 @@ fn registry_pick(
             quant: Some(opt.quant.clone()).filter(|q| q != "unknown"),
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
+            note,
         },
         action: PickAction::Download { label: title, files },
     })
+}
+
+fn fit_rank(f: Fit) -> u8 {
+    match f {
+        Fit::Fits => 0,
+        Fit::Tight => 1,
+        Fit::TooBig => 2,
+    }
 }
 
 /// A YAML id that is a real number (`TODO` and other strings → `None`).
@@ -316,7 +354,7 @@ fn civitai_pick(
             .as_ref()
             .or(fam.vram_gb.as_ref())
             .map(families::need_from)
-            .or_else(|| size.map(|s| vram::estimate(registry, fam, s, families::gpu_component_bytes(registry, fam, hw))))
+            .or_else(|| size.map(|s| families::estimate_need(registry, fam, hw, s)))
             .map(|n| families::need_and_fit(registry, fam, hw, n, size.unwrap_or(0))),
     };
     if installed_file.is_none() && !need_fit.is_some_and(|(_, f)| f != Fit::TooBig) {
@@ -339,6 +377,7 @@ fn civitai_pick(
             quant: None,
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
+            note: None,
         },
         action: if installed { PickAction::Nothing } else { PickAction::Civitai { version_id, family_id: family_id.into() } },
     })
@@ -379,6 +418,7 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
         quant: None,
         license_note: None,
         unavailable_reason: None,
+        note: None,
     };
     match cand.captioner.as_deref() {
         Some("reuse") if captioner_reuse_available(registry, index) => {
@@ -445,17 +485,19 @@ mod tests {
     fn eight_gb() {
         let p = picks(8.0, &index(vec![]));
         let r = role(&p, "realistic");
-        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Tight)));
-        // Q8 model + FLUX VAE + Qwen3-4B Q4_K_M text encoder (below 10 GB).
-        assert_eq!(r.pick.download_bytes, (6577 + 335 + 2497) * MB);
+        // Q8 (12 GB comfortable) and Q4 (8 GB) are both Tight: the one closest to fitting.
+        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight)));
+        // Q4 model + FLUX VAE + Qwen3-4B Q4_K_M text encoder (below 10 GB).
+        assert_eq!(r.pick.download_bytes, (3864 + 335 + 2497) * MB);
+        assert_eq!(r.pick.note.as_deref(), Some(SMALLER_NOTE));
         assert_eq!(r.pick.title.as_deref(), Some("Z-Image Turbo"));
         assert_eq!(r.pick.license_note.as_deref(), Some("Apache 2.0"));
         match &r.action {
             PickAction::Download { files, .. } => {
-                assert_eq!(files[0].file_name, "z_image_turbo-Q8_0.gguf");
+                assert_eq!(files[0].file_name, "z_image_turbo-Q4_K.gguf");
                 assert_eq!(files[0].kind, ModelKind::Diffusion);
-                assert_eq!(files[0].friendly_name, "Z-Image Turbo (Q8)");
-                assert_eq!(files[0].sha256.as_deref(), Some("df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1"));
+                assert_eq!(files[0].friendly_name, "Z-Image Turbo (Q4)");
+                assert_eq!(files[0].sha256.as_deref(), Some("14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd"));
                 let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
                 assert_eq!(comps.len(), 2);
                 assert!(comps.contains(&"flux_ae") && comps.contains(&"qwen3_4b_q4km"));
@@ -472,15 +514,18 @@ mod tests {
     #[test]
     fn twelve_gb() {
         let p = picks(12.0, &index(vec![]));
-        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Tight)), "mid tier prefers Q8");
+        // Q8 needs 12 GB to be comfortable (registry figure): the Q4 that Fits wins over a Tight Q8.
+        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Fits)));
         assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Fits)));
-        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Tight)));
+        // No Qwen Edit version Fits 12 GB; Q3_K_M is the closest (Tight).
+        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Tight)));
     }
 
     #[test]
     fn sixteen_gb_runs_q8_z_image_and_qwen_edit() {
         // SPEC §6: the 16 GB tier runs Z-Image Turbo Q8_0 + the Q8_0 GGUF text encoder
-        // (bf16 + bf16 ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511 Q4_K_M.
+        // (bf16 + bf16 ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511 Q3_K_M
+        // (Q4_K_M ran only at the smallest size / fastest setting on a real 16 GB card).
         let p = picks(16.0, &index(vec![]));
         let r = role(&p, "realistic");
         assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Fits)));
@@ -493,11 +538,20 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+        assert_eq!(r.pick.note.as_deref(), Some(SMALLER_NOTE), "bf16 is the full version");
         let e = role(&p, "edit");
-        assert_eq!(summary(e), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Tight)));
-        assert_eq!(e.pick.vram.unwrap().gb, 16.0);
-        assert_eq!(e.pick.vram.unwrap().min_gb, 12.0);
+        assert_eq!(summary(e), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits)));
+        assert_eq!(e.pick.vram.unwrap().gb, 13.0);
+        assert_eq!(e.pick.vram.unwrap().min_gb, 9.0);
         assert!(!e.pick.vram.unwrap().estimate);
+        assert_eq!(e.pick.note.as_deref(), Some(SMALLER_NOTE));
+        match &e.action {
+            PickAction::Download { files, .. } => {
+                assert_eq!(files[0].file_name, "qwen-image-edit-2511-Q3_K_M.gguf");
+                assert_eq!(files[0].sha256.as_deref(), Some("5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9"));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -506,17 +560,18 @@ mod tests {
         let r = role(&p, "realistic");
         assert_eq!(summary(r), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits)));
         assert_eq!(r.pick.download_bytes, (12310 + 335 + 8045) * MB, "bf16 model + bf16 encoder");
-        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Fits)));
+        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q6_k"), Some(Fit::Fits)));
+        assert_eq!(role(&p, "realistic").pick.note, None, "full version, no note");
     }
 
     #[test]
     fn krea2_turbo_is_a_second_realistic_pick_from_12_gb() {
-        // Q5_K_S below 20 GB, Q8_0 from 20 GB; not offered below 12 GB or without a GPU.
+        // Q5_K_S until Q8_0 Fits (24 GB); not offered below 12 GB or without a GPU.
         for (vram, want) in [
             (12.0, Some(("q5_k", Fit::Tight))),
             (16.0, Some(("q5_k", Fit::Tight))),
             (19.9, Some(("q5_k", Fit::Fits))),
-            (20.0, Some(("q8_0", Fit::Tight))),
+            (20.0, Some(("q5_k", Fit::Fits))), // a Q5 that Fits beats a Tight Q8
             (24.0, Some(("q8_0", Fit::Fits))),
             (11.9, None),
             (8.0, None),
@@ -699,21 +754,49 @@ mod tests {
     fn installed_model_with_missing_component_is_not_complete() {
         let reg = registry();
         let idx = index(vec![model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"), component(&reg, "flux_ae")]);
-        let p = recommend(&reg, &idx, &hw(16.0));
+        let p = recommend(&reg, &idx, &hw(24.0));
         let r = role(&p, "realistic");
         assert!(!r.pick.installed);
-        assert_eq!(r.pick.download_bytes, 4280 * MB, "only the text encoder (Q8_0 GGUF at 16 GB)");
+        assert_eq!(r.pick.download_bytes, 8045 * MB, "only the bf16 text encoder at 24 GB");
         assert_eq!(r.pick.vram.unwrap().gb, 16.0, "registry figure for the bf16 file");
-        // An installed bf16 encoder does not count at 16 GB: the Q8_0 one is required.
+        assert_eq!(r.pick.note, None);
+        // An installed Q8 encoder does not count at 24 GB: the bf16 one is required.
         let idx = index(vec![
             model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"),
             component(&reg, "flux_ae"),
-            component(&reg, "qwen3_4b"),
+            component(&reg, "qwen3_4b_q8"),
         ]);
-        let r = recommend_role(&reg, &idx, &hw(16.0), "realistic").unwrap();
+        let r = recommend_role(&reg, &idx, &hw(24.0), "realistic").unwrap();
         assert!(!r.pick.installed);
-        assert_eq!(r.pick.download_bytes, 4280 * MB);
-        assert!(recommend_role(&reg, &idx, &hw(24.0), "realistic").unwrap().pick.installed, "bf16 encoder is right at 24 GB");
+        assert_eq!(r.pick.download_bytes, 8045 * MB);
+    }
+
+    #[test]
+    fn tight_installed_version_offers_the_smaller_one_that_fits() {
+        let reg = registry();
+        // Qwen Image Edit Q4_K_M installed on a 16 GB card: Tight. Q3_K_M Fits → offered.
+        let idx = index(vec![
+            model("qe", "qwen_image_edit_2511", ModelKind::Diffusion, "qwen-image-edit-2511-Q4_K_M.gguf"),
+            component(&reg, "qwen_image_vae"),
+            component(&reg, "qwen25_vl_7b_q8"),
+            component(&reg, "qwen25_vl_7b_mmproj"),
+        ]);
+        let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
+        assert_eq!(summary(&e), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits)));
+        assert!(!e.pick.installed);
+        assert_eq!(e.pick.note.as_deref(), Some(TIGHT_INSTALLED_NOTE));
+        assert_eq!(e.pick.download_bytes, 9921 * MB, "only the smaller model; parts are shared");
+        // Once the smaller version is installed, the card shows it as done.
+        let mut files = idx.files.clone();
+        files.push(model("qe3", "qwen_image_edit_2511", ModelKind::Diffusion, "qwen-image-edit-2511-Q3_K_M.gguf"));
+        let e = recommend_role(&reg, &index(files), &hw(16.0), "edit").unwrap();
+        assert!(e.pick.installed);
+        assert_eq!(e.pick.fit, Some(Fit::Fits));
+        assert_eq!(e.action, PickAction::Nothing);
+        // On a 24 GB card the installed Q4_K_M Fits: nothing to offer.
+        let e = recommend_role(&reg, &idx, &hw(24.0), "edit").unwrap();
+        assert!(e.pick.installed);
+        assert_eq!(e.pick.note, None);
     }
 
     #[test]

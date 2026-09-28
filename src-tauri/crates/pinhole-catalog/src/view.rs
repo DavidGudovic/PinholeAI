@@ -232,6 +232,9 @@ pub struct RecommendedPick {
     pub quant: Option<String>,
     pub license_note: Option<String>,
     pub unavailable_reason: Option<String>,
+    /// Plain-words note when the pick is a smaller version chosen so it fits
+    /// (or replaces an installed version that is a tight fit).
+    pub note: Option<String>,
 }
 
 // ------------------------------------------------------------------ paste from CivitAI
