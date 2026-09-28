@@ -46,7 +46,7 @@ fn client(srv: &MockServer, offline: bool) -> CivitaiClient {
 struct AnyEnv;
 impl CatalogEnv for AnyEnv {
     fn family_for(&self, base_model: &str, _: Option<&str>) -> Option<FamilyInfo> {
-        (base_model != "SD 3.5 Large").then(|| FamilyInfo { id: "sdxl".into(), label: "SDXL".into(), license_note: None })
+        (base_model != "SD 3.5 Large").then(|| FamilyInfo { id: "sdxl".into(), label: "SDXL".into(), license_note: None, diffusion_only: false })
     }
     fn vram_for(&self, _: &str, _: u64) -> Option<(VramNeed, Fit)> {
         None

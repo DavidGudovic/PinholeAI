@@ -277,7 +277,7 @@ const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
   // Rust: no request; the cursor is handed back unchanged.
-  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
   if (q.query.toLowerCase() === "fail")
     throw err(
       "network",
@@ -299,7 +299,7 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
   else if (q.sort === "Newest") server = server.slice().sort((a, b) => a.createdDaysAgo - b.createdDaysAgo);
   else server = server.slice().sort((a, b) => b.downloadCount - a.downloadCount);
 
-  const out: BrowsePage = { items: [], nextCursor: null, offline: false, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+  const out: BrowsePage = { items: [], nextCursor: null, offline: false, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
   let offset = q.cursor ? Number(q.cursor) || 0 : 0;
   for (let requests = 1; ; requests++) {
     const batch = server.slice(offset, offset + API_LIMIT);
@@ -313,7 +313,11 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
         (q.price === "paid_only" && !e.earlyAccess)
       )
         out.hiddenByFilters += 1;
-      else out.items.push(toCard(e, q.content));
+      else {
+        const c = toCard(e, q.content);
+        if (q.runsOnMyCard && c.fit === "tooBig") out.hiddenBySize! += 1;
+        else out.items.push(c);
+      }
     }
     out.nextCursor = offset < server.length ? String(offset) : null;
     if (out.items.length >= PAGE || !out.nextCursor) return out;
@@ -502,23 +506,39 @@ async function fetchPreview(url: string): Promise<ArrayBuffer> {
 // ---------------------------------------------------------------- install plan / install
 let hasKey = false;
 
-function plan(versionId: number): InstallPlan {
+/**
+ * Big safetensors checkpoints also come as a compact FP8 file (like many CivitAI versions):
+ * Rust picks the best one that fits unless the user chose one (SPEC §5.4 "Install").
+ */
+function fileChoices(e: ReturnType<typeof allEntries>[number], slug: string) {
+  const full = { fileId: e.versionId * 10, name: `${slug}_${e.versionName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9._-]/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, mb: e.mainMb, label: "Full quality" };
+  if (e.type === "LORA" || e.gguf || e.mainMb < 10000) return [full];
+  const vram = vramFor(e);
+  const fp8 = { fileId: e.versionId * 10 + 1, name: full.name.replace(/\.safetensors$/, "_fp8.safetensors"), mb: Math.round(e.mainMb / 2), label: "Compact (FP8)" };
+  return [{ ...full, vram }, { ...fp8, vram: vram && { ...vram, gb: Math.round((vram.gb - e.mainMb / 2048) * 10) / 10, minGb: Math.max(1, vram.minGb - e.mainMb / 4096) } }];
+}
+
+function plan(versionId: number, chosenFile: number | null = null): InstallPlan {
   const e = allEntries().find((x) => x.versionId === versionId);
   if (!e) throw err("not_found", "This model is no longer on CivitAI.");
   const isLora = e.type === "LORA";
   const fam = e.familyId ? FAMILIES[e.familyId] : null;
   const have = installedComponents();
   const components = isLora || !fam ? [] : fam.components.map((c) => ({ componentId: c, label: COMPONENTS[c].label, sizeBytes: COMPONENTS[c].mb * MB, installed: have.has(c) }));
-  const mainBytes = e.mainMb * MB;
+  const slug = e.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const choices = fileChoices(e, slug).map((c) => ({ ...c, ...sizeFor("vram" in c ? (c.vram ?? null) : vramFor(e), e.familyId, c.mb * MB) }));
+  const picked = choices.find((c) => c.fileId === chosenFile) ?? (choices[0].fit === "fits" ? choices[0] : (choices.find((c) => c.fit === "fits") ?? choices[0]));
+  const mainBytes = picked.mb * MB;
   const total = mainBytes + components.filter((c) => !c.installed).reduce((a, c) => a + c.sizeBytes, 0);
   const free = (mockFlags().lowDisk ? 9.2 : 214.6) * 1024 * MB;
-  const { vram, fit } = sizeFor(vramFor(e), e.familyId, mainBytes);
-  const slug = e.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const { vram, fit } = picked;
   return {
+    fileOptions: choices.map((c) => ({ fileId: c.fileId, name: c.name, sizeBytes: c.mb * MB, label: c.label, vram: c.vram, fit: c.fit, selected: c === picked })),
+    smallerFile: chosenFile == null && picked !== choices[0] ? picked.label : null,
     versionId,
     modelName: e.name,
     versionName: e.versionName,
-    mainFile: { name: `${slug}_${e.versionName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9._-]/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
+    mainFile: { name: picked.name, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
     family: e.familyId ? { familyId: e.familyId, label: FAMILIES[e.familyId]?.label ?? e.familyId } : null,
     familyCandidates: e.ambiguous
       ? [
@@ -540,10 +560,10 @@ function plan(versionId: number): InstallPlan {
   };
 }
 
-async function install(versionId: number, familyId: string | null) {
+async function install(versionId: number, familyId: string | null, fileId: number | null = null) {
   await sleep(350);
   if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to download models.");
-  const p = plan(versionId);
+  const p = plan(versionId, fileId);
   const e = allEntries().find((x) => x.versionId === versionId)!;
   if (p.blockedReason) throw err("invalid", p.blockedReason);
   if (!p.enoughDisk) throw err("disk_space", "Not enough free disk space. Delete a model you don't use, then try again.");
@@ -629,9 +649,9 @@ const table: MockTable = {
   plan_civitai_install: async (a) => {
     await sleep(500);
     if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to download models.");
-    return plan(Number(a.versionId));
+    return plan(Number(a.versionId), a.fileId == null ? null : Number(a.fileId));
   },
-  install_civitai: (a) => install(Number(a.versionId), (a.familyId as string | null) ?? null),
+  install_civitai: (a) => install(Number(a.versionId), (a.familyId as string | null) ?? null, a.fileId == null ? null : Number(a.fileId)),
   has_civitai_key: async () => hasKey,
   set_civitai_key: async (a) => {
     await sleep(250);

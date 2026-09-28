@@ -182,7 +182,7 @@ async fn fetch_version(client: &CivitaiClient, version_id: u64) -> CoreResult<(p
 }
 
 /// Everything the Install dialog shows before downloading (SPEC §5.4).
-pub async fn plan_civitai_install(core: &AppCore, version_id: u64) -> CoreResult<InstallPlan> {
+pub async fn plan_civitai_install(core: &AppCore, version_id: u64, file_id: Option<u64>) -> CoreResult<InstallPlan> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
     let (version, model) = fetch_version(&client, version_id).await?;
@@ -190,23 +190,24 @@ pub async fn plan_civitai_install(core: &AppCore, version_id: u64) -> CoreResult
     let hw = crate::app::hw_context(core);
     let index = core.installed.lock().clone();
 
+    let free = local::free_space(&core.data.root.join("models"));
+    let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
+    let plan = plan::build_plan(&env, &version, model.as_ref(), free, false, file_id);
     // Does the download need a key (401/403)? Only asked when there is
     // something to download.
-    let picked = select::select_file(&version.files, &filters.allowed_file_formats).ok();
+    let picked = plan.file_options.iter().find(|o| o.selected).and_then(|o| version.files.iter().find(|f| f.id == o.file_id && f.name == o.name));
     let already = picked.and_then(|f| f.sha256()).is_some_and(|h| index.find_by_sha(&h).is_some());
     let needs_api_key = match picked.filter(|_| !already) {
         Some(f) if !f.download_url.is_empty() => matches!(client.probe_download(&f.download_url).await, Ok(401 | 403)),
         _ => false,
     };
-    let free = local::free_space(&core.data.root.join("models"));
-    let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
-    Ok(plan::build_plan(&env, &version, model.as_ref(), free, needs_api_key))
+    Ok(InstallPlan { needs_api_key, ..plan })
 }
 
 /// Download a CivitAI version (safe file + missing components) as one group;
 /// files are registered when it finishes. `family_id` = the user's pick when
 /// the plan listed several candidates.
-pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Option<String>) -> CoreResult<InstallStarted> {
+pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Option<String>, file_id: Option<u64>) -> CoreResult<InstallStarted> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
     let (version, model) = fetch_version(&client, version_id).await?;
@@ -228,7 +229,7 @@ pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Op
         },
     };
     let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
-    let install = plan::civitai_install_files(&env, &version, model.as_ref(), family.as_deref()).map_err(CoreError::invalid)?;
+    let install = plan::civitai_install_files(&env, &version, model.as_ref(), family.as_deref(), file_id).map_err(CoreError::invalid)?;
     if install.files.is_empty() {
         return Err(CoreError::invalid("This model is already installed."));
     }
@@ -260,8 +261,8 @@ mod tests {
         assert_eq!(fetch_preview(&core, "https://evil.example/x.jpeg").await.unwrap_err().code, "invalid");
         assert_eq!(fetch_preview(&core, "http://image.civitai.com/x.jpeg").await.unwrap_err().code, "invalid");
         assert_eq!(fetch_preview(&core, "https://image.civitai.com/x/width=450/1.jpeg").await.unwrap_err().code, "offline");
-        assert_eq!(plan_civitai_install(&core, 1).await.unwrap_err().code, "offline");
-        assert_eq!(install_civitai(&core, 1, None).await.unwrap_err().code, "offline");
+        assert_eq!(plan_civitai_install(&core, 1, None).await.unwrap_err().code, "offline");
+        assert_eq!(install_civitai(&core, 1, None, None).await.unwrap_err().code, "offline");
     }
 
     #[test]

@@ -68,6 +68,10 @@ pub struct CatalogCard {
     pub license_note: Option<String>,
     pub installed: bool,
     pub blocked_reason: Option<String>,
+    /// Set when a smaller file of this version was picked so it fits the card
+    /// (e.g. "Compact (FP8)"); the Install dialog explains it and offers the others.
+    #[serde(default)]
+    pub smaller_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,12 +90,15 @@ pub struct BrowsePage {
     /// …of which Look, price, commercial use, kind or compatibility hid.
     #[serde(default)]
     pub hidden_by_filters: u32,
+    /// …of which "Runs on my card" hid (too big for this machine).
+    #[serde(default)]
+    pub hidden_by_size: u32,
 }
 
 impl BrowsePage {
     /// Offline mode: no request; the cursor is handed back unchanged.
     pub fn offline(cursor: Option<String>) -> Self {
-        Self { items: Vec::new(), next_cursor: cursor, offline: true, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0 }
+        Self { items: Vec::new(), next_cursor: cursor, offline: true, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0, hidden_by_size: 0 }
     }
 }
 
@@ -108,6 +115,21 @@ pub struct PlanFile {
     pub name: String,
     pub size_bytes: u64,
     pub format: String,
+}
+
+/// One installable file of a CivitAI version (Install dialog size choice).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanFileOption {
+    /// CivitAI file id: pass back to `plan_civitai_install` / `install_civitai`.
+    pub file_id: u64,
+    pub name: String,
+    pub size_bytes: u64,
+    /// "Full quality" | "Compact (FP8)" | "Compact (Q4)" …
+    pub label: String,
+    pub vram: Option<VramNeed>,
+    pub fit: Option<Fit>,
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -139,6 +161,12 @@ pub struct InstallPlan {
     pub trained_words: Vec<String>,
     pub blocked_reason: Option<String>,
     pub needs_api_key: bool,
+    /// Every installable file of the version (more than one = a size choice).
+    #[serde(default)]
+    pub file_options: Vec<PlanFileOption>,
+    /// Label of the main file when a smaller one was picked so it fits the card.
+    #[serde(default)]
+    pub smaller_file: Option<String>,
 }
 
 // ------------------------------------------------------------------ installed models
@@ -232,6 +260,12 @@ pub struct RecommendedPick {
     pub quant: Option<String>,
     pub license_note: Option<String>,
     pub unavailable_reason: Option<String>,
+    /// Plain-words note when the pick is a smaller version chosen so it fits
+    /// (or replaces an installed version that is a tight fit).
+    pub note: Option<String>,
+    /// True when an installed version of this family is a tight fit and this smaller one fits.
+    #[serde(default)]
+    pub replaces_installed: bool,
 }
 
 // ------------------------------------------------------------------ paste from CivitAI

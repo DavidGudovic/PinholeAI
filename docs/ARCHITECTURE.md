@@ -160,9 +160,10 @@ cache + shared in-flight requests, next page prefetched), `previewQueue.ts` / `p
 fetches at a time, on-screen first, queued fetches dropped when a card scrolls away, 48 MB RAM LRU).
 
 ### Install from CivitAI / registry (catalog agent)
-`plan_civitai_install(versionId)` → pick file (SafeTensor/GGUF, primary preferred, both scans
-`Success`, else `blockedReason`), family via `baseModel` (→ hash/known file → ask), components
-missing (matched by component id / SHA-256), sizes, free disk, VRAM fit. `install_civitai` enqueues
+`plan_civitai_install(versionId, fileId?)` → pick file (SafeTensor/GGUF, primary preferred, both
+scans `Success`, else `blockedReason`; a smaller file that Fits when the usual one doesn't, or the
+user's `fileId` from the Size choice, `select::select_file_for_machine`), family via `baseModel` (→ hash/known file → ask), components
+missing (matched by component id / SHA-256), sizes, free disk, VRAM fit, `fileOptions`. `install_civitai(versionId, familyId, fileId?)` enqueues
 one download group (model + missing components); on success registers every file in
 `installed.json` and emits `models-changed`. 401/403 → `CoreError{code:"unauthorized"}` and the UI
 asks for an API key (keychain). LoRAs store `trainedWords`.

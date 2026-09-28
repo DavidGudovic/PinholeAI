@@ -33,7 +33,7 @@ fn estimate_formula() {
     let reg = shipped();
     let sdxl = reg.family("sdxl").unwrap();
     // 6.5 GiB checkpoint + 0.3125 GiB VAE override + 2.0 activations + 0.5 reserve.
-    let n = estimate(reg, sdxl, 13 * GIB / 2, 5 * GIB / 16);
+    let n = estimate(reg, sdxl, 13 * GIB / 2, 5 * GIB / 16, 0);
     assert!(n.estimate);
     assert!(approx(n.gb, 9.4), "{n:?}"); // 9.3125 rounded up
     assert!(approx(n.min_gb, 5.8), "{n:?}"); // 3.25 + 2 + 0.5 = 5.75 rounded up
@@ -41,21 +41,42 @@ fn estimate_formula() {
     assert_eq!(fit(&n, 8.0), Fit::Tight);
     assert_eq!(fit(&n, 4.0), Fit::TooBig);
 
-    // Flux Q4 (≈6.4 GiB) with clip_l + t5 fp8 + VAE on the GPU.
+    // Flux Q4 (≈6.4 GiB) with a VAE, clip_l + t5 fp8 on the GPU.
     let flux = reg.family("flux1_dev").unwrap();
     let n = estimate(
         reg,
         flux,
         6_931_817_760,
-        335_304_388 + 246_144_152 + 4_893_934_904,
+        335_304_388,
+        246_144_152 + 4_893_934_904,
     );
     assert!(n.gb > n.min_gb);
     assert_eq!(fit(&n, 8.0), Fit::Tight);
     assert_eq!(fit(&n, 16.0), Fit::Fits);
     assert_eq!(
-        estimate(reg, flux, 0, 0).min_gb,
-        estimate(reg, flux, 0, 0).gb
+        estimate(reg, flux, 0, 0, 0).min_gb,
+        estimate(reg, flux, 0, 0, 0).gb
     );
+}
+
+/// Regression: the text encoder is not on the GPU during sampling, so it is
+/// not added to the diffusion weights (Qwen models read ~8 GB too big).
+#[test]
+fn text_encoders_are_a_separate_stage() {
+    let reg = shipped();
+    let qwen = reg.family("qwen_image").unwrap();
+    // CivitAI's usual Qwen-Image file: fp8, 19,951,792 KiB.
+    let fp8 = 19_951_792 * 1024;
+    let vae = 254_000_000;
+    let te = 8_099_000_000; // Qwen2.5-VL 7B Q8
+    let n = estimate(reg, qwen, fp8, vae, te);
+    // 19.03 GiB + 0.24 VAE + 3.0 activations + 0.5 = 22.8, not 30.3 with the encoder.
+    assert!(approx(n.gb, 22.8), "{n:?}");
+    assert_eq!(fit(&n, 16.0), Fit::Tight);
+    assert_eq!(fit(&n, 24.0), Fit::Fits);
+    // A small diffusion model with a big encoder is sized by the prompt stage.
+    let n = estimate(reg, qwen, GIB, 0, 8 * GIB);
+    assert!(approx(n.gb, 9.5), "{n:?}"); // 8 + 1 + 0.5
 }
 
 #[test]
