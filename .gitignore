@@ -13,3 +13,6 @@ dist/
 target/
 src-tauri/target/
 .env
+
+# Tauri generated
+src-tauri/gen/

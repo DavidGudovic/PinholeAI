@@ -1,0 +1,175 @@
+# Pinhole — Architecture & build contract
+
+`docs/SPEC.md` says *what* Pinhole does; this file says *how the code is organised*
+and is the contract between the modules. Read SPEC.md and CLAUDE.md first.
+
+## 1. Layout
+
+```
+Cargo.toml                 workspace root (MSRV-aware resolver, shared deps)
+package.json, vite.config.ts, index.html
+config/                    shipped YAML (bundled as Tauri resources → <resources>/config/)
+  models.yaml engine.yaml catalog-filters.yaml styles/ presets/
+src-tauri/                 Tauri 2 app crate `pinhole` (thin: commands + event bridge)
+  src/lib.rs               builds AppCore, TauriSink, dispatch  (orchestrator)
+  src/commands/<area>.rs   thin #[tauri::command] wrappers, one file per area
+  crates/
+    pinhole-registry/      models.yaml → families, header detector, wiring, VRAM, style combine (pure)
+    pinhole-net/           THE http client (allow-list + offline), resumable verified downloads
+    pinhole-store/         Data dir, settings.yaml, installed.json, styles, presets, keychain
+    pinhole-hardware/      GPU vendor/VRAM/RAM detection
+    pinhole-engine/        engine pins/install, sd-server + llama-server processes, API clients, PNG scrub
+    pinhole-catalog/       CivitAI API client, filters, safe-file selection, card view models
+    pinhole-core/          AppCore service layer (Tauri-free) used by commands and tests
+tests/                     crate `pinhole-tests`: privacy sentinel scan, offline test, engine smoke test
+src/                       React + TS UI
+  lib/types.ts lib/api.ts  IPC contract (mirrors Rust serde camelCase)
+  lib/mock/                browser mock backend (per-area handler tables)
+scripts/                   CI helpers (privacy lint, pin verification) — Node, no Python
+.github/workflows/         CI (build/test matrix), release packaging, pin verification
+```
+
+Why a workspace of small crates: each area compiles and tests independently
+(`cargo test -p pinhole-net`), dependencies are explicit, and the privacy-critical
+pieces (net, store) are small enough to audit.
+
+## 2. Ownership (parallel build)
+
+| Area | Owns | Depends on |
+|---|---|---|
+| **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (detect rules, schema) | — |
+| **net** | `crates/pinhole-net/**`, `crates/pinhole-core/src/downloads.rs`, `src-tauri/src/commands/downloads.rs` | — |
+| **store** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/app.rs`, `core/src/library.rs`, `commands/app.rs`, `commands/library.rs`, `config/presets/**` | — |
+| **engine** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
+| **catalog** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
+| **frontend A** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/paste/**`, `src/lib/mock/{generate,library,describe}.ts`, `src/lib/state/**` | api.ts |
+| **frontend B** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**`, `src/lib/mock/{app,models,catalog}.ts` | api.ts |
+| **ci** | `.github/**`, `scripts/**`, `tests/**`, `THIRD_PARTY_LICENSES`, `README.md` | everything (read) |
+| **orchestrator** | root manifests, `src-tauri/src/{lib.rs,commands/mod.rs}`, `core/src/{lib,error,events}.rs`, `src/lib/{api,types}.ts`, `src/lib/mock/index.ts`, docs | — |
+
+Rules for agents:
+- Edit only files you own. Need something from another area? Code against the
+  contract (stub signatures / api.ts), and list the request in your final report.
+- Stub signatures in the crates are the cross-crate contract. Implement them; you
+  may add items; do not rename/remove/re-type existing public items.
+- Do not `git commit`/`push` (the orchestrator integrates). Do not run `npm install`
+  (dependencies are fixed; ask in your report). Rust deps: add to your own crate's
+  `Cargo.toml`; prefer `workspace = true` entries that already exist.
+- The build dir is shared: `cargo test -p <your-crate>` may wait on a file lock — that's fine.
+- The upstream stable-diffusion.cpp source is checked out read-only at
+  `/home/user/leejet/stable-diffusion.cpp` (server API: `examples/server/api.md`,
+  flags: `examples/common/common.cpp`, detection: `src/model_loader.cpp`).
+- huggingface.co and civitai.com are NOT reachable from this dev container; github.com
+  git and crates.io/npm are. Write code + tests with fixtures/mocks; real-network checks
+  run in CI (`.github/workflows/verify-pins.yml`).
+
+## 3. Commands & events
+
+The full command list, argument names and payload types are in `src/lib/api.ts` and
+`src/lib/types.ts`. Rust command names are the snake_case names used there; each area's
+`commands/<area>.rs` declares its commands with `super::area_commands![...]`
+(no edits to `commands/mod.rs` needed). Command fns take
+`core: tauri::State<'_, Arc<AppCore>>` and return `Result<T, CoreError>`; their bodies
+call `pinhole_core::<area>::...` so tests can drive the same code without Tauri.
+
+Binary IPC:
+- `get_image`, `fetch_preview` return `tauri::ipc::Response::new(bytes)` → `ArrayBuffer` in JS.
+- `import_image` receives the raw body: `fn import_image(core, request: tauri::ipc::Request<'_>)`
+  and reads `request.body()` (`InvokeBody::Raw`).
+
+Events (`pinhole_core::events::CoreEvent` → `TauriSink` → event name + payload):
+`download-progress` (GroupStatus), `generation-progress` (GenerationProgress),
+`engine-status` (EngineStatus), `models-changed` (no payload), `hardware-ready`.
+
+Errors: every failure is a `CoreError { code, message, details }`. `message` says what to do
+next ("Not enough VRAM — try the Fast setting or the smaller version of this model");
+engine output goes in `details` (UI shows it behind a "Details" toggle).
+
+## 4. Key flows
+
+### First run
+1. UI: `get_settings` → if `!firstRunDone` show FirstRun (frontend B).
+2. `get_hardware` (detection runs in background at startup; `hardware-ready` event).
+3. `engine_status` → `install_engine` (backend from hardware: NVIDIA→cuda, AMD/Intel→vulkan,
+   none→cpu; Settings override). Progress arrives as `download-progress`.
+4. `get_recommended` → cards per role; **Get** → `install_recommended(role)`; **Get all** =
+   realistic + edit. Skippable. `set_settings({firstRunDone:true})`.
+
+### Engine install (engine agent)
+`config/engine.yaml` pins a release tag + per-platform assets + SHA-256. Install downloads
+through `DownloadManager` into `Data/engine/sd/<version>/<backend>/`, verifies SHA-256,
+unzips (zip-slip safe), marks executables (+x on Linux). Windows CUDA also needs the
+`cudart-*` zip in the same folder. Upstream asset names (stable-diffusion.cpp CI):
+`sd-master-<short>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x64.zip`,
+`sd-master-<short>-bin-Linux-Ubuntu-24.04-x86_64{,-vulkan}.zip` (no Linux CUDA build upstream:
+Linux NVIDIA uses Vulkan).
+
+### Generate (engine agent)
+`generate(req)`:
+1. Look up the installed model + family; resolve components (`wiring::required_components`),
+   error `engine_missing`/`not_found` with a plain message if something's missing.
+2. `wiring::launch_args` → if sd-server isn't running with exactly these args, stop it and start
+   a new one (`--listen-ip 127.0.0.1 --listen-port <free port> --log-level warn` + args +
+   `--lora-model-dir Data/models/loras`), emitting `generation-progress{phase: loadingModel}`.
+   Wait for `GET /sdcpp/v1/capabilities` to answer.
+3. `style::combine` (prompt + style + prefix + negatives, in memory), LoRA trigger words,
+   `wiring::resolve_params` → `POST /sdcpp/v1/img_gen` with **`embed_image_metadata: false`**,
+   structured `lora: [{path, multiplier}]`, `seed` (random if not locked; results get seed+i).
+4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
+   engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
+5. Decode base64 → strip every PNG text chunk (tEXt/zTXt/iTXt) defensively → store in
+   `Session` (RAM) → return `ResultImage`s. Nothing touches disk until `save_image`.
+
+`save_image`: `Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png`; if Settings
+`savedMetadata == "settings"`, add ONE tEXt chunk `pinhole` with model, seed, steps, cfg,
+sampler, scheduler, size — never prompt/negative/style text.
+
+### Edit (engine agent backend, frontend A UI)
+- Instruction edit: edit family (role `edit`), `ref_images[0]` = source; "Stay close to original"
+  → the family's `stay_close_maps_to`; optional mask → `mask_image`.
+- Restyle: current Create model, `init_image` + `strength` (0.35/0.55/0.75).
+- Result images carry `parentId` for the in-memory undo chain.
+
+### Install from CivitAI / registry (catalog agent)
+`plan_civitai_install(versionId)` → pick file (SafeTensor/GGUF, primary preferred, both scans
+`Success`, else `blockedReason`), family via `baseModel` (→ hash/known file → ask), components
+missing (matched by component id / SHA-256), sizes, free disk, VRAM fit. `install_civitai` enqueues
+one download group (model + missing components); on success registers every file in
+`installed.json` and emits `models-changed`. 401/403 → `CoreError{code:"unauthorized"}` and the UI
+asks for an API key (keychain). LoRAs store `trainedWords`.
+
+### Paste from CivitAI (frontend A + catalog agent)
+CivitAI's image page has a **Copy generation data** button producing A1111-style text:
+```
+<prompt lines>
+Negative prompt: <negative lines>
+Steps: 30, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: 123, Size: 832x1216, Clip skip: 2,
+Model hash: 1a2b3c4d5e, Model: foo, Hires upscale: 1.5, Denoising strength: 0.4,
+Lora hashes: "name: abcdef123456", Civitai resources: [{"type":"checkpoint","modelVersionId":1,...}], ...
+```
+A **Paste from CivitAI** button in Create (and Ctrl+V of such text into the prompt box) parses it
+in the WebView (`src/lib/paste/`, pure + unit-tested, never logged/stored), fills prompt,
+negative, steps, CFG/guidance, sampler+scheduler (mapped to sd.cpp names), seed, size, clip skip,
+hires, then calls `resolve_civitai_resources(resources)` (ids/hashes only — no prompt) to select the
+installed checkpoint/LoRAs or offer one-click installs. A summary lists what was applied and
+what was skipped.
+
+## 5. Privacy implementation rules (enforced by tests + `scripts/privacy-lint.mjs`)
+- Prompt-bearing types: `GenerateRequest`, `FineTune` (negativePrompt), `FinalPrompt`, the
+  engine request body, pasted text. They are `Deserialize` from IPC and serialized ONLY into the
+  loopback HTTP request body. Never pass them to `std::fs`, `serde_yaml::to_*`, `serde_json::to_writer`,
+  any logging macro, `println!/eprintln!/dbg!`, or into `CoreError`.
+- No `log`/`tracing` crates. No `console.*` in `src/` except `console.error` of CoreError `code`.
+- Engine stdout/stderr → in-memory ring buffer (~200 lines) only; lines containing the prompt
+  or anything after `-p`/`prompt` are redacted before storage.
+- `LocalClient` only talks to `127.0.0.1`; `HttpClient` is the only internet client.
+- The WebView makes no network calls: CSP `connect-src ipc: http://ipc.localhost`, images are
+  `blob:` URLs from bytes returned by Rust.
+
+## 6. Testing expectations
+- Every crate: unit tests for its logic (`cargo test -p <crate>`), no network in unit tests
+  (use local mock servers on 127.0.0.1 where a server is needed — e.g. a tiny tokio TCP server).
+- `tests/` (ci agent): privacy sentinel test using a mock sd-server that echoes the prompt into a
+  PNG tEXt chunk (proves scrubbing + no disk writes), offline-mode test, engine smoke test
+  (`PINHOLE_SMOKE=1`, real sd-server + tiny model, 256×256 on CPU) run in CI.
+- Frontend: vitest for `src/lib/**` logic (paste parser, dial math), `npm run build` must pass.

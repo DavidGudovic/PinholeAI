@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* System font stack only: no remote fonts (privacy rule 4). */
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+html, body, #root { height: 100%; }
+body { @apply bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100 antialiased; }
