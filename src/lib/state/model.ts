@@ -3,7 +3,7 @@
 // PRIVACY: this state holds prompt text (create.prompt, fineTune.negativePrompt,
 // edit.instruction, edit.restylePrompt, describe.text, batch requests). It lives
 // in memory only — never persist it (no localStorage/sessionStorage/IndexedDB),
-// never log it, never put it in URLs. "Clear session" resets it.
+// never log it, never put it in URLs. "Reset" (top bar) clears it.
 
 import type {
   DescribeStyle,
@@ -135,7 +135,7 @@ export interface AppState {
   describe: DescribeParams;
   job: Job | null;
   toasts: Toast[];
-  /** Bumped by Clear session; tab roots are keyed on it so local state resets too. */
+  /** Bumped by Reset; tab roots are keyed on it so local state resets too. */
   sessionNonce: number;
 }
 

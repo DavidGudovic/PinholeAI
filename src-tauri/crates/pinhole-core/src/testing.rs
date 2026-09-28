@@ -281,7 +281,7 @@ mod tests {
         let all = serde_json::to_string(&events).unwrap();
         assert!(!all.contains(SENTINEL));
 
-        // Clear session drops everything.
+        // Reset drops everything.
         session::clear(&core).await;
         assert!(session::get(&core, &res.images[1].id).is_err());
     }
@@ -944,7 +944,7 @@ mod tests {
         core.gen.slot.lock().await.proc.is_some()
     }
 
-    /// sd-server keeps finished results (unauthenticated) for 600 s: Clear session
+    /// sd-server keeps finished results (unauthenticated) for 600 s: Reset
     /// and the idle timer stop a Pinhole-started engine once it ran a job.
     #[cfg(unix)]
     #[tokio::test]
@@ -952,7 +952,7 @@ mod tests {
         use std::sync::atomic::Ordering;
         let (tmp, core, _rec) = new_core();
 
-        // No job ran yet: Clear session leaves the loaded model alone.
+        // No job ran yet: Reset leaves the loaded model alone.
         put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), false).await;
         session::clear(&core).await;
         assert!(engine_running(&core).await);
@@ -979,7 +979,7 @@ mod tests {
         }
         assert!(!engine_running(&core).await, "idle engine with results is stopped");
 
-        // Clear session while a job runs: the engine stops right after the job.
+        // Reset while a job runs: the engine stops right after the job.
         put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), true).await;
         let run = core.gen.run_lock.lock().await;
         session::clear(&core).await;

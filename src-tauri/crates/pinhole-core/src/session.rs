@@ -1,5 +1,5 @@
 //! In-memory image store (CLAUDE.md privacy rule 3): generated and imported
-//! images live here until Save or Clear session. OWNER: engine agent.
+//! images live here until Save or Reset. OWNER: engine agent.
 //!
 //! Nothing here touches disk except [`save_image`] / [`save_image_as`], which
 //! run only on an explicit user click. Saved file names are never derived from
@@ -108,7 +108,7 @@ pub fn discard(core: &AppCore, id: &str) {
     core.session.remove(id);
 }
 
-/// Clear session: drop every image immediately (and the engines' output
+/// Reset: drop every image immediately (and the engines' output
 /// buffers), and stop sd-server if it ran a job — it keeps finished results
 /// for 600 s behind an unauthenticated API (`generate::IDLE_STOP_AFTER`). The
 /// next Generate reloads the model. If a job is running, the engine stops

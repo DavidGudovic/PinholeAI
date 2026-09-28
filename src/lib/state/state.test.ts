@@ -154,7 +154,7 @@ describe("reducer", () => {
     expect(run(base, { type: "editDelete", index: 0 })).toBe(base);
   });
 
-  it("Clear session wipes prompts, results, edit chain and description", () => {
+  it("Reset clears prompts, results, edit chain and description", () => {
     let s = withModels();
     s = run(
       s,
