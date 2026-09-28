@@ -575,7 +575,12 @@ build is shared.
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
-  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  processor"); while decoding → `--vae-tiling`; then, and right away when denoising runs out, the
+  weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
+  every weight fits in RAM with 2 GB to spare, and only while that engine stays loaded — the next
+  load tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
+  at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
+  or a reference image has no room; offloaded weights are only cached there. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
   the smaller version of the model; the engine output stays behind Details, led by the engine's
   memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's

@@ -488,12 +488,15 @@ mod tests {
         use_external_engine(&core, &always.base_url());
         let model = register_fake_model(&core, "z_image_turbo");
 
-        // Off: no automatic retry; the message says where to change it.
+        // Off: the text encoder stays on the card; the one retry keeps the
+        // weights in system memory, then the message says where to change it.
         core.settings.write().text_encoder_on_cpu = "off".into();
         let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.unwrap_err();
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::TE_ON_GPU_MESSAGE);
-        assert_eq!(core.gen.external_launches.lock().len(), 1);
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 2, "{launches:?}");
+        assert!(!te_on_cpu(&launches[1]) && launches[1].iter().any(|a| a == "--offload-to-cpu"), "{launches:?}");
         let details = err.details.unwrap_or_default();
         assert!(details.contains("failed to encode prompt") && !details.contains(SENTINEL), "{details}");
 
@@ -504,7 +507,7 @@ mod tests {
         assert!(te_on_cpu(core.gen.external_launches.lock().last().unwrap()));
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::RAM_MESSAGE);
-        assert_eq!(core.gen.external_launches.lock().len(), 2, "no retry");
+        assert_eq!(core.gen.external_launches.lock().len(), 3, "one launch, no retry");
     }
 
     #[tokio::test]
@@ -535,10 +538,13 @@ mod tests {
             "Your graphics card ran out of memory. Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). Close them and try again, or pick the smaller version of this model in Models."
         );
         assert_ne!(err.message, generate::UNKNOWN_JOB_MESSAGE);
-        // Diffusion ran out: one retry with VAE tiling (the 16 GB profile has none).
+        // Denoising ran out: one retry with the weights in system memory
+        // (VAE tiling wouldn't help that step).
         let launches = core.gen.external_launches.lock().clone();
         assert_eq!(launches.len(), 2);
-        assert!(!launches[0].contains(&"--vae-tiling".to_string()) && launches[1].contains(&"--vae-tiling".to_string()), "{launches:?}");
+        let has = |a: &[String], f: &str| a.iter().any(|x| x == f);
+        assert!(!has(&launches[0], "--offload-to-cpu") && has(&launches[1], "--offload-to-cpu"), "{launches:?}");
+        assert!(!has(&launches[1], "--vae-tiling"), "{launches:?}");
 
         // A failure that isn't about memory keeps the generic message.
         let (_tmp2, core2, _) = gpu_core();
@@ -585,10 +591,10 @@ mod tests {
         assert_eq!(mock.requests().len(), 3);
         let launches = core.gen.external_launches.lock().clone();
         assert_eq!(launches.len(), 3, "{launches:?}");
-        let tiled = |a: &[String]| a.iter().any(|x| x == "--vae-tiling");
-        assert!(!te_on_cpu(&launches[0]) && !tiled(&launches[0]));
-        assert!(te_on_cpu(&launches[1]) && !tiled(&launches[1]));
-        assert!(te_on_cpu(&launches[2]) && tiled(&launches[2]));
+        let offloaded = |a: &[String]| a.iter().any(|x| x == "--offload-to-cpu");
+        assert!(!te_on_cpu(&launches[0]) && !offloaded(&launches[0]));
+        assert!(te_on_cpu(&launches[1]) && !offloaded(&launches[1]));
+        assert!(te_on_cpu(&launches[2]) && offloaded(&launches[2]));
 
         // Each retry shows its own note while the engine reloads (the later one replaces the earlier).
         let loading_notes: Vec<String> = rec
@@ -601,13 +607,24 @@ mod tests {
             })
             .collect();
         let te_note = loading_notes.iter().position(|n| n == generate::TE_RETRY_NOTE).expect("text encoder retry note");
-        let tiling_note = loading_notes.iter().position(|n| n == generate::TILING_RETRY_NOTE).expect("tiling retry note");
-        assert!(te_note < tiling_note, "{loading_notes:?}");
-        // Both choices are kept for this model for the rest of the session.
-        let next = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        let offload_note = loading_notes.iter().position(|n| n == generate::OFFLOAD_RETRY_NOTE).expect("offload retry note");
+        assert!(te_note < offload_note, "{loading_notes:?}");
+        // The text encoder choice is kept for the session; system memory only
+        // while that engine stays loaded (and the engine status says so).
+        let next = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
         assert_eq!(next.images.len(), 1);
         let last = core.gen.external_launches.lock().last().cloned().unwrap();
-        assert!(te_on_cpu(&last) && tiled(&last), "{last:?}");
+        assert!(te_on_cpu(&last) && offloaded(&last), "{last:?}");
+        {
+            let mut f = core.gen.flags.lock();
+            (f.running, f.offloaded, f.loaded_model_id) = (true, true, Some(model.clone()));
+        }
+        let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
+        assert!(note.contains("system memory"), "{note}");
+        generate::unload_model(&core, &model).await;
+        generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        let last = core.gen.external_launches.lock().last().cloned().unwrap();
+        assert!(te_on_cpu(&last) && !offloaded(&last), "the next load tries the card again: {last:?}");
         // The prompt never reached the engine output buffer (redacted like real output).
         let kept = engine_log(&core).tail_text(200);
         assert!(kept.contains("failed to encode prompt") && !kept.contains(SENTINEL), "{kept}");

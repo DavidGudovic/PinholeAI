@@ -12,8 +12,10 @@
 //! runs out of memory is retried with each memory-saving choice at most once:
 //! reading the prompt → the text encoder moves to the processor
 //! (`--backend te=cpu`, remembered per model for the app session; Settings
-//! `textEncoderOnCpu` can force it on or off); any other stage →
-//! `--vae-tiling` if it isn't on yet. Otherwise the error is `vram` with a
+//! `textEncoderOnCpu` can force it on or off); decoding / unknown stage →
+//! `--vae-tiling` if it isn't on yet; then (right away when denoising runs
+//! out) the weights stay in system memory and are streamed to the card
+//! (`--offload-to-cpu`, only while that engine stays loaded). Otherwise the error is `vram` with a
 //! message that says what to do next (never the generic "couldn't make this
 //! image").
 //!
@@ -71,7 +73,11 @@ pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while 
 pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).";
 pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
 pub(crate) const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
-const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE];
+pub(crate) const OFFLOAD_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with the model kept in system memory and sent to the card as needed (slower).";
+const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE, OFFLOAD_RETRY_NOTE];
+const OFFLOAD_NOTE: &str = "This model is kept in system memory and sent to the graphics card as needed, because the card ran out of memory. Pictures take longer until the model is next loaded.";
+/// System memory kept free when deciding whether a model fits there (OS, other apps).
+const OFFLOAD_SPARE_RAM_GB: f64 = 2.0;
 const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Run the text encoder on the processor”).";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
@@ -222,6 +228,11 @@ pub(crate) struct MemFallback {
     pub te_on_cpu: bool,
     /// `--vae-tiling`
     pub vae_tiling: bool,
+    /// `--offload-to-cpu`: every weight lives in system memory (mapped from the
+    /// file, `--mmap`) and the card only caches what fits, so the engine can
+    /// make room for its working memory. Never remembered for the session: it
+    /// only sticks while the engine that needed it stays loaded.
+    pub offload: bool,
 }
 
 /// Settings `textEncoderOnCpu`.
@@ -248,6 +259,8 @@ pub(crate) struct EngineFlags {
     pub loading: bool,
     pub running: bool,
     pub loaded_model_id: Option<String>,
+    /// The running engine keeps the model in system memory (`--offload-to-cpu`).
+    pub offloaded: bool,
     /// Last engine failure, shown by the top bar's "Engine problem" popover.
     pub error: Option<CoreError>,
 }
@@ -782,18 +795,53 @@ fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
     if fb.vae_tiling && !args.iter().any(|a| a == "--vae-tiling") {
         args.push("--vae-tiling".into());
     }
+    if fb.offload && !args.iter().any(|a| a == "--offload-to-cpu") {
+        args.push("--offload-to-cpu".into());
+    }
     args
 }
 
-/// The next retry after running out of memory at `stage`, if any: text
-/// encoder → processor (Settings on Automatic, GPU backend, not there yet);
-/// anything else → VAE tiling (not on yet and allowed). Each choice is made at
-/// most once, so a job is retried at most twice. Returns the new choices and
-/// the note to show.
-fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool) -> Option<(MemFallback, &'static str)> {
+/// Weight files these launch args load (main model + components), in GiB.
+fn weights_gb(args: &[String]) -> f64 {
+    const FILE_FLAGS: &[&str] = &["--model", "--diffusion-model", "--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--llm_vision", "--clip_vision"];
+    let bytes: u64 = args
+        .windows(2)
+        .filter(|w| FILE_FLAGS.contains(&w[0].as_str()))
+        .filter_map(|w| std::fs::metadata(&w[1]).ok())
+        .map(|m| m.len())
+        .sum();
+    bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+}
+
+/// Every weight fits in system memory with room to spare (unknown RAM: assume so).
+fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
+    !(ram_gb.is_finite() && ram_gb > 0.0) || weights_gb(args) + OFFLOAD_SPARE_RAM_GB <= f64::from(ram_gb)
+}
+
+/// The next retry after running out of memory at `stage`, if any. Each
+/// choice is made at most once, so a job is retried at most three times:
+/// * reading the prompt → text encoder on the processor (Settings Automatic,
+///   GPU backend, not there yet); with Settings Off → weights to system memory;
+/// * decoding (VAE) or unknown → VAE tiling (not on yet and allowed), then
+///   weights to system memory;
+/// * denoising → weights to system memory right away. Tiling only helps the
+///   VAE, while sd.cpp auto-fit decides once, at launch, to keep the weights
+///   on the card with a fixed ~2 GB for working memory
+///   (src/core/backend_fit.cpp), so a bigger picture or a reference image has
+///   no room. Offloaded weights are only cached on the card and give way.
+///
+/// Weights go to system memory only on a GPU backend and when they fit there
+/// (`offload_ok`, see [`offload_fits_ram`]). Returns the new choices and the note.
+fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool, offload_ok: bool) -> Option<(MemFallback, &'static str)> {
+    let tiling = (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE));
+    let offload = (gpu_backend && offload_ok && !args.iter().any(|a| a == "--offload-to-cpu")).then_some((MemFallback { offload: true, ..fb }, OFFLOAD_RETRY_NOTE));
     match stage {
-        Stage::TextEncoder => (gpu_backend && te == TeChoice::Auto && !text_encoder_on_cpu(args)).then_some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
-        _ => (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE)),
+        // No GPU, or the text encoder already on the processor: it's system memory.
+        Stage::TextEncoder if !gpu_backend || text_encoder_on_cpu(args) => None,
+        Stage::TextEncoder if te == TeChoice::Auto => Some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
+        Stage::TextEncoder => offload,
+        Stage::Diffusion => offload,
+        Stage::Vae | Stage::Unknown => tiling.or(offload),
     }
 }
 
@@ -889,6 +937,9 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     if te_auto && TeChoice::current(core) == TeChoice::Auto {
         notes.push(TE_ON_CPU_NOTE.to_string());
     }
+    if flags.offloaded {
+        notes.push(OFFLOAD_NOTE.to_string());
+    }
     if let Some(o) = core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
         notes.push(others_sentence(&o));
     }
@@ -969,8 +1020,12 @@ enum ReadyFailure {
 /// stopped (GPU backends) and graphics memory used by other programs is
 /// measured (NVIDIA) — a lot of it becomes a progress note.
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
-    if let Some(url) = core.gen.external.lock().clone() {
+    let external = core.gen.external.lock().clone();
+    if let Some(url) = external {
         core.gen.external_launches.lock().push(wiring_args.to_vec());
+        let mut slot = core.gen.slot.lock().await;
+        slot.args = wiring_args.to_vec();
+        slot.model_id = Some(model_id.to_string());
         return Ok(url);
     }
     let cfg = engine_setup::engine_config(core)?;
@@ -1067,6 +1122,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
                 let mut f = core.gen.flags.lock();
                 f.running = true;
                 f.loaded_model_id = Some(model_id.to_string());
+                f.offloaded = slot.args.iter().any(|a| a == "--offload-to-cpu");
             }
             engine_setup::emit_status(core);
             Ok(format!("http://127.0.0.1:{port}"))
@@ -1314,11 +1370,18 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
 
     // Engine (restart only when the launch args differ) + job. When the graphics
     // card runs out of memory, each memory-saving choice is tried once (text
-    // encoder on the processor, VAE tiling), so there are at most two retries.
+    // encoder on the processor, VAE tiling, weights in system memory), so there
+    // are at most three retries (see `next_memory_fallback`).
     // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
+    // Weights in system memory stick while the engine that needed them stays
+    // loaded (not remembered: the next load tries the card again).
+    fb.offload = gpu_backend && {
+        let slot = core.gen.slot.lock().await;
+        slot.model_id.as_deref() == Some(prep.model.id.as_str()) && slot.args.iter().any(|a| a == "--offload-to-cpu")
+    };
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
     let job = loop {
@@ -1329,7 +1392,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             Ok(job) => break job,
             Err(RunError::Failed(e)) => return Err(e),
             Err(RunError::OutOfMemory { stage, details }) => {
-                let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed) else {
+                let offload_ok = offload_fits_ram(&args, hw.ram_gb);
+                let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed, offload_ok) else {
                     return Err(memory_error(core, stage, &args, gpu_backend).with_details(with_memory_plan(core, &prep.model.id, details)));
                 };
                 // Remember the automatic choice for this model (RAM only, app session).
@@ -1839,24 +1903,54 @@ mod tests {
     fn one_memory_retry_per_stage() {
         let gpu = v(&["--diffusion-model", "/d"]);
         let none = MemFallback::default();
-        let (fb, note) = next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, true, &gpu, true).unwrap();
-        assert_eq!(fb, MemFallback { te_on_cpu: true, vae_tiling: false });
-        assert_eq!(note, TE_RETRY_NOTE);
+        let next = |fb, stage, te, args: &[String]| next_memory_fallback(fb, stage, te, true, args, true, true);
+        // Reading the prompt: text encoder to the processor, and nothing after that.
+        let (fb, note) = next(none, Stage::TextEncoder, TeChoice::Auto, &gpu).unwrap();
+        assert_eq!((fb, note), (MemFallback { te_on_cpu: true, ..none }, TE_RETRY_NOTE));
         let args = with_memory_choices(&gpu, fb);
         assert!(text_encoder_on_cpu(&args), "{args:?}");
-        // Already on the processor, pinned to the card by Settings, or no GPU: no TE retry.
-        assert!(next_memory_fallback(fb, Stage::TextEncoder, TeChoice::Auto, true, &args, true).is_none());
-        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Off, true, &gpu, true).is_none());
-        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true).is_none());
-        // Anything else: VAE tiling once, unless it's on or Fine-tune turned it off.
-        for stage in [Stage::Diffusion, Stage::Vae, Stage::Unknown] {
-            let (fb, note) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, true).unwrap();
-            assert_eq!((fb.vae_tiling, note), (true, TILING_RETRY_NOTE));
+        assert!(next(fb, Stage::TextEncoder, TeChoice::Auto, &args).is_none());
+        // Settings keeps it on the card: the weights go to system memory instead.
+        let (fb, note) = next(none, Stage::TextEncoder, TeChoice::Off, &gpu).unwrap();
+        assert_eq!((fb, note), (MemFallback { offload: true, ..none }, OFFLOAD_RETRY_NOTE));
+        // Denoising: straight to system memory (tiling only helps the VAE), once.
+        let (fb, note) = next(none, Stage::Diffusion, TeChoice::Auto, &gpu).unwrap();
+        assert_eq!((fb, note), (MemFallback { offload: true, ..none }, OFFLOAD_RETRY_NOTE));
+        let args = with_memory_choices(&gpu, fb);
+        assert_eq!(args.iter().filter(|a| *a == "--offload-to-cpu").count(), 1);
+        assert!(next(fb, Stage::Diffusion, TeChoice::Auto, &args).is_none());
+        // Decoding / unknown: VAE tiling once, then system memory once.
+        for stage in [Stage::Vae, Stage::Unknown] {
+            let (fb, note) = next(none, stage, TeChoice::Auto, &gpu).unwrap();
+            assert_eq!((fb.vae_tiling, fb.offload, note), (true, false, TILING_RETRY_NOTE));
             let args = with_memory_choices(&gpu, fb);
             assert_eq!(args.iter().filter(|a| *a == "--vae-tiling").count(), 1);
-            assert!(next_memory_fallback(fb, stage, TeChoice::Auto, true, &args, true).is_none());
-            assert!(next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false).is_none());
+            let (fb, note) = next(fb, stage, TeChoice::Auto, &args).unwrap();
+            assert_eq!((fb.vae_tiling, fb.offload, note), (true, true, OFFLOAD_RETRY_NOTE));
+            assert!(next(fb, stage, TeChoice::Auto, &with_memory_choices(&gpu, fb)).is_none());
+            // Fine-tune turned tiling off: system memory right away.
+            let (fb, _) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false, true).unwrap();
+            assert_eq!((fb.vae_tiling, fb.offload), (false, true));
         }
+        // Not enough system memory for every weight: no offload.
+        assert!(next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, true, &gpu, true, false).is_none());
+        // No GPU: VAE tiling only, never for the prompt or denoising.
+        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true, true).is_none());
+        assert!(next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, false, &gpu, true, true).is_none());
+        let (fb, _) = next_memory_fallback(none, Stage::Vae, TeChoice::Auto, false, &gpu, true, true).unwrap();
+        assert_eq!((fb.vae_tiling, fb.offload), (true, false));
+    }
+
+    #[test]
+    fn offload_needs_room_in_system_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("m.gguf");
+        std::fs::File::create(&f).unwrap().set_len(3 * 1024 * 1024 * 1024).unwrap(); // sparse, 3 GiB
+        let args = v(&["--diffusion-model", f.to_str().unwrap(), "--listen-ip", "127.0.0.1"]);
+        assert!((weights_gb(&args) - 3.0).abs() < 1e-6);
+        assert!(offload_fits_ram(&args, 8.0));
+        assert!(!offload_fits_ram(&args, 4.0), "3 GB of weights + 2 GB spare > 4 GB");
+        assert!(offload_fits_ram(&args, 0.0), "unknown RAM");
     }
 
     #[test]

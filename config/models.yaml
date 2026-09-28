@@ -1115,6 +1115,8 @@ captioner:
 # auto-fit (diffusion_engine.cpp: auto_fit_enabled = auto_fit && params_backend
 # empty) and forces every weight into RAM — worse on low-RAM PCs. `--max-vram`
 # only lowers auto-fit's budget; the default (free VRAM − 512 MiB) is fine.
+# Pinhole adds --offload-to-cpu only as an out-of-memory retry, when every weight fits in RAM
+# (generate.rs next_memory_fallback): then the card caches weights and gives them up for work.
 # VAE tiling stays for small cards: decode retries with tiles on OOM by itself,
 # but img2img/edit *encoding* does not (docs/performance.md).
 hardware_profiles:

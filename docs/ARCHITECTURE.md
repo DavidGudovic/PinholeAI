@@ -125,7 +125,9 @@ Linux NVIDIA uses Vulkan).
    Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
    each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
    `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
-   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; then `CoreError{code:"vram"}`
+   `textEncoderOnCpu: auto|on|off`), VAE / unknown stage → `--vae-tiling`, then (denoising: right
+   away) `--offload-to-cpu` when every weight fits in RAM + 2 GB (kept only while that engine stays
+   loaded, `EngineFlags.offloaded` → engine note); then `CoreError{code:"vram"}`
    (message names other programs using the card, engine output in `details`, after the auto-fit
    memory plan kept from this model's last launch, `pinhole_engine::failure::memory_plan`).
    Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines
