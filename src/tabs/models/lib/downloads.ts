@@ -2,7 +2,7 @@
 // events. Shared by the Models tab, Recommended cards, First run and Settings, so the
 // event listener is registered once. Tags (RAM only) remember which group belongs to
 // which button ("rec:edit", "civitai:123", "engine") so progress survives remounts.
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import { cancelDownload, listDownloads, onDownload } from "../../../lib/api";
 import type { GroupStatus } from "../../../lib/types";
 import { isActive } from "./words";
@@ -70,19 +70,27 @@ export function getTagged(key: string): GroupStatus | null {
   return id ? groups.get(id) ?? null : null;
 }
 
-/** The group tagged `key`, or (fallback) the newest active group matching `match`. */
+/**
+ * The group tagged `key`, or (fallback) the newest active group matching `match`.
+ * Re-renders only when that group's status object changes (cards stay cheap).
+ */
 export function useTaggedGroup(key: string, match?: (g: GroupStatus) => boolean): GroupStatus | null {
-  useVersion();
-  const tagged = getTagged(key);
-  if (tagged) return tagged;
-  if (!match) return null;
-  for (let i = snapshot.length - 1; i >= 0; i--) if (isActive(snapshot[i]) && match(snapshot[i])) return snapshot[i];
-  return null;
+  const matchRef = useRef(match);
+  matchRef.current = match;
+  const get = useCallback(() => {
+    const tagged = getTagged(key);
+    if (tagged) return tagged;
+    const m = matchRef.current;
+    if (!m) return null;
+    for (let i = snapshot.length - 1; i >= 0; i--) if (isActive(snapshot[i]) && m(snapshot[i])) return snapshot[i];
+    return null;
+  }, [key]);
+  return useSyncExternalStore(subscribe, get);
 }
 
 export function useGroup(groupId: string | null): GroupStatus | null {
-  useVersion();
-  return groupId ? groups.get(groupId) ?? null : null;
+  const get = useCallback(() => (groupId ? (groups.get(groupId) ?? null) : null), [groupId]);
+  return useSyncExternalStore(subscribe, get);
 }
 
 /** Groups shown in the Models tab downloads list (finished ones can be hidden). */

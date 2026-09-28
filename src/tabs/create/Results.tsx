@@ -193,8 +193,8 @@ const Strip = memo(function Strip({
 }) {
   const dispatch = useDispatch();
   return (
-    <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">
-      <div className="flex gap-2 overflow-x-auto pb-1" role="listbox" aria-label="Images in this session" aria-orientation="horizontal">
+    <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
+      <div className="flex gap-2 overflow-x-auto p-1" role="listbox" aria-label="Images in this session" aria-orientation="horizontal">
         {Array.from({ length: pending }, (_, i) => (
           <div key={`p${i}`} className="pinhole-shimmer h-18 w-18 shrink-0 rounded-lg bg-neutral-200 dark:bg-neutral-800" aria-hidden />
         ))}

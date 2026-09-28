@@ -61,6 +61,7 @@ export function ModelsTab() {
             </p>
           </div>
           <Segmented
+            ariaLabel="View"
             options={[
               { value: "browse" as View, label: "Browse" },
               { value: "installed" as View, label: installedCount != null ? `Installed (${installedCount})` : "Installed" },

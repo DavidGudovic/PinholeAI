@@ -46,8 +46,15 @@ struct Inner {
     /// Current prompt texts (lowercased), in memory only, cleared after each job.
     secrets: Vec<String>,
     progress: Option<StepProgress>,
-    /// Partial line not yet terminated by `\n` / `\r`.
-    partial: String,
+    /// Per-stream partial line not yet terminated by `\n` / `\r` (stdout, stderr).
+    partial: [String; 2],
+}
+
+/// Which pipe bytes came from (each keeps its own partial line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stream {
+    Stdout = 0,
+    Stderr = 1,
 }
 
 /// Thread-safe ring buffer. Share as `Arc<LogBuffer>`.
@@ -91,11 +98,17 @@ impl LogBuffer {
         self.inner.lock().secrets.clear();
     }
 
-    /// Feed raw output bytes (may contain partial lines, `\r` progress updates).
+    /// Feed raw stdout bytes (may contain partial lines, `\r` progress updates).
     pub fn push_bytes(&self, bytes: &[u8]) {
+        self.push_stream(Stream::Stdout, bytes);
+    }
+
+    /// Feed raw bytes from one stream. stdout and stderr keep separate partial
+    /// lines so an unterminated progress bar can't swallow an error line.
+    pub fn push_stream(&self, stream: Stream, bytes: &[u8]) {
         let text = String::from_utf8_lossy(bytes);
         let mut g = self.inner.lock();
-        let mut buf = std::mem::take(&mut g.partial);
+        let mut buf = std::mem::take(&mut g.partial[stream as usize]);
         buf.push_str(&text);
         let mut rest = buf.as_str();
         while let Some(pos) = rest.find(['\n', '\r']) {
@@ -110,7 +123,7 @@ impl LogBuffer {
         }
         // Cap an unterminated segment so a runaway line can't grow forever.
         let keep: String = rest.chars().take(8 * MAX_LINE_CHARS).collect();
-        g.partial = keep;
+        g.partial[stream as usize] = keep;
     }
 
     /// Store one complete line (redacted).
@@ -122,9 +135,11 @@ impl LogBuffer {
     /// Flush a pending partial line (process exited).
     pub fn flush(&self) {
         let mut g = self.inner.lock();
-        let partial = std::mem::take(&mut g.partial);
-        if !partial.is_empty() {
-            Self::push_segment(&mut g, &partial);
+        for i in 0..2 {
+            let partial = std::mem::take(&mut g.partial[i]);
+            if !partial.is_empty() {
+                Self::push_segment(&mut g, &partial);
+            }
         }
     }
 
@@ -177,7 +192,7 @@ impl LogBuffer {
     pub fn clear(&self) {
         let mut g = self.inner.lock();
         g.lines.clear();
-        g.partial.clear();
+        g.partial = Default::default();
         g.progress = None;
     }
 }
@@ -360,6 +375,16 @@ mod tests {
         assert_eq!(b.tail(5), vec!["[WARN ] partial line", "[ERROR] second"]);
         b.reset_progress();
         assert!(b.progress().is_none());
+    }
+
+    #[test]
+    fn stderr_line_is_not_swallowed_by_a_pending_stdout_progress_bar() {
+        let b = LogBuffer::new(10);
+        b.push_stream(Stream::Stdout, b"\r  |==>   | 2/8 - 1.0it/s");
+        b.push_stream(Stream::Stderr, b"[ERROR] new_sd_ctx_t failed\n");
+        b.flush();
+        assert_eq!(b.tail(5), vec!["[ERROR] new_sd_ctx_t failed"]);
+        assert_eq!(b.progress().map(|p| (p.step, p.total)), Some((2, 8)));
     }
 
     #[test]

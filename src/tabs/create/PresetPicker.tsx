@@ -82,7 +82,7 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
             type="button"
             aria-label={`Preset: ${current?.name ?? "none"}`}
             className={cx(
-              "flex h-full w-32 shrink-0 flex-col justify-center rounded-xl border border-neutral-200 bg-white px-3 py-2 text-left shadow-xs hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700",
+              "flex w-32 shrink-0 flex-col justify-center self-stretch rounded-xl border border-neutral-200 bg-white px-3 py-2 text-left shadow-xs hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:border-neutral-700",
               focusRing,
             )}
           >

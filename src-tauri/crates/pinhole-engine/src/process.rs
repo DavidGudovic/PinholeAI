@@ -27,7 +27,7 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::logbuf::LogBuffer;
+use crate::logbuf::{LogBuffer, Stream};
 
 /// Why an engine did not become ready.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -135,7 +135,7 @@ impl EngineProcess {
                     if n == 0 {
                         break;
                     }
-                    logs.push_bytes(&buf[..n]);
+                    logs.push_stream(Stream::Stderr, &buf[..n]);
                 }
                 logs.flush();
             }));

@@ -103,6 +103,36 @@ export function useIsVisible<T extends Element>(ref: RefObject<T | null>): boole
 
 export type PreviewState = { src: string | null; failed: boolean; loading: boolean };
 
+const pending = new Map<string, Promise<Blob | null>>();
+const wanted = new Map<string, number>();
+
+function want(url: string, delta: number) {
+  const n = (wanted.get(url) ?? 0) + delta;
+  if (n <= 0) wanted.delete(url);
+  else wanted.set(url, n);
+}
+
+/** Cached blob, or one shared fetch per URL. Resolves null if every requester went away first. */
+function loadBlob(url: string): Promise<Blob | null> {
+  const cached = cacheGet(url);
+  if (cached) return Promise.resolve(cached);
+  let p = pending.get(url);
+  if (!p) {
+    p = schedule(() => fetchPreview(url), () => wanted.has(url))
+      .then((buf) => {
+        if (buf == null) return null;
+        const bytes = toBytes(buf);
+        if (!bytes.length) throw new Error("empty preview");
+        const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
+        cachePut(url, blob);
+        return blob;
+      })
+      .finally(() => pending.delete(url));
+    pending.set(url, p);
+  }
+  return p;
+}
+
 export function usePreviewBlob(url: string | null, enabled: boolean): PreviewState {
   const [state, setState] = useState<PreviewState>({ src: null, failed: false, loading: false });
   const objectUrl = useRef<string | null>(null);
@@ -110,6 +140,7 @@ export function usePreviewBlob(url: string | null, enabled: boolean): PreviewSta
   useEffect(() => {
     if (!url || !enabled) return;
     let alive = true;
+    want(url, 1);
     const show = (blob: Blob) => {
       const u = URL.createObjectURL(blob);
       objectUrl.current = u;
@@ -119,21 +150,21 @@ export function usePreviewBlob(url: string | null, enabled: boolean): PreviewSta
     if (cached) show(cached);
     else {
       setState({ src: null, failed: false, loading: true });
-      schedule(() => fetchPreview(url), () => alive)
-        .then((buf) => {
-          if (!alive || buf == null) return;
-          const bytes = toBytes(buf);
-          if (!bytes.length) throw new Error("empty");
-          const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
-          cachePut(url, blob);
-          show(blob);
-        })
-        .catch(() => {
-          if (alive) setState({ src: null, failed: true, loading: false });
-        });
+      const attempt = (retry: boolean) =>
+        loadBlob(url)
+          .then((blob) => {
+            if (!alive) return;
+            if (blob) show(blob);
+            else if (retry) void attempt(false);
+          })
+          .catch(() => {
+            if (alive) setState({ src: null, failed: true, loading: false });
+          });
+      void attempt(true);
     }
     return () => {
       alive = false;
+      want(url, -1);
       if (objectUrl.current) {
         URL.revokeObjectURL(objectUrl.current);
         objectUrl.current = null;

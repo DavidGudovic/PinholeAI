@@ -56,6 +56,20 @@ struct PendingAdd {
     dtype: Option<String>,
     civitai: Option<CivitaiRef>,
     candidates: Vec<String>,
+    created: std::time::Instant,
+}
+
+/// Unanswered family choices are dropped (and their copies deleted) after this.
+const PENDING_TTL: Duration = Duration::from_secs(30 * 60);
+
+/// Forget expired "Add a file" choices and delete the copies we made for them.
+fn purge_expired_pending(core: &AppCore) {
+    let expired: Vec<PendingAdd> = {
+        let mut pending = core.models.pending.lock();
+        let keys: Vec<String> = pending.iter().filter(|(_, p)| p.created.elapsed() > PENDING_TTL).map(|(k, _)| k.clone()).collect();
+        keys.into_iter().filter_map(|k| pending.remove(&k)).collect()
+    };
+    expired.iter().for_each(remove_copy);
 }
 
 /// What a finished download is, for registering it in `installed.json`.
@@ -289,8 +303,9 @@ pub(crate) async fn start_install(
         }
         // Failures are reported through the group's `download-progress` status.
         if let Ok(files) = result {
+            let same_len = files.len() == planned.len();
             for (i, (dest, _, reg)) in planned.into_iter().enumerate() {
-                let file = files.iter().find(|f| f.path == dest).or_else(|| files.get(i));
+                let file = files.iter().find(|f| f.path == dest).or_else(|| files.get(i).filter(|_| same_len));
                 if let Some(file) = file {
                     let _ = register_download(&task_core, file, reg);
                 }
@@ -346,6 +361,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         return Err(CoreError::not_found("Pinhole can't find that file. Check that it still exists and try again."));
     }
     let registry = core.registry();
+    purge_expired_pending(core);
 
     let header_src = src.clone();
     let reg_for_detect = registry.clone();
@@ -403,6 +419,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         dtype: Some(detection.dtype.clone()).filter(|d| !d.is_empty()),
         civitai: None,
         candidates: Vec::new(),
+        created: std::time::Instant::now(),
     };
 
     // Already installed (same bytes)? Keep the existing entry.
@@ -472,6 +489,7 @@ pub fn confirm_family(core: &AppCore, token: &str, family_id: &str) -> CoreResul
     if registry.family(family_id).is_none() {
         return Err(CoreError::invalid("That model type isn't known to Pinhole. Pick one from the list."));
     }
+    purge_expired_pending(core);
     let pending = core
         .models
         .pending

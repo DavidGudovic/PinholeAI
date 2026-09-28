@@ -26,6 +26,7 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
     let alive = true;
     setPlan(null);
     setError(null);
+    if (attempt === 0) setKeyOpen(false);
     planCivitaiInstall(versionId)
       .then((p) => {
         if (!alive) return;
