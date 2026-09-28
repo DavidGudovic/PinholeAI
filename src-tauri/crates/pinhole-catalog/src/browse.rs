@@ -197,6 +197,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_and_short_answers_keep_paging() {
+        // CivitAI can answer an empty or short page that still has a cursor (text search,
+        // filters applied after its own paging): that is not the end of the list.
+        let pages = vec![page(0..0, 0, Some("c1")), page(1..6, 0, Some("c2")), page(6..40, 0, Some("c3"))];
+        let src = FakeSource { pages, calls: Mutex::new(vec![]) };
+        let out = browse(&src, &filters(), &BrowseQuery::default(), &[], &env(), now(), go).await.unwrap();
+        assert_eq!(src.calls.lock().unwrap().len(), 3);
+        assert_eq!(out.items.len(), 39);
+        assert_eq!(out.next_cursor.as_deref(), Some("c3"));
+        assert!(!out.partial);
+    }
+
+    #[tokio::test]
     async fn stops_at_the_end_and_dedupes() {
         let src = FakeSource { pages: vec![page(1..11, 0, Some("c1")), page(5..15, 0, None)], calls: Mutex::new(vec![]) };
         let out = browse(&src, &filters(), &BrowseQuery::default(), &[], &env(), now(), go).await.unwrap();

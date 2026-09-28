@@ -20,6 +20,8 @@ pub const LEVEL_PG: u32 = 1;
 pub const LEVEL_PG13: u32 = 2;
 /// R: images at this level or above count as mature.
 pub const LEVEL_R: u32 = 4;
+/// Blocked by CivitAI's moderators: never a card preview.
+pub const LEVEL_BLOCKED: u32 = 32;
 
 /// `safe_filter` in `catalog-filters.yaml`. Lists are lowercased on load.
 #[derive(Debug, Clone, Deserialize)]

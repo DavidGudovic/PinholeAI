@@ -441,6 +441,7 @@ export interface CatalogCard {
   creator: string | null;
   /** Preview URL — fetch bytes via fetchPreview(); never put it in an <img src>. */
   previewUrl: string | null;
+  /** The preview comes from a video: `previewUrl` is a still frame of it (a bare video file URL is never fetched). */
   previewIsVideo: boolean;
   previewNsfw: boolean;
   modelNsfw: boolean;

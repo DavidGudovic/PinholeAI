@@ -144,6 +144,18 @@ sampler, scheduler, size — never prompt/negative/style text.
 - Restyle: current Create model, `init_image` + `strength` (0.35/0.55/0.75).
 - Result images carry `parentId` for the in-memory undo chain.
 
+### Browse CivitAI (catalog)
+`browse_catalog(query)` → `core::catalog::browse` → `pinhole_catalog::browse::browse`: asks
+`GET /api/v1/models` (`limit=50`, always `nsfw=true`, repeated `baseModels`/`types` keys, cursor
+paging; JSON requested gzip-compressed) through `cache::CachedSource` (RAM-only, 12 answers / 5 min,
+compacted), turns each model into a card or a hidden count (`filters::hidden_by` → `safe::SafeFilter`
+for Safe only / 18+ only, then Look, commercial use, price, compatibility) and keeps fetching until
+24 cards or 1 + 5 requests (`partial` → "Load more"). A newer Browse request stops an older one's
+extra requests (`cancelled`). Card previews are `width=450,optimized=true` CDN URLs (video → still
+frame); `fetch_preview` returns their bytes. UI (`src/tabs/models/lib/`): `pageStore.ts` (RAM page
+cache + shared in-flight requests, next page prefetched), `previewQueue.ts` / `preview.ts` (8
+fetches at a time, on-screen first, queued fetches dropped when a card scrolls away, 48 MB RAM LRU).
+
 ### Install from CivitAI / registry (catalog agent)
 `plan_civitai_install(versionId)` → pick file (SafeTensor/GGUF, primary preferred, both scans
 `Success`, else `blockedReason`), family via `baseModel` (→ hash/known file → ask), components

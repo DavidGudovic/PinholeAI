@@ -54,6 +54,7 @@ pub struct CatalogCard {
     pub creator: Option<String>,
     /// Fetch through `fetch_preview`; never an `<img src>`.
     pub preview_url: Option<String>,
+    /// The preview comes from a video; `preview_url` asks the CDN for a still frame.
     pub preview_is_video: bool,
     pub preview_nsfw: bool,
     pub model_nsfw: bool,

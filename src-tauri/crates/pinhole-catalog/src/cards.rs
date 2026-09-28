@@ -160,7 +160,7 @@ pub fn card_for_version(
 /// version's first still image, else its first video, else another version's
 /// still image. The UI blurs `previewNsfw` when 18+ is off.
 pub fn pick_preview<'a>(m: &'a Model, v: &'a ModelVersion, content: ContentMode, safe: &SafeFilter) -> Option<&'a ModelImage> {
-    let usable = |i: &&ModelImage| !i.url.trim().is_empty();
+    let usable = |i: &&ModelImage| !i.url.trim().is_empty() && i.nsfw_level.is_none_or(|l| l < crate::safe::LEVEL_BLOCKED);
     let still = |i: &&ModelImage| !i.is_video();
     let others = || m.model_versions.iter().filter(|o| o.id != v.id).flat_map(|o| o.images.iter());
     if content == ContentMode::Safe {
@@ -382,6 +382,12 @@ pub(crate) mod tests {
         assert!(pick_preview(&only_video, &only_video.model_versions[0], ContentMode::Safe, &f.safe).unwrap().is_video());
         let none: Model = serde_json::from_value(serde_json::json!({ "id": 3, "modelVersions": [{ "id": 31, "images": [{ "url": "u", "nsfwLevel": 2 }] }] })).unwrap();
         assert!(pick_preview(&none, &none.model_versions[0], ContentMode::Safe, &f.safe).is_none(), "PG-13 only → no preview");
+        let blocked: Model = serde_json::from_value(serde_json::json!({ "id": 4, "modelVersions": [{ "id": 41, "images": [
+            { "url": "https://image.civitai.com/x/b/original=true/b.jpeg", "nsfwLevel": 32 },
+            { "url": "https://image.civitai.com/x/r/original=true/r.jpeg", "nsfwLevel": 4 } ] }] }))
+        .unwrap();
+        let p = pick_preview(&blocked, &blocked.model_versions[0], ContentMode::Include18Plus, &f.safe).unwrap();
+        assert!(p.url.ends_with("r.jpeg"), "images CivitAI blocked are never previews");
     }
 
     #[test]
