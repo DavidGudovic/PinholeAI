@@ -303,6 +303,11 @@ impl Registry {
             if !f.detect.has_positive_rule() {
                 problems.push(format!("family `{id}`: detect has no positive rule (header sniffing can never pick it)"));
             }
+            if f.detect.whole_checkpoint && f.layout != Layout::AllInOne {
+                problems.push(format!(
+                    "family `{id}`: detect.whole_checkpoint needs layout: all_in_one"
+                ));
+            }
             if let Some(s) = &f.defaults.sampler {
                 if !wiring::SAMPLERS.contains(&s.as_str()) {
                     problems.push(format!(

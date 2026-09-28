@@ -18,6 +18,8 @@ zip = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
+# Leftover-engine sweep (process list + exe paths). Already in the tree via pinhole-hardware.
+sysinfo = { workspace = true }
 # PNG chunk CRCs (text-chunk scrubbing / settings chunk). Already in the tree via `png`.
 crc32fast = "1"
 # llama.cpp Linux releases are .tar.gz.

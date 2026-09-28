@@ -26,13 +26,15 @@ pub struct MockOptions {
     pub polls_before_done: u32,
     /// Finish jobs with `status: failed` and this message instead of images.
     pub fail_with: Option<String>,
+    /// With `fail_with`: only the first this-many jobs fail (0 = every job).
+    pub fail_first: u32,
     /// Cap for the side length of returned images (keeps tests fast).
     pub max_side: u32,
 }
 
 impl Default for MockOptions {
     fn default() -> Self {
-        Self { polls_before_done: 2, fail_with: None, max_side: 1024 }
+        Self { polls_before_done: 2, fail_with: None, fail_first: 0, max_side: 1024 }
     }
 }
 
@@ -49,6 +51,8 @@ struct MockJob {
     body: Value,
     polls: u32,
     cancelled: bool,
+    /// 1-based submission order.
+    seq: u64,
 }
 
 /// A fake sd-server. Dropping it stops the server.
@@ -122,7 +126,8 @@ fn sd_route(st: &Mutex<SdState>, opts: &MockOptions, method: &str, path: &str, b
             g.next_id += 1;
             let id = format!("job_mock_{:08}", g.next_id);
             g.requests.push(v.clone());
-            g.jobs.insert(id.clone(), MockJob { body: v, polls: 0, cancelled: false });
+            let seq = g.next_id;
+            g.jobs.insert(id.clone(), MockJob { body: v, polls: 0, cancelled: false, seq });
             (202, json!({"id": id, "kind": "img_gen", "status": "queued", "created": 1, "poll_url": format!("/sdcpp/v1/jobs/{id}")}))
         }
         ("POST", "/sdcpp/v1/upscale") => {
@@ -152,7 +157,8 @@ fn sd_route(st: &Mutex<SdState>, opts: &MockOptions, method: &str, path: &str, b
                 let status = if polls == 0 { "queued" } else { "generating" };
                 return (200, json!({"id": id, "status": status, "queue_position": if polls == 0 { 1 } else { 0 }, "result": null, "error": null}));
             }
-            if let Some(msg) = &opts.fail_with {
+            let fails = opts.fail_first == 0 || job.seq <= u64::from(opts.fail_first);
+            if let Some(msg) = opts.fail_with.as_ref().filter(|_| fails) {
                 return (200, json!({"id": id, "status": "failed", "queue_position": 0, "result": null, "error": {"code": "generation_failed", "message": msg}}));
             }
             let images = render(&job.body, opts);

@@ -791,9 +791,15 @@ pub fn detect(registry: &Registry, header: &HeaderInfo) -> Detection {
         component_kind(header, &raw)
     };
 
+    // Families like HiDream-O1 carry their text encoder under their own names
+    // (`detect.whole_checkpoint`): such files are always all-in-one.
+    let whole_checkpoint = candidates
+        .first()
+        .and_then(|id| registry.family(id))
+        .is_some_and(|f| f.detect.whole_checkpoint);
     let layout = if !is_lora
-        && (has_diffusion || !candidates.is_empty())
-        && (has_vae_prefixed || has_te_prefixed)
+        && (whole_checkpoint
+            || ((has_diffusion || !candidates.is_empty()) && (has_vae_prefixed || has_te_prefixed)))
     {
         Layout::AllInOne
     } else {
@@ -805,7 +811,9 @@ pub fn detect(registry: &Registry, header: &HeaderInfo) -> Detection {
         layout,
         has_vae: !is_lora && (has_vae_prefixed || comp == Some("vae")),
         has_text_encoders: !is_lora
-            && (has_te_prefixed || matches!(comp, Some("clip_l" | "clip_g" | "t5xxl" | "llm"))),
+            && (whole_checkpoint
+                || has_te_prefixed
+                || matches!(comp, Some("clip_l" | "clip_g" | "t5xxl" | "llm"))),
         dtype: header.dtype.clone(),
         is_lora,
         is_component,
