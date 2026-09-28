@@ -126,8 +126,8 @@ Linux NVIDIA uses Vulkan).
    each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
    `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
    `textEncoderOnCpu: auto|on|off`), VAE / unknown stage → `--vae-tiling`, then (denoising: right
-   away) `--offload-to-cpu` when every weight fits in RAM + 2 GB (kept only while that engine stays
-   loaded, `EngineFlags.offloaded` → engine note); then `CoreError{code:"vram"}`
+   away) `--offload-to-cpu` when every weight fits in RAM + 2 GB (else denoising gets tiling; kept while the
+   same model runs with the same wiring args, `GenState::offloaded` → engine note); then `CoreError{code:"vram"}`
    (message names other programs using the card, engine output in `details`, after the auto-fit
    memory plan kept from this model's last launch, `pinhole_engine::failure::memory_plan`).
    Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines

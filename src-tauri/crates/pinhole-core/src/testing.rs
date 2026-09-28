@@ -530,7 +530,8 @@ mod tests {
         *core.gen.memory_plan.lock() = Some((model.clone(), vec![plan_line.clone()]));
         let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
         let details = err.details.clone().unwrap_or_default();
-        assert!(details.starts_with("Memory plan when the engine started:") && details.contains(&plan_line), "{details}");
+        // The last attempt kept the weights in system memory (no auto-fit): the plan is the earlier one's.
+        assert!(details.starts_with("Memory plan of the earlier attempt") && details.contains(&plan_line), "{details}");
         assert!(details.contains("sampling for image 1/1 failed"), "{details}");
         assert_eq!(err.code, "vram");
         assert_eq!(
@@ -617,11 +618,28 @@ mod tests {
         assert!(te_on_cpu(&last) && offloaded(&last), "{last:?}");
         {
             let mut f = core.gen.flags.lock();
-            (f.running, f.offloaded, f.loaded_model_id) = (true, true, Some(model.clone()));
+            (f.running, f.loaded_model_id) = (true, Some(model.clone()));
         }
         let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
         assert!(note.contains("system memory"), "{note}");
-        generate::unload_model(&core, &model).await;
+        // Deleting another model leaves this engine alone, unless it has one of the files open.
+        let running = core.gen.slot.lock().await.args.clone();
+        generate::unload_model(&core, "other", &[std::path::PathBuf::from("/not/used.gguf")]).await;
+        assert_eq!(core.gen.slot.lock().await.model_id.as_deref(), Some(model.as_str()));
+        let shared = running.iter().find(|a| a.ends_with(".gguf") || a.ends_with(".safetensors")).cloned().expect("a weight file");
+        generate::unload_model(&core, "other", &[shared.into()]).await;
+        assert!(core.gen.slot.lock().await.model_id.is_none(), "the engine that had the file open stopped");
+        assert!(core.gen.offloaded.lock().is_some(), "same model, same settings: still system memory");
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        assert!(offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        // Other settings (other launch args): the card again.
+        core.gen.offloaded.lock().as_mut().unwrap().1.push("--other-setting".into());
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        assert!(!offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        assert!(core.gen.offloaded.lock().is_none());
+        // Deleting this model forgets it.
+        *core.gen.offloaded.lock() = Some((model.clone(), core.gen.external_launches.lock().last().cloned().unwrap()));
+        generate::unload_model(&core, &model, &[]).await;
         generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
         let last = core.gen.external_launches.lock().last().cloned().unwrap();
         assert!(te_on_cpu(&last) && !offloaded(&last), "the next load tries the card again: {last:?}");
@@ -670,7 +688,7 @@ mod tests {
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::VRAM_MESSAGE);
         assert!(err.message.starts_with("Your graphics card ran out of memory. Close other programs"), "{}", err.message);
-        assert_eq!(mock.requests().len(), 3, "text encoder retry + tiling retry, then stop");
+        assert_eq!(mock.requests().len(), 3, "text encoder retry + system memory retry, then stop");
         let details = err.details.unwrap_or_default();
         assert!(details.contains("generate_image returned no results") && details.contains("sampling for image 1/1 failed"), "{details}");
         assert!(!details.contains(SENTINEL));

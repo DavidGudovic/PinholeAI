@@ -25,7 +25,7 @@
 //! in `installed.json`.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -259,8 +259,6 @@ pub(crate) struct EngineFlags {
     pub loading: bool,
     pub running: bool,
     pub loaded_model_id: Option<String>,
-    /// The running engine keeps the model in system memory (`--offload-to-cpu`).
-    pub offloaded: bool,
     /// Last engine failure, shown by the top bar's "Engine problem" popover.
     pub error: Option<CoreError>,
 }
@@ -306,6 +304,11 @@ pub struct GenState {
     /// weights went; no prompt text). Kept across a retry whose engine doesn't
     /// run auto-fit, and shown in the details of an out-of-memory error.
     pub(crate) memory_plan: parking_lot::Mutex<Option<(String, Vec<String>)>>,
+    /// Model id + wiring args of the last launch when it kept the weights in
+    /// system memory (`--offload-to-cpu`); `None` after any other launch or an
+    /// unload. The same model with the same settings keeps them there, also
+    /// after the idle stop, so it doesn't run out of memory on the card again.
+    pub(crate) offloaded: parking_lot::Mutex<Option<(String, Vec<String>)>>,
     /// Tests: the launch args each run asked an external engine for.
     pub(crate) external_launches: parking_lot::Mutex<Vec<Vec<String>>>,
 }
@@ -328,6 +331,7 @@ impl Default for GenState {
             job_note: parking_lot::Mutex::new(Vec::new()),
             gpu_others: parking_lot::Mutex::new(None),
             memory_plan: parking_lot::Mutex::new(None),
+            offloaded: parking_lot::Mutex::new(None),
             external_launches: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -353,9 +357,18 @@ pub async fn shutdown(core: &AppCore) {
 /// loaded, and whenever it runs at all, because with `--mmap` it keeps the
 /// files it read (a LoRA, a shared component) mapped, and Windows can't delete
 /// a mapped file. The next Generate loads the model again.
-pub async fn unload_model(core: &AppCore, model_id: &str) {
+pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
+    {
+        let mut off = core.gen.offloaded.lock();
+        if off.as_ref().is_some_and(|(id, _)| id == model_id) {
+            *off = None;
+        }
+    }
     let mut slot = core.gen.slot.lock().await;
-    if slot.model_id.as_deref() == Some(model_id) || slot.proc.is_some() {
+    // Also when the running engine has one of the files open (a shared
+    // component): Windows can't delete a mapped file (`--mmap`).
+    let uses_file = files.iter().any(|f| slot.args.iter().any(|a| Path::new(a) == f.as_path()));
+    if slot.model_id.as_deref() == Some(model_id) || uses_file {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
         }
@@ -803,10 +816,9 @@ fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
 
 /// Weight files these launch args load (main model + components), in GiB.
 fn weights_gb(args: &[String]) -> f64 {
-    const FILE_FLAGS: &[&str] = &["--model", "--diffusion-model", "--vae", "--clip_l", "--clip_g", "--t5xxl", "--llm", "--llm_vision", "--clip_vision"];
     let bytes: u64 = args
         .windows(2)
-        .filter(|w| FILE_FLAGS.contains(&w[0].as_str()))
+        .filter(|w| pinhole_registry::wiring::WEIGHT_FILE_FLAGS.contains(&w[0].as_str()))
         .filter_map(|w| std::fs::metadata(&w[1]).ok())
         .map(|m| m.len())
         .sum();
@@ -824,7 +836,8 @@ fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
 ///   GPU backend, not there yet); with Settings Off → weights to system memory;
 /// * decoding (VAE) or unknown → VAE tiling (not on yet and allowed), then
 ///   weights to system memory;
-/// * denoising → weights to system memory right away. Tiling only helps the
+/// * denoising → weights to system memory right away (tiling only when they
+///   don't fit there). Tiling only helps the
 ///   VAE, while sd.cpp auto-fit decides once, at launch, to keep the weights
 ///   on the card with a fixed ~2 GB for working memory
 ///   (src/core/backend_fit.cpp), so a bigger picture or a reference image has
@@ -840,7 +853,9 @@ fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend
         Stage::TextEncoder if !gpu_backend || text_encoder_on_cpu(args) => None,
         Stage::TextEncoder if te == TeChoice::Auto => Some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
         Stage::TextEncoder => offload,
-        Stage::Diffusion => offload,
+        Stage::Diffusion if gpu_backend && offload_ok => offload,
+        // Tiling as a last resort: the stage is read from the engine output.
+        Stage::Diffusion => tiling,
         Stage::Vae | Stage::Unknown => tiling.or(offload),
     }
 }
@@ -904,7 +919,7 @@ pub(crate) fn vram_message(core: &AppCore) -> String {
 
 /// Engine output of an out-of-memory job, after the memory plan this model's
 /// last auto-fit launch printed (when it isn't in the output already).
-fn with_memory_plan(core: &AppCore, model_id: &str, details: String) -> String {
+fn with_memory_plan(core: &AppCore, model_id: &str, args: &[String], details: String) -> String {
     let plan = match core.gen.memory_plan.lock().as_ref() {
         Some((id, plan)) if id == model_id => plan.clone(),
         _ => return details,
@@ -912,7 +927,13 @@ fn with_memory_plan(core: &AppCore, model_id: &str, details: String) -> String {
     if plan.iter().all(|l| details.contains(l.as_str())) {
         return details;
     }
-    format!("Memory plan when the engine started:\n{}\n\n{details}", plan.join("\n"))
+    // An offloaded engine doesn't run auto-fit: the plan is the earlier attempt's.
+    let title = if args.iter().any(|a| a == "--offload-to-cpu") {
+        "Memory plan of the earlier attempt (before the weights moved to system memory):"
+    } else {
+        "Memory plan when the engine started:"
+    };
+    format!("{title}\n{}\n\n{details}", plan.join("\n"))
 }
 
 /// The final out-of-memory error for a job (after any retry).
@@ -937,7 +958,7 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     if te_auto && TeChoice::current(core) == TeChoice::Auto {
         notes.push(TE_ON_CPU_NOTE.to_string());
     }
-    if flags.offloaded {
+    if core.gen.offloaded.lock().is_some() {
         notes.push(OFFLOAD_NOTE.to_string());
     }
     if let Some(o) = core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
@@ -1019,6 +1040,11 @@ enum ReadyFailure {
 /// engines under `Data/engine/` are killed, an idle describe engine is
 /// stopped (GPU backends) and graphics memory used by other programs is
 /// measured (NVIDIA) — a lot of it becomes a progress note.
+/// Remember a launch with the weights in system memory (see `GenState::offloaded`).
+fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
+    *core.gen.offloaded.lock() = wiring_args.iter().any(|a| a == "--offload-to-cpu").then(|| (model_id.to_string(), wiring_args.to_vec()));
+}
+
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
@@ -1026,6 +1052,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         let mut slot = core.gen.slot.lock().await;
         slot.args = wiring_args.to_vec();
         slot.model_id = Some(model_id.to_string());
+        note_offload(core, model_id, wiring_args);
         return Ok(url);
     }
     let cfg = engine_setup::engine_config(core)?;
@@ -1115,6 +1142,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
             if !plan.is_empty() {
                 *core.gen.memory_plan.lock() = Some((model_id.to_string(), plan));
             }
+            note_offload(core, model_id, wiring_args);
             slot.proc = Some(proc);
             slot.args = args;
             slot.model_id = Some(model_id.to_string());
@@ -1122,7 +1150,6 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
                 let mut f = core.gen.flags.lock();
                 f.running = true;
                 f.loaded_model_id = Some(model_id.to_string());
-                f.offloaded = slot.args.iter().any(|a| a == "--offload-to-cpu");
             }
             engine_setup::emit_status(core);
             Ok(format!("http://127.0.0.1:{port}"))
@@ -1376,11 +1403,11 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
-    // Weights in system memory stick while the engine that needed them stays
-    // loaded (not remembered: the next load tries the card again).
+    // Weights in system memory stick while this model runs with the same
+    // settings (see `GenState::offloaded`); anything else tries the card again.
     fb.offload = gpu_backend && {
-        let slot = core.gen.slot.lock().await;
-        slot.model_id.as_deref() == Some(prep.model.id.as_str()) && slot.args.iter().any(|a| a == "--offload-to-cpu")
+        let with_offload = with_memory_choices(&wiring_args, MemFallback { offload: true, ..fb });
+        core.gen.offloaded.lock().as_ref().is_some_and(|(id, a)| *id == prep.model.id && *a == with_offload)
     };
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
@@ -1394,7 +1421,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             Err(RunError::OutOfMemory { stage, details }) => {
                 let offload_ok = offload_fits_ram(&args, hw.ram_gb);
                 let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed, offload_ok) else {
-                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(with_memory_plan(core, &prep.model.id, details)));
+                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(with_memory_plan(core, &prep.model.id, &args, details)));
                 };
                 // Remember the automatic choice for this model (RAM only, app session).
                 {
@@ -1932,11 +1959,14 @@ mod tests {
             let (fb, _) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false, true).unwrap();
             assert_eq!((fb.vae_tiling, fb.offload), (false, true));
         }
-        // Not enough system memory for every weight: no offload.
-        assert!(next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, true, &gpu, true, false).is_none());
-        // No GPU: VAE tiling only, never for the prompt or denoising.
+        // Not enough system memory for every weight: no offload, tiling as a last resort.
+        let (fb, _) = next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, true, &gpu, true, false).unwrap();
+        assert_eq!((fb.vae_tiling, fb.offload), (true, false));
+        assert!(next_memory_fallback(fb, Stage::Diffusion, TeChoice::Auto, true, &with_memory_choices(&gpu, fb), true, false).is_none());
+        // No GPU: VAE tiling only, never for the prompt.
         assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true, true).is_none());
-        assert!(next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, false, &gpu, true, true).is_none());
+        let (fb, _) = next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, false, &gpu, true, true).unwrap();
+        assert_eq!((fb.vae_tiling, fb.offload), (true, false));
         let (fb, _) = next_memory_fallback(none, Stage::Vae, TeChoice::Auto, false, &gpu, true, true).unwrap();
         assert_eq!((fb.vae_tiling, fb.offload), (true, false));
     }
@@ -1945,11 +1975,13 @@ mod tests {
     fn offload_needs_room_in_system_memory() {
         let dir = tempfile::tempdir().unwrap();
         let f = dir.path().join("m.gguf");
-        std::fs::File::create(&f).unwrap().set_len(3 * 1024 * 1024 * 1024).unwrap(); // sparse, 3 GiB
-        let args = v(&["--diffusion-model", f.to_str().unwrap(), "--listen-ip", "127.0.0.1"]);
-        assert!((weights_gb(&args) - 3.0).abs() < 1e-6);
-        assert!(offload_fits_ram(&args, 8.0));
-        assert!(!offload_fits_ram(&args, 4.0), "3 GB of weights + 2 GB spare > 4 GB");
+        let t = dir.path().join("t.safetensors");
+        std::fs::write(&f, vec![0u8; 3 << 20]).unwrap();
+        std::fs::write(&t, vec![0u8; 1 << 20]).unwrap();
+        let args = v(&["--diffusion-model", f.to_str().unwrap(), "--t5xxl", t.to_str().unwrap(), "--listen-ip", "127.0.0.1"]);
+        assert!((weights_gb(&args) - 4.0 / 1024.0).abs() < 1e-9);
+        assert!(offload_fits_ram(&args, 2.01));
+        assert!(!offload_fits_ram(&args, 2.0), "4 MB of weights + 2 GB spare > 2 GB");
         assert!(offload_fits_ram(&args, 0.0), "unknown RAM");
     }
 

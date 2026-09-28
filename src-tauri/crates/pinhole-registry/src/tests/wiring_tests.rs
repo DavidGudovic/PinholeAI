@@ -1064,3 +1064,13 @@ fn minimax_h3_is_not_wired() {
     assert!(reg.families_for_base_model("MiniMax H3").is_empty());
     assert!(!reg.all_civitai_base_models().contains(&"MiniMax H3".to_string()));
 }
+
+#[test]
+fn weight_file_flags_cover_every_component_flag() {
+    for f in WEIGHT_FILE_FLAGS {
+        assert!(is_known_flag(f), "{f}");
+    }
+    for (_, f) in COMPONENT_FLAGS {
+        assert!(WEIGHT_FILE_FLAGS.contains(f), "{f}");
+    }
+}

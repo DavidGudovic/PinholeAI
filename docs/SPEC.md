@@ -577,8 +577,9 @@ build is shared.
   encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
   processor"); while decoding → `--vae-tiling`; then, and right away when denoising runs out, the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
-  every weight fits in RAM with 2 GB to spare, and only while that engine stays loaded — the next
-  load tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
+  every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
+  model runs with the same settings, also after the idle stop — another model, other settings or
+  deleting it tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
   at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
   or a reference image has no room; offloaded weights are only cached there. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
@@ -587,7 +588,9 @@ build is shared.
   last launch. `sd-server` runs at `--log-level info` for that plan, never verbose / debug (they
   print the request). Weights auto-fit keeps in system memory are memory-mapped from the model
   file (`--mmap`) rather than copied into pinned memory, so the OS can page them out; because a
-  mapped file can't be deleted on Windows, deleting a model first stops a running engine.
+  mapped file can't be deleted on Windows, deleting a model first stops the engine when it runs
+  that model or has one of its files open. sd-server's per-tensor "unknown tensor" lines are not
+  kept in the output buffer (they can run to hundreds and push out the useful lines).
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,
