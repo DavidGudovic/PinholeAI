@@ -948,6 +948,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     })?;
 
     engine_setup::ensure_runtime(core, &installed)?;
+    emit_progress(core, GenPhase::LoadingModel, label, None, None, t0);
 
     let gpu_backend = installed.backend != "cpu";
     if gpu_backend {

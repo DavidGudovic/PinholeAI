@@ -394,6 +394,9 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Offline mode
 - Data folder location (portable / installed) + Open folder
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
+- Engine backend (auto / CUDA / Vulkan / CPU) and **Read the prompt on** (Automatic / Processor /
+  Graphics card) — where the text encoder runs; Automatic moves it to the processor for a model
+  after the graphics card runs out of memory while reading the prompt (kept for the app session)
 - Default content mode (Safe only / Include 18+ / 18+ only)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
@@ -497,6 +500,13 @@ build is shared.
 - **WebView is private**: the main window runs incognito (no cookies/cache/storage on disk); in
   portable mode its profile folder lives in `Data/webview`.
 - **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
+- **Running out of graphics memory**: before `sd-server` starts, leftover Pinhole engines (processes
+  under `Data/engine/` that this app isn't running) are killed, an idle Describe engine is stopped,
+  and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
+  loading when it's > 2 GB or > 25 %). A job that runs out of memory is retried once: while
+  reading the prompt → text encoder on the processor (`--backend te=cpu`, Settings "Read the
+  prompt on"); otherwise → `--vae-tiling`. The final error (code `vram`) names the other
+  programs when known and says to close them or pick the smaller version of the model.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,

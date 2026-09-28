@@ -6,7 +6,7 @@ import { formatBytes, formatCount } from "../../lib/format";
 import { Badge, Button } from "../../components/ui";
 import { GroupProgress, VramLine } from "./controls";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
-import { useNearViewport, usePreviewBlob } from "./lib/preview";
+import { usePreviewBlob, useVisibility } from "./lib/preview";
 import { shouldBlurPreview } from "./lib/query";
 import { isActive, ratioPercent } from "./lib/words";
 
@@ -42,9 +42,9 @@ export const CatalogCardView = memo(function CatalogCardView({
   onInstall: (card: CatalogCard) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const near = useNearViewport(ref);
+  const visibility = useVisibility(ref);
   const blur = shouldBlurPreview(card, content);
-  const preview = usePreviewBlob(card.previewIsVideo ? null : card.previewUrl, near);
+  const preview = usePreviewBlob(card.previewIsVideo ? null : card.previewUrl, visibility);
   const group = useTaggedGroup(`civitai:${card.versionId}`);
   const downloading = !!group && isActive(group);
   const isLora = card.type.toUpperCase() === "LORA";
@@ -82,10 +82,11 @@ export const CatalogCardView = memo(function CatalogCardView({
     );
 
   return (
-    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+    // content-visibility: the browser skips layout/paint for cards far off screen.
+    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
       <div ref={ref} className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         {preview.src ? (
-          <img src={preview.src} alt="" draggable={false} className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
+          <img src={preview.src} alt="" draggable={false} decoding="async" className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
         ) : card.previewIsVideo ? (
           <Placeholder icon={<Film className="h-6 w-6" />} text="Video preview" />
         ) : preview.failed || !card.previewUrl ? (

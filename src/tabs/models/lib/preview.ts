@@ -1,56 +1,24 @@
 // CivitAI preview images: bytes come from Rust (`fetch_preview`), shown as Blob URLs.
-// The WebView never loads a remote URL. Fetches start only when the card is near the
-// viewport, run at most 4 at a time, and Blob URLs are revoked on unmount. A small
-// in-memory cache (RAM only) avoids fetching the same preview twice when filters change.
+// The WebView never loads a remote URL.
+//  * Cards report whether they are on screen, near it, or away (two shared observers).
+//  * Fetches run 8 at a time, on-screen cards first; a queued fetch is dropped when its
+//    card scrolls away or unmounts (see previewQueue.ts).
+//  * Previews stay in a RAM-only LRU (≈48 MB) for the whole session, so scrolling back,
+//    switching filters or tabs doesn't fetch them again. Nothing is written to disk.
+//  * A card far off screen gives its Blob URL back, so memory stays bounded by the LRU.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { fetchPreview } from "../../../lib/api";
+import { BlobLru, PreviewScheduler, type PreviewHandle, type Priority } from "./previewQueue";
+import { measureSince } from "./perf";
 import { sniffImageType } from "./words";
 
-const MAX_IN_FLIGHT = 4;
-const CACHE_MAX = 160;
-const cache = new Map<string, Blob>();
+const MAX_IN_FLIGHT = 8;
+const CACHE_BYTES = 48 * 1024 * 1024;
+const CACHE_COUNT = 600;
+/** Start fetching this far before a card scrolls into view. */
+export const NEAR_MARGIN = "1200px 0px";
 
-function cacheGet(url: string): Blob | null {
-  const b = cache.get(url);
-  if (!b) return null;
-  cache.delete(url); // refresh LRU position
-  cache.set(url, b);
-  return b;
-}
-
-function cachePut(url: string, blob: Blob) {
-  cache.set(url, blob);
-  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
-}
-let inFlight = 0;
-const waiting: (() => void)[] = [];
-
-function next() {
-  const run = waiting.shift();
-  if (run) run();
-}
-
-/** Run `job` when a slot is free; skipped entirely if `alive()` turns false while queued. */
-function schedule<T>(job: () => Promise<T>, alive: () => boolean): Promise<T | null> {
-  return new Promise((resolve, reject) => {
-    const run = () => {
-      if (!alive()) {
-        resolve(null);
-        next();
-        return;
-      }
-      inFlight += 1;
-      job()
-        .then(resolve, reject)
-        .finally(() => {
-          inFlight -= 1;
-          next();
-        });
-    };
-    if (inFlight < MAX_IN_FLIGHT) run();
-    else waiting.push(run);
-  });
-}
+const cache = new BlobLru<Blob>(CACHE_BYTES, CACHE_COUNT);
 
 function toBytes(buf: unknown): Uint8Array {
   if (buf instanceof ArrayBuffer) return new Uint8Array(buf);
@@ -59,29 +27,78 @@ function toBytes(buf: unknown): Uint8Array {
   return new Uint8Array();
 }
 
-/** True once the element has been near the viewport (stays true). */
-export function useNearViewport<T extends Element>(ref: RefObject<T | null>, margin = "400px"): boolean {
-  const [seen, setSeen] = useState(false);
-  useEffect(() => {
-    if (seen) return;
-    const el = ref.current;
-    if (!el || typeof IntersectionObserver === "undefined") {
-      setSeen(true);
-      return;
-    }
-    const io = new IntersectionObserver(
+const scheduler = new PreviewScheduler<Blob>(async (url) => {
+  const cached = cache.get(url);
+  if (cached) return cached;
+  const started = performance.now();
+  const bytes = toBytes(await fetchPreview(url));
+  if (!bytes.length) throw new Error("empty preview");
+  const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
+  cache.set(url, blob);
+  measureSince("pinhole:preview", started);
+  return blob;
+}, MAX_IN_FLIGHT);
+
+// ---------------------------------------------------------------- viewport tracking
+export type Visibility = "visible" | "near" | "away";
+
+type Watcher = { visible: boolean; near: boolean; cb: (v: Visibility) => void };
+const watchers = new Map<Element, Watcher>();
+let visibleObserver: IntersectionObserver | null = null;
+let nearObserver: IntersectionObserver | null = null;
+
+function report(w: Watcher) {
+  w.cb(w.visible ? "visible" : w.near ? "near" : "away");
+}
+
+function observers(): [IntersectionObserver, IntersectionObserver] | null {
+  if (typeof IntersectionObserver === "undefined") return null;
+  if (!visibleObserver || !nearObserver) {
+    visibleObserver = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        const w = watchers.get(e.target);
+        if (w && w.visible !== e.isIntersecting) {
+          w.visible = e.isIntersecting;
+          report(w);
+        }
+      }
+    });
+    nearObserver = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setSeen(true);
-          io.disconnect();
+        for (const e of entries) {
+          const w = watchers.get(e.target);
+          if (w && w.near !== e.isIntersecting) {
+            w.near = e.isIntersecting;
+            report(w);
+          }
         }
       },
-      { rootMargin: margin },
+      { rootMargin: NEAR_MARGIN },
     );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [ref, margin, seen]);
-  return seen;
+  }
+  return [visibleObserver, nearObserver];
+}
+
+/** Where a card is relative to the screen (two observers shared by every card). */
+export function useVisibility<T extends Element>(ref: RefObject<T | null>): Visibility {
+  const [vis, setVis] = useState<Visibility>("away");
+  useEffect(() => {
+    const el = ref.current;
+    const obs = observers();
+    if (!el || !obs) {
+      setVis("visible");
+      return;
+    }
+    watchers.set(el, { visible: false, near: false, cb: setVis });
+    obs[0].observe(el);
+    obs[1].observe(el);
+    return () => {
+      obs[0].unobserve(el);
+      obs[1].unobserve(el);
+      watchers.delete(el);
+    };
+  }, [ref]);
+  return vis;
 }
 
 /** Live visibility (false while an ancestor is `hidden` / display:none, e.g. an inactive tab). */
@@ -101,76 +118,66 @@ export function useIsVisible<T extends Element>(ref: RefObject<T | null>): boole
   return visible;
 }
 
+// ---------------------------------------------------------------- preview hook
 export type PreviewState = { src: string | null; failed: boolean; loading: boolean };
 
-const pending = new Map<string, Promise<Blob | null>>();
-const wanted = new Map<string, number>();
+const EMPTY: PreviewState = { src: null, failed: false, loading: false };
 
-function want(url: string, delta: number) {
-  const n = (wanted.get(url) ?? 0) + delta;
-  if (n <= 0) wanted.delete(url);
-  else wanted.set(url, n);
-}
-
-/** Cached blob, or one shared fetch per URL. Resolves null if every requester went away first. */
-function loadBlob(url: string): Promise<Blob | null> {
-  const cached = cacheGet(url);
-  if (cached) return Promise.resolve(cached);
-  let p = pending.get(url);
-  if (!p) {
-    p = schedule(() => fetchPreview(url), () => wanted.has(url))
-      .then((buf) => {
-        if (buf == null) return null;
-        const bytes = toBytes(buf);
-        if (!bytes.length) throw new Error("empty preview");
-        const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
-        cachePut(url, blob);
-        return blob;
-      })
-      .finally(() => pending.delete(url));
-    pending.set(url, p);
-  }
-  return p;
-}
-
-export function usePreviewBlob(url: string | null, enabled: boolean): PreviewState {
-  const [state, setState] = useState<PreviewState>({ src: null, failed: false, loading: false });
+/**
+ * Blob URL for a preview. Fetches while the card is on screen or near it (on-screen first);
+ * a card that scrolls away drops its queued fetch and gives its Blob URL back.
+ */
+export function usePreviewBlob(url: string | null, visibility: Visibility): PreviewState {
+  const [state, setState] = useState<PreviewState>(EMPTY);
   const objectUrl = useRef<string | null>(null);
+  const handle = useRef<PreviewHandle<Blob> | null>(null);
+  const failedUrl = useRef<string | null>(null);
+  const active = visibility !== "away";
+  const priority: Priority = visibility === "visible" ? 0 : 1;
 
+  // Load (or reuse) while on/near screen; give everything back when away.
   useEffect(() => {
-    if (!url || !enabled) return;
+    if (!url || !active || failedUrl.current === url) return;
     let alive = true;
-    want(url, 1);
     const show = (blob: Blob) => {
-      const u = URL.createObjectURL(blob);
-      objectUrl.current = u;
-      setState({ src: u, failed: false, loading: false });
+      if (!alive) return;
+      objectUrl.current = URL.createObjectURL(blob);
+      setState({ src: objectUrl.current, failed: false, loading: false });
     };
-    const cached = cacheGet(url);
+    const cached = cache.get(url);
     if (cached) show(cached);
     else {
       setState({ src: null, failed: false, loading: true });
-      const attempt = (retry: boolean) =>
-        loadBlob(url)
-          .then((blob) => {
-            if (!alive) return;
-            if (blob) show(blob);
-            else if (retry) void attempt(false);
-          })
-          .catch(() => {
-            if (alive) setState({ src: null, failed: true, loading: false });
-          });
-      void attempt(true);
+      const h = scheduler.request(url, priority);
+      handle.current = h;
+      h.promise
+        .then((blob) => {
+          if (blob) show(blob);
+        })
+        .catch(() => {
+          failedUrl.current = url;
+          if (alive) setState({ src: null, failed: true, loading: false });
+        });
     }
     return () => {
       alive = false;
-      want(url, -1);
+      handle.current?.release();
+      handle.current = null;
       if (objectUrl.current) {
         URL.revokeObjectURL(objectUrl.current);
         objectUrl.current = null;
       }
+      setState((s) => (s.failed ? s : EMPTY));
     };
-  }, [url, enabled]);
+    // Priority changes are applied below without restarting the load.
+  }, [url, active]);
+
+  useEffect(() => {
+    handle.current?.setPriority(priority);
+  }, [priority]);
 
   return state;
 }
+
+/** For tests / diagnostics. */
+export const previewStats = () => ({ inFlight: scheduler.inFlight, queued: scheduler.queued, cachedBytes: cache.bytes, cached: cache.size });

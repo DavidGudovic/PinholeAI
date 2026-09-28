@@ -323,12 +323,17 @@ pub(crate) mod tests {
 
     #[test]
     fn live_lora_sample() {
+        // Style add-ons CivitAI does NOT flag NSFW, yet most are clothing / pose add-ons
+        // whose sample images are mostly R or above.
         let s = &filters().safe;
         let page = live("loras");
-        for keep in ["Add Micro Details", "Retro Sci-fi 90's anime", "The Space Marines Warhammer", "Art Nouveau", "30s Technicolor Movie"] {
-            assert_eq!(s.adult_reason(by_name(&page, keep)), None, "{keep}");
+        let kept: Vec<&str> = page.items.iter().filter(|m| s.adult_reason(m).is_none()).map(|m| m.name.as_str()).collect();
+        for keep in ["Add Micro Details", "People's Works", "Retro Sci-fi 90's anime", "The Space Marines Warhammer", "Niji oil painting", "Dark Art Style"] {
+            assert!(kept.iter().any(|k| k.starts_with(keep)), "{keep}");
         }
-        let hidden = page.items.iter().filter(|m| s.adult_reason(m).is_some()).count();
-        assert!(hidden >= 25, "most of the suggestive clothing/pose add-ons are hidden ({hidden})");
+        assert_eq!(s.adult_reason(by_name(&page, "AI styles dump")), Some(AdultReason::Tag("ecchi".into())));
+        assert_eq!(s.adult_reason(by_name(&page, "Micro Panties")), Some(AdultReason::NoSafeContent), "nsfwLevel 12: no PG image at all");
+        assert!(matches!(s.adult_reason(by_name(&page, "Krekkov Style")), Some(AdultReason::MatureImages(_))));
+        assert_eq!(kept.len(), 19, "{kept:?}");
     }
 }

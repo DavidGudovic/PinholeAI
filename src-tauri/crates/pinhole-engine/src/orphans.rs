@@ -7,6 +7,8 @@
 //! Other programs are never touched: the executable must be one of the engine
 //! binaries AND sit inside the engine folder, and engines this app is running
 //! right now ([`crate::process::managed_pids`]) and the app itself are skipped.
+//! An engine whose parent is another running copy of this app (Pinhole opened
+//! twice on the same Data folder) belongs to that copy and is left alone too.
 //! Blocking (lists every process): call it through `spawn_blocking`.
 
 use std::path::{Path, PathBuf};
@@ -74,6 +76,45 @@ pub fn is_engine_exe(exe: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|r| !r.as_os_str().is_empty() && exe.starts_with(r) && exe != *r)
 }
 
+/// Who started an engine process, as far as the process list tells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Parent {
+    /// No parent recorded / the parent has exited.
+    Gone,
+    /// This app (an engine it no longer manages: a stop that timed out).
+    Me,
+    /// The parent pid now belongs to a newer process (pid reuse on Windows).
+    Reused,
+    /// A live process started before the engine, with its executable if readable.
+    Running(Option<PathBuf>),
+}
+
+/// Kill the engine? Yes unless its parent is a live copy of this app
+/// (`my_exe`): a Linux engine re-parented to init / a subreaper, or one whose
+/// Pinhole crashed, is a leftover.
+pub fn parent_allows_kill(parent: &Parent, my_exe: Option<&Path>) -> bool {
+    match parent {
+        Parent::Gone | Parent::Me | Parent::Reused => true,
+        Parent::Running(exe) => match (exe, my_exe) {
+            (Some(p), Some(me)) => comparable(p) != comparable(me),
+            _ => true,
+        },
+    }
+}
+
+fn parent_of(sys: &System, p: &sysinfo::Process, me: u32) -> Parent {
+    let Some(ppid) = p.parent() else { return Parent::Gone };
+    if ppid.as_u32() == me {
+        return Parent::Me;
+    }
+    match sys.process(ppid) {
+        None => Parent::Gone,
+        Some(pp) if is_gone(pp.status()) => Parent::Gone,
+        Some(pp) if pp.start_time() > p.start_time() => Parent::Reused,
+        Some(pp) => Parent::Running(pp.exe().map(Path::to_path_buf)),
+    }
+}
+
 fn list(sys: &mut System) {
     sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().without_tasks().with_exe(UpdateKind::Always));
 }
@@ -90,6 +131,7 @@ fn find_in(sys: &mut System, roots: &[PathBuf]) -> Vec<Orphan> {
     // registered by the time its pid can show up (see `EngineProcess::spawn`).
     let managed = crate::process::managed_pids();
     let me = std::process::id();
+    let my_exe = std::env::current_exe().ok();
     let mut out: Vec<Orphan> = sys
         .processes()
         .iter()
@@ -99,7 +141,10 @@ fn find_in(sys: &mut System, roots: &[PathBuf]) -> Vec<Orphan> {
                 return None;
             }
             let exe = p.exe()?;
-            is_engine_exe(exe, roots).then(|| Orphan { pid, exe: exe.to_path_buf(), exited: false })
+            if !is_engine_exe(exe, roots) || !parent_allows_kill(&parent_of(sys, p, me), my_exe.as_deref()) {
+                return None;
+            }
+            Some(Orphan { pid, exe: exe.to_path_buf(), exited: false })
         })
         .collect();
     out.sort_by_key(|o| o.pid);
@@ -149,6 +194,17 @@ mod tests {
         for no in ["sd-cli", "python", "python.exe", "sd-server2", "my-sd-server", "", ".exe", "llama-server.sh"] {
             assert!(!is_engine_binary_name(no), "{no}");
         }
+    }
+
+    #[test]
+    fn engines_of_another_running_pinhole_are_left_alone() {
+        let me = Path::new("/opt/Pinhole/pinhole");
+        assert!(parent_allows_kill(&Parent::Gone, Some(me)), "its Pinhole crashed");
+        assert!(parent_allows_kill(&Parent::Me, Some(me)), "ours, no longer managed");
+        assert!(parent_allows_kill(&Parent::Reused, Some(me)), "pid reused by a newer process");
+        assert!(parent_allows_kill(&Parent::Running(Some("/usr/lib/systemd/systemd".into())), Some(me)), "re-parented to a subreaper");
+        assert!(parent_allows_kill(&Parent::Running(None), Some(me)));
+        assert!(!parent_allows_kill(&Parent::Running(Some(me.to_path_buf())), Some(me)), "Pinhole opened twice");
     }
 
     #[cfg(unix)]

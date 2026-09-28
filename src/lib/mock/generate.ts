@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import { styleById } from "./library";
+import { mockFlags } from "./app";
 import { touchLastUsed } from "./models";
 import { FAMILY_UI } from "../state/familyFixtures";
 import type {

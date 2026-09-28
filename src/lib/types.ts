@@ -423,6 +423,9 @@ export interface CatalogFilterOptions {
   price: { key: PriceMode; label: string }[];
   defaultContent: ContentMode;
   defaultPrice: PriceMode;
+  /** Opening sort / time (`api` values from `sorts` / `periods`). */
+  defaultSort: string;
+  defaultPeriod: string;
 }
 
 export interface CatalogCard {
@@ -460,6 +463,12 @@ export interface BrowsePage {
   offline: boolean;
   /** True when client-side filtering hit the 5-extra-requests cap: show "Load more". */
   partial: boolean;
+  /** CivitAI models looked at for this page. */
+  checked: number;
+  /** …hidden by the Content mode ("Safe only" hides models made for adults). */
+  hiddenByContent: number;
+  /** …hidden by Look, price, commercial use, kind or "Works with Pinhole". */
+  hiddenByFilters: number;
 }
 
 export interface InstallPlan {

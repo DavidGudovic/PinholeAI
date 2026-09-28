@@ -829,7 +829,7 @@ families:
   # VAE, so all-in-one. CivitAI currently lists no SD 3.x checkpoints (probe
   # 2026-09-28 returned none for every SD 3.x string); kept for local files / LoRAs.
   sd3:
-    label: "Stable Diffusion 3.5"
+    label: "Stable Diffusion 3 / 3.5"
     style_template: natural
     activation_gb: 2.5
     license_note: "Stability AI Community License"

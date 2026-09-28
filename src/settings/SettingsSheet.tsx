@@ -1,7 +1,7 @@
 // OWNER: frontend B. Settings sheet (SPEC §8). Every change is saved immediately.
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, CircleCheck, Download, FolderOpen, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Check, CircleCheck, Download, FolderOpen, Info, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   appInfo,
   asCoreError,
@@ -292,6 +292,29 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             ]}
           />
         </Labeled>
+        {!isCpuOnly(hw) && (
+          <Labeled
+            label="Read the prompt on"
+            hint="This step (the text encoder) turns your prompt into something the model understands. Automatic uses the graphics card and moves it to the processor for a model if the card runs out of memory. The processor is slower here but leaves more graphics memory for the picture."
+          >
+            <Segmented<Settings["textEncoderOnCpu"]>
+              size="sm"
+              options={[
+                { value: "auto", label: "Automatic" },
+                { value: "on", label: "Processor" },
+                { value: "off", label: "Graphics card" },
+              ]}
+              value={settings.textEncoderOnCpu}
+              onChange={(textEncoderOnCpu) => update({ textEncoderOnCpu })}
+            />
+          </Labeled>
+        )}
+        {st?.note && (
+          <p className="flex items-start gap-1.5 text-xs text-neutral-600 dark:text-neutral-400" role="note">
+            <Info className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span>{st.note}</span>
+          </p>
+        )}
         <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 text-sm">
