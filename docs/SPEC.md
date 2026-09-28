@@ -136,7 +136,7 @@ folder can overwrite each other's index (dual boot never does that).
 
 1. No prompt text is ever written to disk, logs, crash dumps, presets, file names, or PNG metadata.
 2. Generated images live in RAM until the user clicks **Save**. Closing the app discards them.
-3. **Clear session** button: drops all in-memory images and prompt fields immediately.
+3. **Reset** button: drops all in-memory images and prompt fields immediately.
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
@@ -505,7 +505,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 engine download + launch of `sd-server`, health check.
 
 **M1 – Generate**: registry loader, header detector, wiring, VRAM estimate, Create tab with
-simple dials and Style field, in-memory results, Save, Cancel, Clear session. First-run
+simple dials and Style field, in-memory results, Save, Cancel, Reset. First-run
 "Recommended for your GPU" screen with one-click download (§6.1).
 
 **M2 – Models tab**: CivitAI browse with all filters (incl. 18+ only, paid hidden by default),
@@ -592,16 +592,29 @@ build is shared.
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
-  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  processor"); while decoding → `--vae-tiling`; then, and right away when denoising runs out, the
+  weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
+  every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
+  model runs with the same settings, also after the idle stop — another model, other settings or
+  deleting it tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
+  at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
+  or a reference image has no room; offloaded weights are only cached there. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
-  the smaller version of the model; the engine output stays behind Details.
+  the smaller version of the model; the engine output stays behind Details, led by the engine's
+  memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's
+  last launch. `sd-server` runs at `--log-level info` for that plan, never verbose / debug (they
+  print the request). Weights auto-fit keeps in system memory are memory-mapped from the model
+  file (`--mmap`) rather than copied into pinned memory, so the OS can page them out; because a
+  mapped file can't be deleted on Windows, deleting a model first stops the engine when it runs
+  that model or has one of its files open. sd-server's per-tensor "unknown tensor" lines are not
+  kept in the output buffer (they can run to hundreds and push out the useful lines).
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,
   answers any CORS `Origin` (with credentials) and keeps every finished job — base64 images
   included — at `GET /sdcpp/v1/jobs/{id}` for 600 s. Another program on this computer, or a web
   page that finds the random port and a job id, could read recent images while the engine runs.
-  Interim mitigations: loopback-only random port; the engine is stopped on **Clear session** and
+  Interim mitigations: loopback-only random port; the engine is stopped on **Reset** and
   5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
   after start-up Pinhole checks that the server on the port is its own child reporting the model
   it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via

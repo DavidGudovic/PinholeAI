@@ -125,6 +125,9 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
 ## Wording rules (docs, README, UI, commits, release notes)
 - Describe privacy as "your prompts and images stay on your computer". Never "leaves no trace",
   "untraceable", "no one will know", "uncensored", "unfiltered", "undress", "nudify", "face swap".
+- Privacy copy states facts (what stays on the computer, what is saved and when, what goes online).
+  Don't frame it as hiding what someone made ("forgets everything", "wipes your tracks", "nobody
+  will see"). The top-bar control is **Reset**. No one-click adult-content shortcuts in the UI.
 - Edit examples change scenes, objects, lighting or style — never a real person's body or clothes
   while keeping their face.
 - Screenshots and examples: safe for work, fictional subjects, no real people.

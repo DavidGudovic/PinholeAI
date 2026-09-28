@@ -119,14 +119,17 @@ Linux NVIDIA uses Vulkan).
 4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
    engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
    sd-server has no auth and keeps finished jobs (images included) for 600 s, so an engine that
-   ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
+   ran a job is stopped on Reset and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
    Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
    each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
    `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
-   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; then `CoreError{code:"vram"}`
-   (message names other programs using the card, engine output in `details`).
+   `textEncoderOnCpu: auto|on|off`), VAE / unknown stage → `--vae-tiling`, then (denoising: right
+   away) `--offload-to-cpu` when every weight fits in RAM + 2 GB (else denoising gets tiling; kept while the
+   same model runs with the same wiring args, `GenState::offloaded` → engine note); then `CoreError{code:"vram"}`
+   (message names other programs using the card, engine output in `details`, after the auto-fit
+   memory plan kept from this model's last launch, `pinhole_engine::failure::memory_plan`).
    Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines
    under `Data/engine/` killed (`pinhole_engine::orphans`; also at app start; never other programs
    or engines this app runs), an idle Describe engine stopped and NVIDIA memory used by other

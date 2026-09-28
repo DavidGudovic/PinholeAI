@@ -281,7 +281,7 @@ mod tests {
         let all = serde_json::to_string(&events).unwrap();
         assert!(!all.contains(SENTINEL));
 
-        // Clear session drops everything.
+        // Reset drops everything.
         session::clear(&core).await;
         assert!(session::get(&core, &res.images[1].id).is_err());
     }
@@ -488,12 +488,15 @@ mod tests {
         use_external_engine(&core, &always.base_url());
         let model = register_fake_model(&core, "z_image_turbo");
 
-        // Off: no automatic retry; the message says where to change it.
+        // Off: the text encoder stays on the card; the one retry keeps the
+        // weights in system memory, then the message says where to change it.
         core.settings.write().text_encoder_on_cpu = "off".into();
         let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.unwrap_err();
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::TE_ON_GPU_MESSAGE);
-        assert_eq!(core.gen.external_launches.lock().len(), 1);
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 2, "{launches:?}");
+        assert!(!te_on_cpu(&launches[1]) && launches[1].iter().any(|a| a == "--offload-to-cpu"), "{launches:?}");
         let details = err.details.unwrap_or_default();
         assert!(details.contains("failed to encode prompt") && !details.contains(SENTINEL), "{details}");
 
@@ -504,7 +507,7 @@ mod tests {
         assert!(te_on_cpu(core.gen.external_launches.lock().last().unwrap()));
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::RAM_MESSAGE);
-        assert_eq!(core.gen.external_launches.lock().len(), 2, "no retry");
+        assert_eq!(core.gen.external_launches.lock().len(), 3, "one launch, no retry");
     }
 
     #[tokio::test]
@@ -522,17 +525,27 @@ mod tests {
             others_mib: 9216,
             processes: vec![pinhole_hardware::GpuProcess { pid: 4242, name: "python.exe".into(), used_mib: Some(9114) }],
         });
+        // The memory plan this model's engine printed at start leads the details.
+        let plan_line = "[INFO ] backend_fit.cpp:346  -     DiT          params  11740 MiB -> compute CUDA0, params CUDA0".to_string();
+        *core.gen.memory_plan.lock() = Some((model.clone(), vec![plan_line.clone()]));
         let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
+        let details = err.details.clone().unwrap_or_default();
+        // The last attempt kept the weights in system memory (no auto-fit): the plan is the earlier one's.
+        assert!(details.starts_with("Memory plan of the earlier attempt") && details.contains(&plan_line), "{details}");
+        assert!(details.contains("sampling for image 1/1 failed"), "{details}");
         assert_eq!(err.code, "vram");
         assert_eq!(
             err.message,
             "Your graphics card ran out of memory. Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). Close them and try again, or pick the smaller version of this model in Models."
         );
         assert_ne!(err.message, generate::UNKNOWN_JOB_MESSAGE);
-        // Diffusion ran out: one retry with VAE tiling (the 16 GB profile has none).
+        // Denoising ran out: one retry with the weights in system memory
+        // (VAE tiling wouldn't help that step).
         let launches = core.gen.external_launches.lock().clone();
         assert_eq!(launches.len(), 2);
-        assert!(!launches[0].contains(&"--vae-tiling".to_string()) && launches[1].contains(&"--vae-tiling".to_string()), "{launches:?}");
+        let has = |a: &[String], f: &str| a.iter().any(|x| x == f);
+        assert!(!has(&launches[0], "--offload-to-cpu") && has(&launches[1], "--offload-to-cpu"), "{launches:?}");
+        assert!(!has(&launches[1], "--vae-tiling"), "{launches:?}");
 
         // A failure that isn't about memory keeps the generic message.
         let (_tmp2, core2, _) = gpu_core();
@@ -579,10 +592,10 @@ mod tests {
         assert_eq!(mock.requests().len(), 3);
         let launches = core.gen.external_launches.lock().clone();
         assert_eq!(launches.len(), 3, "{launches:?}");
-        let tiled = |a: &[String]| a.iter().any(|x| x == "--vae-tiling");
-        assert!(!te_on_cpu(&launches[0]) && !tiled(&launches[0]));
-        assert!(te_on_cpu(&launches[1]) && !tiled(&launches[1]));
-        assert!(te_on_cpu(&launches[2]) && tiled(&launches[2]));
+        let offloaded = |a: &[String]| a.iter().any(|x| x == "--offload-to-cpu");
+        assert!(!te_on_cpu(&launches[0]) && !offloaded(&launches[0]));
+        assert!(te_on_cpu(&launches[1]) && !offloaded(&launches[1]));
+        assert!(te_on_cpu(&launches[2]) && offloaded(&launches[2]));
 
         // Each retry shows its own note while the engine reloads (the later one replaces the earlier).
         let loading_notes: Vec<String> = rec
@@ -595,13 +608,41 @@ mod tests {
             })
             .collect();
         let te_note = loading_notes.iter().position(|n| n == generate::TE_RETRY_NOTE).expect("text encoder retry note");
-        let tiling_note = loading_notes.iter().position(|n| n == generate::TILING_RETRY_NOTE).expect("tiling retry note");
-        assert!(te_note < tiling_note, "{loading_notes:?}");
-        // Both choices are kept for this model for the rest of the session.
-        let next = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        let offload_note = loading_notes.iter().position(|n| n == generate::OFFLOAD_RETRY_NOTE).expect("offload retry note");
+        assert!(te_note < offload_note, "{loading_notes:?}");
+        // The text encoder choice is kept for the session; system memory only
+        // while that engine stays loaded (and the engine status says so).
+        let next = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
         assert_eq!(next.images.len(), 1);
         let last = core.gen.external_launches.lock().last().cloned().unwrap();
-        assert!(te_on_cpu(&last) && tiled(&last), "{last:?}");
+        assert!(te_on_cpu(&last) && offloaded(&last), "{last:?}");
+        {
+            let mut f = core.gen.flags.lock();
+            (f.running, f.loaded_model_id) = (true, Some(model.clone()));
+        }
+        let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
+        assert!(note.contains("system memory"), "{note}");
+        // Deleting another model leaves this engine alone, unless it has one of the files open.
+        let running = core.gen.slot.lock().await.args.clone();
+        generate::unload_model(&core, "other", &[std::path::PathBuf::from("/not/used.gguf")]).await;
+        assert_eq!(core.gen.slot.lock().await.model_id.as_deref(), Some(model.as_str()));
+        let shared = running.iter().find(|a| a.ends_with(".gguf") || a.ends_with(".safetensors")).cloned().expect("a weight file");
+        generate::unload_model(&core, "other", &[shared.into()]).await;
+        assert!(core.gen.slot.lock().await.model_id.is_none(), "the engine that had the file open stopped");
+        assert!(core.gen.offloaded.lock().is_some(), "same model, same settings: still system memory");
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        assert!(offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        // Other settings (other launch args): the card again.
+        core.gen.offloaded.lock().as_mut().unwrap().1.push("--other-setting".into());
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        assert!(!offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        assert!(core.gen.offloaded.lock().is_none());
+        // Deleting this model forgets it.
+        *core.gen.offloaded.lock() = Some((model.clone(), core.gen.external_launches.lock().last().cloned().unwrap()));
+        generate::unload_model(&core, &model, &[]).await;
+        generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        let last = core.gen.external_launches.lock().last().cloned().unwrap();
+        assert!(te_on_cpu(&last) && !offloaded(&last), "the next load tries the card again: {last:?}");
         // The prompt never reached the engine output buffer (redacted like real output).
         let kept = engine_log(&core).tail_text(200);
         assert!(kept.contains("failed to encode prompt") && !kept.contains(SENTINEL), "{kept}");
@@ -647,7 +688,7 @@ mod tests {
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::VRAM_MESSAGE);
         assert!(err.message.starts_with("Your graphics card ran out of memory. Close other programs"), "{}", err.message);
-        assert_eq!(mock.requests().len(), 3, "text encoder retry + tiling retry, then stop");
+        assert_eq!(mock.requests().len(), 3, "text encoder retry + system memory retry, then stop");
         let details = err.details.unwrap_or_default();
         assert!(details.contains("generate_image returned no results") && details.contains("sampling for image 1/1 failed"), "{details}");
         assert!(!details.contains(SENTINEL));
@@ -772,6 +813,17 @@ mod tests {
         assert!(args.windows(2).any(|w| w[0] == "--lora-model-dir" && w[1].ends_with("loras")));
         assert!(args.windows(2).any(|w| w[0] == "--hires-upscalers-dir" && w[1].ends_with("upscalers")));
         assert!(args.contains(&"--vae-tiling".to_string()));
+        // Info level (memory plan in Details) and memory-mapped weights by default.
+        assert!(args.windows(2).any(|w| w == ["--log-level", "info"]), "{args:?}");
+        assert!(args.contains(&"--mmap".to_string()), "{args:?}");
+        // Verbose / debug print the request (prompt included): never enabled.
+        let mut loud = (*cfg).clone();
+        loud.stable_diffusion_cpp.launch_defaults.extend(["--verbose", "--log-level", "debug"].map(String::from));
+        let wiring_loud: Vec<String> = ["--model", "/m.safetensors", "-v", "--log-level", "verbose"].map(String::from).to_vec();
+        let args = crate::generate::full_sd_args(&core, &wiring_loud, &loud);
+        assert!(!args.iter().any(|a| a == "--verbose" || a == "-v" || a == "debug" || a == "verbose"), "{args:?}");
+        assert_eq!(args.iter().filter(|a| *a == "--log-level").count(), 1, "{args:?}");
+        assert!(args.windows(2).any(|w| w == ["--log-level", "info"]), "{args:?}");
     }
 
     /// Drives the REAL sd-server (Linux) through `generate` when
@@ -944,7 +996,7 @@ mod tests {
         core.gen.slot.lock().await.proc.is_some()
     }
 
-    /// sd-server keeps finished results (unauthenticated) for 600 s: Clear session
+    /// sd-server keeps finished results (unauthenticated) for 600 s: Reset
     /// and the idle timer stop a Pinhole-started engine once it ran a job.
     #[cfg(unix)]
     #[tokio::test]
@@ -952,7 +1004,7 @@ mod tests {
         use std::sync::atomic::Ordering;
         let (tmp, core, _rec) = new_core();
 
-        // No job ran yet: Clear session leaves the loaded model alone.
+        // No job ran yet: Reset leaves the loaded model alone.
         put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), false).await;
         session::clear(&core).await;
         assert!(engine_running(&core).await);
@@ -979,7 +1031,7 @@ mod tests {
         }
         assert!(!engine_running(&core).await, "idle engine with results is stopped");
 
-        // Clear session while a job runs: the engine stops right after the job.
+        // Reset while a job runs: the engine stops right after the job.
         put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), true).await;
         let run = core.gen.run_lock.lock().await;
         session::clear(&core).await;
