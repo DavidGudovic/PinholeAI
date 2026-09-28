@@ -67,4 +67,16 @@ describe("PageStore", () => {
     store.clear();
     expect(store.size).toBe(0);
   });
+
+  it("doesn't share or cache a request started before clear()", async () => {
+    const store = new PageStore();
+    let resolveOld!: (p: BrowsePage) => void;
+    const old = store.load("k", null, () => new Promise<BrowsePage>((r) => (resolveOld = r)));
+    store.clear();
+    const fresh = store.load("k", null, async () => page([2], null));
+    resolveOld(page([1], null));
+    await old;
+    expect((await fresh).items[0].versionId).toBe(2);
+    expect(store.get("k", null)!.items[0].versionId).toBe(2);
+  });
 });

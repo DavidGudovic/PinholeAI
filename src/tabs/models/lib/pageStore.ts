@@ -20,6 +20,8 @@ export interface Chain {
 export class PageStore {
   private entries = new Map<string, Entry>();
   private inflight = new Map<string, Promise<BrowsePage>>();
+  /** Bumped by clear(), so requests started before it neither get shared nor cached. */
+  private generation = 0;
 
   constructor(
     private readonly maxPages = 80,
@@ -66,13 +68,17 @@ export class PageStore {
     const k = PageStore.key(filtersKey, cursor);
     let p = this.inflight.get(k);
     if (!p) {
-      p = fetcher()
+      const gen = this.generation;
+      const req: Promise<BrowsePage> = fetcher()
         .then((page) => {
-          this.put(filtersKey, cursor, page);
+          if (gen === this.generation) this.put(filtersKey, cursor, page);
           return page;
         })
-        .finally(() => this.inflight.delete(k));
-      this.inflight.set(k, p);
+        .finally(() => {
+          if (this.inflight.get(k) === req) this.inflight.delete(k);
+        });
+      this.inflight.set(k, req);
+      p = req;
     }
     return p;
   }
@@ -97,6 +103,8 @@ export class PageStore {
 
   clear() {
     this.entries.clear();
+    this.inflight.clear();
+    this.generation++;
   }
 
   get size(): number {
