@@ -1,0 +1,119 @@
+# Builds the installers: Windows NSIS setup + portable zip, Linux AppImage + .deb.
+# Called by ci.yml (every push, after tests) and release.yml (tags). Can also be
+# started by hand (Actions → Bundle → Run workflow) to get installers without tests.
+name: Bundle
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  bundle:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64 (NSIS + portable zip)
+            os: windows-latest
+            platform: windows
+            bundles: nsis
+            artifact: pinhole-windows-x64
+          - name: Linux x64 (AppImage + deb)
+            os: ubuntu-22.04
+            platform: linux
+            bundles: appimage,deb
+            artifact: pinhole-linux-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev patchelf libssl-dev libxdo-dev libdbus-1-dev pkg-config \
+            build-essential file xdg-utils
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bundle
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Collect MSVC runtime DLLs for the engines (Windows)
+        # The upstream sd-server / llama-server Windows builds import the VC++
+        # 2015-2022 runtime and do not ship it. Pinhole bundles the redistributable
+        # DLLs (resources/vcrt) and copies them next to an engine when the system
+        # lacks them, so a clean Windows install can generate without extra setup.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $redist) { throw "VC redist folder not found under $vs" }
+          New-Item -ItemType Directory -Force src-tauri/vcrt | Out-Null
+          Copy-Item (Join-Path $redist.FullName "x64\Microsoft.VC143.CRT\*.dll") src-tauri/vcrt/
+          Copy-Item (Join-Path $redist.FullName "x64\Microsoft.VC143.OpenMP\*.dll") src-tauri/vcrt/
+          foreach ($d in "msvcp140.dll","vcruntime140.dll","vcruntime140_1.dll","vcomp140.dll","msvcp140_codecvt_ids.dll") {
+            if (-not (Test-Path "src-tauri/vcrt/$d")) { throw "missing $d in $($redist.FullName)" }
+          }
+          Get-ChildItem src-tauri/vcrt | Format-Table Name, Length
+
+      - name: Build app and installers (tauri build --bundles ${{ matrix.bundles }})
+        run: npx tauri build --bundles ${{ matrix.bundles }}
+        env:
+          # linuxdeploy (AppImage) runs without FUSE on hosted runners
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      - name: Collect installers, portable zip and SHA256SUMS.txt
+        run: |
+          if [ "${{ matrix.platform }}" = "windows" ]; then
+            node scripts/package.mjs --platform windows --out release-assets --portable-dir portable/Pinhole
+          else
+            node scripts/package.mjs --platform linux --out release-assets
+          fi
+          ls -la release-assets
+
+      - name: Upload ${{ matrix.artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release-assets/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      # Same portable build, unzipped: downloading this artifact from the run page
+      # gives a zip that is directly the ready-to-run portable app.
+      - name: Upload pinhole-windows-x64-portable (ready-to-run folder)
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pinhole-windows-x64-portable
+          path: portable/
+          if-no-files-found: error
+          retention-days: 30

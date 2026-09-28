@@ -16,7 +16,9 @@ every decision can be overridden.
 3. **Light and fast.** Small installer, low idle RAM, no Python, no bundled browser.
 4. **Data, not code, for model knowledge.** Everything model-specific (components, defaults,
    dial ranges) lives in YAML so it can be updated without touching code.
-5. **Windows 10/11 and Ubuntu 22.04+ are first-class.** macOS is out of scope for v1.
+5. **Windows 10/11 and Ubuntu 24.04+ are first-class.** macOS is out of scope for v1.
+   (The app itself runs on 22.04, but the pinned upstream Linux engine builds need glibc 2.38 —
+   see §13.)
 
 ---
 
@@ -72,7 +74,10 @@ every decision can be overridden.
 - First-run setup detects GPU and downloads the matching build once:
   NVIDIA → CUDA 12.x build (must support Blackwell / RTX 50xx), AMD/Intel → Vulkan build,
   no GPU → CPU build (warn: very slow).
-- Stored in `Data/engine/<version>/`. Verify hash before first launch.
+- Stored in `Data/engine/{sd,llama}/<version>/<backend>/`. Verify hash before first launch.
+- Linux has no upstream CUDA build of `sd-server`: NVIDIA on Linux uses the Vulkan build.
+- Windows: the upstream builds need the MSVC runtime (VC++ 2015–2022 x64); Pinhole bundles the
+  redistributable DLLs and copies them next to an engine when the system lacks them.
 
 ---
 
@@ -175,6 +180,14 @@ VAE tiling. Each field shows the registry default and a "reset" button.
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
 
+**Paste from CivitAI**: CivitAI's "Copy generation data" button yields A1111-style text (prompt,
+`Negative prompt:`, `Steps: …, Sampler: …, CFG scale: …, Seed: …, Size: …, Clip skip: …, Civitai
+resources: [...]`). A **Paste from CivitAI** button next to the prompt (and pasting such text into
+the prompt box) parses it in memory, fills prompt, negative, steps, CFG/guidance, sampler +
+scheduler (mapped to sd.cpp names), seed, size, clip skip and hires, selects the installed
+checkpoint/LoRAs (matched by CivitAI version id or hash) or offers one-click installs, and shows
+what was applied and what was skipped. The pasted text is never stored or logged.
+
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
 
@@ -255,7 +268,9 @@ model in small text.
 
 #### Installed
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
-after confirmation), and **Add a file I already have** (drag a .safetensors/.gguf → detected).
+after confirmation), and **Add a file I already have** (pick a .safetensors/.gguf in the file
+chooser → detected). Dropping files onto the window is not supported: the native drop handler
+is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
 ---
 
@@ -295,8 +310,11 @@ finetune of a known family.
 - `config/models.yaml → recommended` holds a ranked list per **role**: Realistic, Anime,
   Edit, Describe. Each candidate has a download spec and its VRAM needs.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
-  choosing the best quant that fits (bf16 → Q8 → Q4).
-- **First run**: after the engine download, show "Recommended for your GPU (16 GB)" with one
+  choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
+  small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
+  model: there, candidates are sized against system RAM instead (§6.2).
+- **First run**: after the engine download, show "Recommended for your GPU (16 GB)" (or
+  "Recommended for your computer" without a usable GPU) with one
   card per role: model name, what it's good at, download size, VRAM needed, and a **Get** button.
   A **Get all** button downloads the Realistic + Edit picks. Skippable.
 - The same card appears wherever a role is empty (Create with no models, Edit with no edit
@@ -313,6 +331,12 @@ badge against the detected GPU:
 - **Tight** — fits only with CPU offload / VAE tiling (Pinhole enables them automatically; slower)
 - **Too big** — will not run acceptably; install button warns before downloading
 
+Without a usable GPU (engine backend `cpu`, or no known VRAM; a VRAM override only counts with a
+GPU backend) the figure is **"Needs ~X GB memory"**: weights of the model and its components +
+activations. The badge is **Slow** ("runs on the processor — slow", i.e. Tight) when the family is
+marked `cpu_friendly` (SD 1.5) or the weights are ≤ 4 GB, and it leaves ≥ 4 GB of RAM free;
+everything else is **Too big**. The UI then says "your computer", not "your GPU".
+
 How X is computed:
 1. **Known models**: `vram_gb: { min, recommended }` from the registry (measured, not guessed).
 2. **Unknown models** (CivitAI, dropped-in files): estimate =
@@ -322,7 +346,8 @@ How X is computed:
 3. After a real run, record the observed peak VRAM for that file in `installed.json`
    (a number only) and show the measured value from then on.
 
-VRAM detection: `nvidia-smi` for NVIDIA; Vulkan device memory heaps for AMD/Intel; manual
+VRAM detection: `nvidia-smi` for NVIDIA; DXGI adapter memory on Windows and sysfs on Linux for
+AMD/Intel (no Vulkan loader needed); manual
 override in Settings.
 
 ---
@@ -391,7 +416,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 ## 10. Packaging
 
 - Windows: NSIS installer + portable zip (with an empty `Data/` folder → portable mode).
-- Linux: AppImage + .deb (Ubuntu 22.04 and 24.04).
+- Linux: AppImage + .deb (built on Ubuntu 22.04; engine needs 24.04+, see §13).
 - GitHub Actions matrix build for both; release artifacts with SHA-256 sums.
 - License: MIT (compatible with stable-diffusion.cpp and llama.cpp). Include their license
   files in `THIRD_PARTY_LICENSES`.
@@ -455,6 +480,36 @@ build is shared.
   `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
   Prompts are never sent to a server for moderation.
+
+### Implementation decisions (v1 build-out)
+- **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the
+  final VAE decode, so the Create tab shows step progress (parsed from the engine's progress bar)
+  instead. `models.yaml → engine_features.taesd_preview` turns it on when the engine supports it.
+- **VRAM fitting uses sd.cpp auto-fit** (default in the pinned engine) instead of
+  `--offload-to-cpu`, which disables auto-fit and forces every weight into RAM. Low/mid tiers keep
+  `--vae-tiling`.
+- **Cancel while generating restarts `sd-server`** (the server answers 409 to cancelling a running
+  job); the next Generate reloads the model.
+- **Linux engine = Ubuntu 24.04+**: upstream only publishes Ubuntu 24.04 builds (glibc 2.38). Building
+  our own 22.04 engine is a possible follow-up.
+- **"Stay close to original"** maps strict → the low end of the edit family's CFG/guidance range
+  (more guidance moves the edit further from the source).
+- **WebView is private**: the main window runs incognito (no cookies/cache/storage on disk); in
+  portable mode its profile folder lives in `Data/webview`.
+- **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
+- Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
+  `docs/ARCHITECTURE.md`).
+- **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,
+  answers any CORS `Origin` (with credentials) and keeps every finished job — base64 images
+  included — at `GET /sdcpp/v1/jobs/{id}` for 600 s. Another program on this computer, or a web
+  page that finds the random port and a job id, could read recent images while the engine runs.
+  Interim mitigations: loopback-only random port; the engine is stopped on **Clear session** and
+  5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
+  after start-up Pinhole checks that the server on the port is its own child reporting the model
+  it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via
+  `LLAMA_API_KEY` and only `/health` stays public. **Real fix (follow-up):** ship a patched
+  `sd-server` build that rejects any request carrying an `Origin` header and requires a
+  per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
 
 ## 14. Open questions
 

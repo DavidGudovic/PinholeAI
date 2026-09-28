@@ -1,0 +1,30 @@
+[package]
+name = "pinhole-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+dirs = { workspace = true }
+chrono = { workspace = true }
+keyring = { workspace = true }
+parking_lot = { workspace = true }
+
+# OS keychain backends (keyring 3 has none enabled by default → it would silently
+# fall back to an in-memory mock).
+[target.'cfg(windows)'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

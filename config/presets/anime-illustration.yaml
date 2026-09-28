@@ -1,0 +1,10 @@
+# Built-in preset (read-only). Presets never contain a prompt: only the model
+# family, a style reference and dial values. Fields left out use the family's
+# registry defaults.
+name: "Anime illustration"
+family: sdxl_illustrious
+styleId: "builtin:anime-cel"
+shape: portrait
+quality: balanced
+stick: 0.5
+count: 2

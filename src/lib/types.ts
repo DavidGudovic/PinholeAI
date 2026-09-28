@@ -1,0 +1,508 @@
+// IPC contract types. Mirrors the Rust structs (serde camelCase).
+// Source of truth for the frontend ↔ backend boundary together with api.ts and
+// docs/ARCHITECTURE.md. If you change a shape here, change the Rust side too.
+//
+// PRIVACY: types marked "prompt-bearing" contain user prompt text. Never log
+// them (no console.*), never put them in localStorage/sessionStorage/IndexedDB,
+// never put them in URLs or file names.
+
+// ---------------------------------------------------------------- errors
+export interface CoreError {
+  /** offline | not_found | disk_space | vram | engine_missing | engine_failed |
+   *  model_load | cancelled | unauthorized | hash_mismatch | invalid | network | io | internal.
+   *  engine_missing = the image engine isn't installed (fix: installEngine).
+   *  model_load = the engine couldn't load the model file (fix: Models → Installed). */
+  code: string;
+  /** Plain language, says what to do next. */
+  message: string;
+  /** Technical output for the "Details" toggle. */
+  details?: string | null;
+}
+
+// ---------------------------------------------------------------- app / settings / hardware
+export interface AppInfo {
+  version: string;
+  dataDir: string;
+  portable: boolean;
+  os: "windows" | "linux" | "macos" | string;
+}
+
+export type ContentMode = "safe" | "include_18plus" | "only_18plus";
+
+export interface Settings {
+  offline: boolean;
+  /** auto | cpu | gpu:<index> */
+  gpu: string;
+  vramOverrideGb: number | null;
+  contentMode: ContentMode;
+  showPaid: boolean;
+  /** none | settings */
+  savedMetadata: "none" | "settings";
+  theme: "system" | "light" | "dark";
+  addTriggerWords: boolean;
+  firstRunDone: boolean;
+  /** auto | cuda | vulkan | cpu */
+  engineBackend: string;
+}
+
+export type Vendor = "nvidia" | "amd" | "intel" | "other";
+
+export interface GpuInfo {
+  index: number;
+  vendor: Vendor;
+  name: string;
+  vramGb: number;
+}
+
+export interface HardwareView {
+  /** null while detection is still running. */
+  detected: {
+    gpus: GpuInfo[];
+    ramGb: number;
+    cpuThreads: number;
+    os: string;
+  } | null;
+  /** Effective VRAM after Settings overrides (0 = CPU only). */
+  vramGb: number;
+  /** Selected GPU (after override) or null for CPU. */
+  gpu: GpuInfo | null;
+  /** cuda | vulkan | cpu */
+  backend: string;
+  /** Hardware profile name from the registry: low | mid | high | ultra */
+  tier: string;
+}
+
+// ---------------------------------------------------------------- engine
+export interface EngineStatus {
+  installed: boolean;
+  installing: boolean;
+  version: string | null;
+  backend: string | null;
+  running: boolean;
+  loading: boolean;
+  loadedModelId: string | null;
+  /** Plain-language message of the last engine failure (CoreError.message). */
+  error: string | null;
+  /** CoreError.code of that failure (engine_failed | model_load | vram | …). */
+  errorCode: string | null;
+  /** Engine output for the "Details" toggle. */
+  errorDetails: string | null;
+}
+
+// ---------------------------------------------------------------- downloads
+export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
+
+/** What a download group fetches (match on this, never on the label). */
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler";
+
+export interface GroupStatus {
+  groupId: string;
+  label: string;
+  /** engine = image engine (installEngine); captioner = Describe model (+ its engine). null = untagged. */
+  kind?: DownloadKind | null;
+  state: DownloadState;
+  currentFile: string | null;
+  fileIndex: number;
+  fileCount: number;
+  downloadedBytes: number;
+  totalBytes: number;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------- VRAM
+export type Fit = "fits" | "tight" | "tooBig";
+
+export interface VramNeed {
+  gb: number;
+  minGb: number;
+  estimate: boolean;
+  /** No usable GPU: gb/minGb are system RAM the model needs on the processor,
+   *  and the badge is judged against RAM ("tight" = runs on the processor, slowly). */
+  onCpu?: boolean;
+}
+
+// ---------------------------------------------------------------- models
+export interface InstalledModel {
+  id: string;
+  friendlyName: string;
+  familyId: string | null;
+  familyLabel: string | null;
+  /** "Realistic" | "Anime" | "3D" | "Illustration" | null */
+  styleBadge: string | null;
+  /** txt2img | img2img | inpaint | edit */
+  modes: string[];
+  isEditModel: boolean;
+  sizeBytes: number;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  /** Unix time in SECONDS of the last generation with this model. */
+  lastUsed: number | null;
+  /** Components the family needs that are not installed (labels). Empty = ready. */
+  missingComponents: string[];
+  licenseNote: string | null;
+  civitaiModelId: number | null;
+  civitaiVersionId: number | null;
+  baseModel: string | null;
+}
+
+export interface InstalledLora {
+  id: string;
+  friendlyName: string;
+  familyId: string | null;
+  baseModel: string | null;
+  trainedWords: string[];
+  sizeBytes: number;
+  civitaiVersionId: number | null;
+}
+
+export interface FamilyChoice {
+  familyId: string;
+  label: string;
+}
+
+/** Result of "Add a file I already have". */
+export interface AddFileResult {
+  /** Set when the file was registered. */
+  model: InstalledModel | null;
+  lora: InstalledLora | null;
+  /** Set when detection is ambiguous: call confirmFamily(token, familyId). */
+  needsChoice: { token: string; fileName: string; candidates: FamilyChoice[] } | null;
+}
+
+export interface DeletePreview {
+  modelId: string;
+  /** Files that will be removed, incl. components no other model uses. */
+  files: { relPath: string; sizeBytes: number; reason: "model" | "orphanComponent" }[];
+}
+
+export interface RecommendedPick {
+  /** realistic | anime | edit | describe */
+  role: string;
+  roleLabel: string;
+  /** null when nothing fits / no candidate verified yet. */
+  title: string | null;
+  familyId: string | null;
+  goodAt: string | null;
+  /** Only what is missing (shared components counted once). */
+  downloadBytes: number;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  installed: boolean;
+  /** Chosen quant (bf16 | q8_0 | q4_k) for registry models. */
+  quant: string | null;
+  licenseNote: string | null;
+  unavailableReason: string | null;
+}
+
+export interface InstallStarted {
+  groupId: string;
+}
+
+// ---------------------------------------------------------------- family UI / dials
+export type Shape = "square" | "portrait" | "landscape" | "wide";
+export type Quality = "fast" | "balanced" | "best";
+export type GenMode = "txt2img" | "img2img" | "edit";
+
+export interface FamilyUi {
+  familyId: string;
+  label: string;
+  modes: string[];
+  shapes: Record<string, [number, number]>;
+  qualitySteps: [number, number, number];
+  showStick: boolean;
+  stickMapsTo: "cfg" | "guidance";
+  stickRange: [number, number];
+  stickDefault: number;
+  usesNegativePrompt: boolean;
+  defaultNegativePrompt: string | null;
+  defaultSampler: string | null;
+  defaultScheduler: string | null;
+  defaultClipSkip: number | null;
+  defaultFlowShift: number | null;
+  defaultCfg: number;
+  defaultGuidance: number | null;
+  autoPromptPrefix: string | null;
+  hiresAtBest: boolean;
+  licenseNote: string | null;
+  isEditFamily: boolean;
+}
+
+export interface Dials {
+  shape: Shape;
+  quality: Quality;
+  /** 0 (loose) … 1 (strict); for edit = "Stay close to original". */
+  stick: number;
+  count: 1 | 2 | 4;
+}
+
+/** prompt-bearing (negativePrompt). All fields optional = registry default. */
+export interface FineTune {
+  sampler?: string | null;
+  scheduler?: string | null;
+  steps?: number | null;
+  cfg?: number | null;
+  guidance?: number | null;
+  seed?: number | null;
+  flowShift?: number | null;
+  clipSkip?: number | null;
+  width?: number | null;
+  height?: number | null;
+  hires?: boolean | null;
+  hiresScale?: number | null;
+  hiresDenoise?: number | null;
+  vaeTiling?: boolean | null;
+  negativePrompt?: string | null;
+  autoPromptPrefix?: boolean | null;
+}
+
+export interface LoraUse {
+  loraId: string;
+  weight: number;
+}
+
+// ---------------------------------------------------------------- generation
+/** prompt-bearing. */
+export interface GenerateRequest {
+  modelId: string;
+  mode: GenMode;
+  prompt: string;
+  styleId: string | null;
+  dials: Dials;
+  fineTune: FineTune;
+  loras: LoraUse[];
+  /** Add LoRA trigger words to the prompt (in memory). */
+  addTriggerWords: boolean;
+  /** img2img (Restyle): source image id in the session. */
+  initImageId?: string | null;
+  /** Restyle "How much to change": 0.35 | 0.55 | 0.75 */
+  strength?: number | null;
+  /** Instruction edit: reference images (ref_images). */
+  refImageIds?: string[];
+  /** Optional "Only change here" mask (session image id, white = change). */
+  maskImageId?: string | null;
+}
+
+/** generated = txt2img/img2img/edit; upscaled = upscaleImage (model/seed/sampling copied from the source image). */
+export type ResultKind = "generated" | "upscaled";
+
+export interface ResultImage {
+  id: string;
+  kind?: ResultKind;
+  width: number;
+  height: number;
+  seed: number;
+  modelId: string;
+  modelLabel: string;
+  familyId: string;
+  /** Settings summary (no prompt) shown on the card. */
+  steps: number;
+  cfg: number;
+  guidance: number | null;
+  sampler: string | null;
+  scheduler: string | null;
+  /** Parent image id for edit chains. */
+  parentId: string | null;
+}
+
+export interface GenerateResult {
+  images: ResultImage[];
+}
+
+export type GenPhase = "loadingModel" | "queued" | "generating" | "done" | "failed" | "cancelled";
+
+export interface GenerationProgress {
+  phase: GenPhase;
+  modelLabel: string | null;
+  queuePosition: number | null;
+  step: number | null;
+  totalSteps: number | null;
+  elapsedMs: number;
+}
+
+/** prompt-bearing. */
+export interface FinalPromptPreview {
+  prompt: string;
+  negative: string | null;
+}
+
+export interface ImportedImage {
+  id: string;
+  width: number;
+  height: number;
+}
+
+export interface SavedImage {
+  path: string;
+}
+
+// ---------------------------------------------------------------- describe
+export interface CaptionerStatus {
+  /** Ready to describe without downloading anything. */
+  available: boolean;
+  /** reuse (edit model's Qwen2.5-VL) | default (small captioner) | null */
+  source: "reuse" | "default" | null;
+  /** Bytes to download to make the default captioner available. */
+  downloadBytes: number;
+  running: boolean;
+}
+
+export type DescribeStyle = "sentence" | "tags";
+
+// ---------------------------------------------------------------- styles / presets
+export interface Style {
+  id: string;
+  name: string;
+  positive: string;
+  negative: string | null;
+  families: string[];
+  thumbnail: string | null;
+  builtin: boolean;
+}
+
+export interface PresetLora {
+  loraId: string | null;
+  civitaiVersionId: number | null;
+  name: string;
+  weight: number;
+}
+
+/** Stored fine-tune values: NO negative prompt, ever. */
+export type PresetFineTune = Omit<FineTune, "negativePrompt" | "hiresScale" | "hiresDenoise">;
+
+export interface Preset {
+  id: string;
+  name: string;
+  family: string | null;
+  modelId: string | null;
+  civitaiVersionId: number | null;
+  styleId: string | null;
+  shape: Shape | null;
+  quality: Quality | null;
+  stick: number | null;
+  count: number | null;
+  fineTune: PresetFineTune;
+  loras: PresetLora[];
+  builtin: boolean;
+}
+
+// ---------------------------------------------------------------- catalog (CivitAI)
+export type CatalogKind = "models" | "styleAddons";
+export type PriceMode = "free" | "include" | "paid_only";
+
+export interface BrowseQuery {
+  kind: CatalogKind;
+  /** Look key from catalog-filters.yaml (realistic | anime | illustration | three_d | brand) or null. */
+  look: string | null;
+  content: ContentMode;
+  price: PriceMode;
+  /** "Highest Rated" | "Most Downloaded" | "Newest" */
+  sort: string;
+  /** Week | Month | Year | AllTime */
+  period: string;
+  commercialOnly: boolean;
+  compatibleOnly: boolean;
+  query: string;
+  cursor: string | null;
+}
+
+export interface CatalogFilterOptions {
+  looks: { key: string; label: string }[];
+  sorts: { label: string; api: string }[];
+  periods: { label: string; api: string }[];
+  content: { key: ContentMode; label: string }[];
+  price: { key: PriceMode; label: string }[];
+  defaultContent: ContentMode;
+  defaultPrice: PriceMode;
+}
+
+export interface CatalogCard {
+  modelId: number;
+  versionId: number;
+  name: string;
+  versionName: string;
+  /** civitai type: Checkpoint | LORA */
+  type: string;
+  baseModel: string;
+  familyId: string | null;
+  styleBadge: string | null;
+  creator: string | null;
+  /** Preview URL — fetch bytes via fetchPreview(); never put it in an <img src>. */
+  previewUrl: string | null;
+  previewIsVideo: boolean;
+  previewNsfw: boolean;
+  modelNsfw: boolean;
+  thumbsUpRatio: number | null;
+  downloadCount: number;
+  downloadBytes: number | null;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  earlyAccess: boolean;
+  commercialOk: boolean;
+  licenseNote: string | null;
+  installed: boolean;
+  /** Why it can't be installed (pickle only, scans failed…), or null. */
+  blockedReason: string | null;
+}
+
+export interface BrowsePage {
+  items: CatalogCard[];
+  nextCursor: string | null;
+  offline: boolean;
+  /** True when client-side filtering hit the 5-extra-requests cap: show "Load more". */
+  partial: boolean;
+}
+
+export interface InstallPlan {
+  versionId: number;
+  modelName: string;
+  versionName: string;
+  mainFile: { name: string; sizeBytes: number; format: string };
+  family: FamilyChoice | null;
+  /** Non-empty when the family is ambiguous: user must pick one. */
+  familyCandidates: FamilyChoice[];
+  components: { componentId: string; label: string; sizeBytes: number; installed: boolean }[];
+  totalDownloadBytes: number;
+  freeDiskBytes: number;
+  enoughDisk: boolean;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  licenseNote: string | null;
+  isLora: boolean;
+  trainedWords: string[];
+  /** Non-null → install is refused (unsafe format, failed scans…). */
+  blockedReason: string | null;
+  needsApiKey: boolean;
+}
+
+// ---------------------------------------------------------------- paste from CivitAI
+/** A resource from the "Civitai resources" JSON or hashes in pasted generation data. */
+export interface PastedResource {
+  /** checkpoint | lora | embed | vae | … */
+  type: string;
+  modelVersionId: number | null;
+  modelName: string | null;
+  modelVersionName: string | null;
+  /** AutoV2 (10 hex) or full SHA-256. */
+  hash: string | null;
+  weight: number | null;
+}
+
+export interface ResolvedResource {
+  resource: PastedResource;
+  /** Installed model/LoRA id when we already have it. */
+  installedId: string | null;
+  /** Can be installed with installCivitai(versionId). */
+  installableVersionId: number | null;
+  displayName: string;
+  familyId: string | null;
+  downloadBytes: number | null;
+  fit: Fit | null;
+  /** Why it can't be used ("SD 1.5 LoRA doesn't work with SDXL models"…). */
+  problem: string | null;
+}
+
+export interface ResolvedResources {
+  checkpoint: ResolvedResource | null;
+  loras: ResolvedResource[];
+  ignored: ResolvedResource[];
+}

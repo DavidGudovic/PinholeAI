@@ -1,0 +1,706 @@
+//! Plain-language Browse filters (SPEC §5.4) from `config/catalog-filters.yaml`:
+//! the query parameters sent to `GET /api/v1/models` and the client-side rules
+//! (18+ only, free / early access, Look tags, brand commercial use).
+
+use std::path::Path;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::api::{Model, ModelVersion};
+use crate::view::{CatalogFilterOptions, KeyLabel, KeyedLabel};
+
+// ------------------------------------------------------------------ query from the UI
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CatalogKind {
+    #[default]
+    Models,
+    StyleAddons,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ContentMode {
+    #[default]
+    #[serde(rename = "safe")]
+    Safe,
+    #[serde(rename = "include_18plus")]
+    Include18Plus,
+    #[serde(rename = "only_18plus")]
+    Only18Plus,
+}
+
+impl ContentMode {
+    pub fn key(self) -> &'static str {
+        match self {
+            ContentMode::Safe => "safe",
+            ContentMode::Include18Plus => "include_18plus",
+            ContentMode::Only18Plus => "only_18plus",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PriceMode {
+    #[default]
+    Free,
+    Include,
+    PaidOnly,
+}
+
+impl PriceMode {
+    pub fn key(self) -> &'static str {
+        match self {
+            PriceMode::Free => "free",
+            PriceMode::Include => "include",
+            PriceMode::PaidOnly => "paid_only",
+        }
+    }
+}
+
+/// `BrowseQuery` in types.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct BrowseQuery {
+    pub kind: CatalogKind,
+    /// Look key (`realistic` | `anime` | `illustration` | `three_d` | `brand`) or null.
+    pub look: Option<String>,
+    pub content: ContentMode,
+    pub price: PriceMode,
+    /// `Highest Rated` | `Most Downloaded` | `Newest`
+    pub sort: String,
+    /// `Week` | `Month` | `Year` | `AllTime`
+    pub period: String,
+    pub commercial_only: bool,
+    pub compatible_only: bool,
+    pub query: String,
+    pub cursor: Option<String>,
+}
+
+impl Default for BrowseQuery {
+    fn default() -> Self {
+        Self {
+            kind: CatalogKind::Models,
+            look: None,
+            content: ContentMode::Safe,
+            price: PriceMode::Free,
+            sort: "Highest Rated".into(),
+            period: "AllTime".into(),
+            commercial_only: false,
+            compatible_only: true,
+            query: String::new(),
+            cursor: None,
+        }
+    }
+}
+
+// ------------------------------------------------------------------ YAML
+
+#[derive(Debug, thiserror::Error)]
+pub enum FiltersError {
+    #[error("could not read catalog filters: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("invalid catalog-filters.yaml: {0}")]
+    Yaml(String),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KindSpec {
+    pub label: String,
+    pub api_types: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Kinds {
+    pub models: KindSpec,
+    pub style_addons: KindSpec,
+}
+
+impl Default for Kinds {
+    fn default() -> Self {
+        Self {
+            models: KindSpec { label: "Models".into(), api_types: vec!["Checkpoint".into()] },
+            style_addons: KindSpec { label: "Style add-ons".into(), api_types: vec!["LORA".into()] },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AlsoRequire {
+    #[serde(rename = "allowCommercialUse_includes", default)]
+    pub allow_commercial_use_includes: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct LookYaml {
+    label: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    also_require: Option<AlsoRequire>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Look {
+    pub key: String,
+    pub label: String,
+    /// Lowercased.
+    pub tags: Vec<String>,
+    pub also_require: AlsoRequire,
+}
+
+impl Look {
+    pub fn matches_tags(&self, tags: &[String]) -> bool {
+        tags.iter().any(|t| {
+            let t = t.trim().to_ascii_lowercase();
+            self.tags.contains(&t)
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StyleBadge {
+    pub look: String,
+    pub badge: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Labelled {
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PriceSection {
+    pub free: Labelled,
+    pub include: Labelled,
+    pub paid_only: Labelled,
+    #[serde(default)]
+    pub default: PriceMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentOption {
+    pub label: String,
+    #[serde(default)]
+    pub api_nsfw: Option<bool>,
+    #[serde(default)]
+    pub client_filter: Option<String>,
+}
+
+impl ContentOption {
+    /// `Some(required model.nsfw)` from `client_filter`.
+    fn required_nsfw(&self) -> Result<Option<bool>, String> {
+        let Some(expr) = self.client_filter.as_deref() else { return Ok(None) };
+        let compact: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
+        match compact.as_str() {
+            "model.nsfw==true" => Ok(Some(true)),
+            "model.nsfw==false" => Ok(Some(false)),
+            _ => Err(format!("unsupported client_filter `{expr}`")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContentSection {
+    pub safe: ContentOption,
+    pub include_18plus: ContentOption,
+    pub only_18plus: ContentOption,
+    #[serde(default)]
+    pub default: ContentMode,
+    #[serde(default)]
+    pub confirm_once_per_session: bool,
+    #[serde(default)]
+    pub blur_nsfw_previews_when_safe: bool,
+}
+
+impl ContentSection {
+    pub fn option(&self, mode: ContentMode) -> &ContentOption {
+        match mode {
+            ContentMode::Safe => &self.safe,
+            ContentMode::Include18Plus => &self.include_18plus,
+            ContentMode::Only18Plus => &self.only_18plus,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiOption {
+    pub label: String,
+    pub api: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FiltersYaml {
+    #[serde(default)]
+    kinds: Kinds,
+    #[serde(default = "default_lora_types")]
+    lora_types: Vec<String>,
+    #[serde(default)]
+    looks: serde_yaml::Mapping,
+    #[serde(default)]
+    style_badges: Vec<StyleBadge>,
+    price: PriceSection,
+    content: ContentSection,
+    sort: Vec<ApiOption>,
+    period: Vec<ApiOption>,
+    #[serde(default = "default_formats")]
+    allowed_file_formats: Vec<String>,
+    #[serde(default = "default_page_size")]
+    page_size: u32,
+    #[serde(default = "default_extra")]
+    max_extra_requests: u32,
+    #[serde(default = "default_preview_width")]
+    preview_width: u32,
+}
+
+fn default_lora_types() -> Vec<String> {
+    vec!["LORA".into(), "LoCon".into(), "DoRA".into()]
+}
+fn default_formats() -> Vec<String> {
+    vec!["SafeTensor".into(), "GGUF".into()]
+}
+fn default_page_size() -> u32 {
+    24
+}
+fn default_extra() -> u32 {
+    5
+}
+fn default_preview_width() -> u32 {
+    450
+}
+
+/// Loaded `catalog-filters.yaml`.
+#[derive(Debug, Clone)]
+pub struct CatalogFilters {
+    pub kinds: Kinds,
+    pub lora_types: Vec<String>,
+    /// In YAML order.
+    pub looks: Vec<Look>,
+    pub style_badges: Vec<StyleBadge>,
+    pub price: PriceSection,
+    pub content: ContentSection,
+    pub sort: Vec<ApiOption>,
+    pub period: Vec<ApiOption>,
+    pub allowed_file_formats: Vec<String>,
+    /// Always true in practice; the YAML can't turn scan checks off (CLAUDE.md).
+    pub require_scans_success: bool,
+    pub page_size: u32,
+    pub max_extra_requests: u32,
+    pub preview_width: u32,
+}
+
+impl CatalogFilters {
+    pub fn load(path: &Path) -> Result<Self, FiltersError> {
+        Self::from_yaml(&std::fs::read_to_string(path)?)
+    }
+
+    pub fn from_yaml(yaml: &str) -> Result<Self, FiltersError> {
+        let raw: FiltersYaml = serde_yaml::from_str(yaml).map_err(|e| FiltersError::Yaml(e.to_string()))?;
+        let mut looks = Vec::new();
+        for (k, v) in raw.looks {
+            let key = k.as_str().ok_or_else(|| FiltersError::Yaml("look keys must be strings".into()))?.to_string();
+            let l: LookYaml = serde_yaml::from_value(v).map_err(|e| FiltersError::Yaml(format!("look `{key}`: {e}")))?;
+            looks.push(Look {
+                key,
+                label: l.label,
+                tags: l.tags.iter().map(|t| t.trim().to_ascii_lowercase()).collect(),
+                also_require: l.also_require.unwrap_or_default(),
+            });
+        }
+        for mode in [ContentMode::Safe, ContentMode::Include18Plus, ContentMode::Only18Plus] {
+            raw.content.option(mode).required_nsfw().map_err(FiltersError::Yaml)?;
+        }
+        if raw.sort.is_empty() || raw.period.is_empty() {
+            return Err(FiltersError::Yaml("sort and period need at least one entry".into()));
+        }
+        // Security: the YAML may narrow the allowed formats, never widen them.
+        let allowed_file_formats: Vec<String> = raw
+            .allowed_file_formats
+            .into_iter()
+            .filter(|f| crate::select::HARD_ALLOWED_FORMATS.iter().any(|a| a.eq_ignore_ascii_case(f)))
+            .collect();
+        Ok(Self {
+            kinds: raw.kinds,
+            lora_types: raw.lora_types,
+            looks,
+            style_badges: raw.style_badges,
+            price: raw.price,
+            content: raw.content,
+            sort: raw.sort,
+            period: raw.period,
+            allowed_file_formats,
+            require_scans_success: true,
+            page_size: raw.page_size.clamp(1, 100),
+            max_extra_requests: raw.max_extra_requests.min(20),
+            preview_width: raw.preview_width.clamp(64, 2048),
+        })
+    }
+
+    pub fn look(&self, key: &str) -> Option<&Look> {
+        self.looks.iter().find(|l| l.key == key)
+    }
+
+    /// Friendly badge for a model's tags (`style_badges`, first match wins).
+    pub fn style_badge(&self, tags: &[String]) -> Option<String> {
+        self.style_badges
+            .iter()
+            .find(|b| self.look(&b.look).is_some_and(|l| l.matches_tags(tags)))
+            .map(|b| b.badge.clone())
+    }
+
+    pub fn is_lora_type(&self, civitai_type: &str) -> bool {
+        self.lora_types.iter().any(|t| t.eq_ignore_ascii_case(civitai_type))
+    }
+
+    pub fn kind_spec(&self, kind: CatalogKind) -> &KindSpec {
+        match kind {
+            CatalogKind::Models => &self.kinds.models,
+            CatalogKind::StyleAddons => &self.kinds.style_addons,
+        }
+    }
+
+    /// `catalog_filters` command payload.
+    pub fn options(&self) -> CatalogFilterOptions {
+        CatalogFilterOptions {
+            looks: self.looks.iter().map(|l| KeyLabel { key: l.key.clone(), label: l.label.clone() }).collect(),
+            sorts: self.sort.iter().map(|s| KeyedLabel { label: s.label.clone(), api: s.api.clone() }).collect(),
+            periods: self.period.iter().map(|s| KeyedLabel { label: s.label.clone(), api: s.api.clone() }).collect(),
+            content: [ContentMode::Safe, ContentMode::Include18Plus, ContentMode::Only18Plus]
+                .into_iter()
+                .map(|m| KeyLabel { key: m.key().into(), label: self.content.option(m).label.clone() })
+                .collect(),
+            price: [
+                (PriceMode::Free, &self.price.free),
+                (PriceMode::Include, &self.price.include),
+                (PriceMode::PaidOnly, &self.price.paid_only),
+            ]
+            .into_iter()
+            .map(|(m, l)| KeyLabel { key: m.key().into(), label: l.label.clone() })
+            .collect(),
+            default_content: self.content.default,
+            default_price: self.price.default,
+        }
+    }
+
+    /// Query parameters for one `GET /api/v1/models` page (SPEC §5.4 table).
+    /// Repeated keys for arrays (`types`, `baseModels`). Never uses `page`
+    /// (CivitAI answers 429 when page × limit > 1000): paging is by `cursor`.
+    pub fn query_params(&self, q: &BrowseQuery, base_models: &[String], cursor: Option<&str>) -> Vec<(String, String)> {
+        let mut p: Vec<(String, String)> = Vec::new();
+        let mut push = |k: &str, v: &str| p.push((k.to_string(), v.to_string()));
+        push("limit", &self.page_size.to_string());
+        for t in &self.kind_spec(q.kind).api_types {
+            push("types", t);
+        }
+        let sort = self.sort.iter().find(|s| s.api == q.sort).unwrap_or(&self.sort[0]);
+        push("sort", &sort.api);
+        let period = self
+            .period
+            .iter()
+            .find(|s| s.api == q.period)
+            .or_else(|| self.period.iter().find(|s| s.api == "AllTime"))
+            .unwrap_or(&self.period[0]);
+        push("period", &period.api);
+        if let Some(nsfw) = self.content.option(q.content).api_nsfw {
+            push("nsfw", if nsfw { "true" } else { "false" });
+        }
+        let text = q.query.trim();
+        if !text.is_empty() {
+            let text: String = text.chars().take(200).collect();
+            push("query", &text);
+        }
+        if self.commercial_required(q).is_some() {
+            push("allowCommercialUse", "Image");
+        }
+        if q.compatible_only {
+            for b in base_models {
+                push("baseModels", b);
+            }
+        }
+        if let Some(c) = cursor.map(str::trim).filter(|c| !c.is_empty()) {
+            push("cursor", c);
+        }
+        p
+    }
+
+    /// Commercial-use permission every result must have (`Image`), from the
+    /// "OK for client work" toggle or the Look's `also_require`.
+    pub fn commercial_required(&self, q: &BrowseQuery) -> Option<String> {
+        if q.commercial_only {
+            return Some("Image".into());
+        }
+        let look = q.look.as_deref().and_then(|k| self.look(k))?;
+        look.also_require.allow_commercial_use_includes.clone()
+    }
+
+    /// Model-level client-side rules: kind, content (18+ only / safe), Look tags
+    /// (+ brand `also_require`), commercial use, archived models.
+    pub fn keep_model(&self, q: &BrowseQuery, m: &Model) -> bool {
+        if m.is_unavailable() {
+            return false;
+        }
+        let kind = self.kind_spec(q.kind);
+        if !m.kind.is_empty() && !kind.api_types.iter().any(|t| t.eq_ignore_ascii_case(&m.kind)) {
+            return false;
+        }
+        if let Ok(Some(required)) = self.content.option(q.content).required_nsfw() {
+            if m.nsfw != required {
+                return false;
+            }
+        }
+        if let Some(key) = q.look.as_deref() {
+            match self.look(key) {
+                Some(look) if look.matches_tags(&m.tags) => {}
+                Some(_) => return false,
+                None => {} // unknown look key: ignore the filter
+            }
+        }
+        if let Some(what) = self.commercial_required(q) {
+            if !m.allow_commercial_use.allows(&what) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The version a card shows, after compatibility and price rules:
+    /// newest version (newest *compatible* one when "Works with Pinhole" is on);
+    /// Free drops the model when that version is in early access, Early access
+    /// only keeps only those.
+    pub fn pick_version<'a>(
+        &self,
+        q: &BrowseQuery,
+        m: &'a Model,
+        is_compatible: impl Fn(&str) -> bool,
+        now: DateTime<Utc>,
+    ) -> Option<&'a ModelVersion> {
+        let v = m.model_versions.iter().find(|v| !q.compatible_only || is_compatible(&v.base_model))?;
+        let early = v.is_early_access(now);
+        match q.price {
+            PriceMode::Free if early => None,
+            PriceMode::PaidOnly if !early => None,
+            _ => Some(v),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::api::ModelsPage;
+
+    pub(crate) fn filters() -> CatalogFilters {
+        CatalogFilters::from_yaml(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"))).unwrap()
+    }
+
+    pub(crate) fn now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-09-28T12:00:00Z").unwrap().with_timezone(&Utc)
+    }
+
+    fn page() -> ModelsPage {
+        serde_json::from_str(include_str!("../tests/fixtures/models_page.json")).unwrap()
+    }
+
+    fn get<'a>(p: &'a [(String, String)], k: &str) -> Vec<&'a str> {
+        p.iter().filter(|(pk, _)| pk == k).map(|(_, v)| v.as_str()).collect()
+    }
+
+    #[test]
+    fn loads_shipped_yaml() {
+        let f = filters();
+        assert_eq!(f.looks.iter().map(|l| l.key.as_str()).collect::<Vec<_>>(), ["realistic", "anime", "illustration", "three_d", "brand"]);
+        assert_eq!(f.page_size, 24);
+        assert_eq!(f.max_extra_requests, 5);
+        assert_eq!(f.allowed_file_formats, ["SafeTensor", "GGUF"]);
+        let o = f.options();
+        assert_eq!(o.default_content, ContentMode::Safe);
+        assert_eq!(o.default_price, PriceMode::Free);
+        assert_eq!(o.content[2].key, "only_18plus");
+        assert_eq!(o.price[2].key, "paid_only");
+        assert_eq!(o.sorts[0].api, "Highest Rated");
+        let json = serde_json::to_value(&o).unwrap();
+        assert_eq!(json["defaultContent"], "safe");
+        assert_eq!(json["defaultPrice"], "free");
+        assert_eq!(json["looks"][3]["key"], "three_d");
+    }
+
+    #[test]
+    fn yaml_cannot_widen_formats_or_add_unknown_filters() {
+        let y = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"))
+            .replace("allowed_file_formats: [SafeTensor, GGUF]", "allowed_file_formats: [SafeTensor, PickleTensor]");
+        assert_eq!(CatalogFilters::from_yaml(&y).unwrap().allowed_file_formats, ["SafeTensor"]);
+        let y = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"))
+            .replace("client_filter: \"model.nsfw == true\"", "client_filter: \"model.rating > 3\"");
+        assert!(CatalogFilters::from_yaml(&y).is_err());
+    }
+
+    #[test]
+    fn browse_query_json_matches_types_ts() {
+        let q: BrowseQuery = serde_json::from_str(
+            r#"{"kind":"styleAddons","look":"anime","content":"only_18plus","price":"paid_only","sort":"Newest","period":"Week","commercialOnly":true,"compatibleOnly":false,"query":"neon","cursor":"2|5"}"#,
+        )
+        .unwrap();
+        assert_eq!(q.kind, CatalogKind::StyleAddons);
+        assert_eq!(q.content, ContentMode::Only18Plus);
+        assert_eq!(q.price, PriceMode::PaidOnly);
+        assert!(q.commercial_only && !q.compatible_only);
+        let q: BrowseQuery = serde_json::from_str(r#"{"content":"include_18plus"}"#).unwrap();
+        assert_eq!(q.content, ContentMode::Include18Plus);
+        assert!(q.compatible_only, "defaults to Works with Pinhole");
+    }
+
+    #[test]
+    fn query_params_defaults() {
+        let f = filters();
+        let bases = vec!["SDXL 1.0".to_string(), "Pony".to_string()];
+        let p = f.query_params(&BrowseQuery::default(), &bases, None);
+        assert_eq!(get(&p, "limit"), ["24"]);
+        assert_eq!(get(&p, "types"), ["Checkpoint"]);
+        assert_eq!(get(&p, "sort"), ["Highest Rated"]);
+        assert_eq!(get(&p, "period"), ["AllTime"]);
+        assert_eq!(get(&p, "nsfw"), ["false"]);
+        assert_eq!(get(&p, "baseModels"), ["SDXL 1.0", "Pony"]);
+        assert!(get(&p, "query").is_empty());
+        assert!(get(&p, "cursor").is_empty());
+        assert!(get(&p, "allowCommercialUse").is_empty());
+        assert!(get(&p, "page").is_empty(), "never page-based paging");
+    }
+
+    #[test]
+    fn query_params_every_filter() {
+        let f = filters();
+        let bases = vec!["SD 1.5".to_string()];
+        let mut q = BrowseQuery { kind: CatalogKind::StyleAddons, ..Default::default() };
+        assert_eq!(get(&f.query_params(&q, &bases, None), "types"), ["LORA"]);
+
+        q.content = ContentMode::Include18Plus;
+        assert_eq!(get(&f.query_params(&q, &bases, None), "nsfw"), ["true"]);
+        q.content = ContentMode::Only18Plus;
+        assert_eq!(get(&f.query_params(&q, &bases, None), "nsfw"), ["true"]);
+
+        for (sort, period) in [("Most Downloaded", "Week"), ("Newest", "Month"), ("Highest Rated", "Year")] {
+            q.sort = sort.into();
+            q.period = period.into();
+            let p = f.query_params(&q, &bases, None);
+            assert_eq!(get(&p, "sort"), [sort]);
+            assert_eq!(get(&p, "period"), [period]);
+        }
+        q.sort = "Most Buzz".into();
+        q.period = "Decade".into();
+        let p = f.query_params(&q, &bases, None);
+        assert_eq!(get(&p, "sort"), ["Highest Rated"], "unknown sort → first configured");
+        assert_eq!(get(&p, "period"), ["AllTime"]);
+
+        q.commercial_only = true;
+        assert_eq!(get(&f.query_params(&q, &bases, None), "allowCommercialUse"), ["Image"]);
+        q.commercial_only = false;
+        q.look = Some("brand".into());
+        assert_eq!(get(&f.query_params(&q, &bases, None), "allowCommercialUse"), ["Image"], "brand look requires Image");
+        q.look = Some("anime".into());
+        assert!(get(&f.query_params(&q, &bases, None), "allowCommercialUse").is_empty());
+
+        q.compatible_only = false;
+        assert!(get(&f.query_params(&q, &bases, None), "baseModels").is_empty());
+
+        q.query = "  neon cat  ".into();
+        assert_eq!(get(&f.query_params(&q, &bases, Some("2|17")), "query"), ["neon cat"]);
+        assert_eq!(get(&f.query_params(&q, &bases, Some("2|17")), "cursor"), ["2|17"]);
+    }
+
+    #[test]
+    fn content_client_filters() {
+        let f = filters();
+        let page = page();
+        let nsfw_lora = &page.items[1];
+        let sfw_ckpt = &page.items[0];
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Only18Plus, ..Default::default() };
+        assert!(f.keep_model(&q, nsfw_lora));
+        let q = BrowseQuery { content: ContentMode::Only18Plus, ..Default::default() };
+        assert!(!f.keep_model(&q, sfw_ckpt), "18+ only keeps only model.nsfw == true");
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Safe, ..Default::default() };
+        assert!(!f.keep_model(&q, nsfw_lora), "safe mode drops nsfw models defensively");
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Include18Plus, ..Default::default() };
+        assert!(f.keep_model(&q, nsfw_lora));
+        let q = BrowseQuery { content: ContentMode::Include18Plus, ..Default::default() };
+        assert!(f.keep_model(&q, sfw_ckpt));
+    }
+
+    #[test]
+    fn kind_filter_is_enforced_client_side() {
+        let f = filters();
+        let page = page();
+        assert!(!f.keep_model(&BrowseQuery::default(), &page.items[1]), "LoRA in the Models view");
+        assert!(f.keep_model(&BrowseQuery::default(), &page.items[0]));
+    }
+
+    #[test]
+    fn price_filters() {
+        let f = filters();
+        let page = page();
+        let lora = &page.items[1]; // newest version in early access, older one free
+        let toon = page.items.iter().find(|m| m.id == 800002).unwrap(); // EA ended
+        let yes = |_: &str| true;
+        let free = BrowseQuery { price: PriceMode::Free, ..Default::default() };
+        assert!(f.pick_version(&free, lora, yes, now()).is_none(), "Free drops models whose latest version is early access");
+        assert_eq!(f.pick_version(&free, toon, yes, now()).unwrap().id, 800102, "EA that already ended counts as free");
+        let include = BrowseQuery { price: PriceMode::Include, ..Default::default() };
+        assert_eq!(f.pick_version(&include, lora, yes, now()).unwrap().id, 902001);
+        let paid = BrowseQuery { price: PriceMode::PaidOnly, ..Default::default() };
+        assert_eq!(f.pick_version(&paid, lora, yes, now()).unwrap().id, 902001);
+        assert!(f.pick_version(&paid, toon, yes, now()).is_none(), "Early access only drops free models");
+    }
+
+    #[test]
+    fn compatible_version_choice() {
+        let f = filters();
+        let page = page();
+        let sd35 = page.items.iter().find(|m| m.id == 900001).unwrap();
+        let compat = |b: &str| b != "SD 3.5 Large";
+        let q = BrowseQuery::default();
+        assert!(f.pick_version(&q, sd35, compat, now()).is_none());
+        let q = BrowseQuery { compatible_only: false, ..Default::default() };
+        assert_eq!(f.pick_version(&q, sd35, compat, now()).unwrap().id, 900101);
+    }
+
+    #[test]
+    fn look_and_brand_filters() {
+        let f = filters();
+        let page = page();
+        let by_id = |id: u64| page.items.iter().find(|m| m.id == id).unwrap();
+        let q = |look: &str| BrowseQuery { look: Some(look.into()), ..Default::default() };
+        assert!(f.keep_model(&q("realistic"), by_id(139562)));
+        assert!(!f.keep_model(&q("anime"), by_id(139562)));
+        assert!(f.keep_model(&q("anime"), by_id(777001)), "tag `2d`");
+        assert!(f.keep_model(&q("three_d"), by_id(800002)));
+        assert!(f.keep_model(&q("illustration"), by_id(618692)));
+        // Brand: product tags AND commercial Image.
+        assert!(f.keep_model(&q("brand"), by_id(800002)), "product tag + {{Image,Sell}}");
+        assert!(!f.keep_model(&q("brand"), by_id(618692)), "product tag but no commercial use");
+        assert!(!f.keep_model(&q("brand"), by_id(139562)), "commercial but no product tag");
+        // Unknown look keys are ignored rather than hiding everything.
+        assert!(f.keep_model(&q("nope"), by_id(139562)));
+    }
+
+    #[test]
+    fn commercial_filter() {
+        let f = filters();
+        let page = page();
+        let q = BrowseQuery { commercial_only: true, ..Default::default() };
+        assert!(f.keep_model(&q, &page.items[0]));
+        assert!(!f.keep_model(&q, page.items.iter().find(|m| m.id == 5000).unwrap()), "\"None\"");
+        assert!(!f.keep_model(&q, page.items.iter().find(|m| m.id == 618692).unwrap()), "[]");
+    }
+
+    #[test]
+    fn style_badges_first_match_wins() {
+        let f = filters();
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(f.style_badge(&t(&["Anime", "photorealistic"])).as_deref(), Some("Anime"));
+        assert_eq!(f.style_badge(&t(&["photography"])).as_deref(), Some("Realistic"));
+        assert_eq!(f.style_badge(&t(&["3d", "cartoon"])).as_deref(), Some("3D"));
+        assert_eq!(f.style_badge(&t(&["digital art"])).as_deref(), Some("Illustration"));
+        assert_eq!(f.style_badge(&t(&["base model"])), None);
+    }
+}

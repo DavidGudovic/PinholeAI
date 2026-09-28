@@ -1,0 +1,36 @@
+{
+  "id": 133005,
+  "name": "Juggernaut XL",
+  "description": "<p>Photoreal SDXL.</p>",
+  "allowNoCredit": false,
+  "allowCommercialUse": "{Rent}",
+  "allowDerivatives": false,
+  "allowDifferentLicense": false,
+  "type": "Checkpoint",
+  "minor": false,
+  "poi": false,
+  "nsfw": false,
+  "nsfwLevel": 15,
+  "availability": "Public",
+  "stats": { "downloadCount": 1900000, "thumbsUpCount": 21000, "thumbsDownCount": 300 },
+  "creator": { "username": "KandooAI" },
+  "tags": ["photorealistic", "base model", "photography"],
+  "modelVersions": [
+    {
+      "id": 1759168,
+      "name": "Ragnarok_by_RunDiffusion",
+      "baseModel": "SDXL 1.0",
+      "availability": "Public",
+      "files": [],
+      "images": []
+    },
+    {
+      "id": 782002,
+      "name": "Jugg_XI_by_RunDiffusion",
+      "baseModel": "SDXL 1.0",
+      "availability": "Public",
+      "files": [],
+      "images": []
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+[package]
+name = "pinhole-catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pinhole-net = { workspace = true }
+pinhole-registry = { workspace = true }
+pinhole-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+thiserror = { workspace = true }
+url = { workspace = true }
+chrono = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+fs2 = { workspace = true }
+
+[dev-dependencies]
+pinhole-net = { workspace = true, features = ["test-util"] }
+tempfile = { workspace = true }
+tokio = { workspace = true }

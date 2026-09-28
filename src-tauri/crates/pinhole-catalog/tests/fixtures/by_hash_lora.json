@@ -1,0 +1,34 @@
+{
+  "id": 91234,
+  "modelId": 81234,
+  "name": "v1.0",
+  "createdAt": "2023-06-01T00:00:00.000Z",
+  "status": "Published",
+  "availability": "Public",
+  "publishedAt": "2023-06-01T00:00:00.000Z",
+  "trainedWords": ["watercolor"],
+  "baseModel": "SD 1.5",
+  "baseModelType": "Standard",
+  "earlyAccessEndsAt": null,
+  "stats": { "downloadCount": 40000, "thumbsUpCount": 1200 },
+  "model": { "name": "Soft Watercolor", "type": "LORA", "nsfw": false, "poi": false },
+  "files": [
+    {
+      "id": 88001,
+      "sizeKB": 147581.23046875,
+      "name": "soft_watercolor_v1.safetensors",
+      "type": "Model",
+      "pickleScanResult": "Success",
+      "virusScanResult": "Success",
+      "metadata": { "format": "SafeTensor", "size": null, "fp": null },
+      "hashes": {
+        "AutoV2": "0F4168490E",
+        "SHA256": "0F4168490E38B8447E11BA4BD656AA11B925BD22AF30BAC464BC153FDB608501"
+      },
+      "primary": true,
+      "downloadUrl": "https://civitai.com/api/download/models/91234"
+    }
+  ],
+  "images": [],
+  "downloadUrl": "https://civitai.com/api/download/models/91234"
+}

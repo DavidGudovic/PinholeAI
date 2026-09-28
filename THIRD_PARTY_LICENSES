@@ -1,0 +1,179 @@
+Pinhole — third-party licenses
+==============================
+
+Pinhole itself is released under the MIT License (see LICENSE).
+
+Pinhole ships NO model weights and NO inference-engine binaries. The engines
+below are downloaded once, on first run, from their official GitHub releases
+(pinned + SHA-256 verified, see config/engine.yaml). Their license texts are
+reproduced here as required by SPEC §10; the downloaded archives also carry
+their own copies. Model licenses are shown on each model card in the app and
+are the user's responsibility (e.g. FLUX.1-dev is non-commercial).
+
+Contents
+  1. stable-diffusion.cpp (MIT)
+  2. ggml (MIT)
+  3. llama.cpp (MIT)
+  4. Components compiled into the upstream engine binaries
+  5. Libraries compiled into Pinhole (Rust crates, npm packages)
+
+
+==============================================================================
+1. stable-diffusion.cpp — https://github.com/leejet/stable-diffusion.cpp
+   Used as: sd-server (image generation), downloaded at runtime.
+==============================================================================
+
+MIT License
+
+Copyright (c) 2023 leejet
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+==============================================================================
+2. ggml — https://github.com/ggml-org/ggml (stable-diffusion.cpp uses the
+   https://github.com/leejet/ggml fork; same license)
+   Used as: tensor library inside sd-server and llama-server.
+==============================================================================
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+==============================================================================
+3. llama.cpp — https://github.com/ggml-org/llama.cpp
+   Used as: llama-server (Describe tab / image captioning), downloaded at runtime.
+==============================================================================
+
+MIT License
+
+Copyright (c) 2023-2026 The ggml authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+==============================================================================
+4. Components compiled into the upstream engine binaries
+==============================================================================
+
+stable-diffusion.cpp vendors the following (see its thirdparty/README.md);
+they are part of the downloaded sd-server build, not of Pinhole:
+
+  cpp-httplib (Yuji Hirose)          MIT
+  nlohmann/json                      MIT
+  stb_image / stb_image_write /
+    stb_image_resize (Sean Barrett)  MIT or Public Domain (Unlicense)
+  miniz                              MIT / Unlicense (public domain)
+  kuba--/zip                         Unlicense
+  darts-clone (Susumu Yata)          BSD-2-Clause
+  Oniguruma (K. Kosako)              BSD-2-Clause
+  utf8proc                           MIT and Unicode data license
+  libwebp, libwebm (Google)          BSD-3-Clause
+The Windows CUDA builds additionally include NVIDIA CUDA runtime libraries
+(cudart, cuBLAS) distributed by the upstream projects under the NVIDIA CUDA
+Toolkit EULA (redistributable components).
+
+llama.cpp vendors (vendor/): cpp-httplib (MIT), nlohmann/json (MIT),
+stb_image (MIT / Public Domain), miniaudio (Public Domain / MIT-0),
+sheredom/subprocess.h (Unlicense / public domain), and small hash
+implementations (sha1, sha256, xxhash — public domain / BSD-2-Clause).
+
+
+==============================================================================
+5. Libraries compiled into Pinhole
+==============================================================================
+
+5.1 Rust crates (from Cargo.lock; 599 third-party crates in the full
+    Windows + Linux dependency tree as of 2026-09-28). Every crate's full
+    license text is included in its source package on https://crates.io.
+
+    License summary of the tree:
+      MIT OR Apache-2.0 (incl. "Apache-2.0 OR MIT", "MIT/Apache-2.0")  ~360
+      MIT                                                               ~140
+      Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, other permissive ORs  ~45
+      Unicode-3.0 (ICU4X data crates: icu_*, zerovec, tinystr, yoke…)     18
+      MPL-2.0 (cssparser, cssparser-macros, dtoa-short, selectors —
+               used by Tauri's build-time HTML processing; option-ext)     5
+      Apache-2.0 (tao, gethostname, sync_wrapper, zopfli)                  4
+      ISC (rustls-webpki, untrusted, libloading)                           3
+      BSD-3-Clause (subtle, alloc-no-stdlib, alloc-stdlib; brotli is
+               BSD-3-Clause AND MIT)                                       4
+      Apache-2.0 AND ISC (ring)                                            1
+      BSL-1.0 (clipboard-win, error-code)                                  2
+      Zlib (foldhash, zlib-rs)                                             2
+    No GPL/AGPL/LGPL-only crates. (Crates offered under "… OR LGPL-2.1+"
+    are used under their MIT/Apache-2.0 option.)
+
+    Direct dependencies:
+      tauri, tauri-build, tauri-plugin-dialog, tauri-plugin-opener,
+      tauri-plugin-clipboard-manager ......... Apache-2.0 OR MIT
+      serde, serde_json, serde_yaml, thiserror, anyhow, async-trait,
+      reqwest (rustls), url, sha2, hex, base64, flate2, tar, image, png,
+      crc32fast, chrono, uuid, rand, parking_lot, futures-util, dirs,
+      fs2, keyring, libc, windows-sys, tempfile .... MIT OR Apache-2.0
+      tokio, tokio-util, zip, sysinfo ............ MIT
+
+    To regenerate: `cargo metadata --format-version 1` lists every crate
+    with its `license` field.
+
+5.2 npm packages bundled into the user interface (dist/):
+      react, react-dom ................... MIT (Meta Platforms, Inc.)
+      @tauri-apps/api, @tauri-apps/plugin-dialog, @tauri-apps/plugin-opener,
+      @tauri-apps/plugin-clipboard-manager  Apache-2.0 OR MIT
+      lucide-react ....................... ISC (Lucide Contributors)
+      Tailwind CSS (generated CSS) ....... MIT (Tailwind Labs, Inc.)
+    Build-time only (not shipped): vite, typescript, vitest, @vitejs/plugin-react,
+    @tailwindcss/vite, @tauri-apps/cli, jsdom, @testing-library/react — MIT /
+    Apache-2.0 licensed.
+
+    Pinhole bundles no fonts (system fonts only) and loads nothing from CDNs.

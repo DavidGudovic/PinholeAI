@@ -1,0 +1,31 @@
+[package]
+name = "pinhole-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Workspace-level integration tests: privacy sentinel scan, offline mode, engine smoke test."
+
+[lib]
+path = "lib.rs"
+
+# tests/tests/privacy.rs      — sentinel prompt never reaches disk (CLAUDE.md "Privacy tests")
+# tests/tests/offline.rs      — Offline mode blocks every call before a socket opens
+# tests/tests/engine_smoke.rs — real sd-server + SD 1.5 on CPU (only with PINHOLE_SMOKE=1)
+
+[dependencies]
+pinhole-core = { workspace = true, features = ["test-util"] }
+pinhole-net = { workspace = true, features = ["test-util"] }
+pinhole-store = { workspace = true }
+pinhole-registry = { workspace = true }
+pinhole-engine = { workspace = true, features = ["test-util"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+base64 = { workspace = true }
+png = { workspace = true }
+uuid = { workspace = true }
+# zTXt / iTXt decompression for the sentinel scan (already in the tree via pinhole-engine).
+flate2 = "1"

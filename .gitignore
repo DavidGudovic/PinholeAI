@@ -13,3 +13,13 @@ dist/
 target/
 src-tauri/target/
 .env
+
+# Tauri generated
+src-tauri/gen/
+.smoke-cache/
+smoke-out/
+release-assets/
+portable/
+pins-report.json
+src-tauri/vcrt/*.dll
+*.tsbuildinfo

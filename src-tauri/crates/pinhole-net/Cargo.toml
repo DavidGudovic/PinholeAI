@@ -1,0 +1,28 @@
+[package]
+name = "pinhole-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures-util = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+fs2 = { workspace = true }
+parking_lot = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+# `HttpClient::new_for_tests` (allows http://127.0.0.1 for local mock servers).
+test-util = []

@@ -1,0 +1,129 @@
+# Publish a GitHub Release with the Windows setup exe + portable zip, the Linux
+# AppImage + deb, and SHA256SUMS.txt. Trigger: push a tag `v<version>` that matches
+# src-tauri/tauri.conf.json, or run it by hand (creates a draft by default).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (default: v<version from tauri.conf.json>). Created at this commit if missing."
+        type: string
+        required: false
+      draft:
+        description: "Create the release as a draft"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    name: Check version / tag
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag and compare with tauri.conf.json
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$EVENT" = "push" ]; then tag="$GITHUB_REF_NAME"; else tag="${INPUT_TAG:-v$version}"; fi
+          if [ "$tag" != "v$version" ]; then
+            echo "::error::Tag $tag does not match the app version $version in src-tauri/tauri.conf.json (expected v$version)"
+            exit 1
+          fi
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$pkg" != "$version" ]; then
+            echo "::warning::package.json version $pkg differs from tauri.conf.json $version"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Privacy lint
+        run: node scripts/privacy-lint.mjs
+
+      - name: No unverified hashes in shipped config
+        run: |
+          # Comment lines are ignored. Any `sha256: TODO` (or empty sha256) in config/ fails the
+          # release: verify it with the "verify pins" workflow and fill in the real hash first.
+          if grep -rnE '^[^#]*\bsha256:[[:space:]]*("?TODO"?|""|)[[:space:]]*($|,|\})' config/; then
+            echo "::error::config/ still has unverified sha256 values (TODO or empty). Verify and fill them in before releasing."
+            exit 1
+          fi
+
+  bundle:
+    name: Installers
+    needs: check
+    uses: ./.github/workflows/bundle.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs: [check, bundle]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pinhole-*-x64
+          path: artifacts
+
+      - name: Collect files and write SHA256SUMS.txt
+        run: |
+          mkdir -p upload
+          find artifacts -type f ! -name 'SHA256SUMS.txt' -exec cp {} upload/ \;
+          cd upload
+          ls -la
+          sha256sum -- * > ../SHA256SUMS.txt
+          mv ../SHA256SUMS.txt .
+          cat SHA256SUMS.txt
+          for f in *-windows-x64-setup.exe *-windows-x64-portable.zip *.AppImage *.deb; do
+            [ -f "$f" ] || { echo "::error::missing release file matching $f"; exit 1; }
+          done
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.check.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Pinhole ${{ needs.check.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
+          # Personal test builds only until docs/RELEASE-SPEC.md is done (CLAUDE.md).
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: upload/*
+          body: |
+            > **Personal test build.** Not for sharing: no build is shared with anyone until
+            > everything in `docs/RELEASE-SPEC.md` is done.
+
+            ## Download
+
+            | System | File |
+            |---|---|
+            | Windows 10/11 (x64) — installer | `Pinhole-${{ needs.check.outputs.version }}-windows-x64-setup.exe` |
+            | Windows 10/11 (x64) — portable | `Pinhole-${{ needs.check.outputs.version }}-windows-x64-portable.zip` (unzip, run `Pinhole.exe`; data stays in `Data/`) |
+            | Linux x86_64 | `Pinhole-${{ needs.check.outputs.version }}-linux-x86_64.AppImage` or `.deb` |
+
+            Windows 10 needs the Microsoft Edge WebView2 Runtime (the installer adds it if missing; Windows 11 has it).
+            The downloadable image engine (stable-diffusion.cpp) for Linux requires Ubuntu 24.04 or newer (glibc 2.38+).
+            Verify downloads with `sha256sum -c SHA256SUMS.txt`.
+
+            No model weights or engine binaries are bundled: Pinhole downloads the engine for your GPU and the models you pick, once, on first run.
