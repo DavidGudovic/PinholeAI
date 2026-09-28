@@ -118,7 +118,9 @@ export function ModelsFolderSection() {
       <Dialog
         open={dialogOpen}
         onClose={() => phase === "confirm" && setPhase("idle")}
-        title={preview?.isDefault ? "Move your models back to the Data folder?" : "Move your models to this folder?"}
+        title={
+          phase !== "confirm" ? "Moving your models…" : preview?.isDefault ? "Move your models back to the Data folder?" : "Move your models to this folder?"
+        }
         footer={
           phase === "confirm" ? (
             <>

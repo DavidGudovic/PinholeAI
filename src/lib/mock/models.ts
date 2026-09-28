@@ -221,7 +221,8 @@ const empty = () => mockFlags().empty;
 let models: ModelRow[] | null = null;
 let loras: LoraRow[] | null = null;
 let components: Set<string> | null = null;
-let captionerInstalled = false;
+// ?captioner → the Describe model is installed (as in describe.ts; screenshots).
+let captionerInstalled = typeof location !== "undefined" && new URLSearchParams(location.search).has("captioner");
 
 function state() {
   if (!models) {
