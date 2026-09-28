@@ -149,7 +149,10 @@ export const CatalogCardView = memo(function CatalogCardView({
         </div>
 
         {card.vram ? (
-          <VramLine vram={card.vram} fit={card.fit} />
+          <div>
+            <VramLine vram={card.vram} fit={card.fit} />
+            {card.smallerFile && <p className="mt-0.5 text-[11px] text-neutral-500">{card.smallerFile} version, so it fits your card</p>}
+          </div>
         ) : isLora ? (
           <span className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</span>
         ) : null}

@@ -12,6 +12,8 @@ export interface BrowseFilters {
   period: string;
   commercialOnly: boolean;
   compatibleOnly: boolean;
+  /** Hide models that are too big for this computer's graphics card (models only). */
+  runsOnMyCard: boolean;
   query: string;
 }
 
@@ -88,6 +90,7 @@ export function defaultFilters(
     period: pickOption(o.periods, o.defaultPeriod) ?? "AllTime",
     commercialOnly: false,
     compatibleOnly: true,
+    runsOnMyCard: false,
     query: "",
   };
 }
@@ -112,6 +115,7 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
     period: f.period,
     commercialOnly: f.commercialOnly,
     compatibleOnly: f.compatibleOnly,
+    runsOnMyCard: f.kind === "models" && f.runsOnMyCard,
     query: normalizeSearch(f.query),
     cursor,
   };
@@ -120,12 +124,12 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
 /** Stable key: a new key means "start over from the first page". */
 export function filtersKey(f: BrowseFilters): string {
   const q = toBrowseQuery(f, null);
-  return JSON.stringify([q.kind, q.look, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.query]);
+  return JSON.stringify([q.kind, q.look, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.query]);
 }
 
 /** Filters that differ from the defaults (for a "Clear filters" button). */
 export function changedFilterCount(f: BrowseFilters, defaults: BrowseFilters): number {
-  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "query"];
+  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "runsOnMyCard", "query"];
   return keys.filter((k) => (k === "query" ? normalizeSearch(f.query) !== normalizeSearch(defaults.query) : f[k] !== defaults[k])).length;
 }
 
@@ -162,15 +166,17 @@ export interface BrowseTotals {
   checked: number;
   hiddenByContent: number;
   hiddenByFilters: number;
+  hiddenBySize: number;
 }
 
-export const NO_TOTALS: BrowseTotals = { checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+export const NO_TOTALS: BrowseTotals = { checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
 
-export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "hiddenByContent" | "hiddenByFilters">): BrowseTotals {
+export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "hiddenByContent" | "hiddenByFilters" | "hiddenBySize">): BrowseTotals {
   return {
     checked: a.checked + (page.checked ?? 0),
     hiddenByContent: a.hiddenByContent + (page.hiddenByContent ?? 0),
     hiddenByFilters: a.hiddenByFilters + (page.hiddenByFilters ?? 0),
+    hiddenBySize: a.hiddenBySize + (page.hiddenBySize ?? 0),
   };
 }
 
@@ -179,7 +185,7 @@ export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "h
  * ("Works with Pinhole", "Safe only"), each with what to change to see them.
  */
 export function resultsSummary(
-  f: Pick<BrowseFilters, "kind" | "content" | "compatibleOnly">,
+  f: Pick<BrowseFilters, "kind" | "content" | "compatibleOnly"> & Partial<Pick<BrowseFilters, "runsOnMyCard">>,
   shown: number,
   totals: BrowseTotals,
 ): { count: string; hints: string[] } {
@@ -190,5 +196,7 @@ export function resultsSummary(
     hints.push(models ? "Showing models that run in Pinhole — turn off “Works with Pinhole” to see all." : "Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all.");
   if (f.content === "safe" && totals.hiddenByContent > 0)
     hints.push(`“Safe only” hid ${totals.hiddenByContent} made for adults.`);
+  if (models && f.runsOnMyCard && totals.hiddenBySize > 0)
+    hints.push(`“Runs on my card” hid ${totals.hiddenBySize} too big for your graphics card.`);
   return { count: `${shown.toLocaleString("en-US")} ${noun}`, hints };
 }

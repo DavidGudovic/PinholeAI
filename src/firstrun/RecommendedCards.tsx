@@ -17,20 +17,30 @@ const ROLE_ICON: Record<string, ReactNode> = {
   realistic_detail: <Camera className="h-4 w-4" />,
   anime: <Sparkles className="h-4 w-4" />,
   edit: <WandSparkles className="h-4 w-4" />,
+  // Optional lighter edit model (FLUX.1 Kontext); absent when it doesn't fit.
+  edit_alt: <WandSparkles className="h-4 w-4" />,
   describe: <ScanText className="h-4 w-4" />,
 };
 
 const GET_ALL_ROLES = ["realistic", "edit"];
 
 export function RecommendedCards(props: {
-  /** Subset of roles to show (realistic | realistic_detail | anime | edit | describe); default all. */
+  /** Subset of roles to show (realistic | realistic_detail | anime | edit | edit_alt | describe); default all. */
   roles?: string[];
+  /**
+   * Only picks you can still get: "all" = anything not installed; "tightInstalled" = only
+   * smaller versions offered because the installed one is a tight fit.
+   * Renders nothing when there is none.
+   */
+  offers?: "all" | "tightInstalled";
+  /** Shown above the cards, only when there are cards to show. */
+  heading?: ReactNode;
   /** Smaller layout for empty states inside a tab. */
   compact?: boolean;
   /** Show the "Get all" button (first run). */
   showGetAll?: boolean;
 }) {
-  const { roles, compact = false, showGetAll = false } = props;
+  const { roles, compact = false, showGetAll = false, offers, heading } = props;
   const [picks, setPicks] = useState<RecommendedPick[] | null>(null);
   const [loadError, setLoadError] = useState<CoreError | null>(null);
   const [errors, setErrors] = useState<Record<string, CoreError | null>>({});
@@ -57,6 +67,7 @@ export function RecommendedCards(props: {
     : !roles?.length
       ? picks
       : roles.map((r) => picks.find((p) => p.role === r)).filter((p): p is RecommendedPick => !!p);
+  const offered = shown && offers ? shown.filter((p) => isOffer(p) && (offers === "all" || !!p.replacesInstalled)) : shown;
 
   const get = useCallback(async (role: string) => {
     setErrors((e) => ({ ...e, [role]: null }));
@@ -71,6 +82,9 @@ export function RecommendedCards(props: {
     }
   }, []);
 
+  // Offers are extras next to something that works: no error box or skeleton for them.
+  if (offers && (loadError || !offered?.length)) return null;
+
   if (loadError)
     return (
       <div className="space-y-2">
@@ -81,7 +95,7 @@ export function RecommendedCards(props: {
       </div>
     );
 
-  if (!shown)
+  if (!offered)
     return (
       <div className="@container" aria-busy="true">
         <div className={compact ? "grid gap-3" : "grid gap-4 @xl:grid-cols-2"}>
@@ -101,17 +115,23 @@ export function RecommendedCards(props: {
 
   return (
     // Container queries: the same cards sit in wide pages and in narrow side panels.
-    <div className="@container space-y-4">
+    <div className={`@container ${compact ? "space-y-2" : "space-y-4"}`}>
+      {heading}
       {showGetAll && (
         <GetAllBar picks={getAllTargets} onGet={(role) => void get(role)} starting={starting} allPicks={picks ?? []} />
       )}
-      <div className={compact ? (shown.length > 1 ? "grid gap-3 @lg:grid-cols-2" : "grid max-w-xl gap-3") : "grid gap-4 @xl:grid-cols-2"}>
-        {shown.map((p) => (
+      <div className={compact ? (offered.length > 1 ? "grid gap-3 @lg:grid-cols-2" : "grid max-w-xl gap-3") : "grid gap-4 @xl:grid-cols-2"}>
+        {offered.map((p) => (
           <PickCard key={p.role} pick={p} compact={compact} machine={machinePlain(hw)} starting={!!starting[p.role]} error={errors[p.role] ?? null} onGet={() => void get(p.role)} onDismissError={() => setErrors((x) => ({ ...x, [p.role]: null }))} />
         ))}
       </div>
     </div>
   );
+}
+
+/** A pick the user can still get (not installed, and something fits). */
+function isOffer(p: RecommendedPick): boolean {
+  return !p.installed && !!p.title && !p.unavailableReason;
 }
 
 function useRoleGroup(pick: RecommendedPick): GroupStatus | null {
@@ -222,6 +242,7 @@ function PickCard({
         <>
           <h3 className={`mt-1.5 font-semibold text-neutral-900 dark:text-neutral-50 ${compact ? "text-sm" : "text-base"}`}>{pick.title}</h3>
           {pick.goodAt && <p className={`mt-1 text-neutral-600 dark:text-neutral-400 ${compact ? "text-xs" : "text-sm"}`}>{pick.goodAt}</p>}
+          {pick.note && !pick.installed && <p className="mt-1.5 text-xs text-amber-800 dark:text-amber-300">{pick.note}</p>}
           {!compact && (quant || pick.licenseNote) && (
             <p className="mt-2 text-xs text-neutral-500">
               {[quant, pick.licenseNote].filter(Boolean).join(" · ")}

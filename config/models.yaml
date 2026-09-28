@@ -1092,6 +1092,10 @@ recommended:
   edit:
     - { family: qwen_image_edit_2511, source: registry }
     - { family: flux1_kontext, source: registry }
+  # A second Edit card (recommend.rs OPTIONAL_ROLES): a lighter edit model next
+  # to Qwen Image Edit, left out when it is already the Edit pick (small cards).
+  edit_alt:
+    - { family: flux1_kontext, source: registry, title: "FLUX.1 Kontext — lighter, faster edits" }
   describe:
     - { captioner: reuse }       # free if Qwen Image Edit is installed
     - { captioner: default }

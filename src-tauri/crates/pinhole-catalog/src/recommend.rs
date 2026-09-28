@@ -13,12 +13,12 @@ use crate::families::{self, mb_to_bytes, normalize_sha, QuantOption};
 use crate::view::RecommendedPick;
 
 /// Display order of roles; other roles in the YAML follow alphabetically.
-pub const ROLE_ORDER: [&str; 5] = ["realistic", "realistic_detail", "anime", "edit", "describe"];
+pub const ROLE_ORDER: [&str; 6] = ["realistic", "realistic_detail", "anime", "edit", "edit_alt", "describe"];
 
 /// Extra cards next to a main role (e.g. a second, slower Realistic model for
 /// 12 GB+ cards). [`recommend`] leaves them out when none of their candidates
 /// fits this machine: no card at all rather than a "doesn't fit" card.
-pub const OPTIONAL_ROLES: [&str; 1] = ["realistic_detail"];
+pub const OPTIONAL_ROLES: [&str; 2] = ["realistic_detail", "edit_alt"];
 
 /// One file to download and how to register it afterwards.
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +57,7 @@ pub fn role_label(role: &str) -> String {
     match role {
         "realistic" | "realistic_detail" => "Realistic".into(),
         "anime" => "Anime".into(),
-        "edit" => "Edit".into(),
+        "edit" | "edit_alt" => "Edit".into(),
         "describe" => "Describe".into(),
         other => {
             let mut c = other.chars();
@@ -73,6 +73,7 @@ fn good_at(role: &str) -> Option<String> {
             "realistic_detail" => "More detailed photos and lifelike pictures, slower to make",
             "anime" => "Anime and illustration",
             "edit" => "Changing a picture by describing the change",
+            "edit_alt" => "Changing a picture by describing the change; lighter and faster, a little less precise",
             "describe" => "Turning a picture into a prompt",
             _ => return None,
         }
@@ -85,10 +86,22 @@ fn good_at(role: &str) -> Option<String> {
 pub fn recommend(registry: &Registry, index: &InstalledIndex, hw: &HwContext) -> Vec<PickPlan> {
     let mut roles: Vec<String> = ROLE_ORDER.iter().map(|r| r.to_string()).filter(|r| registry.recommended().contains_key(r)).collect();
     roles.extend(registry.recommended().keys().filter(|k| !ROLE_ORDER.contains(&k.as_str())).cloned());
-    roles
+    let picks: Vec<PickPlan> = roles
         .iter()
         .filter_map(|r| recommend_role(registry, index, hw, r))
         .filter(|p| !(OPTIONAL_ROLES.contains(&p.pick.role.as_str()) && p.pick.title.is_none()))
+        .collect();
+    // A second card that repeats the first one's model (e.g. the lighter edit
+    // model is already the Edit pick on a small card) is left out.
+    let family_of = |role: &str| picks.iter().find(|p| p.pick.role == role).and_then(|p| p.pick.family_id.clone());
+    let (edit, realistic) = (family_of("edit"), family_of("realistic"));
+    picks
+        .into_iter()
+        .filter(|p| match p.pick.role.as_str() {
+            "edit_alt" => p.pick.family_id != edit,
+            "realistic_detail" => p.pick.family_id != realistic,
+            _ => true,
+        })
         .collect()
 }
 
@@ -174,6 +187,7 @@ fn empty_pick(role: &str, unavailable_reason: Option<String>) -> RecommendedPick
         license_note: None,
         unavailable_reason,
         note: None,
+        replaces_installed: false,
     }
 }
 
@@ -265,6 +279,7 @@ fn registry_pick(
                     license_note: fam.license_note.clone(),
                     unavailable_reason: None,
                     note: None,
+                    replaces_installed: false,
                 },
                 action: if comps.is_empty() { PickAction::Nothing } else { PickAction::Download { label: title, files: comps } },
             });
@@ -309,6 +324,7 @@ fn registry_pick(
             quant: Some(opt.quant.clone()).filter(|q| q != "unknown"),
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
+            replaces_installed: note.as_deref() == Some(TIGHT_INSTALLED_NOTE),
             note,
         },
         action: PickAction::Download { label: title, files },
@@ -378,6 +394,7 @@ fn civitai_pick(
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
             note: None,
+            replaces_installed: false,
         },
         action: if installed { PickAction::Nothing } else { PickAction::Civitai { version_id, family_id: family_id.into() } },
     })
@@ -419,6 +436,7 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
         license_note: None,
         unavailable_reason: None,
         note: None,
+        replaces_installed: false,
     };
     match cand.captioner.as_deref() {
         Some("reuse") if captioner_reuse_available(registry, index) => {
@@ -462,11 +480,12 @@ mod tests {
     fn roles_in_order() {
         let p = picks(16.0, &index(vec![]));
         let roles: Vec<&str> = p.iter().map(|p| p.pick.role.as_str()).collect();
-        assert_eq!(roles, ["realistic", "realistic_detail", "anime", "edit", "describe"]);
+        assert_eq!(roles, ["realistic", "realistic_detail", "anime", "edit", "edit_alt", "describe"]);
         assert_eq!(p[0].pick.role_label, "Realistic");
         assert_eq!(p[1].pick.role_label, "Realistic", "second Realistic card");
         assert!(p[0].pick.good_at.is_some() && p[1].pick.good_at.is_some());
         // The optional second Realistic card only appears when it fits.
+        // …and the lighter edit card only when it isn't already the Edit pick.
         let roles: Vec<String> = picks(8.0, &index(vec![])).into_iter().map(|p| p.pick.role).collect();
         assert_eq!(roles, ["realistic", "anime", "edit", "describe"]);
     }
@@ -785,6 +804,7 @@ mod tests {
         assert_eq!(summary(&e), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits)));
         assert!(!e.pick.installed);
         assert_eq!(e.pick.note.as_deref(), Some(TIGHT_INSTALLED_NOTE));
+        assert!(e.pick.replaces_installed);
         assert_eq!(e.pick.download_bytes, 9921 * MB, "only the smaller model; parts are shared");
         // Once the smaller version is installed, the card shows it as done.
         let mut files = idx.files.clone();
@@ -848,5 +868,16 @@ mod tests {
         assert_eq!(yaml_id(Some(&serde_yaml::Value::from("TODO"))), None);
         assert_eq!(yaml_id(Some(&serde_yaml::Value::from("34"))), Some(34));
         assert_eq!(yaml_id(None), None);
+    }
+
+    #[test]
+    fn a_lighter_edit_model_is_offered_next_to_qwen_edit() {
+        let p = picks(16.0, &index(vec![]));
+        let alt = role(&p, "edit_alt");
+        assert_eq!(summary(alt), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Fits)));
+        assert_eq!(alt.pick.role_label, "Edit");
+        assert_eq!(alt.pick.title.as_deref(), Some("FLUX.1 Kontext — lighter, faster edits"));
+        // Small cards: Kontext is already the Edit pick → no second card.
+        assert!(picks(8.0, &index(vec![])).iter().all(|p| p.pick.role != "edit_alt"));
     }
 }

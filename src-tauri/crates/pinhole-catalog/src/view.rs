@@ -263,6 +263,9 @@ pub struct RecommendedPick {
     /// Plain-words note when the pick is a smaller version chosen so it fits
     /// (or replaces an installed version that is a tight fit).
     pub note: Option<String>,
+    /// True when an installed version of this family is a tight fit and this smaller one fits.
+    #[serde(default)]
+    pub replaces_installed: bool,
 }
 
 // ------------------------------------------------------------------ paste from CivitAI

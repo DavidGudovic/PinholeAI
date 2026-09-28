@@ -52,9 +52,9 @@ export const catalogFilters = () => invoke<T.CatalogFilterOptions>("catalog_filt
 export const browseCatalog = (query: T.BrowseQuery) => invoke<T.BrowsePage>("browse_catalog", { query });
 /** Preview image bytes fetched by Rust (the WebView makes no network calls). */
 export const fetchPreview = (url: string) => invoke<ArrayBuffer>("fetch_preview", { url });
-export const planCivitaiInstall = (versionId: number) => invoke<T.InstallPlan>("plan_civitai_install", { versionId });
-export const installCivitai = (versionId: number, familyId: string | null) =>
-  invoke<T.InstallStarted>("install_civitai", { versionId, familyId });
+export const planCivitaiInstall = (versionId: number, fileId: number | null = null) => invoke<T.InstallPlan>("plan_civitai_install", { versionId, fileId });
+export const installCivitai = (versionId: number, familyId: string | null, fileId: number | null = null) =>
+  invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId });
 export const hasCivitaiKey = () => invoke<boolean>("has_civitai_key");
 export const setCivitaiKey = (key: string) => invoke<void>("set_civitai_key", { key });
 export const clearCivitaiKey = () => invoke<void>("clear_civitai_key");
