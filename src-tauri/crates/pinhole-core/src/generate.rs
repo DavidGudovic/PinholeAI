@@ -632,8 +632,11 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
     };
     let components_optional = layout == Layout::AllInOne && family.layout == Layout::DiffusionOnly;
     let reg = core.registry();
-    let required = wiring::required_components(&reg, family, hw);
     let idx = core.installed.lock();
+    // Another installed option of a VRAM-dependent choice (e.g. the bf16 text
+    // encoder on a 16 GB card) is used rather than asking for a download.
+    let installed = |id: &str| idx.find_component(id).is_some_and(|f| idx.abs_path(&core.data, f).is_file());
+    let required = wiring::required_components_with(&reg, family, hw, &installed);
     let main = idx.abs_path(&core.data, model);
     if !main.is_file() {
         return Err(CoreError::not_found(format!("The file for “{}” is missing from the Data folder. Reinstall it from Models.", model.friendly_name)));

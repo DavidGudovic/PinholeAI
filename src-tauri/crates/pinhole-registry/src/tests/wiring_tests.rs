@@ -165,6 +165,31 @@ fn taesd_is_only_wired_when_the_engine_supports_previews() {
 }
 
 #[test]
+fn installed_option_of_a_vram_choice_is_used() {
+    // Regression: a 16 GB user who installed the bf16 Qwen3-4B before the tier
+    // moved to Q8 must not be asked to download another text encoder.
+    let reg = shipped();
+    let llm = |installed: &[&str], vram: f32| {
+        let is = |id: &str| installed.contains(&id);
+        required_components_with(reg, fam("z_image_turbo"), &hw(vram), &is)
+            .into_iter()
+            .find(|c| c.kind == "llm")
+            .map(|c| c.component_id)
+            .unwrap()
+    };
+    assert_eq!(llm(&[], 16.0), "qwen3_4b_q8", "nothing installed: the pick for this VRAM");
+    assert_eq!(llm(&["qwen3_4b_q8", "qwen3_4b"], 16.0), "qwen3_4b_q8", "the pick wins when installed");
+    assert_eq!(llm(&["qwen3_4b"], 16.0), "qwen3_4b", "a larger installed option");
+    assert_eq!(llm(&["qwen3_4b", "qwen3_4b_q4km"], 16.0), "qwen3_4b_q4km", "closest smaller first");
+    assert_eq!(llm(&["qwen3_4b_q8"], 8.0), "qwen3_4b_q8", "closest larger when nothing smaller");
+    // Fixed components are unaffected.
+    assert_eq!(
+        comps(&required_components_with(reg, fam("z_image_turbo"), &hw(16.0), &|_| false)),
+        comps(&required_components(reg, fam("z_image_turbo"), &hw(16.0)))
+    );
+}
+
+#[test]
 fn launch_args_z_image_turbo_16gb_cuda() {
     // Real-GPU report: bf16 Z-Image (12.3 GB) + the bf16 Qwen3-4B (8 GB) ran out
     // of VRAM on a 16 GB card. Below 20 GB: Q8_0 GGUF model + Q8_0 GGUF encoder.

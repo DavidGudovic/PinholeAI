@@ -873,6 +873,57 @@ mod tests {
         assert_eq!(err.code, "not_found");
     }
 
+    #[tokio::test]
+    async fn installed_other_text_encoder_option_is_used() {
+        // Regression: bf16 Qwen3-4B installed before the 16 GB tier moved to Q8.
+        let (_tmp, core, _) = new_core();
+        let reg = core.registry();
+        let fam = reg.family("z_image_turbo").unwrap().clone();
+        let hw = pinhole_registry::wiring::HwContext { vram_gb: 16.0, backend: "cuda".into(), ram_gb: 32.0 };
+        let (rel, size) = write_dummy(&core, ModelKind::Diffusion, "z_image_turbo_bf16.safetensors");
+        let zit = InstalledFile {
+            id: "zit".into(),
+            rel_path: rel,
+            kind: ModelKind::Diffusion,
+            sha256: "2".repeat(64),
+            size_bytes: size,
+            family: Some("z_image_turbo".into()),
+            component_id: None,
+            friendly_name: "Z-Image Turbo".into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+        };
+        let err = crate::generate::model_files(&core, &zit, &fam, &hw).unwrap_err();
+        assert!(err.message.contains("Qwen3-4B-Q8_0.gguf"), "{}", err.message);
+        {
+            let mut idx = core.installed.lock();
+            for (id, kind) in [("flux_ae", ModelKind::Vae), ("qwen3_4b", ModelKind::TextEncoder)] {
+                let (rel, size) = write_dummy(&core, kind, &reg.component(id).unwrap().file);
+                idx.upsert(InstalledFile {
+                    id: id.into(),
+                    rel_path: rel,
+                    kind,
+                    sha256: format!("{:0>64}", id.len()),
+                    size_bytes: size,
+                    family: None,
+                    component_id: Some(id.into()),
+                    friendly_name: id.into(),
+                    civitai: None,
+                    added_at: 0,
+                    last_used: None,
+                    observed_vram_gb: None,
+                    dtype: None,
+                });
+            }
+        }
+        let files = crate::generate::model_files(&core, &zit, &fam, &hw).unwrap();
+        let llm = files.components.get("llm").unwrap();
+        assert!(llm.ends_with(&reg.component("qwen3_4b").unwrap().file), "{llm:?}");
+    }
+
     /// A long-running child standing in for a Pinhole-started engine.
     #[cfg(unix)]
     fn fake_engine(dir: &std::path::Path, body: &str) -> pinhole_engine::EngineProcess {
