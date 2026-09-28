@@ -15,6 +15,7 @@ pub mod downloads;
 pub mod engine_setup;
 pub mod error;
 pub mod events;
+pub mod gallery;
 pub mod generate;
 pub mod library;
 pub mod models;
