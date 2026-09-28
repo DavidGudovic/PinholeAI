@@ -167,14 +167,23 @@ PINHOLE_SMOKE=1 cargo test -p pinhole-tests --test engine_smoke --release -- --n
 
 ## CI and releases
 
-- **CI** (`.github/workflows/ci.yml`, every push/PR): frontend tests + build + privacy lint,
-  `cargo test` on Windows and Ubuntu, then installers. Downloads on each run's Summary page:
-  `pinhole-windows-x64` (setup exe + portable zip + SHA256SUMS), `pinhole-windows-x64-portable`
-  (the unzipped portable app), `pinhole-linux-x64` (AppImage + deb + SHA256SUMS). The engine
-  smoke test runs on pushes to `main` and on demand.
-- **Bundle** (`bundle.yml`): installers only, can be started by hand.
-- **Release** (`release.yml`): push a tag `v<version>` matching `src-tauri/tauri.conf.json`
-  (e.g. `git tag v0.1.0 && git push origin v0.1.0`) → GitHub Release with all files and
+CI is tiered to keep GitHub Actions minutes low (the repo is private; Windows minutes bill 2x):
+
+| When | What runs | Billed minutes |
+|---|---|---|
+| Every push / PR (code changes) | frontend tests + build + privacy lint, `cargo test` on Ubuntu | ~4 |
+| Push to `main` | + `cargo test` on Windows, engine smoke + app end-to-end (Ubuntu 24.04 + Windows), real-app WebDriver e2e | ~40 |
+| Docs-only changes | nothing | 0 |
+
+A newer push cancels the older run on the same branch (runs on `main` always finish).
+
+- **Installers on demand**: Actions → **Bundle** → Run workflow (installers only), or Actions →
+  **CI** → Run workflow with *installers* ticked. Downloads appear on the run's Summary page:
+  `pinhole-windows-x64` (setup exe + portable zip + SHA256SUMS), `pinhole-windows-x64-portable`,
+  `pinhole-linux-x64` (AppImage + deb + SHA256SUMS).
+- **Release** (`release.yml`): Actions → **Release** → Run workflow (tag `v<version>` matching
+  `src-tauri/tauri.conf.json`; untick *draft* to publish), or push that tag. Publishes a
+  **pre-release** (personal test build, see `docs/RELEASE-SPEC.md`) with all files and
   `SHA256SUMS.txt`.
 - **Verify pins** (`verify-pins.yml`, on `config/**` changes or by hand): checks every model and
   engine URL + SHA-256 in `config/*.yaml` against Hugging Face / GitHub, CivitAI `baseModel`
