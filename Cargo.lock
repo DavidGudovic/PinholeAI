@@ -3088,6 +3088,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "sysinfo",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -3114,6 +3115,7 @@ dependencies = [
 name = "pinhole-net"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "fs2",
  "futures-util",
  "hex",

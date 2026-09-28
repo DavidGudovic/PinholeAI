@@ -8,18 +8,23 @@
 //! * stdout + stderr → [`LogBuffer`] (memory only, redacted);
 //! * readiness = a caller-supplied probe (e.g. `GET /sdcpp/v1/capabilities`)
 //!   polled until it succeeds, the process exits, the timeout hits or the
-//!   caller cancels. Big models can take minutes to load.
+//!   caller cancels. Big models can take minutes to load;
+//! * [`EngineProcess::stop`] / [`EngineProcess::kill`] wait until the process
+//!   has really exited (its graphics memory is only freed then). Every engine
+//!   this app started is listed in [`managed_pids`] until it is dropped, so the
+//!   leftover-engine sweep ([`crate::orphans`]) never touches a live one.
 //!
 //! IMPORTANT (Linux): `PR_SET_PDEATHSIG` is tied to the *thread* that spawns the
 //! child. Always call [`EngineProcess::spawn`] from an async task on a runtime
 //! worker thread, never from `spawn_blocking` (those threads exit when idle).
 
+use std::collections::BTreeSet;
 use std::future::Future;
 use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncReadExt;
@@ -40,9 +45,26 @@ pub enum ReadyError {
     Cancelled,
 }
 
+/// After a kill, how long to wait for the process to be gone. A CUDA process
+/// can take a few seconds to exit while the driver frees its memory.
+const KILL_WAIT: Duration = Duration::from_secs(15);
+
+/// PIDs of engine processes started by this app that haven't been dropped.
+static MANAGED: Mutex<BTreeSet<u32>> = Mutex::new(BTreeSet::new());
+
+fn managed() -> MutexGuard<'static, BTreeSet<u32>> {
+    MANAGED.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// PIDs of the engines this app is running right now (any `AppCore`).
+pub fn managed_pids() -> Vec<u32> {
+    managed().iter().copied().collect()
+}
+
 /// A running engine process.
 pub struct EngineProcess {
     child: Child,
+    pid: Option<u32>,
     port: u16,
     args: Vec<String>,
     exe: PathBuf,
@@ -114,7 +136,15 @@ impl EngineProcess {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
+        // Hold the registry lock across the spawn so a concurrent orphan sweep
+        // (which lists processes first, then reads the registry) always sees it.
+        let mut registry = managed();
         let mut child = cmd.spawn()?;
+        let pid = child.id();
+        if let Some(pid) = pid {
+            registry.insert(pid);
+        }
+        drop(registry);
 
         #[cfg(windows)]
         if let Some(h) = child.raw_handle() {
@@ -149,7 +179,12 @@ impl EngineProcess {
             }));
         }
 
-        Ok(Self { child, port, args: args.to_vec(), exe: exe.to_path_buf(), logs, readers, exit: None, started: Instant::now() })
+        Ok(Self { child, pid, port, args: args.to_vec(), exe: exe.to_path_buf(), logs, readers, exit: None, started: Instant::now() })
+    }
+
+    /// OS process id (None once tokio reaped it).
+    pub fn pid(&self) -> Option<u32> {
+        self.pid
     }
 
     pub fn port(&self) -> u16 {
@@ -245,7 +280,9 @@ impl EngineProcess {
         }
     }
 
-    /// Graceful stop: SIGTERM (Unix) and wait up to 3 s, then kill.
+    /// Graceful stop: SIGTERM (Unix) and wait up to 3 s, then kill and wait
+    /// until the process has exited (bounded; a process that still hasn't gone
+    /// is left to the leftover-engine sweep before the next launch).
     pub async fn stop(mut self) {
         if self.try_exit().is_some() {
             self.drain_readers().await;
@@ -262,16 +299,33 @@ impl EngineProcess {
                 return;
             }
         }
-        let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
-        self.drain_readers().await;
+        self.kill_and_wait().await;
     }
 
-    /// Immediate kill (cancel while generating: sd-server can't interrupt a running job).
+    /// Immediate kill (cancel while generating: sd-server can't interrupt a
+    /// running job), then wait until the process has exited (bounded).
     pub async fn kill(mut self) {
-        let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
+        self.kill_and_wait().await;
+    }
+
+    async fn kill_and_wait(&mut self) {
+        if self.try_exit().is_none() {
+            let _ = self.child.start_kill();
+            if let Ok(Ok(st)) = tokio::time::timeout(KILL_WAIT, self.child.wait()).await {
+                self.exit = Some(st);
+            }
+        }
         self.drain_readers().await;
+    }
+}
+
+impl Drop for EngineProcess {
+    fn drop(&mut self) {
+        // `kill_on_drop` ends a process that is still running; from now on it is
+        // no longer ours, so a sweep may kill (and wait for) it if it lingers.
+        if let Some(pid) = self.pid {
+            managed().remove(&pid);
+        }
     }
 }
 
@@ -400,6 +454,28 @@ mod tests {
         assert!(logs.tail_text(5).contains("key=k123 args=--port 1"), "{}", logs.tail_text(5));
         assert!(!p.args().iter().any(|a| a.contains("k123")));
         p.stop().await;
+    }
+
+    #[tokio::test]
+    async fn managed_until_dropped_and_kill_waits_for_exit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = script(tmp.path(), "trap '' TERM; while :; do sleep 1; done");
+        let logs = Arc::new(LogBuffer::default());
+        let p = EngineProcess::spawn(&exe, &[], 1, logs.clone()).unwrap();
+        let pid = p.pid().unwrap();
+        assert!(managed_pids().contains(&pid));
+        // SIGTERM is ignored: stop() must fall back to a kill and wait for the exit.
+        p.stop().await;
+        assert!(!managed_pids().contains(&pid));
+        // SAFETY: signal 0 only checks whether the pid exists.
+        let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+        assert!(!alive, "the engine is gone once stop() returns");
+
+        let p = EngineProcess::spawn(&exe, &[], 1, logs).unwrap();
+        let pid = p.pid().unwrap();
+        p.kill().await;
+        assert!(!managed_pids().contains(&pid));
+        assert!(unsafe { libc::kill(pid as libc::pid_t, 0) } != 0);
     }
 
     #[test]

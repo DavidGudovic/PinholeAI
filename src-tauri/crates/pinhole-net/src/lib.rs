@@ -254,15 +254,33 @@ impl HttpClient {
         }
     }
 
-    /// GET + JSON decode (capped at [`MAX_JSON_BYTES`], [`REQUEST_TIMEOUT`]).
-    /// `headers` values are never logged (may hold an API key).
+    /// GET + JSON decode (capped at [`MAX_JSON_BYTES`] before and after
+    /// decompression, [`REQUEST_TIMEOUT`]). Asks for gzip: CivitAI's model lists
+    /// are several MB of JSON that compress about 8×. `headers` values are never
+    /// logged (may hold an API key).
     pub async fn get_json<T: DeserializeOwned>(&self, url: &str, headers: &[(&str, &str)]) -> Result<T, NetError> {
-        let mut all: Vec<(&str, &str)> = Vec::with_capacity(headers.len() + 1);
+        let mut all: Vec<(&str, &str)> = Vec::with_capacity(headers.len() + 2);
         if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept")) {
             all.push(("accept", "application/json"));
         }
+        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding")) {
+            all.push(("accept-encoding", "gzip"));
+        }
         all.extend_from_slice(headers);
-        let bytes = self.get_bytes(url, &all, MAX_JSON_BYTES).await?;
+        let rb = with_headers(self.get(url)?, &all)?.timeout(REQUEST_TIMEOUT);
+        let resp = self.send(rb).await?;
+        let encoding = resp
+            .headers()
+            .get(reqwest::header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        let bytes = self.read_body(resp, MAX_JSON_BYTES).await?;
+        let bytes = match encoding.as_str() {
+            "" | "identity" => bytes,
+            "gzip" | "x-gzip" => gunzip(&bytes, MAX_JSON_BYTES)?,
+            _ => return Err(NetError::Decode("unexpected content encoding".into())),
+        };
         serde_json::from_slice(&bytes).map_err(|e| NetError::Decode(e.to_string()))
     }
 
@@ -270,6 +288,12 @@ impl HttpClient {
     pub async fn get_bytes(&self, url: &str, headers: &[(&str, &str)], max_bytes: usize) -> Result<Vec<u8>, NetError> {
         let rb = with_headers(self.get(url)?, headers)?.timeout(REQUEST_TIMEOUT);
         let resp = self.send(rb).await?;
+        self.read_body(resp, max_bytes).await
+    }
+
+    /// Read a response body, capped at `max_bytes` while streaming; Offline mode
+    /// stops it between chunks.
+    async fn read_body(&self, resp: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, NetError> {
         if let Some(len) = resp.content_length() {
             if len > max_bytes as u64 {
                 return Err(NetError::TooLarge);
@@ -317,6 +341,20 @@ impl HttpClient {
 }
 
 /// Attach caller headers, marking every value sensitive (hidden from `Debug`).
+/// Inflate a gzip body, refusing to grow past `max_bytes` (no decompression bombs).
+fn gunzip(data: &[u8], max_bytes: usize) -> Result<Vec<u8>, NetError> {
+    use std::io::Read;
+    let mut out = Vec::with_capacity(data.len().saturating_mul(8).min(max_bytes));
+    flate2::read::MultiGzDecoder::new(data)
+        .take(max_bytes as u64 + 1)
+        .read_to_end(&mut out)
+        .map_err(|_| NetError::Decode("invalid gzip response".into()))?;
+    if out.len() > max_bytes {
+        return Err(NetError::TooLarge);
+    }
+    Ok(out)
+}
+
 pub(crate) fn with_headers(
     mut rb: reqwest::RequestBuilder,
     headers: &[(impl AsRef<str>, impl AsRef<str>)],

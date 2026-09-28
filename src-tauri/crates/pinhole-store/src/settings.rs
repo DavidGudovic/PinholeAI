@@ -26,6 +26,11 @@ pub struct Settings {
     pub first_run_done: bool,
     /// Engine backend override: `auto` | `cuda` | `vulkan` | `cpu`
     pub engine_backend: String,
+    /// Where the text encoder (reads the prompt) runs on a GPU backend:
+    /// `auto` (graphics card; moves to the processor for the rest of the app
+    /// session if the card runs out of memory while reading the prompt),
+    /// `on` (always the processor), `off` (always the graphics card).
+    pub text_encoder_on_cpu: String,
 }
 
 impl Default for Settings {
@@ -41,6 +46,7 @@ impl Default for Settings {
             add_trigger_words: true,
             first_run_done: false,
             engine_backend: "auto".into(),
+            text_encoder_on_cpu: "auto".into(),
         }
     }
 }
@@ -71,6 +77,9 @@ impl Settings {
         }
         if !matches!(self.engine_backend.as_str(), "auto" | "cuda" | "vulkan" | "cpu") {
             self.engine_backend = d.engine_backend;
+        }
+        if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
+            self.text_encoder_on_cpu = d.text_encoder_on_cpu;
         }
         self
     }
@@ -163,6 +172,7 @@ mod tests {
             add_trigger_words: false,
             first_run_done: true,
             engine_backend: "vulkan".into(),
+            text_encoder_on_cpu: "on".into(),
         };
         save(&d, &s).unwrap();
         assert_eq!(load(&d).unwrap(), s);
@@ -214,6 +224,7 @@ mod tests {
             saved_metadata: "prompt".into(),
             theme: "neon".into(),
             engine_backend: "rocm".into(),
+            text_encoder_on_cpu: "maybe".into(),
             vram_override_gb: Some(f32::NAN),
             ..Settings::default()
         }
@@ -224,6 +235,7 @@ mod tests {
         assert_eq!(s.saved_metadata, "none");
         assert_eq!(s.theme, "system");
         assert_eq!(s.engine_backend, "auto");
+        assert_eq!(s.text_encoder_on_cpu, "auto");
         assert_eq!(s.vram_override_gb, None);
         for bad in ["gpu:", "gpu:x", "gpu:-1", "banana"] {
             let s = Settings { gpu: bad.into(), ..Settings::default() }.normalized();

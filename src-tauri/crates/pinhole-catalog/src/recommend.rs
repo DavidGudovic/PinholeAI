@@ -13,7 +13,12 @@ use crate::families::{self, mb_to_bytes, normalize_sha, QuantOption};
 use crate::view::RecommendedPick;
 
 /// Display order of roles; other roles in the YAML follow alphabetically.
-pub const ROLE_ORDER: [&str; 4] = ["realistic", "anime", "edit", "describe"];
+pub const ROLE_ORDER: [&str; 5] = ["realistic", "realistic_detail", "anime", "edit", "describe"];
+
+/// Extra cards next to a main role (e.g. a second, slower Realistic model for
+/// 12 GB+ cards). [`recommend`] leaves them out when none of their candidates
+/// fits this machine: no card at all rather than a "doesn't fit" card.
+pub const OPTIONAL_ROLES: [&str; 1] = ["realistic_detail"];
 
 /// One file to download and how to register it afterwards.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,7 +55,7 @@ pub struct PickPlan {
 
 pub fn role_label(role: &str) -> String {
     match role {
-        "realistic" => "Realistic".into(),
+        "realistic" | "realistic_detail" => "Realistic".into(),
         "anime" => "Anime".into(),
         "edit" => "Edit".into(),
         "describe" => "Describe".into(),
@@ -65,6 +70,7 @@ fn good_at(role: &str) -> Option<String> {
     Some(
         match role {
             "realistic" => "Photos and lifelike pictures",
+            "realistic_detail" => "More detailed photos and lifelike pictures, slower to make",
             "anime" => "Anime and illustration",
             "edit" => "Changing a picture by describing the change",
             "describe" => "Turning a picture into a prompt",
@@ -74,11 +80,16 @@ fn good_at(role: &str) -> Option<String> {
     )
 }
 
-/// Picks for every role, in [`ROLE_ORDER`].
+/// Picks for every role, in [`ROLE_ORDER`]. [`OPTIONAL_ROLES`] with nothing
+/// that fits are left out.
 pub fn recommend(registry: &Registry, index: &InstalledIndex, hw: &HwContext) -> Vec<PickPlan> {
     let mut roles: Vec<String> = ROLE_ORDER.iter().map(|r| r.to_string()).filter(|r| registry.recommended().contains_key(r)).collect();
     roles.extend(registry.recommended().keys().filter(|k| !ROLE_ORDER.contains(&k.as_str())).cloned());
-    roles.iter().filter_map(|r| recommend_role(registry, index, hw, r)).collect()
+    roles
+        .iter()
+        .filter_map(|r| recommend_role(registry, index, hw, r))
+        .filter(|p| !(OPTIONAL_ROLES.contains(&p.pick.role.as_str()) && p.pick.title.is_none()))
+        .collect()
 }
 
 enum Skip {
@@ -411,9 +422,13 @@ mod tests {
     fn roles_in_order() {
         let p = picks(16.0, &index(vec![]));
         let roles: Vec<&str> = p.iter().map(|p| p.pick.role.as_str()).collect();
-        assert_eq!(roles, ["realistic", "anime", "edit", "describe"]);
+        assert_eq!(roles, ["realistic", "realistic_detail", "anime", "edit", "describe"]);
         assert_eq!(p[0].pick.role_label, "Realistic");
-        assert!(p[0].pick.good_at.is_some());
+        assert_eq!(p[1].pick.role_label, "Realistic", "second Realistic card");
+        assert!(p[0].pick.good_at.is_some() && p[1].pick.good_at.is_some());
+        // The optional second Realistic card only appears when it fits.
+        let roles: Vec<String> = picks(8.0, &index(vec![])).into_iter().map(|p| p.pick.role).collect();
+        assert_eq!(roles, ["realistic", "anime", "edit", "describe"]);
     }
 
     #[test]
@@ -422,8 +437,8 @@ mod tests {
         assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight)));
         assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Tight)));
         assert_eq!(summary(role(&p, "edit")), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)), "Qwen Edit needs 12 GB");
-        // z_image q4_k + flux_ae + qwen3_4b
-        assert_eq!(role(&p, "realistic").pick.download_bytes, (3864 + 335 + 8045) * MB);
+        // z_image q4_k + flux_ae + Qwen3-4B Q4_K_M (the 8 GB bf16 encoder only from 20 GB)
+        assert_eq!(role(&p, "realistic").pick.download_bytes, (3864 + 335 + 2497) * MB);
     }
 
     #[test]
@@ -431,7 +446,8 @@ mod tests {
         let p = picks(8.0, &index(vec![]));
         let r = role(&p, "realistic");
         assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Tight)));
-        assert_eq!(r.pick.download_bytes, (6577 + 335 + 8045) * MB);
+        // Q8 model + FLUX VAE + Qwen3-4B Q4_K_M text encoder (below 10 GB).
+        assert_eq!(r.pick.download_bytes, (6577 + 335 + 2497) * MB);
         assert_eq!(r.pick.title.as_deref(), Some("Z-Image Turbo"));
         assert_eq!(r.pick.license_note.as_deref(), Some("Apache 2.0"));
         match &r.action {
@@ -442,7 +458,7 @@ mod tests {
                 assert_eq!(files[0].sha256.as_deref(), Some("df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1"));
                 let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
                 assert_eq!(comps.len(), 2);
-                assert!(comps.contains(&"flux_ae") && comps.contains(&"qwen3_4b"));
+                assert!(comps.contains(&"flux_ae") && comps.contains(&"qwen3_4b_q4km"));
                 assert!(files[1..].iter().all(|f| f.family.is_none()));
             }
             other => panic!("{other:?}"),
@@ -462,12 +478,21 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_gb_runs_bf16_and_qwen_edit() {
-        // SPEC §6: the 16 GB tier runs Z-Image Turbo bf16 and Qwen Image Edit 2511 Q4_K_M.
+    fn sixteen_gb_runs_q8_z_image_and_qwen_edit() {
+        // SPEC §6: the 16 GB tier runs Z-Image Turbo Q8_0 + the Q8_0 GGUF text encoder
+        // (bf16 + bf16 ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511 Q4_K_M.
         let p = picks(16.0, &index(vec![]));
         let r = role(&p, "realistic");
-        assert_eq!(summary(r), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Tight)));
-        assert_eq!(r.pick.download_bytes, (12310 + 335 + 8045) * MB);
+        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Fits)));
+        assert_eq!(r.pick.download_bytes, (6577 + 335 + 4280) * MB);
+        match &r.action {
+            PickAction::Download { files, .. } => {
+                assert_eq!(files[0].file_name, "z_image_turbo-Q8_0.gguf");
+                assert!(files.iter().any(|f| f.component_id.as_deref() == Some("qwen3_4b_q8")));
+                assert!(!files.iter().any(|f| f.component_id.as_deref() == Some("qwen3_4b")), "no bf16 encoder below 20 GB");
+            }
+            other => panic!("{other:?}"),
+        }
         let e = role(&p, "edit");
         assert_eq!(summary(e), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Tight)));
         assert_eq!(e.pick.vram.unwrap().gb, 16.0);
@@ -478,8 +503,67 @@ mod tests {
     #[test]
     fn twenty_four_gb() {
         let p = picks(24.0, &index(vec![]));
-        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits)));
+        let r = role(&p, "realistic");
+        assert_eq!(summary(r), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits)));
+        assert_eq!(r.pick.download_bytes, (12310 + 335 + 8045) * MB, "bf16 model + bf16 encoder");
         assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Fits)));
+    }
+
+    #[test]
+    fn krea2_turbo_is_a_second_realistic_pick_from_12_gb() {
+        // Q5_K_S below 20 GB, Q8_0 from 20 GB; not offered below 12 GB or without a GPU.
+        for (vram, want) in [
+            (12.0, Some(("q5_k", Fit::Tight))),
+            (16.0, Some(("q5_k", Fit::Tight))),
+            (19.9, Some(("q5_k", Fit::Fits))),
+            (20.0, Some(("q8_0", Fit::Tight))),
+            (24.0, Some(("q8_0", Fit::Fits))),
+            (11.9, None),
+            (8.0, None),
+            (0.0, None),
+        ] {
+            let p = picks(vram, &index(vec![]));
+            // Z-Image Turbo stays the first Realistic pick.
+            assert_ne!(role(&p, "realistic").pick.family_id.as_deref(), Some("krea2_turbo"), "{vram} GB");
+            let k = p.iter().find(|p| p.pick.role == "realistic_detail");
+            match want {
+                Some((quant, fit)) => {
+                    assert_eq!(summary(k.unwrap()), (Some("krea2_turbo"), Some(quant), Some(fit)), "{vram} GB");
+                }
+                None => assert!(k.is_none(), "{vram} GB: no card when it doesn't fit"),
+            }
+        }
+        let p = picks(16.0, &index(vec![]));
+        let k = role(&p, "realistic_detail");
+        assert_eq!(k.pick.title.as_deref(), Some("Krea 2 Turbo — more detail, slower"));
+        assert_eq!(k.pick.role_label, "Realistic");
+        assert!(k.pick.license_note.as_deref().unwrap().starts_with("Krea 2 Community License"));
+        // Q5_K_S + Qwen3-VL 4B Q8_0 + the Qwen-Image (Wan 2.1 layout) VAE.
+        assert_eq!(k.pick.download_bytes, (8819 + 4280 + 254) * MB);
+        match &k.action {
+            PickAction::Download { label, files } => {
+                assert_eq!(label, "Krea 2 Turbo — more detail, slower");
+                assert_eq!(files[0].file_name, "Krea-2-Turbo-Q5_K_S.gguf");
+                assert_eq!(files[0].friendly_name, "Krea 2 Turbo (Q5)");
+                assert_eq!(files[0].kind, ModelKind::Diffusion);
+                assert_eq!(files[0].family.as_deref(), Some("krea2_turbo"));
+                assert!(files[0].url.starts_with("https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"));
+                assert_eq!(files[0].sha256.as_deref(), Some("2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd"));
+                let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
+                assert_eq!(comps.len(), 2);
+                assert!(comps.contains(&"qwen3vl_4b_q8") && comps.contains(&"qwen_image_vae"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let k24 = recommend_role(&registry(), &index(vec![]), &hw(24.0), "realistic_detail").unwrap();
+        match &k24.action {
+            PickAction::Download { files, .. } => assert_eq!(files[0].file_name, "Krea-2-Turbo-Q8_0.gguf"),
+            other => panic!("{other:?}"),
+        }
+        // Asked for directly (install_recommended), a card that doesn't fit explains why.
+        let small = recommend_role(&registry(), &index(vec![]), &hw(8.0), "realistic_detail").unwrap();
+        assert_eq!(small.action, PickAction::Nothing);
+        assert!(small.pick.unavailable_reason.is_some());
     }
 
     #[test]
@@ -594,7 +678,7 @@ mod tests {
         let idx = index(vec![
             model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo-Q8_0.gguf"),
             component(&reg, "flux_ae"),
-            component(&reg, "qwen3_4b"),
+            component(&reg, "qwen3_4b_q4km"),
         ]);
         let p = recommend(&reg, &idx, &hw(8.0));
         let r = role(&p, "realistic");
@@ -618,8 +702,18 @@ mod tests {
         let p = recommend(&reg, &idx, &hw(16.0));
         let r = role(&p, "realistic");
         assert!(!r.pick.installed);
-        assert_eq!(r.pick.download_bytes, 8045 * MB, "only the text encoder");
+        assert_eq!(r.pick.download_bytes, 4280 * MB, "only the text encoder (Q8_0 GGUF at 16 GB)");
         assert_eq!(r.pick.vram.unwrap().gb, 16.0, "registry figure for the bf16 file");
+        // An installed bf16 encoder does not count at 16 GB: the Q8_0 one is required.
+        let idx = index(vec![
+            model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"),
+            component(&reg, "flux_ae"),
+            component(&reg, "qwen3_4b"),
+        ]);
+        let r = recommend_role(&reg, &idx, &hw(16.0), "realistic").unwrap();
+        assert!(!r.pick.installed);
+        assert_eq!(r.pick.download_bytes, 4280 * MB);
+        assert!(recommend_role(&reg, &idx, &hw(24.0), "realistic").unwrap().pick.installed, "bf16 encoder is right at 24 GB");
     }
 
     #[test]

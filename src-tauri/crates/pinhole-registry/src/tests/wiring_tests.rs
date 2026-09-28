@@ -82,10 +82,27 @@ fn required_components_resolve_vram_choices() {
         vec![("vae", "sdxl_vae_fp16_fix")]
     );
     assert!(required_components(reg, fam("sd15"), &hw(8.0)).is_empty());
-    assert_eq!(
-        comps(&required_components(reg, fam("z_image_turbo"), &hw(16.0))),
-        vec![("vae", "flux_ae"), ("llm", "qwen3_4b")]
-    );
+    // Z-Image text encoder by VRAM: bf16 only at 20 GB+ (a 16 GB card ran out
+    // of VRAM encoding the prompt with bf16 + bf16), GGUF Q8 from 10 GB, Q4_K_M below.
+    for (vram, te) in [
+        (24.0, "qwen3_4b"),
+        (20.0, "qwen3_4b"),
+        (16.0, "qwen3_4b_q8"),
+        (15.9, "qwen3_4b_q8"),
+        (12.0, "qwen3_4b_q8"),
+        (10.0, "qwen3_4b_q8"),
+        (8.0, "qwen3_4b_q4km"),
+        (0.0, "qwen3_4b_q4km"),
+    ] {
+        for f in ["z_image_turbo", "z_image_base", "flux2_klein_4b"] {
+            let want = if f == "flux2_klein_4b" { "flux2_vae" } else { "flux_ae" };
+            assert_eq!(
+                comps(&required_components(reg, fam(f), &hw(vram))),
+                vec![("vae", want), ("llm", te)],
+                "{f} at {vram} GB"
+            );
+        }
+    }
     assert_eq!(
         comps(&required_components(
             reg,
@@ -148,13 +165,52 @@ fn taesd_is_only_wired_when_the_engine_supports_previews() {
 }
 
 #[test]
+fn installed_option_of_a_vram_choice_is_used() {
+    // Regression: a 16 GB user who installed the bf16 Qwen3-4B before the tier
+    // moved to Q8 must not be asked to download another text encoder.
+    let reg = shipped();
+    let llm = |installed: &[&str], vram: f32| {
+        let is = |id: &str| installed.contains(&id);
+        required_components_with(reg, fam("z_image_turbo"), &hw(vram), &is)
+            .into_iter()
+            .find(|c| c.kind == "llm")
+            .map(|c| c.component_id)
+            .unwrap()
+    };
+    assert_eq!(llm(&[], 16.0), "qwen3_4b_q8", "nothing installed: the pick for this VRAM");
+    assert_eq!(llm(&["qwen3_4b_q8", "qwen3_4b"], 16.0), "qwen3_4b_q8", "the pick wins when installed");
+    assert_eq!(llm(&["qwen3_4b"], 16.0), "qwen3_4b", "a larger installed option");
+    assert_eq!(llm(&["qwen3_4b", "qwen3_4b_q4km"], 16.0), "qwen3_4b_q4km", "closest smaller first");
+    assert_eq!(llm(&["qwen3_4b_q8"], 8.0), "qwen3_4b_q8", "closest larger when nothing smaller");
+    // Fixed components are unaffected.
+    assert_eq!(
+        comps(&required_components_with(reg, fam("z_image_turbo"), &hw(16.0), &|_| false)),
+        comps(&required_components(reg, fam("z_image_turbo"), &hw(16.0)))
+    );
+}
+
+#[test]
 fn launch_args_z_image_turbo_16gb_cuda() {
+    // Real-GPU report: bf16 Z-Image (12.3 GB) + the bf16 Qwen3-4B (8 GB) ran out
+    // of VRAM on a 16 GB card. Below 20 GB: Q8_0 GGUF model + Q8_0 GGUF encoder.
+    let reg = shipped();
+    let hw16 = hw(16.0);
+    let te: Vec<(String, String)> = required_components(reg, fam("z_image_turbo"), &hw16)
+        .into_iter()
+        .map(|c| (c.kind, c.component_id))
+        .collect();
+    assert_eq!(
+        te,
+        vec![("vae".to_string(), "flux_ae".to_string()), ("llm".to_string(), "qwen3_4b_q8".to_string())]
+    );
+    assert_eq!(reg.component("qwen3_4b_q8").unwrap().file, "Qwen3-4B-Q8_0.gguf");
+    assert_eq!(reg.hardware_profile(16.0).prefer_quant.as_deref(), Some("q8_0"));
     let f = files(
         "z_image_turbo",
         Layout::DiffusionOnly,
-        "/models/diffusion/z_image_turbo_bf16.safetensors",
+        "/models/diffusion/z_image_turbo-Q8_0.gguf",
         &[
-            ("llm", "/models/text_encoders/qwen_3_4b.safetensors"),
+            ("llm", "/models/text_encoders/Qwen3-4B-Q8_0.gguf"),
             ("vae", "/models/vae/ae.safetensors"),
         ],
     );
@@ -163,17 +219,30 @@ fn launch_args_z_image_turbo_16gb_cuda() {
         ..Default::default()
     };
     assert_eq!(
-        launch_args(shipped(), &f, &hw(16.0), &extras),
+        launch_args(reg, &f, &hw16, &extras),
         vec![
             "--diffusion-model",
-            "/models/diffusion/z_image_turbo_bf16.safetensors",
+            "/models/diffusion/z_image_turbo-Q8_0.gguf",
             "--vae",
             "/models/vae/ae.safetensors",
             "--llm",
-            "/models/text_encoders/qwen_3_4b.safetensors",
+            "/models/text_encoders/Qwen3-4B-Q8_0.gguf",
             "--diffusion-fa",
             "--lora-model-dir",
             "/data/models/loras",
+        ]
+    );
+    // 24 GB: bf16 model + bf16 encoder, as before.
+    assert_eq!(
+        wired("z_image_turbo", "/m/z_image_turbo_bf16.safetensors", 24.0),
+        vec![
+            "--diffusion-model",
+            "/m/z_image_turbo_bf16.safetensors",
+            "--vae",
+            "/c/flux_ae",
+            "--llm",
+            "/c/qwen3_4b",
+            "--diffusion-fa",
         ]
     );
 }
@@ -744,4 +813,250 @@ fn stick_default_round_trips_for_every_family() {
         }
         assert_eq!(ui.quality_steps[1], p.steps, "{}", f.id);
     }
+}
+
+// ----------------------------------------------------------------------------- families added 2026-09-28
+
+/// Required components for `family` at `vram`, wired to `/c/<component id>`.
+fn wired(family: &str, main: &str, vram: f32) -> Vec<String> {
+    let reg = shipped();
+    let f = fam(family);
+    let comps: Vec<(String, String)> = required_components(reg, f, &hw(vram))
+        .into_iter()
+        .map(|c| (c.kind, format!("/c/{}", c.component_id)))
+        .collect();
+    let comps: Vec<(&str, &str)> = comps.iter().map(|(k, p)| (k.as_str(), p.as_str())).collect();
+    launch_args(
+        reg,
+        &files(family, f.layout, main, &comps),
+        &hw(vram),
+        &LaunchExtras::default(),
+    )
+}
+
+#[test]
+fn launch_args_krea2() {
+    // docs/krea2.md: --diffusion-model + --llm Qwen3-VL-4B + --vae (Wan 2.1 layout) + --diffusion-fa.
+    assert_eq!(
+        wired("krea2_turbo", "/m/krea2_turbo_int8_convrot.safetensors", 16.0),
+        vec![
+            "--diffusion-model",
+            "/m/krea2_turbo_int8_convrot.safetensors",
+            "--vae",
+            "/c/qwen_image_vae",
+            "--llm",
+            "/c/qwen3vl_4b_q8",
+            "--diffusion-fa",
+        ]
+    );
+    // Small cards: Q4_K_M text encoder + VAE tiling from the low tier.
+    assert_eq!(
+        wired("krea2_raw", "/m/Krea-2-Base-Q4_K_M.gguf", 8.0),
+        vec![
+            "--diffusion-model",
+            "/m/Krea-2-Base-Q4_K_M.gguf",
+            "--vae",
+            "/c/qwen_image_vae",
+            "--llm",
+            "/c/qwen3vl_4b_q4km",
+            "--diffusion-fa",
+            "--vae-tiling",
+        ]
+    );
+    let reg = shipped();
+    let p = resolve_params(
+        reg,
+        fam("krea2_turbo"),
+        &dials(Shape::Square, Quality::Balanced, 0.5, 1),
+        &FineTune::default(),
+        GenMode::Txt2img,
+        &hw(16.0),
+    );
+    assert_eq!((p.steps, p.cfg, p.width, p.height), (8, 1.0, 1024, 1024));
+    assert_eq!(p.sampler.as_deref(), Some("euler"));
+    assert_eq!(p.scheduler, None, "engine default + its Krea 2 flow shift (1.15)");
+    let raw = resolve_params(
+        reg,
+        fam("krea2_raw"),
+        &dials(Shape::Square, Quality::Best, family_ui(reg, fam("krea2_raw")).stick_default, 1),
+        &FineTune::default(),
+        GenMode::Txt2img,
+        &hw(16.0),
+    );
+    assert_eq!(raw.steps, 52);
+    assert!(approx(raw.cfg, 3.5));
+}
+
+#[test]
+fn launch_args_anima() {
+    assert_eq!(
+        wired("anima", "/m/anima-base-v1.0.safetensors", 8.0),
+        vec![
+            "--diffusion-model",
+            "/m/anima-base-v1.0.safetensors",
+            "--vae",
+            "/c/qwen_image_vae",
+            "--llm",
+            "/c/qwen3_06b_base",
+            "--diffusion-fa",
+            "--vae-tiling",
+        ]
+    );
+    let reg = shipped();
+    let ui = family_ui(reg, fam("anima"));
+    assert_eq!(ui.auto_prompt_prefix.as_deref(), Some("masterpiece, best quality, score_7, safe, "));
+    assert!(ui.uses_negative_prompt && ui.default_negative_prompt.is_some());
+    assert_eq!(reg.style_template(&fam("anima").style_template), Some("{prompt}, {style}"));
+    let turbo = family_ui(reg, fam("anima_turbo"));
+    assert!(!turbo.show_stick && !turbo.uses_negative_prompt);
+    assert_eq!(turbo.quality_steps, [8, 10, 12]);
+    assert!(approx(turbo.default_cfg, 1.0));
+}
+
+#[test]
+fn launch_args_flux2_klein_and_dev() {
+    assert_eq!(
+        wired("flux2_klein_4b", "/m/flux-2-klein-4b-Q8_0.gguf", 16.0),
+        vec![
+            "--diffusion-model",
+            "/m/flux-2-klein-4b-Q8_0.gguf",
+            "--vae",
+            "/c/flux2_vae",
+            "--llm",
+            "/c/qwen3_4b_q8",
+            "--diffusion-fa",
+        ]
+    );
+    assert_eq!(
+        wired("flux2_klein_9b", "/m/flux-2-klein-9b-Q8_0.gguf", 24.0),
+        vec![
+            "--diffusion-model",
+            "/m/flux-2-klein-9b-Q8_0.gguf",
+            "--vae",
+            "/c/flux2_vae",
+            "--llm",
+            "/c/qwen3_8b_q8",
+            "--diffusion-fa",
+        ]
+    );
+    assert_eq!(
+        wired("flux2_klein_9b_base", "/m/k9b.safetensors", 16.0)[5],
+        "/c/qwen3_8b_q4km"
+    );
+    assert_eq!(
+        wired("flux2_dev", "/m/flux2-dev-Q4_K_M.gguf", 24.0),
+        vec![
+            "--diffusion-model",
+            "/m/flux2-dev-Q4_K_M.gguf",
+            "--vae",
+            "/c/flux2_vae",
+            "--llm",
+            "/c/mistral_small_32_q4km",
+            "--diffusion-fa",
+        ]
+    );
+    let reg = shipped();
+    let d = dials(Shape::Portrait, Quality::Balanced, 0.5, 2);
+    let k = resolve_params(reg, fam("flux2_klein_4b"), &d, &FineTune::default(), GenMode::Txt2img, &hw(16.0));
+    assert_eq!((k.steps, k.cfg, k.guidance, k.batch_count), (4, 1.0, None, 2));
+    assert_eq!((k.width, k.height), (832, 1216));
+    let b = family_ui(reg, fam("flux2_klein_4b_base"));
+    assert!(b.show_stick && b.stick_maps_to == "cfg" && approx(b.default_cfg, 4.0));
+    let dev = family_ui(reg, fam("flux2_dev"));
+    assert!(dev.show_stick && dev.stick_maps_to == "guidance");
+    assert_eq!(dev.default_guidance, Some(4.0));
+}
+
+#[test]
+fn launch_args_other_new_families() {
+    // Qwen-Image 2.1: its own VAE, Qwen3-VL 8B, --fa (docs).
+    assert_eq!(
+        wired("qwen_image_21", "/m/qwen_image_2.1-Q4_K.gguf", 16.0),
+        vec![
+            "--diffusion-model",
+            "/m/qwen_image_2.1-Q4_K.gguf",
+            "--vae",
+            "/c/qwen_image_21_vae",
+            "--llm",
+            "/c/qwen3vl_8b_q4km",
+            "--fa",
+        ]
+    );
+    let reg = shipped();
+    // 32-pixel grid: 1000 → 992.
+    let q = resolve_params(
+        reg,
+        fam("qwen_image_21"),
+        &dials(Shape::Square, Quality::Balanced, 0.5, 1),
+        &FineTune { width: Some(1000), height: Some(1000), ..Default::default() },
+        GenMode::Txt2img,
+        &hw(16.0),
+    );
+    assert_eq!((q.width, q.height), (992, 992));
+    // SD 3.5: all-in-one checkpoint + CLIP-L, CLIP-G, T5 (fp8 below 24 GB).
+    assert_eq!(
+        wired("sd3", "/m/sd3.5_large.safetensors", 16.0),
+        vec![
+            "--model",
+            "/m/sd3.5_large.safetensors",
+            "--clip_l",
+            "/c/clip_l",
+            "--clip_g",
+            "/c/clip_g",
+            "--t5xxl",
+            "/c/t5xxl_fp8",
+        ]
+    );
+    // Chroma: T5 only, no CLIP-L.
+    assert_eq!(
+        wired("chroma", "/m/Chroma1-HD-Q8_0.gguf", 24.0),
+        vec![
+            "--diffusion-model",
+            "/m/Chroma1-HD-Q8_0.gguf",
+            "--vae",
+            "/c/flux_ae",
+            "--t5xxl",
+            "/c/t5xxl_fp16",
+        ]
+    );
+    // HiDream-O1: one file, --model, nothing else.
+    assert_eq!(
+        wired("hidream_o1_dev", "/m/hidream_o1_image_dev_fp8_scaled.safetensors", 24.0),
+        vec!["--model", "/m/hidream_o1_image_dev_fp8_scaled.safetensors"]
+    );
+    // ERNIE-Image and Mage-Flow.
+    assert_eq!(
+        wired("ernie_image_turbo", "/m/e.gguf", 12.0),
+        vec![
+            "--diffusion-model",
+            "/m/e.gguf",
+            "--vae",
+            "/c/flux2_vae",
+            "--llm",
+            "/c/ministral3_3b_q8",
+            "--diffusion-fa",
+            "--vae-tiling",
+        ]
+    );
+    assert_eq!(
+        wired("mage_flow", "/m/mage_flow_int8_convrot.safetensors", 16.0),
+        vec![
+            "--diffusion-model",
+            "/m/mage_flow_int8_convrot.safetensors",
+            "--vae",
+            "/c/mage_flow_vae",
+            "--llm",
+            "/c/qwen3vl_4b_q8",
+            "--diffusion-fa",
+        ]
+    );
+}
+
+#[test]
+fn minimax_h3_is_not_wired() {
+    // The pinned engine only runs MiniMax-H3 through vid_gen (model.h
+    // sd_version_supports_image_generation), so no family claims it.
+    let reg = shipped();
+    assert!(reg.families_for_base_model("MiniMax H3").is_empty());
+    assert!(!reg.all_civitai_base_models().contains(&"MiniMax H3".to_string()));
 }

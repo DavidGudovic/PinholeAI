@@ -1,7 +1,7 @@
 // Pure helpers for the Models → Browse filter bar (SPEC §5.4).
 // The UI keeps a `BrowseFilters` object; `toBrowseQuery` turns it into the IPC
 // `BrowseQuery`. The CivitAI mapping itself (types=, nsfw=, baseModels=…) lives in Rust.
-import type { BrowseQuery, CatalogCard, CatalogFilterOptions, CatalogKind, ContentMode, PriceMode, Settings } from "../../../lib/types";
+import type { BrowsePage, BrowseQuery, CatalogCard, CatalogFilterOptions, CatalogKind, ContentMode, PriceMode, Settings } from "../../../lib/types";
 
 export interface BrowseFilters {
   kind: CatalogKind;
@@ -47,6 +47,8 @@ export const FALLBACK_OPTIONS: CatalogFilterOptions = {
   ],
   defaultContent: "safe",
   defaultPrice: "free",
+  defaultSort: "Most Downloaded",
+  defaultPeriod: "AllTime",
 };
 
 export const KIND_OPTIONS: { value: CatalogKind; label: string }[] = [
@@ -82,12 +84,17 @@ export function defaultFilters(
     look: null,
     content,
     price,
-    sort: o.sorts[0]?.api ?? "Highest Rated",
-    period: o.periods.find((p) => p.api === "Month")?.api ?? o.periods[0]?.api ?? "AllTime",
+    sort: pickOption(o.sorts, o.defaultSort) ?? "Most Downloaded",
+    period: pickOption(o.periods, o.defaultPeriod) ?? "AllTime",
     commercialOnly: false,
     compatibleOnly: true,
     query: "",
   };
+}
+
+/** `wanted` when it is one of the options, else the first option. */
+function pickOption(list: { api: string }[], wanted: string | undefined): string | undefined {
+  return list.find((o) => o.api === wanted)?.api ?? list[0]?.api;
 }
 
 /** Normalise free text the way we send it: trimmed, inner whitespace collapsed, capped. */
@@ -132,6 +139,11 @@ export function shouldBlurPreview(card: Pick<CatalogCard, "previewNsfw" | "model
   return !isAdult(content) && (card.previewNsfw || card.modelNsfw);
 }
 
+/** A preview URL that points at a video file (not a still frame of it): never fetched. */
+export function isVideoFile(url: string | null): boolean {
+  return !!url && /\.(mp4|webm|mov)$/i.test(url.split(/[?#]/)[0]);
+}
+
 /** Append a page, dropping duplicates (the API can repeat items across cursor pages). */
 export function mergePage(existing: CatalogCard[], incoming: CatalogCard[]): CatalogCard[] {
   const seen = new Set(existing.map((c) => c.versionId));
@@ -143,4 +155,40 @@ export function mergePage(existing: CatalogCard[], incoming: CatalogCard[]): Cat
     }
   }
   return out;
+}
+
+/** Running totals over the loaded pages (for the line above the grid). */
+export interface BrowseTotals {
+  checked: number;
+  hiddenByContent: number;
+  hiddenByFilters: number;
+}
+
+export const NO_TOTALS: BrowseTotals = { checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+
+export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "hiddenByContent" | "hiddenByFilters">): BrowseTotals {
+  return {
+    checked: a.checked + (page.checked ?? 0),
+    hiddenByContent: a.hiddenByContent + (page.hiddenByContent ?? 0),
+    hiddenByFilters: a.hiddenByFilters + (page.hiddenByFilters ?? 0),
+  };
+}
+
+/**
+ * The plain-words line above the grid: how many cards, and why some models aren't there
+ * ("Works with Pinhole", "Safe only"), each with what to change to see them.
+ */
+export function resultsSummary(
+  f: Pick<BrowseFilters, "kind" | "content" | "compatibleOnly">,
+  shown: number,
+  totals: BrowseTotals,
+): { count: string; hints: string[] } {
+  const models = f.kind === "models";
+  const noun = models ? (shown === 1 ? "model" : "models") : shown === 1 ? "style add-on" : "style add-ons";
+  const hints: string[] = [];
+  if (f.compatibleOnly)
+    hints.push(models ? "Showing models that run in Pinhole — turn off “Works with Pinhole” to see all." : "Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all.");
+  if (f.content === "safe" && totals.hiddenByContent > 0)
+    hints.push(`“Safe only” hid ${totals.hiddenByContent} made for adults.`);
+  return { count: `${shown.toLocaleString("en-US")} ${noun}`, hints };
 }

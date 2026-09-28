@@ -10,7 +10,8 @@ use pinhole_store::InstalledIndex;
 
 use crate::api::{Model, ModelImage, ModelVersion};
 use crate::families::{self, FamilyResolution, OTHER_BASE_MODEL};
-use crate::filters::{BrowseQuery, CatalogFilters, ContentMode};
+use crate::filters::{BrowseQuery, CatalogFilters, ContentMode, Hidden};
+use crate::safe::SafeFilter;
 use crate::select;
 use crate::view::CatalogCard;
 
@@ -85,12 +86,17 @@ pub struct CardContext<'a> {
 
 /// Build the card for one `/models` item, or `None` if a filter drops it.
 pub fn build_card(ctx: &CardContext, env: &dyn CatalogEnv, m: &Model) -> Option<CatalogCard> {
+    card_or_hidden(ctx, env, m).ok()
+}
+
+/// The card for one `/models` item, or why a filter drops it.
+pub fn card_or_hidden(ctx: &CardContext, env: &dyn CatalogEnv, m: &Model) -> Result<CatalogCard, Hidden> {
     let f = ctx.filters;
-    if !f.keep_model(ctx.query, m) {
-        return None;
+    if let Some(hidden) = f.hidden_by(ctx.query, m) {
+        return Err(hidden);
     }
-    let version = f.pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now)?;
-    Some(card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now))
+    let version = f.pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now).ok_or(Hidden::Other)?;
+    Ok(card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now))
 }
 
 /// Card for a specific version (also used by install plans and paste lookups).
@@ -118,7 +124,7 @@ pub fn card_for_version(
         (Some(fam), Some(bytes)) if !is_lora => env.vram_for(&fam.id, bytes),
         _ => None,
     };
-    let preview = pick_preview(&v.images, content);
+    let preview = pick_preview(m, v, content, &filters.safe);
     let commercial_ok = m.allow_commercial_use.allows("Image");
     CatalogCard {
         model_id: m.id,
@@ -130,7 +136,7 @@ pub fn card_for_version(
         family_id: family.as_ref().map(|f| f.id.clone()),
         style_badge: filters.style_badge(&m.tags),
         creator: m.creator.as_ref().and_then(|c| c.username.clone()),
-        preview_url: preview.map(|i| thumbnail_url(&i.url, filters.preview_width)),
+        preview_url: preview.map(|i| preview_url(i, filters.preview_width)),
         preview_is_video: preview.is_some_and(|i| i.is_video()),
         // Unrated images of an NSFW model are treated as NSFW.
         preview_nsfw: preview.is_some_and(|i| i.is_nsfw() || (i.nsfw_level.is_none() && i.nsfw.is_none() && m.nsfw)),
@@ -148,39 +154,78 @@ pub fn card_for_version(
     }
 }
 
-/// First preview image of the version. In Safe mode a safe still image is
-/// preferred; otherwise still images beat videos. The UI blurs `previewNsfw`.
-pub fn pick_preview(images: &[ModelImage], content: ContentMode) -> Option<&ModelImage> {
-    let usable = |i: &&ModelImage| !i.url.trim().is_empty();
+/// The card's preview image. "Safe only" uses only images rated PG (the
+/// shipped `max_preview_level`): a still one of the shown version, then of
+/// another version, then a video; none → no preview. Other modes: the
+/// version's first still image, else its first video, else another version's
+/// still image. The UI blurs `previewNsfw` when 18+ is off.
+pub fn pick_preview<'a>(m: &'a Model, v: &'a ModelVersion, content: ContentMode, safe: &SafeFilter) -> Option<&'a ModelImage> {
+    let usable = |i: &&ModelImage| !i.url.trim().is_empty() && i.nsfw_level.is_none_or(|l| l < crate::safe::LEVEL_BLOCKED);
     let still = |i: &&ModelImage| !i.is_video();
-    let sfw = |i: &&ModelImage| !i.is_nsfw();
+    let others = || m.model_versions.iter().filter(|o| o.id != v.id).flat_map(|o| o.images.iter());
     if content == ContentMode::Safe {
-        if let Some(i) = images.iter().filter(usable).find(|i| still(i) && sfw(i)) {
-            return Some(i);
-        }
-        if let Some(i) = images.iter().filter(usable).find(sfw) {
-            return Some(i);
-        }
+        let ok = |i: &&ModelImage| usable(i) && safe.is_safe_preview(i);
+        return v
+            .images
+            .iter()
+            .filter(ok)
+            .find(still)
+            .or_else(|| others().filter(ok).find(still))
+            .or_else(|| v.images.iter().find(ok));
     }
-    images.iter().filter(usable).find(still).or_else(|| images.iter().find(usable))
+    v.images
+        .iter()
+        .filter(usable)
+        .find(still)
+        .or_else(|| v.images.iter().find(usable))
+        .or_else(|| others().filter(usable).find(still))
 }
 
-/// Ask CivitAI's image CDN for a small rendition: replace the `width=…` /
-/// `original=true` path segment with `width=<w>`. Other URLs are unchanged.
+/// Widths CivitAI's image CDN keeps renditions of (`COMMON_IMAGE_WIDTHS` in CivitAI's
+/// `src/client-utils/edge-url.ts`). Other widths are snapped up to the next one, as
+/// CivitAI's own site does, so card previews are CDN cache hits.
+pub const CDN_WIDTHS: [u32; 8] = [96, 320, 450, 512, 800, 1200, 1600, 2200];
+/// CivitAI caps requested widths at this.
+const CDN_MAX_WIDTH: u32 = 1800;
+
+fn snap_width(width: u32) -> u32 {
+    CDN_WIDTHS.iter().copied().find(|w| *w >= width).unwrap_or(width).min(CDN_MAX_WIDTH)
+}
+
+/// Ask CivitAI's image CDN for a small, compressed rendition: the transform path
+/// segment (`original=true`, `width=…`) becomes `width=<w>,optimized=true` — the URL
+/// CivitAI's own model cards use (`getEdgeUrl(src, { width: 450 })`). Other URLs are
+/// unchanged.
 pub fn thumbnail_url(url: &str, width: u32) -> String {
+    edge_url(url, width, false)
+}
+
+/// The card preview URL for an image: [`thumbnail_url`] for stills; for a video a
+/// still frame (`anim=false,transcode=true`, `.jpeg` name, as CivitAI's site asks
+/// for when autoplay is off), so a card never downloads a video.
+pub fn preview_url(img: &ModelImage, width: u32) -> String {
+    edge_url(&img.url, width, img.is_video())
+}
+
+fn edge_url(url: &str, width: u32, video_still: bool) -> String {
     let Ok(mut parsed) = url::Url::parse(url) else { return url.to_string() };
     if !parsed.host_str().is_some_and(|h| pinhole_net::allow::host_matches(h, "civitai.com")) {
         return url.to_string();
     }
-    let segs: Vec<String> = match parsed.path_segments() {
+    let mut segs: Vec<String> = match parsed.path_segments() {
         Some(s) => s.map(str::to_string).collect(),
         None => return url.to_string(),
     };
     let is_transform = |s: &str| s.split(',').all(|p| p.contains('=')) && s.split(',').any(|p| p.starts_with("width=") || p == "original=true");
     let Some(pos) = segs.iter().position(|s| is_transform(s)) else { return url.to_string() };
-    let mut new = segs.clone();
-    new[pos] = format!("width={width}");
-    parsed.set_path(&new.join("/"));
+    let w = snap_width(width);
+    segs[pos] = if video_still { format!("anim=false,transcode=true,width={w},optimized=true") } else { format!("width={w},optimized=true") };
+    let has_name = pos + 1 < segs.len();
+    if let Some(name) = segs.last_mut().filter(|_| video_still && has_name) {
+        let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem).to_string();
+        *name = format!("{stem}.jpeg");
+    }
+    parsed.set_path(&segs.join("/"));
     parsed.to_string()
 }
 
@@ -249,7 +294,7 @@ pub(crate) mod tests {
         assert_eq!(c.creator.as_deref(), Some("SG_161222"));
         assert_eq!(
             c.preview_url.as_deref(),
-            Some("https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3a4bd3bb-0cf8-4a0e-9e4c-9a3f5b1b0c11/width=450/26940521.jpeg")
+            Some("https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3a4bd3bb-0cf8-4a0e-9e4c-9a3f5b1b0c11/width=450,optimized=true/26940521.jpeg")
         );
         assert!(!c.preview_nsfw);
         assert_eq!(c.thumbs_up_ratio, Some(0.98));
@@ -307,19 +352,42 @@ pub(crate) mod tests {
         let ctx = CardContext { filters: &f, query: &q, now: now() };
         let toon = build_card(&ctx, &env(), page.items.iter().find(|m| m.id == 800002).unwrap()).unwrap();
         assert!(!toon.preview_is_video);
-        assert!(toon.preview_url.unwrap().ends_with("/width=450/5.jpeg"));
+        assert!(toon.preview_url.unwrap().ends_with("/width=450,optimized=true/5.jpeg"));
         assert_eq!(toon.style_badge.as_deref(), Some("3D"));
     }
 
     #[test]
-    fn safe_mode_prefers_safe_preview() {
-        let imgs: Vec<ModelImage> = serde_json::from_str(
-            r#"[{"url":"https://image.civitai.com/x/a/width=450/1.jpeg","nsfwLevel":8},{"url":"https://image.civitai.com/x/b/width=450/2.jpeg","nsfwLevel":2}]"#,
-        )
+    fn safe_mode_uses_pg_previews_only() {
+        let f = filters();
+        let m: Model = serde_json::from_value(serde_json::json!({ "id": 1, "modelVersions": [
+            { "id": 11, "images": [
+                { "url": "https://image.civitai.com/x/a/original=true/1.jpeg", "nsfwLevel": 8 },
+                { "url": "https://image.civitai.com/x/b/original=true/2.jpeg", "nsfwLevel": 2 },
+                { "url": "https://image.civitai.com/x/c/original=true/3.mp4", "nsfwLevel": 1 } ] },
+            { "id": 12, "images": [
+                { "url": "https://image.civitai.com/x/d/original=true/4.jpeg", "nsfwLevel": 1 } ] },
+            { "id": 13, "images": [
+                { "url": "https://image.civitai.com/x/e/original=true/5.jpeg", "nsfwLevel": 4 } ] } ] }))
         .unwrap();
-        assert!(pick_preview(&imgs, ContentMode::Safe).unwrap().url.ends_with("2.jpeg"));
-        assert!(pick_preview(&imgs, ContentMode::Include18Plus).unwrap().url.ends_with("1.jpeg"));
-        assert!(pick_preview(&[], ContentMode::Safe).is_none());
+        let v = |i: usize| &m.model_versions[i];
+        let pick = |i: usize, c| pick_preview(&m, v(i), c, &f.safe).map(|img| img.url.rsplit('/').next().unwrap().to_string());
+        assert_eq!(pick(0, ContentMode::Safe).as_deref(), Some("4.jpeg"), "a PG still of another version beats a PG video");
+        assert_eq!(pick(0, ContentMode::Include18Plus).as_deref(), Some("1.jpeg"));
+        assert_eq!(pick(1, ContentMode::Safe).as_deref(), Some("4.jpeg"));
+        assert_eq!(pick(2, ContentMode::Safe).as_deref(), Some("4.jpeg"), "never the R image in Safe");
+        assert_eq!(pick(2, ContentMode::Only18Plus).as_deref(), Some("5.jpeg"));
+        let only_video: Model =
+            serde_json::from_value(serde_json::json!({ "id": 2, "modelVersions": [{ "id": 21, "images": [{ "url": "https://image.civitai.com/x/v.mp4", "nsfwLevel": 1 }] }] }))
+                .unwrap();
+        assert!(pick_preview(&only_video, &only_video.model_versions[0], ContentMode::Safe, &f.safe).unwrap().is_video());
+        let none: Model = serde_json::from_value(serde_json::json!({ "id": 3, "modelVersions": [{ "id": 31, "images": [{ "url": "u", "nsfwLevel": 2 }] }] })).unwrap();
+        assert!(pick_preview(&none, &none.model_versions[0], ContentMode::Safe, &f.safe).is_none(), "PG-13 only → no preview");
+        let blocked: Model = serde_json::from_value(serde_json::json!({ "id": 4, "modelVersions": [{ "id": 41, "images": [
+            { "url": "https://image.civitai.com/x/b/original=true/b.jpeg", "nsfwLevel": 32 },
+            { "url": "https://image.civitai.com/x/r/original=true/r.jpeg", "nsfwLevel": 4 } ] }] }))
+        .unwrap();
+        let p = pick_preview(&blocked, &blocked.model_versions[0], ContentMode::Include18Plus, &f.safe).unwrap();
+        assert!(p.url.ends_with("r.jpeg"), "images CivitAI blocked are never previews");
     }
 
     #[test]
@@ -333,7 +401,8 @@ pub(crate) mod tests {
         assert_eq!(env.family_for("NoobAI", None).unwrap().id, "sdxl_illustrious");
         assert_eq!(env.family_for("Flux.1 D", None).unwrap().license_note.as_deref(), Some("Non-commercial license"));
         assert_eq!(env.family_for("Qwen", None).unwrap().id, "qwen_image", "ambiguous: first candidate for display");
-        assert!(env.family_for("SD 3.5 Large", None).is_none());
+        assert!(env.family_for("MiniMax H3", None).is_none(), "video + audio only in the pinned engine");
+        assert_eq!(env.family_for("SD 3.5 Large", None).unwrap().id, "sd3");
         assert!(env.family_for("Other", None).is_none());
         // Known hash beats the base model.
         let zit = "2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6";
@@ -350,15 +419,32 @@ pub(crate) mod tests {
 
     #[test]
     fn thumbnails() {
+        // The URL CivitAI's own cards use (verified in CivitAI's edge-url.ts).
         assert_eq!(
             thumbnail_url("https://image.civitai.com/xG1/1c65/original=true/12221824.jpeg", 450),
-            "https://image.civitai.com/xG1/1c65/width=450/12221824.jpeg"
+            "https://image.civitai.com/xG1/1c65/width=450,optimized=true/12221824.jpeg"
         );
         assert_eq!(
             thumbnail_url("https://image.civitai.com/xG1/1c65/anim=false,width=1024/1.jpeg", 320),
-            "https://image.civitai.com/xG1/1c65/width=320/1.jpeg"
+            "https://image.civitai.com/xG1/1c65/width=320,optimized=true/1.jpeg"
         );
+        // Widths snap up to the CDN's sizes (cache hits), capped like CivitAI does.
+        assert!(thumbnail_url("https://image.civitai.com/x/y/original=true/1.jpeg", 400).contains("/width=450,optimized=true/"));
+        assert!(thumbnail_url("https://image.civitai.com/x/y/original=true/1.jpeg", 2048).contains("/width=1800,optimized=true/"));
         assert_eq!(thumbnail_url("https://example.com/width=100/x.jpeg", 450), "https://example.com/width=100/x.jpeg");
+        assert_eq!(thumbnail_url("https://image.civitai.com/x/1.jpeg", 450), "https://image.civitai.com/x/1.jpeg", "no transform segment");
         assert_eq!(thumbnail_url("not a url", 450), "not a url");
+    }
+
+    #[test]
+    fn video_previews_become_stills() {
+        let img = |json: &str| serde_json::from_str::<ModelImage>(json).unwrap();
+        let video = img(r#"{"url":"https://image.civitai.com/xG1/418f/original=true/141593346.mp4","type":"video","nsfwLevel":1}"#);
+        assert_eq!(preview_url(&video, 450), "https://image.civitai.com/xG1/418f/anim=false,transcode=true,width=450,optimized=true/141593346.jpeg");
+        let still = img(r#"{"url":"https://image.civitai.com/xG1/13f6/original=true/141594075.jpeg","type":"image"}"#);
+        assert_eq!(preview_url(&still, 450), "https://image.civitai.com/xG1/13f6/width=450,optimized=true/141594075.jpeg");
+        // No transform segment: left alone (the UI then shows "Video preview").
+        let bare = img(r#"{"url":"https://image.civitai.com/x/v.mp4"}"#);
+        assert_eq!(preview_url(&bare, 450), "https://image.civitai.com/x/v.mp4");
     }
 }

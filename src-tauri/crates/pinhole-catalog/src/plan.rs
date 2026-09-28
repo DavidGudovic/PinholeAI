@@ -304,9 +304,16 @@ mod tests {
         assert!(!p.components.is_empty(), "estimated with the first candidate");
         assert_eq!(p.blocked_reason, None);
 
+        // MiniMax H3 is video + audio only in the pinned engine: no family.
+        v.base_model = "MiniMax H3".into();
+        let p = build_plan(&env, &v, None, u64::MAX, false);
+        assert_eq!(p.blocked_reason.as_deref(), Some("Pinhole can't run MiniMax H3 models yet."));
+
+        // SD 3.5 Large runs since the SD 3 family was added.
         v.base_model = "SD 3.5 Large".into();
         let p = build_plan(&env, &v, None, u64::MAX, false);
-        assert_eq!(p.blocked_reason.as_deref(), Some("Pinhole can't run SD 3.5 Large models yet."));
+        assert_eq!(p.blocked_reason, None);
+        assert_eq!(p.family.as_ref().map(|f| f.family_id.as_str()), Some("sd3"));
 
         v.base_model = "Other".into();
         let p = build_plan(&env, &v, None, u64::MAX, false);

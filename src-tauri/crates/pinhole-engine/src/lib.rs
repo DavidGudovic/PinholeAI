@@ -18,6 +18,7 @@ pub mod image;
 pub mod install;
 pub mod llama;
 pub mod logbuf;
+pub mod orphans;
 pub mod pins;
 pub mod png;
 pub mod process;
@@ -25,7 +26,7 @@ pub mod sdapi;
 #[cfg(feature = "test-util")]
 pub mod testutil;
 
-pub use failure::{classify, Failure};
+pub use failure::{classify, failed_stage, memory_failure, Failure, Stage};
 pub use install::{InstalledEngine, EngineKind};
 pub use logbuf::{LogBuffer, ProgressKind, StepProgress};
 pub use pins::{EngineConfig, EnginePin};

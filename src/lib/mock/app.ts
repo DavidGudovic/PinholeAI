@@ -5,6 +5,8 @@
 //   ?skipFirstRun   settings.firstRunDone = true and the engine is already installed
 //   ?nogpu          no GPU detected (CPU only)
 //   ?offline        Offline mode on
+//   ?busygpu        other programs use 9 GB of graphics memory: a note while loading, and reading
+//                   the prompt runs out of memory once per model (automatic retry, see generate.ts)
 //   ?theme=dark     theme setting (light | dark | system)
 //   ?failEngine     the first engine download fails half-way (to show retry)
 //   ?slowhw         hardware detection takes ~4 s
@@ -28,6 +30,8 @@ export function mockFlags() {
     failEngine: p.has("failEngine"),
     slowHw: p.has("slowhw"),
     lowDisk: p.has("lowdisk"),
+    /** Other programs hold graphics memory: the first model load shows a note. */
+    busyGpu: p.has("busygpu"),
     theme: theme === "dark" || theme === "light" || theme === "system" ? (theme as Settings["theme"]) : null,
   };
 }
@@ -49,6 +53,7 @@ export function mockSettings(): Settings {
       addTriggerWords: true,
       firstRunDone: f.skipFirstRun,
       engineBackend: "auto",
+      textEncoderOnCpu: "auto",
     };
     settings = initial;
     return initial;
@@ -69,6 +74,7 @@ function normalizeSettings(s: Settings): Settings {
     savedMetadata: pick(s.savedMetadata, ["none", "settings"], "none"),
     theme: pick(s.theme, ["system", "light", "dark"], "system"),
     engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),
+    textEncoderOnCpu: pick(s.textEncoderOnCpu, ["auto", "on", "off"], "auto"),
   };
 }
 

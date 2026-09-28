@@ -1,34 +1,59 @@
 // Models → Browse: CivitAI catalog with plain-language filters (SPEC §5.4).
+//
+// Speed: pages are cached in RAM per filters (going back to filters you used shows the grid
+// at once), the next page is fetched ahead while you look at this one, filter clicks are
+// debounced, cards are memoised and skipped by the browser while far off screen, and
+// previews load on-screen first (lib/preview.ts). Nothing is written to disk.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
 import { asCoreError, browseCatalog, catalogFilters, listLoras, listModels, onModelsChanged } from "../../lib/api";
-import type { CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
-import { Button, ErrorNotice, Segmented, Spinner, Toggle, inputClass } from "../../components/ui";
+import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
+import { Button, ErrorNotice, Segmented, Toggle, inputClass } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
 import { CatalogCardView } from "./CatalogCardView";
 import { AdultConfirmDialog, Chip, EmptyState, FilterGroup, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
+import { PageStore } from "./lib/pageStore";
+import { measureSince } from "./lib/perf";
 import {
   COMMERCIAL_OPTIONS,
   KIND_OPTIONS,
+  NO_TOTALS,
+  addTotals,
   changedFilterCount,
   defaultFilters,
   filtersKey,
   FALLBACK_OPTIONS,
   isAdult,
   mergePage,
+  resultsSummary,
   showPriceBadge,
   toBrowseQuery,
   type BrowseFilters,
+  type BrowseTotals,
 } from "./lib/query";
 import { confirmAdult, getLastFilters, isAdultConfirmed, rememberFilters } from "./lib/session";
+
+/** Filter clicks settle for this long before CivitAI is asked (search text waits longer). */
+const FILTER_DEBOUNCE_MS = 200;
+const SEARCH_DEBOUNCE_MS = 400;
+/** Ask for the next page this far before the end of the grid comes into view. */
+const SCROLL_AHEAD = "1600px 0px";
+
+/** Recent pages for this session (RAM only). */
+const pages = new PageStore();
+
+/** Settings that change what cards say (Offline, GPU/VRAM → fit badges). */
+function cardSettingsKey(s: Settings | null): string {
+  return s ? JSON.stringify([s.offline, s.gpu, s.vramOverrideGb, s.engineBackend]) : "";
+}
 
 export function BrowseView({ settings, onShowInstalled }: { settings: Settings | null; onShowInstalled: () => void }) {
   const [options, setOptions] = useState<CatalogFilterOptions>(FALLBACK_OPTIONS);
   const [filters, setFilters] = useState<BrowseFilters>(() => getLastFilters() ?? defaultFilters(null, settings, isAdultConfirmed()));
   const [search, setSearch] = useState(filters.query);
-  const debouncedSearch = useDebounced(search, 400);
+  const debouncedSearch = useDebounced(search, SEARCH_DEBOUNCE_MS);
   const [pendingContent, setPendingContent] = useState<ContentMode | null>(() =>
     !getLastFilters() && settings && isAdult(settings.contentMode) && !isAdultConfirmed() ? settings.contentMode : null,
   );
@@ -36,6 +61,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const [items, setItems] = useState<CatalogCard[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [partial, setPartial] = useState(false);
+  const [totals, setTotals] = useState<BrowseTotals>(NO_TOTALS);
   const [offline, setOffline] = useState(false);
   const [phase, setPhase] = useState<"loading" | "more" | "idle">("loading");
   const [error, setError] = useState<CoreError | null>(null);
@@ -46,11 +72,20 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   const reqId = useRef(0);
+  /** First visit this session, and the user hasn't touched a filter yet. */
+  const pristine = useRef(!getLastFilters());
+  /** Filters key of the cards in the grid. */
+  const shownKey = useRef<string | null>(null);
 
   useEffect(() => {
     catalogFilters()
-      .then(setOptions)
+      .then((o) => {
+        setOptions(o);
+        // First visit this session: open on the catalog's own defaults (catalog-filters.yaml).
+        if (pristine.current) setFilters((f) => ({ ...defaultFilters(o, settings, isAdultConfirmed()), kind: f.kind, query: f.query }));
+      })
       .catch(() => undefined);
+    // Once per mount; `settings` is only read for the opening defaults.
   }, []);
 
   useEffect(() => {
@@ -61,13 +96,16 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     setFilters((f) => (f.query === debouncedSearch ? f : { ...f, query: debouncedSearch }));
   }, [debouncedSearch]);
 
-  // Offline mode toggled in Settings → reload.
-  const offlineSetting = useRef(settings?.offline);
+  // Offline mode / GPU changes in Settings → cached cards are stale: reload.
+  const cardSettings = useRef(cardSettingsKey(settings));
   useEffect(
     () =>
       onSettingsChanged((s) => {
-        if (s.offline !== offlineSetting.current) {
-          offlineSetting.current = s.offline;
+        const k = cardSettingsKey(s);
+        if (k !== cardSettings.current) {
+          cardSettings.current = k;
+          pages.clear();
+          shownKey.current = null;
           setReloadTick((t) => t + 1);
         }
       }),
@@ -85,43 +123,102 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   useEffect(() => {
     void refreshInstalled();
   }, [refreshInstalled]);
-  useTauriEvent(onModelsChanged, () => void refreshInstalled());
+  useTauriEvent(onModelsChanged, () => {
+    // Cached cards carry an `installed` flag: don't reuse them after an install/delete.
+    pages.clear();
+    void refreshInstalled();
+  });
 
-  const fetchPage = useCallback(async (cursor: string | null) => {
-    const id = ++reqId.current;
-    setPhase(cursor ? "more" : "loading");
-    setError(null);
-    try {
-      const page = await browseCatalog(toBrowseQuery(filtersRef.current, cursor));
-      if (id !== reqId.current) return;
-      setOffline(page.offline);
-      setItems((prev) => (cursor ? mergePage(prev, page.items) : page.items));
-      // Offline pages echo the request cursor (Rust): don't keep paging against it.
-      setNextCursor(page.offline ? null : page.nextCursor);
-      setPartial(page.partial);
-    } catch (e) {
-      if (id === reqId.current) setError(asCoreError(e));
-    } finally {
-      if (id === reqId.current) setPhase("idle");
-    }
+  const showPages = useCallback((key: string, list: BrowsePage[]) => {
+    const last = list[list.length - 1];
+    setItems(list.slice(1).reduce((acc, p) => mergePage(acc, p.items), list[0].items));
+    setTotals(list.reduce(addTotals, NO_TOTALS));
+    setOffline(last.offline);
+    // Offline pages echo the request cursor (Rust): don't keep paging against it.
+    setNextCursor(last.offline ? null : last.nextCursor);
+    setPartial(last.partial);
+    shownKey.current = key;
   }, []);
 
-  const key = filtersKey(filters);
+  const fetchPage = useCallback(
+    async (cursor: string | null, retry = true) => {
+      const f = filtersRef.current;
+      const key = filtersKey(f);
+      const id = ++reqId.current;
+      setPhase(cursor ? "more" : "loading");
+      setError(null);
+      const started = performance.now();
+      try {
+        const page = await pages.load(key, cursor, () => browseCatalog(toBrowseQuery(f, cursor)));
+        measureSince(cursor ? "pinhole:browse-more" : "pinhole:browse-first", started);
+        if (id !== reqId.current) return;
+        if (!cursor) showPages(key, [page]);
+        else {
+          setItems((prev) => mergePage(prev, page.items));
+          setTotals((t) => addTotals(t, page));
+          setNextCursor(page.offline ? null : page.nextCursor);
+          setPartial(page.partial);
+          setOffline(page.offline);
+        }
+      } catch (e) {
+        if (id !== reqId.current) return;
+        const ce = asCoreError(e);
+        // Rust stopped it because another Browse request came in; ask again once.
+        if (ce.code === "cancelled" && retry) {
+          void fetchPage(cursor, false);
+          return;
+        }
+        setError(ce);
+      } finally {
+        if (id === reqId.current) setPhase("idle");
+      }
+    },
+    [showPages],
+  );
+
+  // Filters changed: show the cached grid right away when there is one…
+  const liveKey = filtersKey(filters);
   useEffect(() => {
+    const chain = pages.chain(liveKey);
+    if (!chain) return;
+    reqId.current += 1;
+    showPages(liveKey, chain.pages);
+    setError(null);
+    setPhase("idle");
+  }, [liveKey, showPages]);
+
+  // …otherwise ask CivitAI once the clicks settle.
+  const key = useDebounced(liveKey, FILTER_DEBOUNCE_MS);
+  useEffect(() => {
+    if (key !== filtersKey(filtersRef.current)) return; // still changing
+    if (shownKey.current === key) return; // restored from the cache
     void fetchPage(null);
   }, [key, reloadTick, fetchPage]);
+
+  // Fetch the next page ahead, while the user looks at this one.
+  useEffect(() => {
+    if (phase !== "idle" || !nextCursor || partial || error || offline) return;
+    const k = shownKey.current;
+    const f = filtersRef.current;
+    if (!k || k !== filtersKey(f) || pages.has(k, nextCursor)) return;
+    const t = setTimeout(() => void pages.load(k, nextCursor, () => browseCatalog(toBrowseQuery(f, nextCursor))).catch(() => undefined), 250);
+    return () => clearTimeout(t);
+  }, [phase, nextCursor, partial, error, offline]);
 
   // Infinite scroll (not when the backend hit its extra-request cap: then "Load more").
   const sentinel = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !nextCursor || partial || phase !== "idle" || error || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), { rootMargin: "600px" });
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), { rootMargin: SCROLL_AHEAD });
     io.observe(el);
     return () => io.disconnect();
   }, [nextCursor, partial, phase, error, fetchPage]);
 
-  const update = (patch: Partial<BrowseFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const update = (patch: Partial<BrowseFilters>) => {
+    pristine.current = false;
+    setFilters((f) => ({ ...f, ...patch }));
+  };
   const setContent = (m: ContentMode) => {
     if (isAdult(m) && !isAdultConfirmed()) setPendingContent(m);
     else update({ content: m });
@@ -129,12 +226,21 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const defaults = defaultFilters(options, settings, isAdultConfirmed());
   const changed = changedFilterCount(filters, { ...defaults, kind: filters.kind });
   const clearFilters = () => {
+    pristine.current = false;
     setSearch("");
     setFilters({ ...defaults, kind: filters.kind });
+  };
+  const reload = () => {
+    pages.clear();
+    shownKey.current = null;
+    setReloadTick((t) => t + 1);
   };
 
   const showPrice = showPriceBadge(filters.price);
   const onInstall = useCallback((c: CatalogCard) => setInstallFor(c), []);
+  const settling = liveKey !== shownKey.current && phase === "idle" && items.length > 0;
+  const summary = resultsSummary(filters, items.length, totals);
+  const noun = filters.kind === "models" ? "models" : "style add-ons";
 
   return (
     <div className="space-y-4">
@@ -148,7 +254,10 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               spellCheck={false}
               autoComplete="off"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                pristine.current = false;
+                setSearch(e.target.value);
+              }}
               onKeyDown={(e) => e.key === "Enter" && update({ query: search })}
               placeholder={filters.kind === "models" ? "Search models on CivitAI" : "Search style add-ons on CivitAI"}
               aria-label="Search CivitAI"
@@ -212,33 +321,47 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
       ) : error && items.length === 0 ? (
         <div className="mx-auto max-w-lg space-y-3 py-10">
           <ErrorNotice error={error} />
-          <Button onClick={() => setReloadTick((t) => t + 1)}>
+          <Button onClick={reload}>
             <RotateCw className="h-4 w-4" /> Try again
           </Button>
         </div>
       ) : phase === "loading" && items.length === 0 ? (
         <Grid>
-          {Array.from({ length: 10 }, (_, i) => (
-            <div key={i} className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
-              <Skeleton className="aspect-[4/5] rounded-none" />
-              <div className="space-y-2 p-3">
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-3 w-1/2" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            </div>
-          ))}
+          <SkeletonCards count={12} />
         </Grid>
       ) : items.length === 0 ? (
-        <EmptyState
-          icon={<SearchX className="h-6 w-6" />}
-          title={filters.kind === "models" ? "No models match these filters" : "No style add-ons match these filters"}
-          actions={changed > 0 ? <Button onClick={clearFilters}>Clear filters</Button> : undefined}
-        >
-          Try another look, a longer time range ("All time"), or a different search.
-        </EmptyState>
+        nextCursor && partial ? (
+          <EmptyState
+            icon={<SearchX className="h-6 w-6" />}
+            title={`No matching ${noun} yet`}
+            actions={
+              <>
+                <Button variant="primary" onClick={() => void fetchPage(nextCursor)}>
+                  Keep looking
+                </Button>
+                {changed > 0 && <Button onClick={clearFilters}>Clear filters</Button>}
+              </>
+            }
+          >
+            Pinhole checked {totals.checked.toLocaleString("en-US")} {noun} and none matched your filters. There may be more further down the list.
+          </EmptyState>
+        ) : (
+          <EmptyState
+            icon={<SearchX className="h-6 w-6" />}
+            title={filters.kind === "models" ? "No models match these filters" : "No style add-ons match these filters"}
+            actions={changed > 0 ? <Button onClick={clearFilters}>Clear filters</Button> : undefined}
+          >
+            Try another look, a longer time range ("All time"), or a different search.
+          </EmptyState>
+        )
       ) : (
-        <div className={phase === "loading" ? "opacity-60 transition-opacity" : "transition-opacity"} aria-busy={phase !== "idle"}>
+        <div className={phase === "loading" || settling ? "opacity-60 transition-opacity" : "transition-opacity"} aria-busy={phase !== "idle"}>
+          <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400" aria-live="polite">
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">{summary.count}</span>
+            {summary.hints.map((h) => (
+              <span key={h}>{h}</span>
+            ))}
+          </div>
           <Grid>
             {items.map((c) => (
               <CatalogCardView
@@ -250,16 +373,17 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
                 onInstall={onInstall}
               />
             ))}
+            {phase === "more" && <SkeletonCards count={4} />}
           </Grid>
           <div ref={sentinel} className="flex flex-col items-center gap-2 py-6">
             {error && <ErrorNotice error={error} />}
-            {phase === "more" ? (
-              <span className="inline-flex items-center gap-2 text-sm text-neutral-500">
-                <Spinner className="h-4 w-4 text-amber-500" /> Loading more…
-              </span>
-            ) : nextCursor ? (
+            {phase === "more" ? null : nextCursor ? (
               <>
-                {partial && <span className="text-xs text-neutral-500">Some results were filtered out. There may be more.</span>}
+                {partial && (
+                  <span className="text-xs text-neutral-500">
+                    Pinhole checked {totals.checked.toLocaleString("en-US")} {noun} so far and hid the ones your filters leave out. There may be more.
+                  </span>
+                )}
                 <Button onClick={() => void fetchPage(nextCursor)}>Load more</Button>
               </>
             ) : (
@@ -285,4 +409,23 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
 function Grid({ children }: { children: ReactNode }) {
   return <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">{children}</div>;
+}
+
+/** Placeholder cards with the same shape as real ones (no layout jump when they arrive). */
+function SkeletonCards({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={`skeleton-${i}`} aria-hidden className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+          <Skeleton className="aspect-[4/5] rounded-none" />
+          <div className="space-y-2 p-3">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
 }

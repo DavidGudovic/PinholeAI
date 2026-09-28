@@ -18,6 +18,7 @@ hex = { workspace = true }
 fs2 = { workspace = true }
 parking_lot = { workspace = true }
 uuid = { workspace = true }
+flate2 = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }
