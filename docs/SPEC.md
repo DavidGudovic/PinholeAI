@@ -577,7 +577,12 @@ build is shared.
   encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
   processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
-  the smaller version of the model; the engine output stays behind Details.
+  the smaller version of the model; the engine output stays behind Details, led by the engine's
+  memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's
+  last launch. `sd-server` runs at `--log-level info` for that plan, never verbose / debug (they
+  print the request). Weights auto-fit keeps in system memory are memory-mapped from the model
+  file (`--mmap`) rather than copied into pinned memory, so the OS can page them out; because a
+  mapped file can't be deleted on Windows, deleting a model first stops a running engine.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,

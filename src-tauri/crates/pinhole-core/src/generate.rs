@@ -289,6 +289,10 @@ pub struct GenState {
     pub(crate) job_note: parking_lot::Mutex<Vec<String>>,
     /// Graphics memory used by other programs when the running engine started (NVIDIA).
     pub(crate) gpu_others: parking_lot::Mutex<Option<OtherGpuUse>>,
+    /// Model id + the memory plan its last auto-fit launch printed (where the
+    /// weights went; no prompt text). Kept across a retry whose engine doesn't
+    /// run auto-fit, and shown in the details of an out-of-memory error.
+    pub(crate) memory_plan: parking_lot::Mutex<Option<(String, Vec<String>)>>,
     /// Tests: the launch args each run asked an external engine for.
     pub(crate) external_launches: parking_lot::Mutex<Vec<Vec<String>>>,
 }
@@ -310,6 +314,7 @@ impl Default for GenState {
             mem_fallback: parking_lot::Mutex::new(HashMap::new()),
             job_note: parking_lot::Mutex::new(Vec::new()),
             gpu_others: parking_lot::Mutex::new(None),
+            memory_plan: parking_lot::Mutex::new(None),
             external_launches: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -331,10 +336,13 @@ pub async fn shutdown(core: &AppCore) {
     f.loaded_model_id = None;
 }
 
-/// Stop sd-server if it currently has `model_id` loaded (called before deleting a model).
+/// Stop sd-server before deleting a model's files: when it has `model_id`
+/// loaded, and whenever it runs at all, because with `--mmap` it keeps the
+/// files it read (a LoRA, a shared component) mapped, and Windows can't delete
+/// a mapped file. The next Generate loads the model again.
 pub async fn unload_model(core: &AppCore, model_id: &str) {
     let mut slot = core.gen.slot.lock().await;
-    if slot.model_id.as_deref() == Some(model_id) {
+    if slot.model_id.as_deref() == Some(model_id) || slot.proc.is_some() {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
         }
@@ -846,6 +854,19 @@ pub(crate) fn vram_message(core: &AppCore) -> String {
     }
 }
 
+/// Engine output of an out-of-memory job, after the memory plan this model's
+/// last auto-fit launch printed (when it isn't in the output already).
+fn with_memory_plan(core: &AppCore, model_id: &str, details: String) -> String {
+    let plan = match core.gen.memory_plan.lock().as_ref() {
+        Some((id, plan)) if id == model_id => plan.clone(),
+        _ => return details,
+    };
+    if plan.iter().all(|l| details.contains(l.as_str())) {
+        return details;
+    }
+    format!("Memory plan when the engine started:\n{}\n\n{details}", plan.join("\n"))
+}
+
 /// The final out-of-memory error for a job (after any retry).
 fn memory_error(core: &AppCore, stage: Stage, args: &[String], gpu_backend: bool) -> CoreError {
     let msg = if !gpu_backend || (stage == Stage::TextEncoder && text_encoder_on_cpu(args)) {
@@ -900,15 +921,24 @@ pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineC
     strip_flag(&mut args, &["--listen-ip", "-l", "--listen-port", "--log-level", "--serve-html-path"]);
     let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
     strip_flag(&mut defaults, &["--listen-ip", "-l", "--listen-port"]);
+    // Log level: the pin's last `--log-level` (sd.cpp: the last one wins),
+    // never below info — verbose / debug print the request, prompt included.
+    let level = defaults
+        .windows(2)
+        .rev()
+        .find(|w| w[0] == "--log-level")
+        .map(|w| w[1].to_ascii_lowercase())
+        .filter(|l| matches!(l.as_str(), "info" | "warn" | "error"))
+        .unwrap_or_else(|| "info".into());
+    strip_flag(&mut defaults, &["--log-level"]);
     for d in defaults {
-        if d.starts_with("--") && !d.contains('=') && args.contains(&d) && d != "--log-level" {
+        if d.starts_with("--") && !d.contains('=') && args.contains(&d) {
             continue;
         }
         args.push(d);
     }
-    if !args.iter().any(|a| a == "--log-level") {
-        args.extend(["--log-level".into(), "warn".into()]);
-    }
+    args.retain(|a| a != "--verbose" && a != "-v");
+    args.extend(["--log-level".into(), level]);
     // Privacy safeguard #2 (besides `embed_image_metadata: false` per request):
     // server-wide default off, even if engine.yaml is edited.
     if !args.iter().any(|a| a == "--disable-image-metadata") {
@@ -1026,6 +1056,10 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     };
     match ready {
         Ok(()) => {
+            let plan = pinhole_engine::failure::memory_plan(&core.gen.logs.tail(usize::MAX));
+            if !plan.is_empty() {
+                *core.gen.memory_plan.lock() = Some((model_id.to_string(), plan));
+            }
             slot.proc = Some(proc);
             slot.args = args;
             slot.model_id = Some(model_id.to_string());
@@ -1296,7 +1330,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             Err(RunError::Failed(e)) => return Err(e),
             Err(RunError::OutOfMemory { stage, details }) => {
                 let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed) else {
-                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(details));
+                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(with_memory_plan(core, &prep.model.id, details)));
                 };
                 // Remember the automatic choice for this model (RAM only, app session).
                 {

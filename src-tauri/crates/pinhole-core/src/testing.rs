@@ -522,7 +522,13 @@ mod tests {
             others_mib: 9216,
             processes: vec![pinhole_hardware::GpuProcess { pid: 4242, name: "python.exe".into(), used_mib: Some(9114) }],
         });
+        // The memory plan this model's engine printed at start leads the details.
+        let plan_line = "[INFO ] backend_fit.cpp:346  -     DiT          params  11740 MiB -> compute CUDA0, params CUDA0".to_string();
+        *core.gen.memory_plan.lock() = Some((model.clone(), vec![plan_line.clone()]));
         let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
+        let details = err.details.clone().unwrap_or_default();
+        assert!(details.starts_with("Memory plan when the engine started:") && details.contains(&plan_line), "{details}");
+        assert!(details.contains("sampling for image 1/1 failed"), "{details}");
         assert_eq!(err.code, "vram");
         assert_eq!(
             err.message,
@@ -772,6 +778,17 @@ mod tests {
         assert!(args.windows(2).any(|w| w[0] == "--lora-model-dir" && w[1].ends_with("loras")));
         assert!(args.windows(2).any(|w| w[0] == "--hires-upscalers-dir" && w[1].ends_with("upscalers")));
         assert!(args.contains(&"--vae-tiling".to_string()));
+        // Info level (memory plan in Details) and memory-mapped weights by default.
+        assert!(args.windows(2).any(|w| w == ["--log-level", "info"]), "{args:?}");
+        assert!(args.contains(&"--mmap".to_string()), "{args:?}");
+        // Verbose / debug print the request (prompt included): never enabled.
+        let mut loud = (*cfg).clone();
+        loud.stable_diffusion_cpp.launch_defaults.extend(["--verbose", "--log-level", "debug"].map(String::from));
+        let wiring_loud: Vec<String> = ["--model", "/m.safetensors", "-v", "--log-level", "verbose"].map(String::from).to_vec();
+        let args = crate::generate::full_sd_args(&core, &wiring_loud, &loud);
+        assert!(!args.iter().any(|a| a == "--verbose" || a == "-v" || a == "debug" || a == "verbose"), "{args:?}");
+        assert_eq!(args.iter().filter(|a| *a == "--log-level").count(), 1, "{args:?}");
+        assert!(args.windows(2).any(|w| w == ["--log-level", "info"]), "{args:?}");
     }
 
     /// Drives the REAL sd-server (Linux) through `generate` when
