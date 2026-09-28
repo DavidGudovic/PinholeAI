@@ -27,6 +27,13 @@ const UNSUPPORTED_SAFETENSORS_FP: &[&str] = &["nf4", "int8", "int4", "fp4", "nvf
 /// (`VAE`, `Text Encoder`, `Training Data`, `Config`…) are never the model.
 const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model", "diffusion model", "unet"];
 
+/// Weight files that hold only the diffusion model. A full checkpoint of the
+/// same version is always preferred: all-in-one families (SD 1.5, SDXL, Pony…)
+/// need the text encoders and VAE it carries.
+fn is_diffusion_only(f: &ModelFile) -> bool {
+    ["diffusion model", "unet"].iter().any(|t| f.kind.trim().eq_ignore_ascii_case(t))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Verdict {
     // Ordered by how useful the message is when nothing is installable.
@@ -136,7 +143,8 @@ pub const NO_HASH_REASON: &str =
 /// Pick the file to install, or a plain-language reason why none is safe.
 ///
 /// Ranking among safe files: files without a SHA-256 last (they can't be
-/// verified, and installs refuse them — see [`NO_HASH_REASON`]), then fp32 files
+/// verified, and installs refuse them — see [`NO_HASH_REASON`]), then diffusion-only files
+/// (`Diffusion Model` / `UNet`) when a full checkpoint exists, then fp32 files
 /// (a half-precision copy is the same model at half the download), then the
 /// primary file, then fp16/bf16 → fp8 → unknown → fp32, then pruned → unknown →
 /// full, then the smaller file.
@@ -154,7 +162,7 @@ pub fn select_file<'a>(files: &'a [ModelFile], allowed_formats: &[String]) -> Re
         }
     }
     ok.into_iter()
-        .min_by_key(|f| (f.sha256().is_none(), fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
+        .min_by_key(|f| (f.sha256().is_none(), is_diffusion_only(f), fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
         .ok_or_else(|| reason(best_problem.unwrap_or(Verdict::Unsupported)).to_string())
 }
 
@@ -304,6 +312,11 @@ mod tests {
             te.kind = "Text Encoder".into();
             assert_eq!(select_file(&[vae, te, dm], &allowed()).unwrap().name, "flux_dev_fp8.safetensors", "{kind}");
         }
+        // A full checkpoint beats a smaller, primary, half-precision UNet-only file.
+        let full = file("sdxl_full_fp32.safetensors", Some("SafeTensor"), Some("fp32"), Some("full"), false, 13e6);
+        let mut unet = file("sdxl_unet_fp16.safetensors", Some("SafeTensor"), Some("fp16"), Some("pruned"), true, 5e6);
+        unet.kind = "UNet".into();
+        assert_eq!(select_file(&[unet, full], &allowed()).unwrap().name, "sdxl_full_fp32.safetensors");
     }
 
     #[test]
