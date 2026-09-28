@@ -529,10 +529,8 @@ mod tests {
             "Your graphics card ran out of memory. Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). Close them and try again, or pick the smaller version of this model in Models."
         );
         assert_ne!(err.message, generate::UNKNOWN_JOB_MESSAGE);
-        // Diffusion ran out: one retry with VAE tiling (the 16 GB profile has none).
-        let launches = core.gen.external_launches.lock().clone();
-        assert_eq!(launches.len(), 2);
-        assert!(!launches[0].contains(&"--vae-tiling".to_string()) && launches[1].contains(&"--vae-tiling".to_string()), "{launches:?}");
+        // Diffusion ran out: no retry (VAE tiling can't help it, a reload would only cost time).
+        assert_eq!(core.gen.external_launches.lock().len(), 1);
 
         // A failure that isn't about memory keeps the generic message.
         let (_tmp2, core2, _) = gpu_core();
@@ -547,10 +545,10 @@ mod tests {
     /// Like the real sd-server: the job only says "generate_image returned no
     /// results" and the reason is in the engine output (stdout/stderr → ring
     /// buffer). The field report (prompt encoding out of memory), then the
-    /// diffusion model out of memory on the retry: each memory-saving choice is
+    /// VAE decode out of memory on the retry: each memory-saving choice is
     /// tried once, and the third run makes the picture.
     #[tokio::test]
-    async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
+    async fn field_report_prompt_then_vae_out_of_memory_recovers() {
         let (_tmp, core, rec) = gpu_core();
         let te_oom = format!(
             "ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB):\n\
@@ -561,12 +559,12 @@ mod tests {
              [ERROR  ] image.cpp:448  - failed to encode prompt\n\
              [DEBUG  ] echo {SENTINEL} a lighthouse"
         );
-        let diffusion_oom = "[WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 1200.00 MB device / 300.00 MB budget, available 0.00 MB device / 7044.91 MB budget\n\
-             [ERROR  ] ggml_runner.cpp:899  - z_image segment 4/9 (blocks) failed during workspace capacity check\n\
-             [ERROR  ] image.cpp:904  - sampling for image 1/1 failed after 2.10s";
+        let vae_oom = "[WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 1200.00 MB device / 300.00 MB budget, available 0.00 MB device / 7044.91 MB budget\n\
+             [ERROR  ] ggml_runner.cpp:899  - vae segment 1/1 (graph) failed during workspace capacity check\n\
+             [ERROR  ] image.cpp:614  - decode_first_stage failed for latent 1";
         let mock = MockSdServer::start_with(MockOptions {
             polls_before_done: 0,
-            fail_outputs: vec![te_oom, diffusion_oom.into()],
+            fail_outputs: vec![te_oom, vae_oom.into()],
             engine_log: Some(engine_log(&core)),
             ..Default::default()
         })
@@ -647,7 +645,7 @@ mod tests {
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::VRAM_MESSAGE);
         assert!(err.message.starts_with("Your graphics card ran out of memory. Close other programs"), "{}", err.message);
-        assert_eq!(mock.requests().len(), 3, "text encoder retry + tiling retry, then stop");
+        assert_eq!(mock.requests().len(), 2, "text encoder retry, then stop (no retry for diffusion)");
         let details = err.details.unwrap_or_default();
         assert!(details.contains("generate_image returned no results") && details.contains("sampling for image 1/1 failed"), "{details}");
         assert!(!details.contains(SENTINEL));

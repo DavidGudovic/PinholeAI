@@ -507,7 +507,10 @@ build is shared.
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
-  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  processor"); while decoding (VAE) or at an unknown stage → `--vae-tiling` (shown in the engine
+  note; Fine-tune "VAE tiling: Off" wins); the diffusion model itself gets no retry, since
+  tiling can't lower its needs and a reload would only cost time. A lone "failed to encode
+  prompt" without a memory line is not treated as memory. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
   the smaller version of the model; the engine output stays behind Details.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see

@@ -12,8 +12,8 @@
 //! runs out of memory is retried with each memory-saving choice at most once:
 //! reading the prompt → the text encoder moves to the processor
 //! (`--backend te=cpu`, remembered per model for the app session; Settings
-//! `textEncoderOnCpu` can force it on or off); any other stage →
-//! `--vae-tiling` if it isn't on yet. Otherwise the error is `vram` with a
+//! `textEncoderOnCpu` can force it on or off); VAE decode or an
+//! unknown stage → `--vae-tiling` if it isn't on yet (diffusion: no retry). Otherwise the error is `vram` with a
 //! message that says what to do next (never the generic "couldn't make this
 //! image").
 //!
@@ -72,6 +72,7 @@ pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try 
 pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
 pub(crate) const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
 const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE];
+const TILING_ON_NOTE: &str = "Memory-saving tiling is on for this model because the graphics card ran out of memory earlier. You can turn it off in Fine-tune (“VAE tiling”).";
 const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Run the text encoder on the processor”).";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
@@ -776,13 +777,18 @@ fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
 
 /// The next retry after running out of memory at `stage`, if any: text
 /// encoder → processor (Settings on Automatic, GPU backend, not there yet);
-/// anything else → VAE tiling (not on yet and allowed). Each choice is made at
+/// VAE / unknown stage → VAE tiling; diffusion → none (not on yet and allowed). Each choice is made at
 /// most once, so a job is retried at most twice. Returns the new choices and
 /// the note to show.
 fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool) -> Option<(MemFallback, &'static str)> {
     match stage {
         Stage::TextEncoder => (gpu_backend && te == TeChoice::Auto && !text_encoder_on_cpu(args)).then_some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
-        _ => (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE)),
+        // VAE tiling can't lower what the diffusion model needs: retrying would
+        // only reload the model and fail at the same step.
+        Stage::Diffusion => None,
+        Stage::Vae | Stage::Unknown => {
+            (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE))
+        }
     }
 }
 
@@ -864,6 +870,10 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     let te_auto = flags.loaded_model_id.as_ref().is_some_and(|id| core.gen.mem_fallback.lock().get(id).is_some_and(|f| f.te_on_cpu));
     if te_auto && TeChoice::current(core) == TeChoice::Auto {
         notes.push(TE_ON_CPU_NOTE.to_string());
+    }
+    let tiled = flags.loaded_model_id.as_ref().is_some_and(|id| core.gen.mem_fallback.lock().get(id).is_some_and(|f| f.vae_tiling));
+    if tiled {
+        notes.push(TILING_ON_NOTE.to_string());
     }
     if let Some(o) = core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
         notes.push(others_sentence(&o));
@@ -1282,6 +1292,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
+    // Fine-tune "VAE tiling: off" wins over an automatic choice made earlier.
+    fb.vae_tiling &= req.fine_tune.vae_tiling != Some(false);
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
     let job = loop {
@@ -1811,8 +1823,10 @@ mod tests {
         assert!(next_memory_fallback(fb, Stage::TextEncoder, TeChoice::Auto, true, &args, true).is_none());
         assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Off, true, &gpu, true).is_none());
         assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true).is_none());
-        // Anything else: VAE tiling once, unless it's on or Fine-tune turned it off.
-        for stage in [Stage::Diffusion, Stage::Vae, Stage::Unknown] {
+        // Diffusion: no retry (tiling doesn't help it).
+        assert!(next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, true, &gpu, true).is_none());
+        // VAE / unknown: VAE tiling once, unless it's on or Fine-tune turned it off.
+        for stage in [Stage::Vae, Stage::Unknown] {
             let (fb, note) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, true).unwrap();
             assert_eq!((fb.vae_tiling, note), (true, TILING_RETRY_NOTE));
             let args = with_memory_choices(&gpu, fb);
