@@ -96,5 +96,8 @@ tests/            Rust integration tests + privacy tests
 
 ## Git
 - Conventional commits (`feat:`, `fix:`, `docs:`…).
+- `main` is the only long-lived branch. Delete a branch as soon as its PR is merged (the repo has
+  "Automatically delete head branches" on). If a branch can't be deleted from the current
+  session, tell the user which ones to delete.
 - Never commit or bundle model weights, engine binaries, or anything under `Data/`. Models are
   always one-click downloads.
