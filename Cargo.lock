@@ -3060,6 +3060,7 @@ dependencies = [
  "pinhole-registry",
  "pinhole-store",
  "rand 0.9.5",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",
@@ -3067,6 +3068,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "uuid",
+ "zip",
 ]
 
 [[package]]

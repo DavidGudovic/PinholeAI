@@ -4,7 +4,7 @@
 //
 // Each area registers handlers in its own file (owners in parentheses):
 //   ./app.ts (frontend B), ./models.ts (frontend B), ./catalog.ts (frontend B),
-//   ./generate.ts (frontend A), ./library.ts (frontend A), ./describe.ts (frontend A)
+//   ./generate.ts (frontend A), ./library.ts (frontend A), ./describe.ts (frontend A), ./update.ts
 // A handler receives the invoke args object and returns the result (or throws a CoreError).
 
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -29,6 +29,7 @@ export async function installMocks(): Promise<void> {
     import("./generate").then((m) => m.default as MockTable),
     import("./library").then((m) => m.default as MockTable),
     import("./describe").then((m) => m.default as MockTable),
+    import("./update").then((m) => m.default as MockTable),
   ]);
   const table: MockTable = Object.assign({}, ...tables);
   mockIPC(
