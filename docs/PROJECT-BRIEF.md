@@ -95,7 +95,7 @@ fine-tune installed to reproduce.
    + base), Chroma, Qwen-Image 2.1, SD 3 / 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; CivitAI int8
    (ComfyUI int8_tensorwise) files now install. Not runnable: MiniMax H3 (video + audio only in the
    engine), "Qwen 2" (API-only on CivitAI). Needs real-GPU checks of defaults and VRAM figures.
-3. **CivitAI browser** (built, awaiting a real-app check): Safe only = Stability Matrix's default
+3. **CivitAI browser** (built, awaiting a real-app check): Safe mode (On/Off) = Stability Matrix's default
    (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
    live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then
    "Load more"); gzip JSON, CivitAI's own 450 px card renditions, RAM caches, prefetch.

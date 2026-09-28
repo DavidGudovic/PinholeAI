@@ -27,7 +27,8 @@ export interface AppInfo {
   os: "windows" | "linux" | "macos" | string;
 }
 
-export type ContentMode = "safe" | "include_18plus" | "only_18plus";
+/** Safe mode: "safe" = On (hides models made for adults), "all" = Off. */
+export type ContentMode = "safe" | "all";
 
 export interface Settings {
   offline: boolean;
@@ -403,6 +404,8 @@ export interface BrowseQuery {
   kind: CatalogKind;
   /** Look key from catalog-filters.yaml (realistic | anime | illustration | three_d | brand) or null. */
   look: string | null;
+  /** Tag keys from catalog-filters.yaml → tags; a model must match every one. */
+  tags: string[];
   content: ContentMode;
   price: PriceMode;
   /** "Highest Rated" | "Most Downloaded" | "Newest" */
@@ -417,6 +420,8 @@ export interface BrowseQuery {
 
 export interface CatalogFilterOptions {
   looks: { key: string; label: string }[];
+  /** Tags multi-select. `needsSafeModeOff`: the NSFW tag (finds only what Safe mode hides). */
+  tags: { key: string; label: string; needsSafeModeOff: boolean }[];
   sorts: { label: string; api: string }[];
   periods: { label: string; api: string }[];
   content: { key: ContentMode; label: string }[];
@@ -466,7 +471,7 @@ export interface BrowsePage {
   partial: boolean;
   /** CivitAI models looked at for this page. */
   checked: number;
-  /** …hidden by the Content mode ("Safe only" hides models made for adults). */
+  /** …hidden by Safe mode (models made for adults). */
   hiddenByContent: number;
   /** …hidden by Look, price, commercial use, kind or "Works with Pinhole". */
   hiddenByFilters: number;
@@ -488,7 +493,7 @@ export interface GalleryItem {
 
 export interface ModelGallery {
   items: GalleryItem[];
-  /** 18+ images left out because 18+ content is off. */
+  /** Images made for adults, left out because Safe mode is on. */
   hiddenNsfw: number;
   /** LoRA trigger words. */
   trainedWords: string[];

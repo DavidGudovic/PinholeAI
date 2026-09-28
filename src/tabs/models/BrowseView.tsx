@@ -11,7 +11,7 @@ import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreEr
 import { Button, ErrorNotice, Segmented, Toggle, inputClass } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
 import { CatalogCardView } from "./CatalogCardView";
-import { AdultConfirmDialog, Chip, EmptyState, FilterGroup, Select, Skeleton } from "./controls";
+import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
@@ -26,11 +26,13 @@ import {
   defaultFilters,
   filtersKey,
   FALLBACK_OPTIONS,
-  isAdult,
+  isSafeModeOff,
   mergePage,
   resultsSummary,
   showPriceBadge,
+  tagsWithSafeMode,
   toBrowseQuery,
+  toggleTag,
   type BrowseFilters,
   type BrowseTotals,
 } from "./lib/query";
@@ -56,7 +58,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const [search, setSearch] = useState(filters.query);
   const debouncedSearch = useDebounced(search, SEARCH_DEBOUNCE_MS);
   const [pendingContent, setPendingContent] = useState<ContentMode | null>(() =>
-    !getLastFilters() && settings && isAdult(settings.contentMode) && !isAdultConfirmed() ? settings.contentMode : null,
+    !getLastFilters() && settings && isSafeModeOff(settings.contentMode) && !isAdultConfirmed() ? settings.contentMode : null,
   );
 
   const [items, setItems] = useState<CatalogCard[]>([]);
@@ -222,8 +224,9 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     setFilters((f) => ({ ...f, ...patch }));
   };
   const setContent = (m: ContentMode) => {
-    if (isAdult(m) && !isAdultConfirmed()) setPendingContent(m);
-    else update({ content: m });
+    if (isSafeModeOff(m) && !isAdultConfirmed()) setPendingContent(m);
+    else if (isSafeModeOff(m)) update({ content: m });
+    else update({ content: m, tags: tagsWithSafeMode(filters.tags, options) });
   };
   const defaults = defaultFilters(options, settings, isAdultConfirmed());
   const changed = changedFilterCount(filters, { ...defaults, kind: filters.kind });
@@ -284,9 +287,27 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
           ))}
         </div>
 
+        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Tags">
+          <span className="mr-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">Tags</span>
+          {options.tags.map((t) => {
+            const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
+            return (
+              <Chip
+                key={t.key}
+                active={!locked && filters.tags.includes(t.key)}
+                disabled={locked}
+                title={locked ? "Turn Safe mode off to use this tag" : undefined}
+                onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}
+              >
+                {t.label}
+              </Chip>
+            );
+          })}
+        </div>
+
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-neutral-100 pt-3 dark:border-neutral-800">
-          <FilterGroup label="Content">
-            <Segmented ariaLabel="Content" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
+          <FilterGroup label="Safe mode">
+            <Segmented ariaLabel="Safe mode" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
           </FilterGroup>
           <FilterGroup label="Price">
             <Select<PriceMode> label="Price" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
@@ -354,7 +375,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             title={filters.kind === "models" ? "No models match these filters" : "No style add-ons match these filters"}
             actions={changed > 0 ? <Button onClick={clearFilters}>Clear filters</Button> : undefined}
           >
-            Try another look, a longer time range ("All time"), or a different search.
+            Try another look, fewer tags, a longer time range ("All time"), or a different search.
           </EmptyState>
         )
       ) : (
@@ -407,7 +428,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         />
       )}
       <InstallDialog versionId={installFor?.versionId ?? null} title={installFor?.name} onClose={() => setInstallFor(null)} />
-      <AdultConfirmDialog
+      <SafeModeOffDialog
         open={pendingContent !== null}
         onCancel={() => setPendingContent(null)}
         onConfirm={() => {

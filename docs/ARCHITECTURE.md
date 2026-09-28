@@ -149,7 +149,7 @@ sampler, scheduler, size — never prompt/negative/style text.
 `GET /api/v1/models` (`limit=50`, always `nsfw=true`, repeated `baseModels`/`types` keys, cursor
 paging; JSON requested gzip-compressed) through `cache::CachedSource` (RAM-only, 12 answers / 5 min,
 compacted), turns each model into a card or a hidden count (`filters::hidden_by` → `safe::SafeFilter`
-for Safe only / 18+ only, then Look, commercial use, price, compatibility) and keeps fetching until
+for Safe mode, then Look, Tags, commercial use, price, compatibility) and keeps fetching until
 24 cards or 1 + 5 requests (`partial` → "Load more"). A newer Browse request stops an older one's
 extra requests (`cancelled`). Card previews are `width=450,optimized=true` CDN URLs (video → still
 frame); `fetch_preview` returns their bytes. UI (`src/tabs/models/lib/`): `pageStore.ts` (RAM page

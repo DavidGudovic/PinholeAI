@@ -23,10 +23,21 @@ pub struct KeyedLabel {
     pub api: String,
 }
 
+/// One entry of the Tags multi-select.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagOption {
+    pub key: String,
+    pub label: String,
+    /// Finds only what Safe mode hides (the NSFW tag): off while Safe mode is on.
+    pub needs_safe_mode_off: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogFilterOptions {
     pub looks: Vec<KeyLabel>,
+    pub tags: Vec<TagOption>,
     pub sorts: Vec<KeyedLabel>,
     pub periods: Vec<KeyedLabel>,
     pub content: Vec<KeyLabel>,
@@ -80,7 +91,7 @@ pub struct BrowsePage {
     /// CivitAI models looked at for this page.
     #[serde(default)]
     pub checked: u32,
-    /// …of which the Content mode hid (made for adults in "Safe only").
+    /// …of which Safe mode hid (made for adults).
     #[serde(default)]
     pub hidden_by_content: u32,
     /// …of which Look, price, commercial use, kind or compatibility hid.

@@ -4,7 +4,7 @@
 //! and the oldest one goes first when the cache is full.
 //!
 //! Cached pages are compacted: image URLs that can never become a card
-//! preview are dropped (their ratings stay, "Safe only" needs them), and only
+//! preview are dropped (their ratings stay, Safe mode needs them), and only
 //! the SHA-256 of each file is kept.
 
 use std::collections::VecDeque;

@@ -154,11 +154,11 @@ pub fn card_for_version(
     }
 }
 
-/// The card's preview image. "Safe only" uses only images rated PG (the
+/// The card's preview image. Safe mode uses only images rated PG (the
 /// shipped `max_preview_level`): a still one of the shown version, then of
 /// another version, then a video; none → no preview. Other modes: the
 /// version's first still image, else its first video, else another version's
-/// still image. The UI blurs `previewNsfw` when 18+ is off.
+/// still image. The UI blurs `previewNsfw` while Safe mode is on.
 pub fn pick_preview<'a>(m: &'a Model, v: &'a ModelVersion, content: ContentMode, safe: &SafeFilter) -> Option<&'a ModelImage> {
     let usable = |i: &&ModelImage| !i.url.trim().is_empty() && i.nsfw_level.is_none_or(|l| l < crate::safe::LEVEL_BLOCKED);
     let still = |i: &&ModelImage| !i.is_video();
@@ -336,8 +336,8 @@ pub(crate) mod tests {
     fn nsfw_and_video_previews() {
         let f = filters();
         let page = page();
-        // Include 18+ LoRA: first image is X-rated → flagged.
-        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Include18Plus, price: PriceMode::Include, ..Default::default() };
+        // Safe mode off, LoRA: first image is X-rated → flagged.
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::All, price: PriceMode::Include, ..Default::default() };
         let ctx = CardContext { filters: &f, query: &q, now: now() };
         let c = build_card(&ctx, &env(), &page.items[1]).unwrap();
         assert!(c.preview_nsfw);
@@ -372,10 +372,10 @@ pub(crate) mod tests {
         let v = |i: usize| &m.model_versions[i];
         let pick = |i: usize, c| pick_preview(&m, v(i), c, &f.safe).map(|img| img.url.rsplit('/').next().unwrap().to_string());
         assert_eq!(pick(0, ContentMode::Safe).as_deref(), Some("4.jpeg"), "a PG still of another version beats a PG video");
-        assert_eq!(pick(0, ContentMode::Include18Plus).as_deref(), Some("1.jpeg"));
+        assert_eq!(pick(0, ContentMode::All).as_deref(), Some("1.jpeg"));
         assert_eq!(pick(1, ContentMode::Safe).as_deref(), Some("4.jpeg"));
         assert_eq!(pick(2, ContentMode::Safe).as_deref(), Some("4.jpeg"), "never the R image in Safe");
-        assert_eq!(pick(2, ContentMode::Only18Plus).as_deref(), Some("5.jpeg"));
+        assert_eq!(pick(2, ContentMode::All).as_deref(), Some("5.jpeg"));
         let only_video: Model =
             serde_json::from_value(serde_json::json!({ "id": 2, "modelVersions": [{ "id": 21, "images": [{ "url": "https://image.civitai.com/x/v.mp4", "nsfwLevel": 1 }] }] }))
                 .unwrap();
@@ -386,7 +386,7 @@ pub(crate) mod tests {
             { "url": "https://image.civitai.com/x/b/original=true/b.jpeg", "nsfwLevel": 32 },
             { "url": "https://image.civitai.com/x/r/original=true/r.jpeg", "nsfwLevel": 4 } ] }] }))
         .unwrap();
-        let p = pick_preview(&blocked, &blocked.model_versions[0], ContentMode::Include18Plus, &f.safe).unwrap();
+        let p = pick_preview(&blocked, &blocked.model_versions[0], ContentMode::All, &f.safe).unwrap();
         assert!(p.url.ends_with("r.jpeg"), "images CivitAI blocked are never previews");
     }
 
