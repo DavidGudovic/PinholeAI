@@ -1,7 +1,7 @@
 // ErrorNotice plus a one-click fix where there is one:
 //   engine_missing → "Set up engine" (installEngine, progress in Downloads) → "Try again".
-//   not_found for a model, model_load (the model file couldn't be loaded), vram (ran out of
-//   memory: the message suggests the smaller version of the model) → "Open Models".
+//   not_found for a model, model_load (the model file couldn't be loaded), vram when the message
+//   suggests the smaller version of the model "in Models" → "Open Models".
 import { useState } from "react";
 import { Download, Layers, RotateCcw } from "lucide-react";
 import * as api from "../lib/api";
@@ -47,7 +47,7 @@ export function ErrorWithFix({ error, onDismiss, onRetry }: { error: CoreError; 
           {state === "installing" ? "Setting up… (see Downloads)" : "Set up engine"}
         </Button>
       );
-  } else if (error.code === "model_load" || error.code === "vram" || (error.code === "not_found" && /model/i.test(error.message))) {
+  } else if (error.code === "model_load" || (error.code === "vram" && /in Models/.test(error.message)) || (error.code === "not_found" && /model/i.test(error.message))) {
     action = (
       <Button size="sm" onClick={() => actions.setTab("models")}>
         <Layers className="h-3.5 w-3.5" /> Open Models

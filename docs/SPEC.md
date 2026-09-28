@@ -423,10 +423,11 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Offline mode
 - Data folder location (portable / installed) + Open folder
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
-- Engine backend (auto / CUDA / Vulkan / CPU) and **Run the text encoder on the processor**
+- Engine backend (auto / CUDA / Vulkan / CPU) and **Read the prompt on the processor**
   (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the
   graphics card and moves it to the processor for a model after the card runs out of memory while
-  reading the prompt (kept for the app session)
+  reading the prompt (kept for the app session); Off never moves it automatically (family flags
+  such as `--clip-on-cpu` still apply)
 - Default content mode (Safe only / Include 18+ / 18+ only)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
@@ -550,8 +551,10 @@ build is shared.
   and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
-  encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
-  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
+  processor"); otherwise → `--vae-tiling` (an automatic tiling choice shows in the engine note and
+  Fine-tune "VAE tiling: Off" wins over it). "failed to encode prompt" without a memory line is not
+  treated as running out of memory. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
   the smaller version of the model; the engine output stays behind Details.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see

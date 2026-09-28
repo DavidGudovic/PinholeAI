@@ -29,7 +29,8 @@ pub struct Settings {
     /// Where the text encoder (reads the prompt) runs on a GPU backend:
     /// `auto` (graphics card; moves to the processor for the rest of the app
     /// session if the card runs out of memory while reading the prompt),
-    /// `on` (always the processor), `off` (always the graphics card).
+    /// `on` (always the processor), `off` (never moved automatically; family
+    /// flags such as `--clip-on-cpu` still apply).
     pub text_encoder_on_cpu: String,
 }
 

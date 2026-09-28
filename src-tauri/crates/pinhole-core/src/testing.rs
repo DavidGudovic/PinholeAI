@@ -598,13 +598,46 @@ mod tests {
         let tiling_note = loading_notes.iter().position(|n| n == generate::TILING_RETRY_NOTE).expect("tiling retry note");
         assert!(te_note < tiling_note, "{loading_notes:?}");
         // Both choices are kept for this model for the rest of the session.
-        let next = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        let next = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
         assert_eq!(next.images.len(), 1);
         let last = core.gen.external_launches.lock().last().cloned().unwrap();
         assert!(te_on_cpu(&last) && tiled(&last), "{last:?}");
+        // The automatic tiling choice is visible on the engine status…
+        {
+            let mut f = core.gen.flags.lock();
+            f.running = true;
+            f.loaded_model_id = Some(model.clone());
+        }
+        let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
+        assert!(note.contains("smaller pieces") && note.contains("Fine-tune"), "{note}");
+        assert!(!note.contains("VAE"), "plain words outside Fine-tune: {note}");
+        // …and Fine-tune "VAE tiling: Off" overrides it per request (same engine, no restart).
+        let mut req = GenerateRequest::txt2img(model, "x");
+        req.fine_tune.vae_tiling = Some(false);
+        generate::generate(&core, req).await.unwrap();
+        let last = core.gen.external_launches.lock().last().cloned().unwrap();
+        assert!(te_on_cpu(&last) && tiled(&last), "{last:?}");
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["vae_tiling_params"]["enabled"], serde_json::json!(false), "{body}");
         // The prompt never reached the engine output buffer (redacted like real output).
         let kept = engine_log(&core).tail_text(200);
         assert!(kept.contains("failed to encode prompt") && !kept.contains(SENTINEL), "{kept}");
+    }
+
+    /// "failed to encode prompt" with no memory line (a broken or mismatched text
+    /// encoder): no memory retry, a plain message that points to Models.
+    #[tokio::test]
+    async fn encoder_failure_without_memory_lines_is_not_out_of_memory() {
+        let (_tmp, core, _) = gpu_core();
+        let out = "generate_image returned no results\n[ERROR  ] conditioner.hpp:2224 - LLM prompt encoding failed\n[ERROR  ] image.cpp:448  - failed to encode prompt";
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some(out.into()), ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+        let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.unwrap_err();
+        assert_eq!((err.code.as_str(), err.message.as_str()), ("model_load", generate::ENCODER_FAILED_MESSAGE));
+        assert_eq!(core.gen.external_launches.lock().len(), 1, "no retry");
+        assert!(core.gen.mem_fallback.lock().get(&model).is_none(), "nothing remembered");
+        assert!(!err.details.unwrap_or_default().contains(SENTINEL));
     }
 
     /// Progress notes: the other-programs note is measured again at every
