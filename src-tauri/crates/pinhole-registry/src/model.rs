@@ -169,7 +169,9 @@ pub struct DetectRules {
 impl DetectRules {
     /// `true` when the rules can match anything at all.
     pub fn has_positive_rule(&self) -> bool {
-        !self.any_tensor.is_empty() || !self.all_tensor.is_empty() || self.all_of_any.iter().any(|g| !g.is_empty())
+        !self.any_tensor.is_empty()
+            || !self.all_tensor.is_empty()
+            || self.all_of_any.iter().any(|g| !g.is_empty())
     }
 }
 

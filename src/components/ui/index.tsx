@@ -6,9 +6,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type ButtonHTMLAttributes,
+  type ComponentProps,
   type CSSProperties,
   type ReactNode,
+  type Ref,
   type TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
@@ -37,7 +38,7 @@ export function Button({
   className = "",
   type = "button",
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg" }) {
+}: ComponentProps<"button"> & { variant?: Variant; size?: "sm" | "md" | "lg" }) {
   const sizes = { sm: "h-7 px-2.5 text-xs", md: "h-9 px-3.5 text-sm", lg: "h-11 px-5 text-base" };
   return (
     <button
@@ -62,7 +63,7 @@ export function IconButton({
   className = "",
   children,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; size?: "sm" | "md"; variant?: Variant }) {
+}: ComponentProps<"button"> & { label: string; size?: "sm" | "md"; variant?: Variant }) {
   const sizes = { sm: "h-7 w-7", md: "h-9 w-9" };
   return (
     <button
@@ -468,9 +469,18 @@ export function AutoTextarea({
   maxRows = 12,
   className = "",
   value,
+  ref: outerRef,
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number; maxRows?: number; value: string }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number; maxRows?: number; value: string; ref?: Ref<HTMLTextAreaElement> }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const setRef = useCallback(
+    (el: HTMLTextAreaElement | null) => {
+      ref.current = el;
+      if (typeof outerRef === "function") outerRef(el);
+      else if (outerRef) (outerRef as { current: HTMLTextAreaElement | null }).current = el;
+    },
+    [outerRef],
+  );
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -487,7 +497,7 @@ export function AutoTextarea({
   }, [value, minRows, maxRows]);
   return (
     <textarea
-      ref={ref}
+      ref={setRef}
       rows={minRows}
       spellCheck={false}
       autoComplete="off"

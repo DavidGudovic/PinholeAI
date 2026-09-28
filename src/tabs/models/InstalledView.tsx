@@ -120,9 +120,11 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {models && loras
-            ? `${models.length} ${models.length === 1 ? "model" : "models"} · ${loras.length} style ${loras.length === 1 ? "add-on" : "add-ons"} · ${formatBytes(totalBytes)} on disk`
-            : "Loading…"}
+          {!models || !loras
+            ? "Loading…"
+            : nothing
+              ? "Nothing installed yet."
+              : `${models.length} ${models.length === 1 ? "model" : "models"} · ${loras.length} style ${loras.length === 1 ? "add-on" : "add-ons"} · ${formatBytes(totalBytes)} on disk`}
         </p>
         <div className="flex gap-2">
           <Button onClick={() => void pickFile()} disabled={!!adding}>

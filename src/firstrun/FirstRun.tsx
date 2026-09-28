@@ -6,6 +6,7 @@ import { asCoreError, getHardware, getSettings, onHardwareReady, setSettings } f
 import type { CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
 import { Button, ErrorNotice, Spinner } from "../components/ui";
+import { Logo } from "../components/Logo";
 import { GroupProgress } from "../tabs/models/controls";
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
@@ -139,7 +140,7 @@ export function FirstRun(props: { onDone: () => void }) {
       <div className="mx-auto flex min-h-full max-w-4xl flex-col px-6 py-6 sm:px-10">
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 font-semibold">
-            <PinholeMark className="h-6 w-6" /> Pinhole
+            <Logo className="h-7 w-7" /> Pinhole
           </div>
           <Stepper current={idx} />
         </header>
@@ -147,7 +148,7 @@ export function FirstRun(props: { onDone: () => void }) {
         <main className="flex flex-1 flex-col justify-center py-10">
           {step === "welcome" && (
             <section className="mx-auto max-w-xl text-center">
-              <PinholeMark className="mx-auto h-16 w-16" />
+              <Logo className="mx-auto h-20 w-20" />
               <h1 ref={headingRef} tabIndex={-1} className="mt-6 text-3xl font-semibold tracking-tight outline-none">
                 Welcome to Pinhole
               </h1>
@@ -172,7 +173,7 @@ export function FirstRun(props: { onDone: () => void }) {
 
           {step === "hardware" && (
             <section className="mx-auto w-full max-w-xl">
-              <StepHeading refObj={headingRef} eyebrow="Step 1 of 3" title="Your computer">
+              <StepHeading refObj={headingRef} title="Your computer">
                 Pinhole checks your graphics card to pick models that run well on it.
               </StepHeading>
               {hwError ? (
@@ -194,7 +195,7 @@ export function FirstRun(props: { onDone: () => void }) {
 
           {step === "engine" && (
             <section className="mx-auto w-full max-w-xl">
-              <StepHeading refObj={headingRef} eyebrow="Step 2 of 3" title="Download the image engine">
+              <StepHeading refObj={headingRef} title="Download the image engine">
                 Pinhole makes pictures with a small open-source engine. It's downloaded once from GitHub and checked before it runs.
               </StepHeading>
               <EngineStep engine={engine} hw={hw} />
@@ -203,7 +204,7 @@ export function FirstRun(props: { onDone: () => void }) {
 
           {step === "models" && (
             <section className="w-full">
-              <StepHeading refObj={headingRef} eyebrow="Step 3 of 3" title={vramLabel ? `Recommended for your GPU (${vramLabel})` : "Recommended for your computer"}>
+              <StepHeading refObj={headingRef} title={vramLabel ? `Recommended for your GPU (${vramLabel})` : "Recommended for your computer"}>
                 Each pick is the best model that fits your {hw?.gpu ? "graphics card" : "computer"}. Downloads keep going in the background, so you can start
                 right away. You can always find more in the Models tab.
               </StepHeading>
@@ -254,11 +255,10 @@ function Feature({ icon, title, children }: { icon: ReactNode; title: string; ch
   );
 }
 
-function StepHeading({ refObj, eyebrow, title, children }: { refObj: RefObject<HTMLHeadingElement | null>; eyebrow: string; title: string; children: ReactNode }) {
+function StepHeading({ refObj, title, children }: { refObj: RefObject<HTMLHeadingElement | null>; title: string; children: ReactNode }) {
   return (
     <div className="mb-6">
-      <div className="text-xs font-semibold tracking-wide text-amber-600 uppercase dark:text-amber-400">{eyebrow}</div>
-      <h1 ref={refObj} tabIndex={-1} className="mt-1 text-2xl font-semibold tracking-tight outline-none">
+      <h1 ref={refObj} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
         {title}
       </h1>
       <p className="mt-2 text-neutral-600 dark:text-neutral-400">{children}</p>
@@ -398,16 +398,5 @@ function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine>; hw: 
         </p>
       )}
     </div>
-  );
-}
-
-/** The Pinhole mark: a camera-obscura aperture. */
-function PinholeMark({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-amber-500" />
-      <circle cx="16" cy="16" r="8.5" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-neutral-300 dark:text-neutral-700" />
-      <circle cx="16" cy="16" r="3" className="fill-neutral-900 dark:fill-neutral-100" />
-    </svg>
   );
 }

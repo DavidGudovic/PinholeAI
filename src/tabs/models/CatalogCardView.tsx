@@ -3,8 +3,8 @@ import { memo, useRef, type ReactNode } from "react";
 import { Check, Download, EyeOff, Film, HardDrive, ImageOff, RotateCw, ShieldAlert, ThumbsUp } from "lucide-react";
 import type { CatalogCard, ContentMode } from "../../lib/types";
 import { formatBytes, formatCount } from "../../lib/format";
-import { Badge, Button, VramBadge } from "../../components/ui";
-import { GroupProgress } from "./controls";
+import { Badge, Button } from "../../components/ui";
+import { GroupProgress, VramLine } from "./controls";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { useNearViewport, usePreviewBlob } from "./lib/preview";
 import { shouldBlurPreview } from "./lib/query";
@@ -141,7 +141,7 @@ export const CatalogCardView = memo(function CatalogCardView({
         </div>
 
         {card.vram ? (
-          <VramBadge vram={card.vram} fit={card.fit} />
+          <VramLine vram={card.vram} fit={card.fit} />
         ) : isLora ? (
           <span className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</span>
         ) : null}

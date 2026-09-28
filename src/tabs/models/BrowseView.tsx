@@ -149,10 +149,10 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               onKeyDown={(e) => e.key === "Enter" && update({ query: search })}
               placeholder={filters.kind === "models" ? "Search models on CivitAI" : "Search style add-ons on CivitAI"}
               aria-label="Search CivitAI"
-              className={`${inputClass} h-8 py-1 pl-8`}
+              className={`${inputClass} h-9 py-1 pl-8`}
             />
           </div>
-          <Segmented size="sm" options={KIND_OPTIONS} value={filters.kind} onChange={(kind) => update({ kind })} />
+          <Segmented ariaLabel="Kind" options={KIND_OPTIONS} value={filters.kind} onChange={(kind) => update({ kind })} />
           <Select label="Sort" value={filters.sort} onChange={(sort) => update({ sort })} options={options.sorts.map((s) => ({ value: s.api, label: s.label }))} />
           <Select label="Time" value={filters.period} onChange={(period) => update({ period })} options={options.periods.map((p) => ({ value: p.api, label: p.label }))} />
         </div>
@@ -171,14 +171,14 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-neutral-100 pt-3 dark:border-neutral-800">
           <FilterGroup label="Content">
-            <Segmented size="sm" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
+            <Segmented ariaLabel="Content" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
           </FilterGroup>
           <FilterGroup label="Price">
             <Select<PriceMode> label="Price" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
           </FilterGroup>
           <FilterGroup label="Commercial use">
             <Segmented
-              size="sm"
+              ariaLabel="Commercial use"
               options={COMMERCIAL_OPTIONS}
               value={filters.commercialOnly ? "ok" : "any"}
               onChange={(v) => update({ commercialOnly: v === "ok" })}

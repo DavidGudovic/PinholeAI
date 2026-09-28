@@ -408,6 +408,50 @@ function describeModel(model, baseModel) {
   return d;
 }
 
+/** Verify recommended entries that already pin CivitAI ids (GET /api/v1/model-versions/<id>). */
+async function civitaiPinned(models) {
+  const out = [];
+  const families = models.families || {};
+  const basesFor = (fam) => {
+    let f = families[fam];
+    for (let i = 0; f && i < 5; i++) {
+      if (Array.isArray(f.civitai_base_models) && f.civitai_base_models.length) return f.civitai_base_models;
+      f = f.inherits ? families[f.inherits] : null;
+    }
+    return [];
+  };
+  for (const [role, list] of Object.entries(models.recommended || {})) {
+    for (const [idx, cand] of (list || []).entries()) {
+      if (cand?.source !== "civitai" || isTodo(cand.civitai_version_id)) continue;
+      const res = await getJson(`https://civitai.com/api/v1/model-versions/${cand.civitai_version_id}`, civitaiHeaders());
+      const e = { role, index: idx, family: cand.family, title: cand.title, yamlSizeMB: cand.size_mb ?? null, modelId: cand.civitai_model_id, versionId: cand.civitai_version_id, status: res.status, problems: [], warnings: [] };
+      if (!res.ok || !res.json) {
+        e.hard = res.status === 404 || res.status === 410;
+        e.problems.push(`HTTP ${res.status}`);
+      } else {
+        const v = res.json;
+        const files = v.files || [];
+        const f = files.find((x) => x.primary) || files[0] || {};
+        e.versionName = v.name; e.modelName = v.model?.name; e.baseModel = v.baseModel;
+        e.file = f.name; e.format = f.metadata?.format; e.sizeMB = f.sizeKB ? Math.round(f.sizeKB / 1024) : null;
+        e.sha256 = f.hashes?.SHA256?.toLowerCase() || null; e.pickle = f.pickleScanResult; e.virus = f.virusScanResult;
+        e.earlyAccess = isEarlyAccess(v); e.nsfw = !!v.model?.nsfw;
+        if (!isTodo(cand.civitai_model_id) && Number(v.modelId) !== Number(cand.civitai_model_id)) { e.hard = true; e.problems.push(`version belongs to model ${v.modelId}, not ${cand.civitai_model_id}`); }
+        if (!["SafeTensor", "GGUF"].includes(e.format)) { e.hard = true; e.problems.push(`primary file format ${e.format} (only SafeTensor/GGUF allowed)`); }
+        if (e.pickle !== "Success" || e.virus !== "Success") { e.hard = true; e.problems.push(`scans pickle=${e.pickle} virus=${e.virus}`); }
+        if (e.earlyAccess) { e.hard = true; e.problems.push("version is early access (paid)"); }
+        const bases = basesFor(cand.family);
+        if (bases.length && !bases.includes(v.baseModel)) e.warnings.push(`baseModel "${v.baseModel}" not in family ${cand.family} civitai_base_models [${bases.join(", ")}]`);
+        if (cand.size_mb && e.sizeMB && Math.abs(e.sizeMB - cand.size_mb) / cand.size_mb > 0.1) e.warnings.push(`size_mb ${cand.size_mb} ≠ actual ${e.sizeMB}`);
+        if (e.nsfw) e.warnings.push("model is flagged NSFW");
+      }
+      out.push(e);
+      await sleep(300);
+    }
+  }
+  return out;
+}
+
 async function civitaiCandidates(models) {
   const out = [];
   const families = models.families || {};
@@ -528,7 +572,7 @@ function renderMarkdown(rep) {
       p("### Paste-ready values for TODO hashes");
       p();
       p("```yaml");
-      for (const e of todoFill) p(`# ${e.file} → ${e.where}\nurl: ${e.url}\nsha256: ${e.result.sha256}\nsize_mb: ${Math.round(e.result.size / 1048576)}`);
+      for (const e of todoFill) p(`# ${e.file} → ${e.where}\nurl: ${e.url}\nsha256: ${e.result.sha256}\nsize_mb: ${Math.max(1, Math.round(e.result.size / 1048576))}`);
       p("```");
       p();
     }
@@ -563,9 +607,20 @@ function renderMarkdown(rep) {
     }
     p();
   }
+  if (rep.civitai_pinned?.length) {
+    p("## CivitAI `recommended` pins");
+    p();
+    p("| | role | model / version (ids) | base | file | fmt | MB (yaml → actual) | sha256 | scans | problems / warnings |");
+    p("|---|---|---|---|---|---|---|---|---|---|");
+    for (const e of rep.civitai_pinned) {
+      p(`| ${e.hard ? "❌" : e.warnings.length || e.problems.length ? "⚠️" : "✅"} | ${e.role}[${e.index}] | ${md(e.modelName ?? e.title)} / ${md(e.versionName ?? "")} (${e.modelId}/${e.versionId}) | ${md(e.baseModel ?? "")} | ${md(e.file ?? "")} | ${e.format ?? ""} | ${e.yamlSizeMB ?? "?"} → ${e.sizeMB ?? "?"} | \`${e.sha256 || ""}\` | ${e.pickle ?? "?"}/${e.virus ?? "?"} | ${md([...e.problems, ...e.warnings].join("; "))} |`);
+    }
+    p();
+  }
   if (rep.civitai_candidates) {
     p("## CivitAI candidates for TODO `recommended` entries");
     p();
+    if (!rep.civitai_candidates.length) { p("None — every CivitAI `recommended` entry already has ids (verified above)."); p(); }
     for (const g of rep.civitai_candidates) {
       p(`### ${g.role}[${g.index}] — family \`${g.family}\`, baseModel \`${g.baseModel}\``);
       p();
@@ -602,7 +657,7 @@ function renderMarkdown(rep) {
         p();
         p("```yaml");
         p(`version: ${e.best.tag}`);
-        for (const [k, a] of Object.entries(e.best.found)) p(`${k}: { url: ${a.url}, sha256: ${a.sha256 || "TODO"}, size_mb: ${Math.round(a.size / 1048576)} }`);
+        for (const [k, a] of Object.entries(e.best.found)) p(`${k}: { url: ${a.url}, sha256: ${a.sha256 || "TODO"}, size_mb: ${Math.max(1, Math.round(a.size / 1048576))} }`);
         p("```");
       } else p("⚠️ None of the latest 10 releases has every needed asset — check the regexes in ENGINE_ASSETS against the asset list below.");
       p();
@@ -682,6 +737,7 @@ async function main() {
   }
   if (ONLY.has("civitai")) {
     rep.civitai_enums = await civitaiEnums(collectBaseModels(models));
+    rep.civitai_pinned = await civitaiPinned(models);
     rep.civitai_candidates = await civitaiCandidates(models);
   }
   if (ONLY.has("releases")) rep.engine_releases = await engineReleases(collectRepos(engine));
@@ -701,6 +757,7 @@ async function main() {
     todo_urls: (rep.todo_urls || []).map((e) => `${e.file}:${e.where}`),
     hf_repos: rep.hf_repos || [],
     civitai_enums: rep.civitai_enums || null,
+    civitai_pinned: rep.civitai_pinned || null,
     civitai_candidates: rep.civitai_candidates || null,
     engine_releases: rep.engine_releases || null,
   };
@@ -708,7 +765,9 @@ async function main() {
   console.log(`\nWrote ${OUT}`);
 
   const hard = (rep.entries || []).filter((e) => e.result?.hard);
-  if (hard.length) {
+  const hardCivitai = (rep.civitai_pinned || []).filter((e) => e.hard);
+  for (const e of hardCivitai) console.error(`  - recommended.${e.role}[${e.index}] CivitAI ${e.modelId}/${e.versionId}: ${e.problems.join("; ")}`);
+  if (hard.length || hardCivitai.length) {
     console.error(`\n${hard.length} hard failure(s):`);
     for (const e of hard) console.error(`  - ${e.whereAll.join(", ")}: ${e.result.note || `HTTP ${e.result.status}`} (${e.url})`);
     return 1;

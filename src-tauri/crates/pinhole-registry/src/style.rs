@@ -34,10 +34,12 @@ pub fn combine(
     negative_override: Option<&str>,
     apply_prefix: bool,
 ) -> FinalPrompt {
-    let template = registry.style_template(&family.style_template).unwrap_or(match family.style_template.as_str() {
-        "natural" => FALLBACK_NATURAL,
-        _ => FALLBACK_TAGS,
-    });
+    let template = registry.style_template(&family.style_template).unwrap_or(
+        match family.style_template.as_str() {
+            "natural" => FALLBACK_NATURAL,
+            _ => FALLBACK_TAGS,
+        },
+    );
     let mut text = join_with_template(template, prompt, style_positive.unwrap_or(""));
 
     if apply_prefix {
@@ -47,20 +49,31 @@ pub fn combine(
     }
 
     let negative = family.uses_negative_prompt.then(|| {
-        let base = negative_override.or(family.defaults.negative_prompt.as_deref()).unwrap_or("");
+        let base = negative_override
+            .or(family.defaults.negative_prompt.as_deref())
+            .unwrap_or("");
         join_list(&[base, style_negative.unwrap_or("")])
     });
-    FinalPrompt { prompt: text, negative }
+    FinalPrompt {
+        prompt: text,
+        negative,
+    }
 }
 
 /// Trim whitespace and stray list separators from both ends.
 fn clean(s: &str) -> &str {
-    s.trim().trim_matches(|c: char| c == ',' || c == ';' || c.is_whitespace())
+    s.trim()
+        .trim_matches(|c: char| c == ',' || c == ';' || c.is_whitespace())
 }
 
 /// `a, b` for non-empty parts.
 fn join_list(parts: &[&str]) -> String {
-    parts.iter().map(|p| clean(p)).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(", ")
+    parts
+        .iter()
+        .map(|p| clean(p))
+        .filter(|p| !p.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn add_prefix(prefix: &str, text: &str) -> String {
@@ -69,7 +82,10 @@ fn add_prefix(prefix: &str, text: &str) -> String {
         return text.to_owned();
     }
     // Don't add it twice when the user already typed it.
-    if text.len() >= prefix.len() && text.is_char_boundary(prefix.len()) && text[..prefix.len()].eq_ignore_ascii_case(prefix) {
+    if text.len() >= prefix.len()
+        && text.is_char_boundary(prefix.len())
+        && text[..prefix.len()].eq_ignore_ascii_case(prefix)
+    {
         return text.to_owned();
     }
     join_list(&[prefix, text])
@@ -79,7 +95,8 @@ fn add_prefix(prefix: &str, text: &str) -> String {
 /// for placeholders). Empty sides collapse to the other side alone.
 fn join_with_template(template: &str, prompt: &str, style: &str) -> String {
     let prompt = clean(prompt);
-    let style = clean(style.trim_start_matches(|c: char| c == '.' || c == ',' || c.is_whitespace()));
+    let style =
+        clean(style.trim_start_matches(|c: char| c == '.' || c == ',' || c.is_whitespace()));
     match (prompt.is_empty(), style.is_empty()) {
         (true, true) => return String::new(),
         (false, true) => return prompt.to_owned(),
@@ -118,7 +135,8 @@ fn join_with_template(template: &str, prompt: &str, style: &str) -> String {
             after_prompt = false;
         } else {
             let c = rest.chars().next().unwrap_or_default();
-            let is_sep_char = after_prompt && skip_sep_char && Some(c) == first && !c.is_whitespace();
+            let is_sep_char =
+                after_prompt && skip_sep_char && Some(c) == first && !c.is_whitespace();
             if is_sep_char {
                 skip_sep_char = false;
             } else {

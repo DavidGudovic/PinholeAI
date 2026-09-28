@@ -1,0 +1,135 @@
+// Simple dials (SPEC §5.1): Shape · Quality · Stick to prompt · How many · Keep this look.
+import type { ReactNode } from "react";
+import { Lock } from "lucide-react";
+import { Segmented, Slider, Toggle, cx, focusRing } from "../../components/ui";
+import { SHAPE_LABEL, defaultStickPosition, stickValue } from "../../lib/paste/map";
+import type { FamilyUi, Quality, Shape } from "../../lib/types";
+import { useAppState, useDispatch } from "../../lib/state/store";
+
+export const FALLBACK_SHAPES: Record<Shape, [number, number]> = {
+  square: [1024, 1024],
+  portrait: [832, 1216],
+  landscape: [1216, 832],
+  wide: [1344, 768],
+};
+const SHAPES: Shape[] = ["square", "portrait", "landscape", "wide"];
+const QUALITIES: Quality[] = ["fast", "balanced", "best"];
+export const qualityIndex = (q: Quality) => QUALITIES.indexOf(q);
+
+export function DialRow({ label, children, htmlFor }: { label: ReactNode; children: ReactNode; htmlFor?: string }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3">
+      <label htmlFor={htmlFor} className="text-sm text-neutral-600 dark:text-neutral-400">
+        {label}
+      </label>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+export function ShapeChips({ value, onChange, shapes }: { value: Shape; onChange: (s: Shape) => void; shapes: Record<string, [number, number]> }) {
+  return (
+    <div role="radiogroup" aria-label="Shape" className="flex flex-wrap gap-1.5">
+      {SHAPES.map((s) => {
+        const [w, h] = shapes[s] ?? FALLBACK_SHAPES[s];
+        const active = s === value;
+        const max = 14;
+        const iw = w >= h ? max : Math.round((max * w) / h);
+        const ih = h >= w ? max : Math.round((max * h) / w);
+        return (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            title={`${w}×${h}`}
+            onClick={() => onChange(s)}
+            className={cx(
+              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-sm transition-colors",
+              focusRing,
+              active
+                ? "border-amber-500 bg-amber-50 text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
+                : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600",
+            )}
+          >
+            <span className="flex h-4 w-4 items-center justify-center" aria-hidden>
+              <span className={cx("rounded-[3px] border-[1.5px]", active ? "border-amber-600 dark:border-amber-400" : "border-current opacity-70")} style={{ width: iw, height: ih }} />
+            </span>
+            {SHAPE_LABEL[s]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function Dials({ ui }: { ui: FamilyUi | null }) {
+  const c = useAppState((s) => s.create);
+  const selected = useAppState((s) => s.results.find((r) => r.id === s.selectedResultId) ?? null);
+  const dispatch = useDispatch();
+  const shapes = ui?.shapes ?? FALLBACK_SHAPES;
+  const steps = ui?.qualitySteps;
+  const stickPos = c.stick ?? defaultStickPosition(ui);
+  const stickVal = ui ? stickValue(ui, stickPos) : null;
+  const seedLocked = c.fineTune.seed != null;
+  const canLock = seedLocked || !!selected;
+
+  return (
+    <div className="space-y-3.5">
+      <DialRow label="Shape">
+        <ShapeChips value={c.shape} shapes={shapes} onChange={(v) => dispatch({ type: "setDial", dial: "shape", value: v })} />
+      </DialRow>
+      <DialRow label="Quality">
+        <Segmented
+          ariaLabel="Quality"
+          stretch
+          value={c.quality}
+          onChange={(v) => dispatch({ type: "setDial", dial: "quality", value: v })}
+          options={QUALITIES.map((q, i) => ({
+            value: q,
+            label: q === "fast" ? "Fast" : q === "balanced" ? "Balanced" : "Best",
+            title: steps ? `${steps[i]} steps${q === "best" && ui?.hiresAtBest ? " + hires fix" : ""}` : undefined,
+          }))}
+        />
+      </DialRow>
+      {(!ui || ui.showStick) && (
+        <DialRow label="Stick to prompt">
+          <Slider
+            ariaLabel="Stick to prompt"
+            ariaValueText={stickVal != null ? `${ui?.stickMapsTo === "guidance" ? "Guidance" : "CFG"} ${stickVal}` : undefined}
+            value={stickPos}
+            onChange={(v) => dispatch({ type: "setDial", dial: "stick", value: v })}
+            left="Loose"
+            right="Strict"
+          />
+        </DialRow>
+      )}
+      <DialRow label="How many">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <Segmented
+            ariaLabel="How many"
+            value={c.count}
+            onChange={(v) => dispatch({ type: "setDial", dial: "count", value: v })}
+            options={[
+              { value: 1 as const, label: "1" },
+              { value: 2 as const, label: "2" },
+              { value: 4 as const, label: "4" },
+            ]}
+          />
+          <span title={canLock ? undefined : "Generate and select an image first"}>
+            <Toggle
+              checked={seedLocked}
+              disabled={!canLock}
+              onChange={(on) => dispatch({ type: "keepLook", on })}
+              label={
+                <span className="inline-flex items-center gap-1 text-neutral-700 dark:text-neutral-300">
+                  {seedLocked && <Lock className="h-3 w-3 text-amber-600" />}Keep this look
+                </span>
+              }
+            />
+          </span>
+        </div>
+      </DialRow>
+    </div>
+  );
+}

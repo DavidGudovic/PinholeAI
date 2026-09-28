@@ -16,7 +16,6 @@
 //! only as an `Authorization: Bearer` header, and never logged or stored.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use pinhole_net::{HttpClient, NetError};
@@ -425,10 +424,12 @@ impl CivitaiClient {
 
     /// `Authorization` header for `url`, only for civitai.com hosts.
     pub fn auth_header_for(&self, url: &str) -> Option<(String, String)> {
-        let key = self.api_key.as_ref()?;
-        let parsed = url::Url::parse(url).ok()?;
-        let host = parsed.host_str()?;
-        pinhole_net::allow::host_matches(host, "civitai.com").then(|| ("Authorization".to_string(), format!("Bearer {key}")))
+        civitai_auth_header(self.api_key.as_deref(), url)
+    }
+
+    /// The key (for download specs). Never log it.
+    pub fn api_key(&self) -> Option<&str> {
+        self.api_key.as_deref()
     }
 
     /// `GET /models?...` URL. Spaces are sent as `%20` (not `+`).
@@ -487,22 +488,44 @@ impl CivitaiClient {
         }
     }
 
-    /// Ask the download URL for one byte to learn whether it needs an API key
-    /// (401/403). Returns the HTTP status.
+    /// Ask the download URL for one byte to learn whether it needs an API key.
+    /// Returns the HTTP status (401/403 = key needed or access not bought).
     pub async fn probe_download(&self, url: &str) -> Result<u16, NetError> {
-        let mut req = self.http.get(url)?.header("Range", "bytes=0-0").timeout(Duration::from_secs(20));
-        if let Some((k, v)) = self.auth_header_for(url) {
-            req = req.header(k, v);
+        let auth = self.auth_header_for(url);
+        let mut headers: Vec<(&str, &str)> = vec![("Range", "bytes=0-0")];
+        if let Some((k, v)) = auth.as_ref() {
+            headers.push((k.as_str(), v.as_str()));
         }
-        let resp = req.send().await.map_err(|e| {
-            if e.is_timeout() {
-                NetError::Timeout
-            } else {
-                NetError::Transport("could not reach CivitAI".into())
-            }
-        })?;
-        Ok(resp.status().as_u16())
+        match self.http.get_bytes(url, &headers, 64 * 1024).await {
+            // TooLarge: the server ignored Range and started sending the file.
+            Ok(_) | Err(NetError::TooLarge) => Ok(200),
+            Err(NetError::Unauthorized(code)) | Err(NetError::Status(code)) => Ok(code),
+            Err(e) => Err(e),
+        }
     }
+}
+
+/// `Authorization: Bearer <key>` for https://civitai.com (and subdomains)
+/// URLs only — never sent to CDNs, Hugging Face or anything else.
+pub fn civitai_auth_header(api_key: Option<&str>, url: &str) -> Option<(String, String)> {
+    let key = api_key.map(str::trim).filter(|k| !k.is_empty())?;
+    let parsed = url::Url::parse(url).ok()?;
+    if parsed.scheme() != "https" {
+        return None;
+    }
+    let host = parsed.host_str()?;
+    pinhole_net::allow::host_matches(host, "civitai.com").then(|| ("Authorization".to_string(), format!("Bearer {key}")))
+}
+
+/// Preview images may only come from `https://<*.>civitai.com/...` (no
+/// credentials, no custom port). Redirects are re-checked by the HTTP client.
+pub fn is_preview_url(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    u.scheme() == "https"
+        && u.username().is_empty()
+        && u.password().is_none()
+        && u.port().is_none()
+        && u.host_str().is_some_and(|h| pinhole_net::allow::host_matches(h, "civitai.com"))
 }
 
 /// Percent-encode a query component (RFC 3986 unreserved kept, space → `%20`).
@@ -639,6 +662,35 @@ mod tests {
         assert_eq!(p.next_cursor(), None);
         let p: ModelsPage = serde_json::from_str(r#"{}"#).unwrap();
         assert!(p.items.is_empty());
+    }
+
+    #[test]
+    fn api_key_only_for_civitai() {
+        let k = Some("k3y");
+        assert_eq!(
+            civitai_auth_header(k, "https://civitai.com/api/download/models/1"),
+            Some(("Authorization".into(), "Bearer k3y".into()))
+        );
+        assert!(civitai_auth_header(k, "https://image.civitai.com/x.jpeg").is_some());
+        assert!(civitai_auth_header(k, "https://huggingface.co/a/b").is_none());
+        assert!(civitai_auth_header(k, "https://civitai.com.evil.example/x").is_none());
+        assert!(civitai_auth_header(k, "https://evilcivitai.com/x").is_none());
+        assert!(civitai_auth_header(k, "http://civitai.com/x").is_none(), "never over plain http");
+        assert!(civitai_auth_header(None, "https://civitai.com/x").is_none());
+        assert!(civitai_auth_header(Some("  "), "https://civitai.com/x").is_none());
+    }
+
+    #[test]
+    fn preview_urls() {
+        assert!(is_preview_url("https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg"));
+        assert!(is_preview_url("https://civitai.com/x.png"));
+        assert!(!is_preview_url("http://image.civitai.com/x.jpeg"));
+        assert!(!is_preview_url("https://huggingface.co/x.png"));
+        assert!(!is_preview_url("https://image.civitai.com.evil.example/x.jpeg"));
+        assert!(!is_preview_url("https://user:pw@image.civitai.com/x.jpeg"));
+        assert!(!is_preview_url("https://image.civitai.com:8443/x.jpeg"));
+        assert!(!is_preview_url("file:///etc/passwd"));
+        assert!(!is_preview_url("not a url"));
     }
 
     #[test]

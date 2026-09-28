@@ -18,6 +18,7 @@
 //   (d) [console]           console.log/info/debug/warn/trace/dir/table in src/**
 //       [console-error-prompt] console.error(...) with a prompt-ish identifier
 //   (e) [storage-prompt]    localStorage/sessionStorage/indexedDB near prompt-ish identifiers
+//       [autofill]          prompt-bearing <input> without autoComplete="off" (WebView2 autofill)
 //   (f) [remote-asset]      http(s) assets in index.html / CSS / JSX attributes
 //       [ts-network]        fetch("http…"), WebSocket, EventSource, sendBeacon, XMLHttpRequest in src/**
 //   (g) [csp]               tauri.conf.json CSP allows remote origins / updater configured
@@ -648,6 +649,25 @@ export function lintTs(file, src, F) {
     }
   }
 
+  // [autofill] WebView2/Chromium form autofill can save <input> values to its
+  // on-disk profile: prompt-bearing inputs must opt out.
+  const inputRe = /<input\b/g;
+  while ((m = inputRe.exec(code))) {
+    let k = m.index + 6, depth = 0;
+    for (; k < code.length; k++) {
+      const c = code[k];
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      else if (c === ">" && depth <= 0) break;
+    }
+    const tag = withStr.slice(m.index, k + 1);
+    if (/\btype\s*=\s*["'{]?\s*["']?(checkbox|radio|range|file|hidden|button|submit|color)\b/.test(tag)) continue;
+    const hits = promptishIdents(tag, STORAGE_WORDS);
+    if (hits.length && !/autoComplete\s*=\s*(\{\s*)?["'`]off["'`]/i.test(tag)) {
+      F.add(file, src, starts, m.index, "autofill", `<input> bound to prompt-ish ${hits.map((h) => `\`${h}\``).join(", ")} without autoComplete="off" — WebView2 autofill may store it on disk. Use a <textarea> or add autoComplete="off".`);
+    }
+  }
+
   // (f) remote assets in JSX attributes / inline styles
   const attrRe = /\b(src|href|poster|srcSet|srcset|data|action|formAction)\s*=\s*\{?\s*["'`]\s*(https?:)?\/\//g;
   while ((m = attrRe.exec(withStr))) {
@@ -859,7 +879,7 @@ pub fn body(p: &str) -> serde_json::Value {
 }
 ` },
   // ---- (d)(e)(f) frontend
-  { rel: "src/tabs/create/Bad.tsx", expect: ["console", "console", "console-error-prompt", "storage-prompt", "storage-prompt", "remote-asset", "remote-asset", "ts-network", "ts-network"], content: `
+  { rel: "src/tabs/create/Bad.tsx", expect: ["console", "console", "console-error-prompt", "storage-prompt", "storage-prompt", "remote-asset", "remote-asset", "ts-network", "ts-network", "autofill"], content: `
 export function Bad({ prompt }: { prompt: string }) {
   console.log("render");
   console.warn(\`x\`);
@@ -869,6 +889,7 @@ export function Bad({ prompt }: { prompt: string }) {
   sessionStorage.setItem("d", JSON.stringify(draft));
   fetch("https://civitai.com/api/v1/models");
   const ws = new WebSocket(url);
+  const field = <input value={negativePrompt} onChange={(e) => setNeg(e.target.value)} />;
   return <div style={{ backgroundImage: "url(https://cdn.example.com/a.png)" }}>
     <img src="https://cdn.example.com/x.png" /></div>;
 }
@@ -884,6 +905,9 @@ export function Good({ prompt }: { prompt: string }) {
   const t = \`Don't \${count} "worry"\`;
   const blobUrl = URL.createObjectURL(blob);
   const r = fetch(blobUrl);
+  const a = <input value={negativePrompt} autoComplete="off" onChange={(e) => { if (x > 1) set(e.target.value); }} />;
+  const b = <input type="checkbox" checked={usePromptPrefix} />;
+  const c = <input value={seed} />;
   return <p>Don't worry, we never store it. <img src={blobUrl} /></p>;
 }
 ` },

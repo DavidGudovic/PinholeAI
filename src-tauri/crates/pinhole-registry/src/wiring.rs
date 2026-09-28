@@ -14,53 +14,159 @@ use crate::{ComponentChoice, Family, Layout, Registry};
 
 /// Valid `sample_method` names (`sample_method_to_str`, src/stable-diffusion.cpp).
 pub const SAMPLERS: &[&str] = &[
-    "euler", "euler_a", "heun", "dpm2", "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm",
-    "ddim_trailing", "tcd", "res_multistep", "res_2s", "er_sde", "euler_cfg_pp", "euler_a_cfg_pp", "euler_ge",
-    "dpm++2m_sde", "dpm++2m_sde_bt", "lms",
+    "euler",
+    "euler_a",
+    "heun",
+    "dpm2",
+    "dpm++2s_a",
+    "dpm++2m",
+    "dpm++2mv2",
+    "ipndm",
+    "ipndm_v",
+    "lcm",
+    "ddim_trailing",
+    "tcd",
+    "res_multistep",
+    "res_2s",
+    "er_sde",
+    "euler_cfg_pp",
+    "euler_a_cfg_pp",
+    "euler_ge",
+    "dpm++2m_sde",
+    "dpm++2m_sde_bt",
+    "lms",
 ];
 
 /// Valid `scheduler` names (`scheduler_to_str`, src/stable-diffusion.cpp;
 /// `normal` is accepted as an alias of `discrete`).
 pub const SCHEDULERS: &[&str] = &[
-    "discrete", "karras", "exponential", "ays", "gits", "sgm_uniform", "simple", "smoothstep", "kl_optimal", "lcm",
-    "bong_tangent", "ltx2", "logit_normal", "flux2", "flux", "beta", "llada_image",
+    "discrete",
+    "karras",
+    "exponential",
+    "ays",
+    "gits",
+    "sgm_uniform",
+    "simple",
+    "smoothstep",
+    "kl_optimal",
+    "lcm",
+    "bong_tangent",
+    "ltx2",
+    "logit_normal",
+    "flux2",
+    "flux",
+    "beta",
+    "llada_image",
 ];
 
 /// Boolean (value-less) sd-server options.
 const BOOL_FLAGS: &[&str] = &[
     // SDContextParams bool_options
-    "--disable-prefetch", "--disable-segmented-compute", "--eager-load", "--force-sdxl-vae-conv-scale",
-    "--offload-to-cpu", "--mmap", "--control-net-cpu", "--clip-on-cpu", "--vae-on-cpu", "--fa", "--diffusion-fa",
-    "--sage-attn", "--diffusion-conv-direct", "--vae-conv-direct",
+    "--disable-prefetch",
+    "--disable-segmented-compute",
+    "--eager-load",
+    "--force-sdxl-vae-conv-scale",
+    "--offload-to-cpu",
+    "--mmap",
+    "--control-net-cpu",
+    "--clip-on-cpu",
+    "--vae-on-cpu",
+    "--fa",
+    "--diffusion-fa",
+    "--sage-attn",
+    "--diffusion-conv-direct",
+    "--vae-conv-direct",
     // SDGenerationParams bool_options (server defaults)
-    "--increase-ref-index", "--circular", "--circularx", "--circulary", "--disable-image-metadata", "--vae-tiling",
-    "--temporal-tiling", "--hires",
+    "--increase-ref-index",
+    "--circular",
+    "--circularx",
+    "--circulary",
+    "--disable-image-metadata",
+    "--vae-tiling",
+    "--temporal-tiling",
+    "--hires",
     // server / logging
-    "--color", "--verbose", "--list-devices",
+    "--color",
+    "--verbose",
+    "--list-devices",
 ];
 
 /// Options that take one value.
 const VALUE_FLAGS: &[&str] = &[
     // SDContextParams string / int / manual options
-    "--model", "--clip_l", "--clip_g", "--clip_vision", "--t5xxl", "--llm", "--tokenizer", "--llm_vision",
-    "--qwen2vl", "--qwen2vl_vision", "--diffusion-model", "--high-noise-diffusion-model",
-    "--uncond-diffusion-model", "--embeddings-connectors", "--vae", "--vae-format", "--audio-vae",
-    "--audio-encoder", "--taesd", "--tae", "--control-net", "--ip-adapter", "--motion-module", "--embd-dir",
-    "--lora-model-dir", "--hires-upscalers-dir", "--tensor-type-rules", "--model-args", "--photo-maker",
-    "--pulid-weights", "--upscale-model", "--backend", "--params-backend", "--split-mode", "--rpc-servers",
-    "--max-vram", "--threads", "--conditioning-cache-size", "--linear-scale", "--attn-scale", "--auto-fit",
-    "--type", "--rng", "--sampler-rng", "--prediction", "--lora-apply-mode",
+    "--model",
+    "--clip_l",
+    "--clip_g",
+    "--clip_vision",
+    "--t5xxl",
+    "--llm",
+    "--tokenizer",
+    "--llm_vision",
+    "--qwen2vl",
+    "--qwen2vl_vision",
+    "--diffusion-model",
+    "--high-noise-diffusion-model",
+    "--uncond-diffusion-model",
+    "--embeddings-connectors",
+    "--vae",
+    "--vae-format",
+    "--audio-vae",
+    "--audio-encoder",
+    "--taesd",
+    "--tae",
+    "--control-net",
+    "--ip-adapter",
+    "--motion-module",
+    "--embd-dir",
+    "--lora-model-dir",
+    "--hires-upscalers-dir",
+    "--tensor-type-rules",
+    "--model-args",
+    "--photo-maker",
+    "--pulid-weights",
+    "--upscale-model",
+    "--backend",
+    "--params-backend",
+    "--split-mode",
+    "--rpc-servers",
+    "--max-vram",
+    "--threads",
+    "--conditioning-cache-size",
+    "--linear-scale",
+    "--attn-scale",
+    "--auto-fit",
+    "--type",
+    "--rng",
+    "--sampler-rng",
+    "--prediction",
+    "--lora-apply-mode",
     // SDGenerationParams value options that make sense as server defaults
-    "--vae-tile-size", "--vae-relative-tile-size", "--vae-tile-overlap", "--cache-mode", "--cache-option",
-    "--image-preprocess", "--ref-image-args", "--extra-sample-args", "--extra-tiling-args",
+    "--vae-tile-size",
+    "--vae-relative-tile-size",
+    "--vae-tile-overlap",
+    "--cache-mode",
+    "--cache-option",
+    "--image-preprocess",
+    "--ref-image-args",
+    "--extra-sample-args",
+    "--extra-tiling-args",
     // server
-    "--listen-ip", "--listen-port", "--serve-html-path", "--log-level",
+    "--listen-ip",
+    "--listen-port",
+    "--serve-html-path",
+    "--log-level",
 ];
 
 /// Value options whose values are comma-separated lists: repeated occurrences
 /// are merged instead of the last one silently winning.
-const LIST_FLAGS: &[&str] =
-    &["--model-args", "--backend", "--params-backend", "--tensor-type-rules", "--split-mode", "--rpc-servers"];
+const LIST_FLAGS: &[&str] = &[
+    "--model-args",
+    "--backend",
+    "--params-backend",
+    "--tensor-type-rules",
+    "--split-mode",
+    "--rpc-servers",
+];
 
 /// `true` for a flag the pinned sd-server understands (used by `Registry::validate`).
 pub fn is_known_flag(flag: &str) -> bool {
@@ -79,7 +185,10 @@ const COMPONENT_FLAGS: &[(&str, &str)] = &[
 ];
 
 fn kind_rank(kind: &str) -> usize {
-    COMPONENT_FLAGS.iter().position(|(k, _)| *k == kind).unwrap_or(COMPONENT_FLAGS.len())
+    COMPONENT_FLAGS
+        .iter()
+        .position(|(k, _)| *k == kind)
+        .unwrap_or(COMPONENT_FLAGS.len())
 }
 
 /// Files that make up one runnable model set.
@@ -132,12 +241,18 @@ pub fn resolve_choice(choice: &ComponentChoice, vram_gb: f32) -> Option<String> 
         ComponentChoice::ByVram(map) => {
             let mut best: Option<(f32, &String)> = None;
             for (key, id) in map {
-                let Some(t) = key.strip_prefix("vram_gte_").and_then(|t| t.parse::<f32>().ok()) else { continue };
+                let Some(t) = key
+                    .strip_prefix("vram_gte_")
+                    .and_then(|t| t.parse::<f32>().ok())
+                else {
+                    continue;
+                };
                 if vram_gb >= t && best.is_none_or(|(b, _)| t > b) {
                     best = Some((t, id));
                 }
             }
-            best.map(|(_, id)| id.clone()).or_else(|| map.get("else").or_else(|| map.get("default")).cloned())
+            best.map(|(_, id)| id.clone())
+                .or_else(|| map.get("else").or_else(|| map.get("default")).cloned())
         }
     }
 }
@@ -145,7 +260,11 @@ pub fn resolve_choice(choice: &ComponentChoice, vram_gb: f32) -> Option<String> 
 /// Components required to run `family` on this hardware (VRAM-dependent choices
 /// resolved; `vae_override` included for all-in-one families; TAESD excluded —
 /// see [`optional_components`]).
-pub fn required_components(registry: &Registry, family: &Family, hw: &HwContext) -> Vec<RequiredComponent> {
+pub fn required_components(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+) -> Vec<RequiredComponent> {
     let _ = registry;
     let mut out: Vec<RequiredComponent> = Vec::new();
     for (key, choice) in &family.components {
@@ -158,18 +277,29 @@ pub fn required_components(registry: &Registry, family: &Family, hw: &HwContext)
         };
         if let Some(id) = resolve_choice(choice, hw.vram_gb) {
             if !id.is_empty() {
-                out.push(RequiredComponent { kind: kind.to_owned(), component_id: id });
+                out.push(RequiredComponent {
+                    kind: kind.to_owned(),
+                    component_id: id,
+                });
             }
         }
     }
-    out.sort_by(|a, b| kind_rank(&a.kind).cmp(&kind_rank(&b.kind)).then_with(|| a.kind.cmp(&b.kind)));
+    out.sort_by(|a, b| {
+        kind_rank(&a.kind)
+            .cmp(&kind_rank(&b.kind))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
     out
 }
 
 /// Components whose weights stay on the GPU in the comfortable ("Fits") case,
 /// for [`crate::vram::estimate`]: the VAE always; text encoders unless the
 /// family pins them to the CPU (`--clip-on-cpu` or `--backend …te=cpu`).
-pub fn gpu_resident_components(registry: &Registry, family: &Family, hw: &HwContext) -> Vec<RequiredComponent> {
+pub fn gpu_resident_components(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+) -> Vec<RequiredComponent> {
     let te_on_cpu = family.flags.iter().any(|f| f == "--clip-on-cpu")
         || family.flags.windows(2).any(|w| {
             w[0] == "--backend"
@@ -180,7 +310,9 @@ pub fn gpu_resident_components(registry: &Registry, family: &Family, hw: &HwCont
         });
     required_components(registry, family, hw)
         .into_iter()
-        .filter(|c| !(te_on_cpu && matches!(c.kind.as_str(), "clip_l" | "clip_g" | "t5xxl" | "llm")))
+        .filter(|c| {
+            !(te_on_cpu && matches!(c.kind.as_str(), "clip_l" | "clip_g" | "t5xxl" | "llm"))
+        })
         .collect()
 }
 
@@ -194,7 +326,10 @@ pub fn optional_components(registry: &Registry, family: &Family) -> Vec<Required
         .taesd
         .iter()
         .filter(|id| !id.is_empty())
-        .map(|id| RequiredComponent { kind: "taesd".into(), component_id: id.clone() })
+        .map(|id| RequiredComponent {
+            kind: "taesd".into(),
+            component_id: id.clone(),
+        })
         .collect()
 }
 
@@ -274,7 +409,12 @@ fn path_arg(p: &std::path::Path) -> String {
 /// family flags, hardware-profile flags, `--lora-model-dir`, `--hires-upscalers-dir`.
 /// Repeated options are de-duplicated; list options (`--model-args`, `--backend`…)
 /// are comma-merged.
-pub fn launch_args(registry: &Registry, files: &ModelFiles, hw: &HwContext, extras: &LaunchExtras) -> Vec<String> {
+pub fn launch_args(
+    registry: &Registry,
+    files: &ModelFiles,
+    hw: &HwContext,
+    extras: &LaunchExtras,
+) -> Vec<String> {
     let mut args = ArgList::default();
     let main_flag = match files.layout {
         Layout::AllInOne => "--model",
@@ -449,7 +589,9 @@ pub fn shape_size(family: &Family, shape: Shape) -> [u32; 2] {
 fn stick_target(family: &Family, edit: bool) -> &str {
     let d = &family.dials;
     let t = if edit {
-        d.stay_close_maps_to.as_deref().or(d.stick_to_prompt_maps_to.as_deref())
+        d.stay_close_maps_to
+            .as_deref()
+            .or(d.stick_to_prompt_maps_to.as_deref())
     } else {
         d.stick_to_prompt_maps_to.as_deref()
     };
@@ -510,22 +652,36 @@ pub fn resolve_params(
         Quality::Balanced => q.balanced,
         Quality::Best => q.best,
     });
-    let steps = fine.steps.filter(|s| *s > 0).or(quality_steps).unwrap_or(DEFAULT_STEPS).max(1);
+    let steps = fine
+        .steps
+        .filter(|s| *s > 0)
+        .or(quality_steps)
+        .unwrap_or(DEFAULT_STEPS)
+        .max(1);
 
     let edit = mode == GenMode::Edit;
-    let stick = if dials.stick.is_finite() { dials.stick.clamp(0.0, 1.0) } else { 0.5 };
+    let stick = if dials.stick.is_finite() {
+        dials.stick.clamp(0.0, 1.0)
+    } else {
+        0.5
+    };
     let t = if edit { 1.0 - stick } else { stick };
     let target = stick_target(family, edit);
 
-    let cfg = fine.cfg.filter(|c| c.is_finite()).unwrap_or_else(|| match (d.cfg_fixed, target, d.cfg_range) {
-        (Some(fixed), _, _) => fixed,
-        (None, "cfg", Some(range)) => lerp(range, t),
-        _ => d.cfg_default.unwrap_or(DEFAULT_CFG),
+    let cfg = fine.cfg.filter(|c| c.is_finite()).unwrap_or_else(|| {
+        match (d.cfg_fixed, target, d.cfg_range) {
+            (Some(fixed), _, _) => fixed,
+            (None, "cfg", Some(range)) => lerp(range, t),
+            _ => d.cfg_default.unwrap_or(DEFAULT_CFG),
+        }
     });
-    let guidance = fine.guidance.filter(|g| g.is_finite()).or(match (target, d.guidance_range) {
-        ("guidance", Some(range)) => Some(lerp(range, t)),
-        _ => family.defaults.guidance,
-    });
+    let guidance = fine
+        .guidance
+        .filter(|g| g.is_finite())
+        .or(match (target, d.guidance_range) {
+            ("guidance", Some(range)) => Some(lerp(range, t)),
+            _ => family.defaults.guidance,
+        });
 
     let hires = {
         let cfg_h = d.hires_at_best.as_ref();
@@ -547,9 +703,13 @@ pub fn resolve_params(
         })
     };
 
-    let vae_tiling = fine
-        .vae_tiling
-        .unwrap_or_else(|| registry.hardware_profile(hw.vram_gb).flags.iter().any(|f| f == "--vae-tiling"));
+    let vae_tiling = fine.vae_tiling.unwrap_or_else(|| {
+        registry
+            .hardware_profile(hw.vram_gb)
+            .flags
+            .iter()
+            .any(|f| f == "--vae-tiling")
+    });
 
     ResolvedParams {
         width,
@@ -557,10 +717,21 @@ pub fn resolve_params(
         steps,
         cfg,
         guidance,
-        sampler: fine.sampler.clone().filter(|s| !s.is_empty()).or_else(|| family.defaults.sampler.clone()),
-        scheduler: fine.scheduler.clone().filter(|s| !s.is_empty()).or_else(|| family.defaults.scheduler.clone()),
+        sampler: fine
+            .sampler
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| family.defaults.sampler.clone()),
+        scheduler: fine
+            .scheduler
+            .clone()
+            .filter(|s| !s.is_empty())
+            .or_else(|| family.defaults.scheduler.clone()),
         clip_skip: fine.clip_skip.or(family.defaults.clip_skip),
-        flow_shift: fine.flow_shift.filter(|f| f.is_finite()).or(family.defaults.flow_shift),
+        flow_shift: fine
+            .flow_shift
+            .filter(|f| f.is_finite())
+            .or(family.defaults.flow_shift),
         hires,
         vae_tiling,
         batch_count: dials.count.max(1),
@@ -611,11 +782,18 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
     let d = &family.dials;
     let edit = is_edit_family(family);
     let target = stick_target(family, edit);
-    let default_cfg = d.cfg_fixed.or(d.cfg_default).unwrap_or_else(|| d.cfg_range.map_or(DEFAULT_CFG, |r| lerp(r, 0.5)));
+    let default_cfg = d
+        .cfg_fixed
+        .or(d.cfg_default)
+        .unwrap_or_else(|| d.cfg_range.map_or(DEFAULT_CFG, |r| lerp(r, 0.5)));
 
     let (show_stick, range, default_value) = match target {
         "guidance" => match d.guidance_range {
-            Some(r) => (true, r, family.defaults.guidance.unwrap_or_else(|| lerp(r, 0.5))),
+            Some(r) => (
+                true,
+                r,
+                family.defaults.guidance.unwrap_or_else(|| lerp(r, 0.5)),
+            ),
             None => (false, [default_cfg, default_cfg], default_cfg),
         },
         _ => match (d.cfg_fixed, d.cfg_range) {
@@ -623,7 +801,11 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
             _ => (false, [default_cfg, default_cfg], default_cfg),
         },
     };
-    let stick_default = if show_stick { position(range, default_value, edit) } else { 0.5 };
+    let stick_default = if show_stick {
+        position(range, default_value, edit)
+    } else {
+        0.5
+    };
 
     let quality_steps = d
         .quality
@@ -645,7 +827,11 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
         stick_range: range,
         stick_default,
         uses_negative_prompt: family.uses_negative_prompt,
-        default_negative_prompt: family.defaults.negative_prompt.clone().filter(|_| family.uses_negative_prompt),
+        default_negative_prompt: family
+            .defaults
+            .negative_prompt
+            .clone()
+            .filter(|_| family.uses_negative_prompt),
         default_sampler: family.defaults.sampler.clone(),
         default_scheduler: family.defaults.scheduler.clone(),
         default_clip_skip: family.defaults.clip_skip,

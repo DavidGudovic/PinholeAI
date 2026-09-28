@@ -1,11 +1,27 @@
 // CivitAI preview images: bytes come from Rust (`fetch_preview`), shown as Blob URLs.
 // The WebView never loads a remote URL. Fetches start only when the card is near the
-// viewport, run at most 4 at a time, and Blob URLs are revoked on unmount.
+// viewport, run at most 4 at a time, and Blob URLs are revoked on unmount. A small
+// in-memory cache (RAM only) avoids fetching the same preview twice when filters change.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { fetchPreview } from "../../../lib/api";
 import { sniffImageType } from "./words";
 
 const MAX_IN_FLIGHT = 4;
+const CACHE_MAX = 160;
+const cache = new Map<string, Blob>();
+
+function cacheGet(url: string): Blob | null {
+  const b = cache.get(url);
+  if (!b) return null;
+  cache.delete(url); // refresh LRU position
+  cache.set(url, b);
+  return b;
+}
+
+function cachePut(url: string, blob: Blob) {
+  cache.set(url, blob);
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value!);
+}
 let inFlight = 0;
 const waiting: (() => void)[] = [];
 
@@ -94,19 +110,28 @@ export function usePreviewBlob(url: string | null, enabled: boolean): PreviewSta
   useEffect(() => {
     if (!url || !enabled) return;
     let alive = true;
-    setState({ src: null, failed: false, loading: true });
-    schedule(() => fetchPreview(url), () => alive)
-      .then((buf) => {
-        if (!alive || buf == null) return;
-        const bytes = toBytes(buf);
-        if (!bytes.length) throw new Error("empty");
-        const u = URL.createObjectURL(new Blob([bytes as BlobPart], { type: sniffImageType(bytes) }));
-        objectUrl.current = u;
-        setState({ src: u, failed: false, loading: false });
-      })
-      .catch(() => {
-        if (alive) setState({ src: null, failed: true, loading: false });
-      });
+    const show = (blob: Blob) => {
+      const u = URL.createObjectURL(blob);
+      objectUrl.current = u;
+      setState({ src: u, failed: false, loading: false });
+    };
+    const cached = cacheGet(url);
+    if (cached) show(cached);
+    else {
+      setState({ src: null, failed: false, loading: true });
+      schedule(() => fetchPreview(url), () => alive)
+        .then((buf) => {
+          if (!alive || buf == null) return;
+          const bytes = toBytes(buf);
+          if (!bytes.length) throw new Error("empty");
+          const blob = new Blob([bytes as BlobPart], { type: sniffImageType(bytes) });
+          cachePut(url, blob);
+          show(blob);
+        })
+        .catch(() => {
+          if (alive) setState({ src: null, failed: true, loading: false });
+        });
+    }
     return () => {
       alive = false;
       if (objectUrl.current) {

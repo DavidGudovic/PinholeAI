@@ -1,15 +1,1169 @@
-//! Generate / cancel / save / upscale / prompt preview. OWNER: engine agent.
-use crate::AppCore;
+//! Generate / cancel / upscale / prompt preview. OWNER: engine agent.
+//!
+//! Flow (docs/ARCHITECTURE.md §4 "Generate"): installed model + family →
+//! components → `wiring::launch_args` → (re)start sd-server only when the args
+//! differ → combine prompt/style/prefix/negatives in memory → `img_gen` with
+//! `embed_image_metadata: false` → poll every 300 ms → decode, scrub every PNG
+//! text chunk, keep in the RAM [`Session`](crate::session::Session).
+//!
+//! PRIVACY: `GenerateRequest`, `FinalPromptPreview` and the engine request body
+//! carry prompt text. They are never logged, never written to disk and never
+//! put into a `CoreError`. The only disk write here is `last_used` (a number)
+//! in `installed.json`.
 
-/// sd-server process + current job. Engine agent: fill in.
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use base64::Engine as _;
+use pinhole_engine::failure::{classify, Failure};
+use pinhole_engine::install::EngineKind;
+use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
+use pinhole_engine::pins::EngineConfig;
+use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
+use pinhole_engine::sdapi::{ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, JobStatus, LoraRef, SampleParams, SdClient, UpscaleRequest, VaeTilingRequest};
+use pinhole_registry::style::FinalPrompt;
+use pinhole_registry::wiring::{self, Dials, FamilyUi, FineTune, GenMode, HwContext, LaunchExtras, ModelFiles, Quality, Shape};
+use pinhole_registry::Family;
+use pinhole_store::datadir::ModelKind;
+use pinhole_store::InstalledFile;
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
+
+use crate::engine_setup;
+use crate::events::{GenPhase, GenerationProgress};
+use crate::session::SessionImage;
+use crate::{AppCore, CoreError, CoreEvent, CoreResult};
+
+/// How long a model may take to load before we give up (huge models on slow disks).
+const LOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const POLL_EVERY: Duration = Duration::from_millis(300);
+/// Registry component id of the ESRGAN upscaler.
+pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
+
+// ================================================================ IPC types (mirror src/lib/types.ts)
+
+/// `LoraUse`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LoraUse {
+    pub lora_id: String,
+    pub weight: f32,
+}
+
+/// `GenerateRequest` — prompt-bearing: Deserialize only, redacting Debug.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateRequest {
+    pub model_id: String,
+    pub mode: GenMode,
+    pub prompt: String,
+    #[serde(default)]
+    pub style_id: Option<String>,
+    pub dials: Dials,
+    #[serde(default)]
+    pub fine_tune: FineTune,
+    #[serde(default)]
+    pub loras: Vec<LoraUse>,
+    #[serde(default)]
+    pub add_trigger_words: bool,
+    #[serde(default)]
+    pub init_image_id: Option<String>,
+    #[serde(default)]
+    pub strength: Option<f32>,
+    #[serde(default)]
+    pub ref_image_ids: Vec<String>,
+    #[serde(default)]
+    pub mask_image_id: Option<String>,
+}
+
+impl GenerateRequest {
+    /// Plain txt2img with default dials (square, fast, middle "stick", 1 image).
+    pub fn txt2img(model_id: impl Into<String>, prompt: impl Into<String>) -> Self {
+        Self {
+            model_id: model_id.into(),
+            mode: GenMode::Txt2img,
+            prompt: prompt.into(),
+            style_id: None,
+            dials: Dials { shape: Shape::Square, quality: Quality::Fast, stick: 0.5, count: 1 },
+            fine_tune: FineTune::default(),
+            loras: Vec::new(),
+            add_trigger_words: true,
+            init_image_id: None,
+            strength: None,
+            ref_image_ids: Vec::new(),
+            mask_image_id: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for GenerateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenerateRequest")
+            .field("model_id", &self.model_id)
+            .field("mode", &self.mode)
+            .field("prompt", &"[redacted]")
+            .field("style_id", &self.style_id)
+            .field("loras", &self.loras.len())
+            .finish()
+    }
+}
+
+/// `ResultImage`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ResultImage {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+    pub seed: i64,
+    pub model_id: String,
+    pub model_label: String,
+    pub family_id: String,
+    pub steps: u32,
+    pub cfg: f32,
+    pub guidance: Option<f32>,
+    pub sampler: Option<String>,
+    pub scheduler: Option<String>,
+    pub parent_id: Option<String>,
+}
+
+/// `GenerateResult`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerateResult {
+    pub images: Vec<ResultImage>,
+}
+
+/// `FinalPromptPreview` — prompt-bearing (returned to the UI only).
+#[derive(Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FinalPromptPreview {
+    pub prompt: String,
+    pub negative: Option<String>,
+}
+
+impl std::fmt::Debug for FinalPromptPreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FinalPromptPreview([redacted])")
+    }
+}
+
+/// `ImportedImage`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedImage {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// `SavedImage`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedImage {
+    pub path: String,
+}
+
+// ================================================================ state
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct EngineFlags {
+    pub installing: bool,
+    pub loading: bool,
+    pub running: bool,
+    pub loaded_model_id: Option<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Default)]
-pub struct GenState {}
+pub(crate) struct EngineSlot {
+    pub proc: Option<EngineProcess>,
+    pub args: Vec<String>,
+    pub model_id: Option<String>,
+}
 
+/// sd-server process + current generation job.
+pub struct GenState {
+    pub(crate) slot: tokio::sync::Mutex<EngineSlot>,
+    /// One generation (or upscale) at a time.
+    pub(crate) run_lock: tokio::sync::Mutex<()>,
+    pub(crate) install_lock: tokio::sync::Mutex<()>,
+    /// Cancels the running generate / model load.
+    pub(crate) active: parking_lot::Mutex<Option<CancellationToken>>,
+    pub(crate) flags: parking_lot::Mutex<EngineFlags>,
+    /// sd-server stdout/stderr (memory only, redacted).
+    pub(crate) logs: Arc<LogBuffer>,
+    /// Tests: talk to an already-running (mock) server instead of spawning one.
+    pub(crate) external: parking_lot::Mutex<Option<String>>,
+    pub(crate) config: parking_lot::Mutex<Option<Arc<EngineConfig>>>,
+}
+
+impl Default for GenState {
+    fn default() -> Self {
+        Self {
+            slot: tokio::sync::Mutex::new(EngineSlot::default()),
+            run_lock: tokio::sync::Mutex::new(()),
+            install_lock: tokio::sync::Mutex::new(()),
+            active: parking_lot::Mutex::new(None),
+            flags: parking_lot::Mutex::new(EngineFlags::default()),
+            logs: Arc::new(LogBuffer::default()),
+            external: parking_lot::Mutex::new(None),
+            config: parking_lot::Mutex::new(None),
+        }
+    }
+}
+
+/// Stop the engine (app exit). Cancels any running job first.
 pub async fn shutdown(core: &AppCore) {
-    let _ = core;
+    if let Some(tok) = core.gen.active.lock().take() {
+        tok.cancel();
+    }
+    let mut slot = core.gen.slot.lock().await;
+    if let Some(p) = slot.proc.take() {
+        p.stop().await;
+    }
+    *slot = EngineSlot::default();
+    let mut f = core.gen.flags.lock();
+    f.running = false;
+    f.loading = false;
+    f.loaded_model_id = None;
 }
 
 /// Stop sd-server if it currently has `model_id` loaded (called before deleting a model).
 pub async fn unload_model(core: &AppCore, model_id: &str) {
-    let _ = (core, model_id);
+    let mut slot = core.gen.slot.lock().await;
+    if slot.model_id.as_deref() == Some(model_id) {
+        if let Some(p) = slot.proc.take() {
+            p.stop().await;
+        }
+        *slot = EngineSlot::default();
+        let mut f = core.gen.flags.lock();
+        f.running = false;
+        f.loaded_model_id = None;
+        drop(f);
+        engine_setup::emit_status(core);
+    }
+}
+
+/// Cancel the running generation (or model load). No-op when idle.
+pub fn cancel(core: &AppCore) {
+    if let Some(tok) = core.gen.active.lock().as_ref() {
+        tok.cancel();
+    }
+}
+
+/// Dials + Fine-tune defaults for a family.
+pub fn family_ui(core: &AppCore, family_id: &str) -> CoreResult<FamilyUi> {
+    let reg = core.registry();
+    let fam = reg.family(family_id).ok_or_else(|| CoreError::not_found("Pinhole doesn't know this model family. Pick another model."))?;
+    Ok(wiring::family_ui(&reg, fam))
+}
+
+// ================================================================ prompt
+
+struct Prepared {
+    model: InstalledFile,
+    family: Family,
+    final_prompt: FinalPrompt,
+    /// User texts for log redaction (memory only).
+    secrets: Vec<String>,
+    loras: Vec<LoraRef>,
+}
+
+/// Read-only "Final prompt sent to the model" (combined in memory, never stored).
+pub fn preview_final_prompt(core: &AppCore, req: &GenerateRequest) -> CoreResult<FinalPromptPreview> {
+    let p = prepare(core, req)?;
+    Ok(FinalPromptPreview { prompt: p.final_prompt.prompt, negative: p.final_prompt.negative })
+}
+
+fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
+    let (model, family) = resolve_model(core, req)?;
+    let reg = core.registry();
+
+    // LoRAs → structured list (+ trigger words, in memory).
+    let lora_dir = core.data.models(ModelKind::Lora);
+    let mut loras = Vec::new();
+    let mut triggers: Vec<String> = Vec::new();
+    {
+        let idx = core.installed.lock();
+        for l in &req.loras {
+            let Some(f) = idx.get(&l.lora_id).filter(|f| f.kind == ModelKind::Lora) else {
+                return Err(CoreError::not_found("A style add-on (LoRA) you picked isn't installed anymore. Remove it in Fine-tune."));
+            };
+            let abs = idx.abs_path(&core.data, f);
+            let rel = abs
+                .strip_prefix(&lora_dir)
+                .ok()
+                .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"))
+                .filter(|r| !r.is_empty())
+                .ok_or_else(|| CoreError::invalid("A style add-on (LoRA) is stored outside Data/models/loras. Reinstall it from Models."))?;
+            if !abs.is_file() {
+                return Err(CoreError::not_found(format!("The add-on “{}” is missing from the Data folder. Reinstall it from Models.", f.friendly_name)));
+            }
+            loras.push(LoraRef { path: rel, multiplier: if l.weight.is_finite() { l.weight.clamp(-4.0, 4.0) } else { 1.0 } });
+            if req.add_trigger_words {
+                if let Some(c) = &f.civitai {
+                    for w in &c.trained_words {
+                        let w = w.trim();
+                        if !w.is_empty() && !triggers.iter().any(|t| t.eq_ignore_ascii_case(w)) {
+                            triggers.push(w.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut prompt = req.prompt.trim().to_string();
+    let lower = prompt.to_lowercase();
+    let missing: Vec<&String> = triggers.iter().filter(|t| !lower.contains(&t.to_lowercase())).collect();
+    if !missing.is_empty() {
+        let joined = missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+        prompt = if prompt.is_empty() { joined } else { format!("{prompt}, {joined}") };
+    }
+
+    let style = match req.style_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(id) => Some(crate::library::get_style(core, id).map_err(|_| CoreError::not_found("That style doesn't exist anymore. Pick another style."))?),
+        None => None,
+    };
+    let apply_prefix = req.fine_tune.auto_prompt_prefix.unwrap_or(true) && req.mode != GenMode::Edit;
+    let final_prompt = pinhole_registry::style::combine(
+        &reg,
+        &family,
+        &prompt,
+        style.as_ref().map(|s| s.positive.as_str()),
+        style.as_ref().and_then(|s| s.negative.as_deref()),
+        req.fine_tune.negative_prompt.as_deref(),
+        apply_prefix,
+    );
+
+    let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
+    if let Some(n) = &final_prompt.negative {
+        secrets.push(n.clone());
+    }
+    if let Some(n) = &req.fine_tune.negative_prompt {
+        secrets.push(n.clone());
+    }
+    if let Some(s) = &style {
+        secrets.push(s.positive.clone());
+    }
+    Ok(Prepared { model, family, final_prompt, secrets, loras })
+}
+
+/// The installed model + its family. Edit mode uses the best installed edit model
+/// when the chosen one isn't an edit model.
+fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(InstalledFile, Family)> {
+    let reg = core.registry();
+    let idx = core.installed.lock();
+    let chosen = idx.get(&req.model_id).filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion)).cloned();
+    let is_edit = |f: &InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).map(|fam| fam.role.as_deref() == Some("edit")).unwrap_or(false);
+
+    let model = if req.mode == GenMode::Edit {
+        match chosen.filter(|f| is_edit(f)) {
+            Some(m) => m,
+            None => idx
+                .models()
+                .filter(|f| is_edit(f))
+                .min_by_key(|f| f.family.as_deref().and_then(|id| reg.family(id)).and_then(|fam| fam.edit_priority).unwrap_or(u32::MAX))
+                .cloned()
+                .ok_or_else(|| CoreError::not_found("No edit model is installed yet. Get one from the Edit tab."))?,
+        }
+    } else {
+        chosen.ok_or_else(|| CoreError::not_found("That model isn't installed anymore. Pick another model."))?
+    };
+    let fid = model
+        .family
+        .clone()
+        .ok_or_else(|| CoreError::invalid("Pinhole doesn't know what kind of model this is yet. Pick its model family in Models → Installed."))?;
+    let family = reg.family(&fid).cloned().ok_or_else(|| CoreError::invalid("This model's family isn't in Pinhole's model list anymore. Update Pinhole or pick another model."))?;
+    let mode_name = match req.mode {
+        GenMode::Txt2img => "txt2img",
+        GenMode::Img2img => "img2img",
+        GenMode::Edit => "edit",
+    };
+    if !family.modes.is_empty() && !family.modes.iter().any(|m| m == mode_name) {
+        let msg = match req.mode {
+            GenMode::Edit => "This model can't do instruction edits. Use Restyle, or get an edit model.",
+            _ if family.modes.iter().all(|m| m == "edit") => "This is an edit model — use it in the Edit tab.",
+            _ => "This model doesn't support that mode. Pick another model.",
+        };
+        return Err(CoreError::invalid(msg));
+    }
+    Ok((model, family))
+}
+
+fn component_label(kind: &str) -> &'static str {
+    match kind {
+        "vae" => "its VAE",
+        "clip_l" => "the CLIP-L text encoder",
+        "clip_g" => "the CLIP-G text encoder",
+        "t5xxl" => "the T5 text encoder",
+        "llm" => "its text encoder",
+        "llm_vision" => "its vision encoder",
+        "taesd" => "the preview decoder",
+        _ => "a required component",
+    }
+}
+
+/// Main file + installed components for `family` on this hardware.
+fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwContext) -> CoreResult<ModelFiles> {
+    let reg = core.registry();
+    let required = wiring::required_components(&reg, family, hw);
+    let idx = core.installed.lock();
+    let main = idx.abs_path(&core.data, model);
+    if !main.is_file() {
+        return Err(CoreError::not_found(format!("The file for “{}” is missing from the Data folder. Reinstall it from Models.", model.friendly_name)));
+    }
+    let mut components = BTreeMap::new();
+    let mut missing = Vec::new();
+    for rc in required {
+        match idx.find_component(&rc.component_id) {
+            Some(f) if idx.abs_path(&core.data, f).is_file() => {
+                components.insert(rc.kind.clone(), idx.abs_path(&core.data, f));
+            }
+            _ => {
+                let file = reg.component(&rc.component_id).map(|c| c.file.clone()).unwrap_or_else(|| rc.component_id.clone());
+                missing.push(format!("{} ({file})", component_label(&rc.kind)));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return Err(CoreError::not_found(format!(
+            "This model needs {} before it can run. Open Models → Installed and click Get to download {}.",
+            missing.join(" and "),
+            if missing.len() == 1 { "it" } else { "them" }
+        )));
+    }
+    Ok(ModelFiles { family_id: family.id.clone(), main, layout: family.layout, components })
+}
+
+// ================================================================ engine lifecycle
+
+fn emit_progress(core: &AppCore, phase: GenPhase, label: &str, queue: Option<u32>, step: Option<(u32, u32)>, t0: Instant) {
+    core.emit(CoreEvent::Generation(GenerationProgress {
+        phase,
+        model_label: Some(label.to_string()),
+        queue_position: queue,
+        step: step.map(|s| s.0),
+        total_steps: step.map(|s| s.1),
+        elapsed_ms: t0.elapsed().as_millis() as u64,
+    }));
+}
+
+/// Remove `flag` (and its value) from an argument list.
+fn strip_flag(args: &mut Vec<String>, flags: &[&str]) {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if flags.contains(&args[i].as_str()) {
+            i += 2;
+            continue;
+        }
+        if flags.iter().any(|f| args[i].starts_with(&format!("{f}="))) {
+            i += 1;
+            continue;
+        }
+        out.push(args[i].clone());
+        i += 1;
+    }
+    *args = out;
+}
+
+/// Full sd-server argv (without the port): wiring args + pinned defaults, forced
+/// to listen on 127.0.0.1, with LoRA / upscaler folders.
+pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineConfig) -> Vec<String> {
+    let mut args = wiring_args.to_vec();
+    strip_flag(&mut args, &["--listen-ip", "-l", "--listen-port", "--log-level", "--serve-html-path"]);
+    let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
+    strip_flag(&mut defaults, &["--listen-ip", "-l", "--listen-port"]);
+    for d in defaults {
+        if d.starts_with("--") && !d.contains('=') && args.contains(&d) && d != "--log-level" {
+            continue;
+        }
+        args.push(d);
+    }
+    if !args.iter().any(|a| a == "--log-level") {
+        args.extend(["--log-level".into(), "warn".into()]);
+    }
+    if !args.iter().any(|a| a == "--lora-model-dir") {
+        args.extend(["--lora-model-dir".into(), core.data.models(ModelKind::Lora).to_string_lossy().into_owned()]);
+    }
+    if !args.iter().any(|a| a == "--hires-upscalers-dir") {
+        args.extend(["--hires-upscalers-dir".into(), core.data.models(ModelKind::Upscaler).to_string_lossy().into_owned()]);
+    }
+    args.extend(["--listen-ip".into(), "127.0.0.1".into()]);
+    args
+}
+
+/// Make sure sd-server runs with exactly `wiring_args` (restart otherwise) and
+/// is ready. Returns its base URL.
+async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
+    if let Some(url) = core.gen.external.lock().clone() {
+        return Ok(url);
+    }
+    let cfg = engine_setup::engine_config(core)?;
+    let args = full_sd_args(core, wiring_args, &cfg);
+    let mut slot = core.gen.slot.lock().await;
+    {
+        let s = &mut *slot;
+        if let Some(p) = s.proc.as_mut() {
+            if p.is_running() && s.args == args {
+                return Ok(p.base_url());
+            }
+        }
+    }
+    if let Some(old) = slot.proc.take() {
+        old.stop().await;
+    }
+    *slot = EngineSlot::default();
+    {
+        let mut f = core.gen.flags.lock();
+        f.running = false;
+        f.loaded_model_id = None;
+    }
+
+    let installed = engine_setup::installed_engine(core, EngineKind::Sd).ok_or_else(|| {
+        CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
+    })?;
+
+    let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
+    let mut argv = args.clone();
+    argv.extend(["--listen-port".into(), port.to_string()]);
+    core.gen.logs.clear();
+    let mut proc = EngineProcess::spawn(&installed.exe, &argv, port, core.gen.logs.clone()).map_err(|e| {
+        CoreError::new("engine_failed", "The image engine couldn't be started. Your antivirus may have blocked it — try setting up the engine again.").with_details(e.to_string())
+    })?;
+    {
+        let mut f = core.gen.flags.lock();
+        f.loading = true;
+        f.error = None;
+    }
+    engine_setup::emit_status(core);
+    emit_progress(core, GenPhase::LoadingModel, label, None, None, t0);
+
+    let client = SdClient::new(core.local.clone(), proc.base_url());
+    let logs = core.gen.logs.clone();
+    let mut last_emit = Instant::now();
+    let ready = proc
+        .wait_ready(
+            || client.is_ready(),
+            LOAD_TIMEOUT,
+            cancel,
+            |_| {
+                if last_emit.elapsed() >= Duration::from_millis(500) {
+                    last_emit = Instant::now();
+                    let step = logs.progress().filter(|p| p.kind == ProgressKind::Loading).map(|p| (p.step, p.total));
+                    emit_progress(core, GenPhase::LoadingModel, label, None, step, t0);
+                }
+            },
+        )
+        .await;
+    core.gen.flags.lock().loading = false;
+    match ready {
+        Ok(()) => {
+            slot.proc = Some(proc);
+            slot.args = args;
+            slot.model_id = Some(model_id.to_string());
+            {
+                let mut f = core.gen.flags.lock();
+                f.running = true;
+                f.loaded_model_id = Some(model_id.to_string());
+            }
+            engine_setup::emit_status(core);
+            Ok(format!("http://127.0.0.1:{port}"))
+        }
+        Err(e) => {
+            let code = proc.exit_code();
+            proc.stop().await;
+            let err = match e {
+                ReadyError::Cancelled => CoreError::new("cancelled", "Cancelled."),
+                ReadyError::Timeout => CoreError::new("engine_failed", "The model took too long to load. Try again, or try a smaller version of this model.")
+                    .with_details(core.gen.logs.tail_text(40)),
+                ReadyError::Exited { .. } => engine_failure(&core.gen.logs, code),
+            };
+            if err.code != "cancelled" {
+                core.gen.flags.lock().error = Some(err.message.clone());
+            }
+            engine_setup::emit_status(core);
+            Err(err)
+        }
+    }
+}
+
+/// Plain-language error for an engine failure (ring-buffer tail in `details`).
+pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreError {
+    let tail = logs.tail_text(40);
+    let (code, msg) = match classify(&tail, exit_code) {
+        Failure::OutOfMemory => ("vram", "Not enough VRAM — try the Fast setting or the smaller version of this model"),
+        Failure::DriverTooOld => ("engine_failed", "Your NVIDIA driver is too old for the image engine. Update it (version 570 or newer) and try again."),
+        Failure::NoGpu => ("engine_failed", "The image engine couldn't use your graphics card. Update your graphics driver, or switch the engine to CPU in Settings."),
+        Failure::GlibcTooOld => ("engine_failed", "The image engine needs Ubuntu 24.04 or newer. Please update your system."),
+        Failure::MissingLibrary => (
+            "engine_failed",
+            "The image engine is missing a system component (graphics driver / Vulkan runtime). Update your graphics driver, or switch the engine to CPU in Settings.",
+        ),
+        Failure::ModelLoad => ("engine_failed", "This model couldn't be loaded — the file may be damaged or not supported. Try downloading it again."),
+        Failure::Unknown => ("engine_failed", "The engine stopped unexpectedly. Try again; if it keeps happening, try the Fast setting or restart Pinhole."),
+    };
+    let details = match exit_code {
+        Some(c) if !tail.is_empty() => format!("{tail}\n(exit code {c})"),
+        Some(c) => format!("exit code {c}"),
+        None => tail,
+    };
+    CoreError::new(code, msg).with_details(details)
+}
+
+/// Kill the engine (cancel while generating, or after it died).
+async fn drop_engine(core: &AppCore) {
+    let mut slot = core.gen.slot.lock().await;
+    if let Some(p) = slot.proc.take() {
+        p.kill().await;
+    }
+    *slot = EngineSlot::default();
+    let mut f = core.gen.flags.lock();
+    f.running = false;
+    f.loaded_model_id = None;
+    drop(f);
+    engine_setup::emit_status(core);
+}
+
+/// `Some(exit code)` if the managed engine process has died.
+async fn engine_died(core: &AppCore) -> Option<Option<i32>> {
+    if core.gen.external.lock().is_some() {
+        return None;
+    }
+    let mut slot = core.gen.slot.lock().await;
+    let p = slot.proc.as_mut()?;
+    if p.is_running() {
+        None
+    } else {
+        Some(p.exit_code())
+    }
+}
+
+// ================================================================ generate
+
+/// Size for img2img / edit: keep the source aspect ratio at about the dial's area,
+/// multiples of 16 (Flux/Qwen need 16, SD needs 8).
+fn size_like(src_w: u32, src_h: u32, target_area: u64) -> (u32, u32) {
+    let aspect = src_w.max(1) as f64 / src_h.max(1) as f64;
+    let area = (target_area.max(256 * 256)) as f64;
+    let h = (area / aspect).sqrt();
+    let w = h * aspect;
+    let r = |v: f64| (((v / 16.0).round() as u32) * 16).clamp(256, 2048);
+    (r(w), r(h))
+}
+
+fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
+    let img = core.session.get(id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore. Add it again."))?;
+    Ok((base64::engine::general_purpose::STANDARD.encode(img.bytes.as_slice()), img))
+}
+
+/// Run one generation. See module docs.
+pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
+    let _run = core.gen.run_lock.lock().await;
+    let cancel = CancellationToken::new();
+    *core.gen.active.lock() = Some(cancel.clone());
+    let t0 = Instant::now();
+    let result = generate_inner(core, &req, &cancel, t0).await;
+    *core.gen.active.lock() = None;
+    core.gen.logs.clear_secrets();
+    let label = core.installed.lock().get(&req.model_id).map(|m| m.friendly_name.clone()).unwrap_or_default();
+    match &result {
+        Ok(_) => emit_progress(core, GenPhase::Done, &label, None, None, t0),
+        Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
+        Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
+    }
+    result
+}
+
+async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant) -> CoreResult<GenerateResult> {
+    if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
+        return Err(CoreError::invalid("Type what you want to see first."));
+    }
+    let prep = prepare(core, req)?;
+    let reg = core.registry();
+    let hw = crate::app::hw_context(core);
+    let label = prep.model.friendly_name.clone();
+
+    // Source images (checked before any engine work).
+    let mut init_image = None;
+    let mut ref_images = Vec::new();
+    let mut mask_image = None;
+    let mut source: Option<SessionImage> = None;
+    match req.mode {
+        GenMode::Txt2img => {}
+        GenMode::Img2img => {
+            let id = req.init_image_id.as_deref().ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
+            let (b64, img) = b64_image(core, id)?;
+            init_image = Some(b64);
+            source = Some(img);
+        }
+        GenMode::Edit => {
+            let mut ids: Vec<String> = req.ref_image_ids.clone();
+            if ids.is_empty() {
+                ids.extend(req.init_image_id.clone());
+            }
+            if ids.is_empty() {
+                return Err(CoreError::invalid("Add an image to edit first."));
+            }
+            for id in ids.iter().take(4) {
+                let (b64, img) = b64_image(core, id)?;
+                if source.is_none() {
+                    source = Some(img);
+                }
+                ref_images.push(b64);
+            }
+        }
+    }
+    if req.mode != GenMode::Txt2img {
+        if let Some(mid) = req.mask_image_id.as_deref() {
+            mask_image = Some(b64_image(core, mid)?.0);
+        }
+    }
+
+    let files = model_files(core, &prep.model, &prep.family, &hw)?;
+    let extras = LaunchExtras {
+        lora_dir: Some(core.data.models(ModelKind::Lora)),
+        upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),
+        vae_tiling: None,
+        use_taesd: false,
+    };
+    let wiring_args = wiring::launch_args(&reg, &files, &hw, &extras);
+    let params = wiring::resolve_params(&reg, &prep.family, &req.dials, &req.fine_tune, req.mode, &hw);
+
+    let (mut width, mut height) = (params.width, params.height);
+    if let Some(src) = &source {
+        if req.fine_tune.width.is_none() && req.fine_tune.height.is_none() {
+            (width, height) = size_like(src.width, src.height, u64::from(params.width) * u64::from(params.height));
+        }
+    }
+    let seed: i64 = match req.fine_tune.seed {
+        Some(s) if s >= 0 => s,
+        _ => i64::from(rand::random::<u32>() >> 1),
+    };
+
+    let mut body = ImgGenRequest::new(prep.final_prompt.prompt.clone(), width, height, seed);
+    body.negative_prompt = prep.final_prompt.negative.clone().unwrap_or_default();
+    body.clip_skip = params.clip_skip.unwrap_or(-1);
+    body.batch_count = params.batch_count.clamp(1, 8);
+    body.sample_params = SampleParams {
+        sample_method: params.sampler.clone(),
+        scheduler: params.scheduler.clone(),
+        sample_steps: params.steps.max(1),
+        flow_shift: params.flow_shift,
+        guidance: Guidance { txt_cfg: params.cfg, img_cfg: None, distilled_guidance: params.guidance },
+    };
+    body.hires = params.hires.as_ref().map(|h| HiresRequest { enabled: true, upscaler: None, scale: h.scale, steps: h.steps, denoising_strength: h.denoising_strength });
+    body.vae_tiling_params = if params.vae_tiling {
+        Some(VaeTilingRequest { enabled: true })
+    } else if req.fine_tune.vae_tiling == Some(false) {
+        Some(VaeTilingRequest { enabled: false })
+    } else {
+        None
+    };
+    body.lora = prep.loras.clone();
+    body.init_image = init_image;
+    body.ref_images = ref_images;
+    body.mask_image = mask_image;
+    if req.mode == GenMode::Img2img {
+        body.strength = Some(req.strength.unwrap_or(0.55).clamp(0.05, 1.0));
+    }
+
+    // Engine (restart only when the launch args differ).
+    let base = ensure_engine(core, &wiring_args, &prep.model.id, &label, cancel, t0).await?;
+    let client = SdClient::new(core.local.clone(), base);
+
+    core.gen.logs.set_secrets(&prep.secrets);
+    core.gen.logs.reset_progress();
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
+    emit_progress(core, GenPhase::Queued, &label, None, None, t0);
+    let job_id = client.submit(&body).await.map_err(|e| api_failure(core, e))?;
+    drop(body);
+
+    // Poll.
+    let steps = params.steps.max(1);
+    let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
+    let (mut passes, mut last_step) = (0u32, 0u32);
+    let mut errors = 0;
+    let job = loop {
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_EVERY) => {}
+            _ = cancel.cancelled() => {
+                return Err(cancel_job(core, &client, &job_id).await);
+            }
+        }
+        if let Some(code) = engine_died(core).await {
+            let err = engine_failure(&core.gen.logs, code);
+            drop_engine(core).await;
+            return Err(err);
+        }
+        match client.job(&job_id).await {
+            Ok(job) => {
+                errors = 0;
+                match job.status {
+                    JobStatus::Queued => emit_progress(core, GenPhase::Queued, &label, Some(job.queue_position), None, t0),
+                    JobStatus::Generating => {
+                        let step = core.gen.logs.progress().filter(|p| p.kind == ProgressKind::Sampling).map(|p| {
+                            if batches > 1 && p.total == steps {
+                                if p.step < last_step {
+                                    passes += 1;
+                                }
+                                last_step = p.step;
+                                ((passes.min(batches - 1)) * steps + p.step, steps * batches)
+                            } else {
+                                (p.step, p.total)
+                            }
+                        });
+                        emit_progress(core, GenPhase::Generating, &label, None, step, t0);
+                    }
+                    JobStatus::Completed => break job,
+                    JobStatus::Failed => {
+                        let msg = job.error.map(|e| e.message).unwrap_or_default();
+                        let mut err = engine_failure(&core.gen.logs, None);
+                        if classify(&msg, None) == Failure::OutOfMemory {
+                            err = CoreError::new("vram", "Not enough VRAM — try the Fast setting or the smaller version of this model");
+                        } else if err.code == "engine_failed" && classify(&core.gen.logs.tail_text(40), None) == Failure::Unknown {
+                            err = CoreError::new("engine_failed", "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).");
+                        }
+                        let details = format!("{}\n{}", pinhole_engine::logbuf::redact_line(&msg, &lowered(&prep.secrets)), core.gen.logs.tail_text(40));
+                        return Err(err.with_details(details.trim().to_string()));
+                    }
+                    JobStatus::Cancelled => return Err(CoreError::new("cancelled", "Cancelled.")),
+                    JobStatus::Unknown => {}
+                }
+            }
+            Err(ApiError::NotFound) => return Err(CoreError::new("engine_failed", "The engine lost track of this job. Try again.")),
+            Err(e) => {
+                errors += 1;
+                if errors >= 5 {
+                    return Err(api_failure(core, e));
+                }
+            }
+        }
+    };
+
+    // Decode + scrub + keep in RAM.
+    let mut images = job.result.map(|r| r.images).unwrap_or_default();
+    images.sort_by_key(|i| i.index);
+    if images.is_empty() {
+        return Err(CoreError::new("engine_failed", "The engine returned no image. Try again.").with_details(core.gen.logs.tail_text(20)));
+    }
+    let parent_id = source.as_ref().map(|s| s.id.clone());
+    let mut out = Vec::new();
+    for (i, img) in images.into_iter().enumerate() {
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(img.b64_json.as_bytes())
+            .map_err(|_| CoreError::new("engine_failed", "The engine returned a damaged image. Try again."))?;
+        let png = pinhole_engine::png::scrub(&raw).map_err(|_| CoreError::new("engine_failed", "The engine returned a damaged image. Try again."))?;
+        let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
+        let meta = ResultImage {
+            id: uuid::Uuid::new_v4().to_string(),
+            width: w,
+            height: h,
+            seed: seed + i as i64,
+            model_id: prep.model.id.clone(),
+            model_label: label.clone(),
+            family_id: prep.family.id.clone(),
+            steps: params.steps,
+            cfg: params.cfg,
+            guidance: params.guidance,
+            sampler: params.sampler.clone(),
+            scheduler: params.scheduler.clone(),
+            parent_id: parent_id.clone(),
+        };
+        core.session.insert_generated(png, meta.clone());
+        out.push(meta);
+    }
+    touch_last_used(core, &prep.model.id);
+    Ok(GenerateResult { images: out })
+}
+
+fn lowered(secrets: &[String]) -> Vec<String> {
+    secrets.iter().map(|s| s.trim().to_lowercase()).filter(|s| s.chars().count() >= 4).collect()
+}
+
+/// Cancel the job; sd-server can't interrupt a running job, so kill the engine then.
+async fn cancel_job(core: &AppCore, client: &SdClient, job_id: &str) -> CoreError {
+    match client.cancel(job_id).await {
+        Ok(CancelOutcome::Cancelled) | Ok(CancelOutcome::Gone) | Ok(CancelOutcome::Finished) => {}
+        Ok(CancelOutcome::Running) | Err(_) => {
+            if core.gen.external.lock().is_none() {
+                drop_engine(core).await;
+            }
+        }
+    }
+    CoreError::new("cancelled", "Cancelled.")
+}
+
+fn api_failure(core: &AppCore, e: ApiError) -> CoreError {
+    match e {
+        ApiError::QueueFull => CoreError::new("engine_failed", "The engine is busy. Wait for the current images to finish and try again."),
+        ApiError::Connect | ApiError::Timeout => engine_failure(&core.gen.logs, None),
+        ApiError::Status { code: 400, error } => {
+            CoreError::new("invalid", "The engine didn't accept these settings. Try resetting Fine-tune to the defaults.").with_details(format!("HTTP 400: {error}"))
+        }
+        other => CoreError::new("engine_failed", "The engine stopped unexpectedly. Try again.").with_details(other.to_string()),
+    }
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// `last_used` in installed.json — a timestamp only.
+fn touch_last_used(core: &AppCore, model_id: &str) {
+    let mut idx = core.installed.lock();
+    if let Some(f) = idx.get_mut(model_id) {
+        f.last_used = Some(now_secs());
+        let _ = idx.save(&core.data);
+    }
+}
+
+// ================================================================ upscale
+
+/// Upscale a session image with Real-ESRGAN (4×; 2× = 4× then halve). The
+/// upscaler is downloaded on first use. Needs the engine running (any model).
+pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
+    if factor != 2 && factor != 4 {
+        return Err(CoreError::invalid("Upscale works at 2× or 4×."));
+    }
+    let src = core.session.get(id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore."))?;
+    if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
+        return Err(CoreError::invalid("This image is already too large to upscale (max 8192 pixels per side after upscaling)."));
+    }
+    let upscaler = ensure_upscaler(core).await?;
+
+    let _run = core.gen.run_lock.lock().await;
+    let cancel = CancellationToken::new();
+    *core.gen.active.lock() = Some(cancel.clone());
+    let res = upscale_inner(core, &src, &upscaler, factor, &cancel).await;
+    *core.gen.active.lock() = None;
+    res
+}
+
+async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &str, factor: u32, cancel: &CancellationToken) -> CoreResult<ResultImage> {
+    let t0 = Instant::now();
+    let base = match running_engine_url(core).await {
+        Some(u) => u,
+        None => {
+            // sd-server needs a model loaded to run at all: start it with the image's
+            // model, or the most recently used one.
+            let model_id = pick_model_for_upscale(core, src).ok_or_else(|| CoreError::new("engine_missing", "Install a model first — the upscaler runs inside the image engine."))?;
+            let prep_model = model_and_family(core, &model_id)?;
+            let hw = crate::app::hw_context(core);
+            let files = model_files(core, &prep_model.0, &prep_model.1, &hw)?;
+            let extras = LaunchExtras {
+                lora_dir: Some(core.data.models(ModelKind::Lora)),
+                upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),
+                vae_tiling: None,
+                use_taesd: false,
+            };
+            let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
+            let r = ensure_engine(core, &args, &model_id, &prep_model.0.friendly_name, cancel, t0).await;
+            emit_progress(core, if r.is_ok() { GenPhase::Done } else { GenPhase::Failed }, &prep_model.0.friendly_name, None, None, t0);
+            r?
+        }
+    };
+    let client = SdClient::new(core.local.clone(), base);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(src.bytes.as_slice());
+    let req = UpscaleRequest::new(b64, Some(upscaler_stem.to_string()), 1);
+    let resp = tokio::select! {
+        r = client.upscale(&req) => r,
+        _ = cancel.cancelled() => return Err(CoreError::new("cancelled", "Cancelled.")),
+    };
+    let resp = resp.map_err(|e| match e {
+        ApiError::Status { code: 400, error } => CoreError::new("invalid", "The upscaler couldn't process this image.").with_details(error),
+        other => api_failure(core, other),
+    })?;
+    let img = resp.images.into_iter().next().ok_or_else(|| CoreError::new("engine_failed", "The upscaler returned no image. Try again."))?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(img.b64_json.as_bytes())
+        .map_err(|_| CoreError::new("engine_failed", "The upscaler returned a damaged image."))?;
+    let png = tokio::task::spawn_blocking(move || -> CoreResult<Vec<u8>> {
+        let clean = pinhole_engine::png::scrub(&raw).map_err(|_| CoreError::new("engine_failed", "The upscaler returned a damaged image."))?;
+        if factor == 4 {
+            return Ok(clean);
+        }
+        let (rgba, w, h) = pinhole_engine::image::decode_rgba(&clean).map_err(|e| CoreError::new("engine_failed", "The upscaler returned a damaged image.").with_details(e.to_string()))?;
+        let (small, sw, sh) = pinhole_engine::image::downscale_2x_box(&rgba, w, h);
+        pinhole_engine::image::encode_png_rgba(&small, sw, sh).map_err(|e| CoreError::internal("Couldn't finish the 2× upscale.").with_details(e.to_string()))
+    })
+    .await
+    .map_err(|e| CoreError::internal("The upscale was interrupted.").with_details(e.to_string()))??;
+    let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((src.width * factor, src.height * factor));
+    let mut meta = src.meta.clone().unwrap_or(ResultImage {
+        id: String::new(),
+        width: 0,
+        height: 0,
+        seed: 0,
+        model_id: String::new(),
+        model_label: "Upscaled image".into(),
+        family_id: String::new(),
+        steps: 0,
+        cfg: 0.0,
+        guidance: None,
+        sampler: None,
+        scheduler: None,
+        parent_id: None,
+    });
+    meta.id = uuid::Uuid::new_v4().to_string();
+    meta.width = w;
+    meta.height = h;
+    meta.parent_id = Some(src.id.clone());
+    core.session.insert_generated(png, meta.clone());
+    Ok(meta)
+}
+
+fn model_and_family(core: &AppCore, model_id: &str) -> CoreResult<(InstalledFile, Family)> {
+    let reg = core.registry();
+    let idx = core.installed.lock();
+    let m = idx.get(model_id).cloned().ok_or_else(|| CoreError::not_found("That model isn't installed anymore."))?;
+    let fam = m.family.as_deref().and_then(|f| reg.family(f)).cloned().ok_or_else(|| CoreError::invalid("Pinhole doesn't know how to run this model."))?;
+    Ok((m, fam))
+}
+
+async fn running_engine_url(core: &AppCore) -> Option<String> {
+    if let Some(u) = core.gen.external.lock().clone() {
+        return Some(u);
+    }
+    let mut slot = core.gen.slot.lock().await;
+    let p = slot.proc.as_mut()?;
+    p.is_running().then(|| p.base_url())
+}
+
+fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> {
+    let idx = core.installed.lock();
+    let reg = core.registry();
+    let usable = |f: &&InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).is_some();
+    if let Some(m) = src.meta.as_ref().and_then(|m| idx.get(&m.model_id)).filter(|f| usable(f)) {
+        return Some(m.id.clone());
+    }
+    idx.models().filter(usable).max_by_key(|f| (f.last_used.unwrap_or(0), f.added_at)).map(|f| f.id.clone())
+}
+
+/// Make sure the Real-ESRGAN component is installed; returns its file stem (the
+/// sd-server upscaler name).
+async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
+    let stem_of = |f: &InstalledFile| std::path::Path::new(&f.rel_path).file_stem().map(|s| s.to_string_lossy().into_owned());
+    {
+        let idx = core.installed.lock();
+        if let Some(f) = idx.find_component(UPSCALER_COMPONENT) {
+            if idx.abs_path(&core.data, f).is_file() {
+                return stem_of(f).ok_or_else(|| CoreError::internal("Bad upscaler file name."));
+            }
+        }
+    }
+    let reg = core.registry();
+    let comp = reg
+        .component(UPSCALER_COMPONENT)
+        .cloned()
+        .ok_or_else(|| CoreError::not_found("The upscaler isn't in Pinhole's model list. Update Pinhole."))?;
+    let dest = core.data.models(ModelKind::Upscaler).join(&comp.file);
+    std::fs::create_dir_all(core.data.models(ModelKind::Upscaler))?;
+    let sha = comp.sha256.trim().to_ascii_lowercase();
+    let spec = pinhole_net::download::DownloadSpec {
+        url: comp.url.clone(),
+        dest,
+        sha256: (sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha),
+        size_bytes: Some(comp.size_mb * 1_000_000),
+        label: "Upscaler (Real-ESRGAN 4×)".into(),
+        headers: vec![],
+    };
+    let group = core.downloads.enqueue("Upscaler (Real-ESRGAN 4×)".into(), vec![spec]);
+    let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
+    let file = files.into_iter().next().ok_or_else(|| CoreError::internal("The upscaler download is incomplete. Try again."))?;
+    let reg_file = crate::models::register_download(
+        core,
+        &file,
+        crate::models::Registration {
+            kind: ModelKind::Upscaler,
+            friendly_name: "Real-ESRGAN 4× upscaler".into(),
+            family: None,
+            component_id: Some(UPSCALER_COMPONENT.into()),
+            civitai: None,
+            dtype: None,
+        },
+    )?;
+    stem_of(&reg_file).ok_or_else(|| CoreError::internal("Bad upscaler file name."))
+}
+
+// ================================================================ tests
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_like_keeps_aspect_in_multiples_of_16() {
+        let (w, h) = size_like(1920, 1080, 1024 * 1024);
+        assert_eq!((w % 16, h % 16), (0, 0));
+        let ratio = w as f64 / h as f64;
+        assert!((ratio - 16.0 / 9.0).abs() < 0.05, "{w}x{h}");
+        assert!((w as u64 * h as u64) as f64 / (1024.0 * 1024.0) > 0.9);
+        assert_eq!(size_like(10, 10, 1), (256, 256));
+    }
+
+    #[test]
+    fn strip_flag_removes_values_and_equals_forms() {
+        let mut a: Vec<String> = ["--model", "m", "--listen-ip", "0.0.0.0", "--listen-port=9", "--vae", "v"].iter().map(|s| s.to_string()).collect();
+        strip_flag(&mut a, &["--listen-ip", "--listen-port"]);
+        assert_eq!(a, vec!["--model", "m", "--vae", "v"]);
+    }
+
+    #[test]
+    fn generate_request_debug_is_redacted_and_camel_case_parses() {
+        let json = serde_json::json!({
+            "modelId": "m1", "mode": "img2img", "prompt": "PINHOLE_SENTINEL_7f3a", "styleId": null,
+            "dials": {"shape": "portrait", "quality": "best", "stick": 0.7, "count": 2},
+            "fineTune": {"negativePrompt": "NEG", "seed": 5}, "loras": [{"loraId": "l1", "weight": 0.8}],
+            "addTriggerWords": true, "initImageId": "img1", "strength": 0.35, "refImageIds": [], "maskImageId": null
+        });
+        let req: GenerateRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.mode, GenMode::Img2img);
+        assert_eq!(req.fine_tune.seed, Some(5));
+        assert_eq!(req.loras[0].lora_id, "l1");
+        let dbg = format!("{req:?}");
+        assert!(!dbg.contains("SENTINEL") && !dbg.contains("NEG"), "{dbg}");
+        let p = FinalPromptPreview { prompt: "PINHOLE_SENTINEL_7f3a".into(), negative: None };
+        assert!(!format!("{p:?}").contains("SENTINEL"));
+    }
+
+    #[test]
+    fn engine_failure_messages_say_what_to_do() {
+        let logs = LogBuffer::default();
+        logs.push_line("ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory");
+        let e = engine_failure(&logs, Some(1));
+        assert_eq!(e.code, "vram");
+        assert_eq!(e.message, "Not enough VRAM — try the Fast setting or the smaller version of this model");
+        assert!(e.details.unwrap().contains("exit code 1"));
+        let e = engine_failure(&LogBuffer::default(), None);
+        assert!(e.message.starts_with("The engine stopped unexpectedly"));
+    }
+
+    #[test]
+    fn result_image_serializes_camel_case() {
+        let r = ResultImage {
+            id: "a".into(),
+            width: 1,
+            height: 2,
+            seed: 3,
+            model_id: "m".into(),
+            model_label: "M".into(),
+            family_id: "f".into(),
+            steps: 4,
+            cfg: 1.0,
+            guidance: None,
+            sampler: None,
+            scheduler: None,
+            parent_id: None,
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        for k in ["id", "width", "height", "seed", "modelId", "modelLabel", "familyId", "steps", "cfg", "guidance", "sampler", "scheduler", "parentId"] {
+            assert!(v.get(k).is_some(), "{k}");
+        }
+    }
 }

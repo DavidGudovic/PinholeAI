@@ -45,8 +45,13 @@ const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 /// `vram_gb == 0` (CPU only) → TooBig for everything except explicitly tiny models
 /// (`need.gb <= CPU_TINY_GB`, which are Tight: they run, slowly).
 pub fn fit(need: &VramNeed, vram_gb: f32) -> Fit {
-    if !(vram_gb > 0.0) {
-        return if need.gb <= CPU_TINY_GB + EPS { Fit::Tight } else { Fit::TooBig };
+    // NaN counts as "no GPU".
+    if vram_gb.is_nan() || vram_gb <= 0.0 {
+        return if need.gb <= CPU_TINY_GB + EPS {
+            Fit::Tight
+        } else {
+            Fit::TooBig
+        };
     }
     if need.gb <= vram_gb - HEADROOM_GB + EPS {
         Fit::Fits
@@ -81,24 +86,40 @@ fn ceil_tenth(v: f32) -> f32 {
 ///   resident — streaming more than that is "will not run acceptably".
 ///
 /// Both values are rounded up to 0.1 GB and `min_gb ≤ gb`.
-pub fn estimate(registry: &Registry, family: &Family, main_file_bytes: u64, component_bytes_on_gpu: u64) -> VramNeed {
+pub fn estimate(
+    registry: &Registry,
+    family: &Family,
+    main_file_bytes: u64,
+    component_bytes_on_gpu: u64,
+) -> VramNeed {
     let _ = registry;
     let main = gib(main_file_bytes);
     let comps = gib(component_bytes_on_gpu);
     let act = family.activation_gb.max(0.0);
     let gb = ceil_tenth(main + comps + act + ENGINE_RESERVE_GB);
     let min_gb = ceil_tenth(MIN_RESIDENT_SHARE * main + act + ENGINE_RESERVE_GB).min(gb);
-    VramNeed { gb, min_gb, estimate: true }
+    VramNeed {
+        gb,
+        min_gb,
+        estimate: true,
+    }
 }
 
 /// Measured / curated need from the registry (SPEC §6.2 item 1): the quant's
 /// `vram_gb` (`alt_quants.<quant>`), else the family download's, else the
 /// family's. `quant = None` = the main download.
 pub fn registry_need(family: &Family, quant: Option<&str>) -> Option<VramNeed> {
-    let from = |v: &VramGb| VramNeed { gb: v.recommended, min_gb: v.min.min(v.recommended), estimate: false };
+    let from = |v: &VramGb| VramNeed {
+        gb: v.recommended,
+        min_gb: v.min.min(v.recommended),
+        estimate: false,
+    };
     let dl = family.download.as_ref();
     quant
-        .and_then(|q| dl.and_then(|d| d.alt_quants.get(q)).and_then(|a| a.vram_gb.as_ref()))
+        .and_then(|q| {
+            dl.and_then(|d| d.alt_quants.get(q))
+                .and_then(|a| a.vram_gb.as_ref())
+        })
         .or_else(|| dl.and_then(|d| d.vram_gb.as_ref()))
         .or(family.vram_gb.as_ref())
         .map(from)

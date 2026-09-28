@@ -9,7 +9,8 @@
 //! Loading pipeline ([`Registry::from_yaml`]):
 //! 1. parse both documents as `serde_yaml::Value`, expand anchors and `<<` merge keys;
 //! 2. deep-merge the overrides over the shipped file ([`merge::deep_merge`]:
-//!    maps merge recursively, the user wins, scalars and sequences replace);
+//!    maps merge recursively, the user wins, scalars and sequences replace;
+//!    a family or component set to `null` is removed);
 //! 3. resolve `inherits:` per family (multi-level, cycle-checked; the parent's
 //!    `download` and `civitai_base_models` are *not* inherited);
 //! 4. resolve `detect: { same_as: X }` (copy X's rules, keep the family distinct);
@@ -35,7 +36,10 @@ pub use model::*;
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
     #[error("could not read {path}: {source}")]
-    Io { path: String, source: std::io::Error },
+    Io {
+        path: String,
+        source: std::io::Error,
+    },
     #[error("invalid registry YAML: {0}")]
     Yaml(String),
     #[error("family `{0}` inherits from unknown family `{1}`")]
@@ -59,21 +63,32 @@ pub struct Registry {
 const NON_INHERITED_KEYS: &[&str] = &["download", "civitai_base_models"];
 
 /// Used when a registry has no `hardware_profiles` at all.
-static DEFAULT_PROFILE: HardwareProfile =
-    HardwareProfile { name: String::new(), max_vram_gb: f32::MAX, flags: Vec::new(), prefer_quant: None };
+static DEFAULT_PROFILE: HardwareProfile = HardwareProfile {
+    name: String::new(),
+    max_vram_gb: f32::MAX,
+    flags: Vec::new(),
+    prefer_quant: None,
+};
 
 impl Registry {
     /// Load `<config_dir>/models.yaml` and deep-merge `overrides` (user wins).
     /// A missing overrides file is treated as "no overrides".
     pub fn load(config_dir: &Path, overrides: Option<&Path>) -> Result<Self, RegistryError> {
         let path = config_dir.join("models.yaml");
-        let models = std::fs::read_to_string(&path)
-            .map_err(|source| RegistryError::Io { path: path.display().to_string(), source })?;
+        let models = std::fs::read_to_string(&path).map_err(|source| RegistryError::Io {
+            path: path.display().to_string(),
+            source,
+        })?;
         let over = match overrides {
             Some(p) => match std::fs::read_to_string(p) {
                 Ok(s) => Some(s),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(source) => return Err(RegistryError::Io { path: p.display().to_string(), source }),
+                Err(source) => {
+                    return Err(RegistryError::Io {
+                        path: p.display().to_string(),
+                        source,
+                    })
+                }
             },
             None => None,
         };
@@ -81,32 +96,56 @@ impl Registry {
     }
 
     /// Same as [`Registry::load`] but from strings (tests).
-    pub fn from_yaml(models_yaml: &str, overrides_yaml: Option<&str>) -> Result<Self, RegistryError> {
+    pub fn from_yaml(
+        models_yaml: &str,
+        overrides_yaml: Option<&str>,
+    ) -> Result<Self, RegistryError> {
         let mut root = parse_doc(models_yaml, "models.yaml")?;
         if !root.is_mapping() {
-            return Err(RegistryError::Yaml("models.yaml: the top level must be a mapping".into()));
+            return Err(RegistryError::Yaml(
+                "models.yaml: the top level must be a mapping".into(),
+            ));
         }
         if let Some(over) = overrides_yaml {
             let over = parse_doc(over, "overrides.yaml")?;
             match over {
                 Value::Null => {}
                 Value::Mapping(_) => merge::deep_merge(&mut root, over),
-                _ => return Err(RegistryError::Yaml("overrides.yaml: the top level must be a mapping".into())),
+                _ => {
+                    return Err(RegistryError::Yaml(
+                        "overrides.yaml: the top level must be a mapping".into(),
+                    ))
+                }
+            }
+        }
+
+        // `families: { x: null }` / `components: { x: null }` in overrides removes an entry.
+        for section in ["families", "components"] {
+            if let Some(Value::Mapping(m)) = root.get_mut(section) {
+                m.retain(|_, v| !v.is_null());
             }
         }
 
         let family_order: Vec<String> = match root.get("families") {
-            Some(Value::Mapping(m)) => m.keys().filter_map(|k| k.as_str().map(str::to_owned)).collect(),
+            Some(Value::Mapping(m)) => m
+                .keys()
+                .filter_map(|k| k.as_str().map(str::to_owned))
+                .collect(),
             Some(Value::Null) | None => Vec::new(),
             Some(_) => return Err(RegistryError::Yaml("`families` must be a mapping".into())),
         };
 
         let mut file: RegistryFile =
             serde_yaml::from_value(root).map_err(|e| RegistryError::Yaml(e.to_string()))?;
-        file.hardware_profiles.sort_by(|a, b| a.max_vram_gb.total_cmp(&b.max_vram_gb));
+        file.hardware_profiles
+            .sort_by(|a, b| a.max_vram_gb.total_cmp(&b.max_vram_gb));
 
         let families = resolve_families(&file.families, &family_order)?;
-        Ok(Self { file, families, family_order })
+        Ok(Self {
+            file,
+            families,
+            family_order,
+        })
     }
 
     pub fn family(&self, id: &str) -> Option<&Family> {
@@ -119,7 +158,9 @@ impl Registry {
 
     /// Families in YAML order (the order detection candidates and pickers use).
     pub fn families_in_order(&self) -> impl Iterator<Item = &Family> {
-        self.family_order.iter().filter_map(|id| self.families.get(id))
+        self.family_order
+            .iter()
+            .filter_map(|id| self.families.get(id))
     }
 
     pub fn component(&self, id: &str) -> Option<&Component> {
@@ -138,7 +179,11 @@ impl Registry {
             return Vec::new();
         }
         self.families_in_order()
-            .filter(|f| f.civitai_base_models.iter().any(|b| b.trim().eq_ignore_ascii_case(wanted)))
+            .filter(|f| {
+                f.civitai_base_models
+                    .iter()
+                    .any(|b| b.trim().eq_ignore_ascii_case(wanted))
+            })
             .collect()
     }
 
@@ -160,7 +205,10 @@ impl Registry {
         if wanted.is_empty() || wanted.eq_ignore_ascii_case("TODO") {
             return None;
         }
-        self.file.known_files.iter().find(|k| k.sha256.trim().eq_ignore_ascii_case(wanted))
+        self.file
+            .known_files
+            .iter()
+            .find(|k| k.sha256.trim().eq_ignore_ascii_case(wanted))
     }
 
     /// Hardware tier for this much VRAM (first profile with `max_vram_gb >= vram_gb`;
@@ -221,12 +269,16 @@ impl Registry {
                 };
                 for c in ids {
                     if !comp_ok(c) {
-                        problems.push(format!("family `{id}`: component `{kind}` refers to unknown component `{c}`"));
+                        problems.push(format!(
+                            "family `{id}`: component `{kind}` refers to unknown component `{c}`"
+                        ));
                     }
                 }
                 if let ComponentChoice::ByVram(m) = choice {
                     if !m.contains_key("else") && !m.contains_key("default") {
-                        problems.push(format!("family `{id}`: component `{kind}` has no `else` choice"));
+                        problems.push(format!(
+                            "family `{id}`: component `{kind}` has no `else` choice"
+                        ));
                     }
                 }
             }
@@ -236,11 +288,16 @@ impl Registry {
                 }
             }
             if !self.file.style_templates.contains_key(&f.style_template) {
-                problems.push(format!("family `{id}`: unknown style_template `{}`", f.style_template));
+                problems.push(format!(
+                    "family `{id}`: unknown style_template `{}`",
+                    f.style_template
+                ));
             }
             for other in &f.detect.ambiguous_with {
                 if !self.families.contains_key(other) {
-                    problems.push(format!("family `{id}`: ambiguous_with unknown family `{other}`"));
+                    problems.push(format!(
+                        "family `{id}`: ambiguous_with unknown family `{other}`"
+                    ));
                 }
             }
             if !f.detect.has_positive_rule() {
@@ -248,18 +305,24 @@ impl Registry {
             }
             if let Some(s) = &f.defaults.sampler {
                 if !wiring::SAMPLERS.contains(&s.as_str()) {
-                    problems.push(format!("family `{id}`: sampler `{s}` is not an sd.cpp sample method"));
+                    problems.push(format!(
+                        "family `{id}`: sampler `{s}` is not an sd.cpp sample method"
+                    ));
                 }
             }
             if let Some(s) = &f.defaults.scheduler {
                 if !wiring::SCHEDULERS.contains(&s.as_str()) {
-                    problems.push(format!("family `{id}`: scheduler `{s}` is not an sd.cpp scheduler"));
+                    problems.push(format!(
+                        "family `{id}`: scheduler `{s}` is not an sd.cpp scheduler"
+                    ));
                 }
             }
             let multiple = wiring::size_multiple(f);
             for (shape, [w, h]) in &f.dials.shape {
                 if w % multiple != 0 || h % multiple != 0 {
-                    problems.push(format!("family `{id}`: shape `{shape}` {w}x{h} is not a multiple of {multiple}"));
+                    problems.push(format!(
+                        "family `{id}`: shape `{shape}` {w}x{h} is not a multiple of {multiple}"
+                    ));
                 }
             }
             if f.dials.shape.is_empty() {
@@ -269,7 +332,9 @@ impl Registry {
                 problems.push(format!("family `{id}`: no dials.quality"));
             }
             if f.dials.cfg_fixed.is_none() && f.dials.cfg_range.is_none() {
-                problems.push(format!("family `{id}`: neither dials.cfg_fixed nor dials.cfg_range"));
+                problems.push(format!(
+                    "family `{id}`: neither dials.cfg_fixed nor dials.cfg_range"
+                ));
             }
             for flag in &f.flags {
                 if flag.starts_with("--") && !wiring::is_known_flag(flag) {
@@ -280,7 +345,10 @@ impl Registry {
         for p in &self.file.hardware_profiles {
             for flag in &p.flags {
                 if flag.starts_with("--") && !wiring::is_known_flag(flag) {
-                    problems.push(format!("hardware profile `{}`: unknown sd-server flag `{flag}`", p.name));
+                    problems.push(format!(
+                        "hardware profile `{}`: unknown sd-server flag `{flag}`",
+                        p.name
+                    ));
                 }
             }
         }
@@ -307,7 +375,10 @@ impl Registry {
         }
         for k in &self.file.known_files {
             if !self.families.contains_key(&k.family) {
-                problems.push(format!("known_files {}: unknown family `{}`", k.sha256, k.family));
+                problems.push(format!(
+                    "known_files {}: unknown family `{}`",
+                    k.sha256, k.family
+                ));
             }
         }
         problems
@@ -315,8 +386,10 @@ impl Registry {
 }
 
 fn parse_doc(text: &str, what: &str) -> Result<Value, RegistryError> {
-    let mut v: Value = serde_yaml::from_str(text).map_err(|e| RegistryError::Yaml(format!("{what}: {e}")))?;
-    v.apply_merge().map_err(|e| RegistryError::Yaml(format!("{what}: {e}")))?;
+    let mut v: Value =
+        serde_yaml::from_str(text).map_err(|e| RegistryError::Yaml(format!("{what}: {e}")))?;
+    v.apply_merge()
+        .map_err(|e| RegistryError::Yaml(format!("{what}: {e}")))?;
     Ok(v)
 }
 
@@ -344,8 +417,8 @@ fn resolve_families(
         let map = v.as_mapping_mut().expect("checked in resolve_inherits");
         map.insert(Value::from("id"), Value::from(id.as_str()));
         map.insert(Value::from("detect"), detects[*id].clone());
-        let mut fam: Family =
-            serde_yaml::from_value(v).map_err(|e| RegistryError::Yaml(format!("family `{id}`: {e}")))?;
+        let mut fam: Family = serde_yaml::from_value(v)
+            .map_err(|e| RegistryError::Yaml(format!("family `{id}`: {e}")))?;
         fam.id = (*id).clone();
         families.insert((*id).clone(), fam);
     }
@@ -394,18 +467,29 @@ fn resolve_inherits(
     }
     if stack.iter().any(|s| s == id) {
         stack.push(id.to_owned());
-        return Err(RegistryError::Invalid(format!("`inherits` cycle: {}", stack.join(" → "))));
+        return Err(RegistryError::Invalid(format!(
+            "`inherits` cycle: {}",
+            stack.join(" → ")
+        )));
     }
     let own = raw.get(id).cloned().unwrap_or(Value::Null);
     let own = match own {
         Value::Mapping(m) => m,
         Value::Null => Mapping::new(),
-        _ => return Err(RegistryError::Yaml(format!("family `{id}` must be a mapping"))),
+        _ => {
+            return Err(RegistryError::Yaml(format!(
+                "family `{id}` must be a mapping"
+            )))
+        }
     };
     let parent = match own.get("inherits") {
         None | Some(Value::Null) => None,
         Some(Value::String(p)) => Some(p.clone()),
-        Some(_) => return Err(RegistryError::Invalid(format!("family `{id}`: `inherits` must be a family id"))),
+        Some(_) => {
+            return Err(RegistryError::Invalid(format!(
+                "family `{id}`: `inherits` must be a family id"
+            )))
+        }
     };
     let value = match parent {
         None => Value::Mapping(own),
@@ -442,17 +526,28 @@ fn resolve_detect(
     }
     if stack.iter().any(|s| s == id) {
         stack.push(id.to_owned());
-        return Err(RegistryError::Invalid(format!("`detect.same_as` cycle: {}", stack.join(" → "))));
+        return Err(RegistryError::Invalid(format!(
+            "`detect.same_as` cycle: {}",
+            stack.join(" → ")
+        )));
     }
     let own = match merged.get(id).and_then(|f| f.get("detect")) {
         Some(Value::Mapping(m)) => m.clone(),
         None | Some(Value::Null) => Mapping::new(),
-        Some(_) => return Err(RegistryError::Yaml(format!("family `{id}`: `detect` must be a mapping"))),
+        Some(_) => {
+            return Err(RegistryError::Yaml(format!(
+                "family `{id}`: `detect` must be a mapping"
+            )))
+        }
     };
     let target = match own.get("same_as") {
         None | Some(Value::Null) => None,
         Some(Value::String(t)) => Some(t.clone()),
-        Some(_) => return Err(RegistryError::Invalid(format!("family `{id}`: `detect.same_as` must be a family id"))),
+        Some(_) => {
+            return Err(RegistryError::Invalid(format!(
+                "family `{id}`: `detect.same_as` must be a family id"
+            )))
+        }
     };
     let value = match target {
         None => Value::Mapping(own),

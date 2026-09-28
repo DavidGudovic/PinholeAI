@@ -98,33 +98,24 @@ pub fn unsupported_message(base: Option<&str>) -> String {
     }
 }
 
-/// Architecture key: families with the same tensor layout (e.g. SDXL, Pony,
-/// Illustrious; FLUX.1 dev/schnell/Kontext) share it. Used to check that a
-/// LoRA fits a checkpoint.
-pub fn arch_key(registry: &Registry, family_id: &str) -> String {
+/// Architecture root of a family: follow `detect.same_as`, then `inherits`,
+/// to the family that defines the tensor layout (Pony / Illustrious → SDXL,
+/// Kontext / schnell → FLUX.1 dev, Qwen Image Edit → Qwen-Image).
+pub fn arch_root(registry: &Registry, family_id: &str) -> String {
     let mut id = family_id.to_string();
-    let mut fam = registry.family(&id);
-    for _ in 0..8 {
-        match fam.and_then(|f| f.detect.same_as.clone()) {
-            Some(parent) if registry.family(&parent).is_some() => {
-                fam = registry.family(&parent);
-                id = parent;
-            }
+    for _ in 0..16 {
+        let Some(f) = registry.family(&id) else { break };
+        match f.detect.same_as.clone().or_else(|| f.inherits.clone()) {
+            Some(next) if next != id && registry.family(&next).is_some() => id = next,
             _ => break,
         }
     }
-    let Some(f) = fam else { return id };
-    let mut rules: Vec<&str> = f.detect.any_tensor.iter().chain(&f.detect.all_tensor).map(String::as_str).collect();
-    if rules.is_empty() {
-        return id;
-    }
-    rules.sort_unstable();
-    rules.dedup();
-    rules.join("|")
+    id
 }
 
+/// Same tensor layout: a LoRA for one works with the other.
 pub fn same_architecture(registry: &Registry, a: &str, b: &str) -> bool {
-    a == b || arch_key(registry, a) == arch_key(registry, b)
+    a == b || arch_root(registry, a) == arch_root(registry, b)
 }
 
 // ------------------------------------------------------------------ components
@@ -217,20 +208,12 @@ pub fn missing_components<'a>(
         .collect()
 }
 
-const TEXT_ENCODER_KINDS: &[&str] = &["clip_l", "clip_g", "t5xxl", "llm", "llm_vision"];
-
-/// Bytes of required components that stay on the GPU while sampling:
-/// VAE-type parts always; text encoders unless the family runs them on the
-/// CPU (`--clip-on-cpu`) or the hardware tier offloads (`--offload-to-cpu`).
+/// Bytes of the components that stay on the GPU (registry
+/// `wiring::gpu_resident_components`), for `vram::estimate`.
 pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext) -> u64 {
-    let profile_flags = &registry.hardware_profile(hw.vram_gb).flags;
-    let has = |flag: &str| family.flags.iter().chain(profile_flags.iter()).any(|f| f == flag);
-    let encoders_on_cpu = has("--clip-on-cpu") || has("--offload-to-cpu");
-    wiring::required_components(registry, family, hw)
+    wiring::gpu_resident_components(registry, family, hw)
         .iter()
         .filter_map(|rc| registry.component(&rc.component_id))
-        .filter(|c| c.kind != "upscaler")
-        .filter(|c| !(encoders_on_cpu && TEXT_ENCODER_KINDS.contains(&c.kind.as_str())))
         .map(|c| mb_to_bytes(c.size_mb))
         .sum()
 }
@@ -238,7 +221,7 @@ pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext)
 // ------------------------------------------------------------------ VRAM
 
 pub fn need_from(v: &VramGb) -> VramNeed {
-    VramNeed { gb: v.recommended, min_gb: v.min, estimate: false }
+    VramNeed { gb: v.recommended, min_gb: v.min.min(v.recommended), estimate: false }
 }
 
 /// Registry figure for the family when it has one (measured), else an

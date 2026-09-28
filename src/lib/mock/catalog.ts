@@ -245,7 +245,6 @@ export function catalogEntryByVersion(versionId: number): CatalogCard | null {
 
 // ---------------------------------------------------------------- browse
 const PAGE = 24;
-const PERIOD_DAYS: Record<string, number> = { Week: 7, Month: 30, Year: 365, AllTime: Infinity };
 
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
@@ -267,7 +266,6 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
     if (q.price === "paid_only" && !e.earlyAccess) return false;
     if (q.commercialOnly && !e.commercialOk) return false;
     if (q.compatibleOnly && !e.compatible) return false;
-    if (e.createdDaysAgo > (PERIOD_DAYS[q.period] ?? Infinity)) return false;
     if (text && !`${e.name} ${e.creator} ${e.baseModel}`.toLowerCase().includes(text)) return false;
     return true;
   });

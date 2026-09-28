@@ -98,7 +98,8 @@ pub struct Detection {
     pub dtype: String,
     /// `true` when the file is a LoRA rather than a base model.
     pub is_lora: bool,
-    /// `true` when the file looks like a standalone component (VAE / text encoder).
+    /// `Some(kind)` when the file looks like a standalone component (best effort):
+    /// `vae` | `taesd` | `clip_l` | `clip_g` | `t5xxl` | `llm` | `llm_vision`.
     pub is_component: Option<String>,
 }
 
@@ -125,13 +126,17 @@ pub fn read_header(path: &Path) -> Result<HeaderInfo, DetectError> {
     }
 
     let n = safetensors_precheck(&head[..head_len], file_size)?;
-    let total = usize::try_from(8 + n).map_err(|_| DetectError::Malformed("header too large".into()))?;
+    let total =
+        usize::try_from(8 + n).map_err(|_| DetectError::Malformed("header too large".into()))?;
     let mut buf = vec![0u8; total];
     buf[..head_len].copy_from_slice(&head[..head_len]);
-    f.read_exact(&mut buf[head_len..]).map_err(|e| match e.kind() {
-        std::io::ErrorKind::UnexpectedEof => DetectError::Malformed("safetensors header is truncated".into()),
-        _ => DetectError::Io(e),
-    })?;
+    f.read_exact(&mut buf[head_len..])
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::UnexpectedEof => {
+                DetectError::Malformed("safetensors header is truncated".into())
+            }
+            _ => DetectError::Io(e),
+        })?;
     parse_safetensors(&buf, file_size)
 }
 
@@ -162,7 +167,9 @@ fn safetensors_precheck(head: &[u8], file_size: u64) -> Result<u64, DetectError>
         return Err(DetectError::Malformed("safetensors header is empty".into()));
     }
     if file_size > 0 && n > file_size.saturating_sub(8) {
-        return Err(DetectError::Malformed("safetensors header runs past the end of the file".into()));
+        return Err(DetectError::Malformed(
+            "safetensors header runs past the end of the file".into(),
+        ));
     }
     Ok(n)
 }
@@ -170,19 +177,28 @@ fn safetensors_precheck(head: &[u8], file_size: u64) -> Result<u64, DetectError>
 fn parse_safetensors(bytes: &[u8], file_size: u64) -> Result<HeaderInfo, DetectError> {
     let n = safetensors_precheck(bytes, file_size)?;
     let end = 8usize
-        .checked_add(usize::try_from(n).map_err(|_| DetectError::Malformed("header too large".into()))?)
+        .checked_add(
+            usize::try_from(n).map_err(|_| DetectError::Malformed("header too large".into()))?,
+        )
         .ok_or_else(|| DetectError::Malformed("header too large".into()))?;
     if bytes.len() < end {
-        return Err(DetectError::Malformed("safetensors header is truncated".into()));
+        return Err(DetectError::Malformed(
+            "safetensors header is truncated".into(),
+        ));
     }
-    let json: serde_json::Value = serde_json::from_slice(&bytes[8..end])
-        .map_err(|e| DetectError::Malformed(format!("safetensors header is not valid JSON: {e}")))?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes[8..end]).map_err(|e| {
+        DetectError::Malformed(format!("safetensors header is not valid JSON: {e}"))
+    })?;
     let obj = json
         .as_object()
         .ok_or_else(|| DetectError::Malformed("safetensors header is not a JSON object".into()))?;
 
     // Bytes available for tensor data, when the file size is known.
-    let data_len = if file_size > 0 { Some(file_size - 8 - n) } else { None };
+    let data_len = if file_size > 0 {
+        Some(file_size - 8 - n)
+    } else {
+        None
+    };
 
     let mut metadata = BTreeMap::new();
     let mut tensors = Vec::with_capacity(obj.len());
@@ -197,18 +213,34 @@ fn parse_safetensors(bytes: &[u8], file_size: u64) -> Result<HeaderInfo, DetectE
             }
             continue;
         }
-        let bad = |what: &str| DetectError::Malformed(format!("tensor `{}`: {what}", truncate_chars(name, 120)));
-        let t = entry.as_object().ok_or_else(|| bad("entry is not an object"))?;
-        let dtype = t.get("dtype").and_then(|d| d.as_str()).ok_or_else(|| bad("missing dtype"))?;
-        let shape = t.get("shape").and_then(|s| s.as_array()).ok_or_else(|| bad("missing shape"))?;
+        let bad = |what: &str| {
+            DetectError::Malformed(format!("tensor `{}`: {what}", truncate_chars(name, 120)))
+        };
+        let t = entry
+            .as_object()
+            .ok_or_else(|| bad("entry is not an object"))?;
+        let dtype = t
+            .get("dtype")
+            .and_then(|d| d.as_str())
+            .ok_or_else(|| bad("missing dtype"))?;
+        let shape = t
+            .get("shape")
+            .and_then(|s| s.as_array())
+            .ok_or_else(|| bad("missing shape"))?;
         if shape.len() > MAX_DIMS {
             return Err(bad("too many dimensions"));
         }
         let mut dims = Vec::with_capacity(shape.len());
         for d in shape {
-            dims.push(d.as_u64().ok_or_else(|| bad("shape is not a list of non-negative integers"))?);
+            dims.push(
+                d.as_u64()
+                    .ok_or_else(|| bad("shape is not a list of non-negative integers"))?,
+            );
         }
-        let offsets = t.get("data_offsets").and_then(|o| o.as_array()).ok_or_else(|| bad("missing data_offsets"))?;
+        let offsets = t
+            .get("data_offsets")
+            .and_then(|o| o.as_array())
+            .ok_or_else(|| bad("missing data_offsets"))?;
         if offsets.len() != 2 {
             return Err(bad("data_offsets must have two entries"));
         }
@@ -226,9 +258,19 @@ fn parse_safetensors(bytes: &[u8], file_size: u64) -> Result<HeaderInfo, DetectE
             .try_fold(1u64, |acc, d| acc.checked_mul(*d))
             .ok_or_else(|| bad("shape overflows"))?;
         dims.reverse(); // PyTorch order → ggml `ne` order
-        tensors.push(TensorInfo { name: name.clone(), dtype: dtype.to_ascii_lowercase(), ne: dims, bytes: stop - begin });
+        tensors.push(TensorInfo {
+            name: name.clone(),
+            dtype: dtype.to_ascii_lowercase(),
+            ne: dims,
+            bytes: stop - begin,
+        });
     }
-    Ok(finish(FileFormat::Safetensors, tensors, metadata, file_size))
+    Ok(finish(
+        FileFormat::Safetensors,
+        tensors,
+        metadata,
+        file_size,
+    ))
 }
 
 fn finish(
@@ -300,7 +342,9 @@ impl<R: Read> Bounded<R> {
     fn fill(&mut self, buf: &mut [u8]) -> Result<(), DetectError> {
         self.take_budget(buf.len() as u64)?;
         self.r.read_exact(buf).map_err(|e| match e.kind() {
-            std::io::ErrorKind::UnexpectedEof => DetectError::Malformed("GGUF header is truncated".into()),
+            std::io::ErrorKind::UnexpectedEof => {
+                DetectError::Malformed("GGUF header is truncated".into())
+            }
             _ => DetectError::Io(e),
         })
     }
@@ -338,7 +382,9 @@ impl<R: Read> Bounded<R> {
     fn string(&mut self, max: u64, what: &str) -> Result<String, DetectError> {
         let len = self.u64()?;
         if len > max {
-            return Err(DetectError::Malformed(format!("GGUF {what} is {len} bytes long (limit {max})")));
+            return Err(DetectError::Malformed(format!(
+                "GGUF {what} is {len} bytes long (limit {max})"
+            )));
         }
         if len > self.remaining() {
             return Err(DetectError::Malformed("GGUF header is truncated".into()));
@@ -442,25 +488,36 @@ pub fn ggml_type_info(t: u32) -> Option<(&'static str, u64, u64)> {
 }
 
 fn parse_gguf<R: Read>(r: R, file_size: u64) -> Result<HeaderInfo, DetectError> {
-    let limit = if file_size > 0 { file_size.min(MAX_HEADER_BYTES) } else { MAX_HEADER_BYTES };
+    let limit = if file_size > 0 {
+        file_size.min(MAX_HEADER_BYTES)
+    } else {
+        MAX_HEADER_BYTES
+    };
     let mut rd = Bounded { r, used: 0, limit };
 
     let mut magic = [0u8; 4];
-    rd.fill(&mut magic).map_err(|_| DetectError::UnknownFormat)?;
+    rd.fill(&mut magic)
+        .map_err(|_| DetectError::UnknownFormat)?;
     if &magic != b"GGUF" {
         return Err(DetectError::UnknownFormat);
     }
     let version = rd.u32()?;
     if !(2..=3).contains(&version) {
-        return Err(DetectError::Malformed(format!("unsupported GGUF version {version}")));
+        return Err(DetectError::Malformed(format!(
+            "unsupported GGUF version {version}"
+        )));
     }
     let n_tensors = rd.u64()?;
     let n_kv = rd.u64()?;
     if n_tensors > MAX_GGUF_TENSORS {
-        return Err(DetectError::Malformed(format!("GGUF claims {n_tensors} tensors")));
+        return Err(DetectError::Malformed(format!(
+            "GGUF claims {n_tensors} tensors"
+        )));
     }
     if n_kv > MAX_GGUF_KV {
-        return Err(DetectError::Malformed(format!("GGUF claims {n_kv} metadata entries")));
+        return Err(DetectError::Malformed(format!(
+            "GGUF claims {n_kv} metadata entries"
+        )));
     }
 
     let mut metadata = BTreeMap::new();
@@ -485,7 +542,9 @@ fn parse_gguf<R: Read>(r: R, file_size: u64) -> Result<HeaderInfo, DetectError> 
         let name = rd.string(MAX_GGUF_NAME, "tensor name")?;
         let n_dims = rd.u32()? as usize;
         if n_dims > MAX_DIMS {
-            return Err(DetectError::Malformed(format!("GGUF tensor with {n_dims} dimensions")));
+            return Err(DetectError::Malformed(format!(
+                "GGUF tensor with {n_dims} dimensions"
+            )));
         }
         let mut ne = Vec::with_capacity(n_dims);
         for _ in 0..n_dims {
@@ -509,7 +568,12 @@ fn parse_gguf<R: Read>(r: R, file_size: u64) -> Result<HeaderInfo, DetectError> 
             None => (format!("type_{ttype}"), 0),
         };
         ranges.push((offset, bytes));
-        tensors.push(TensorInfo { name, dtype, ne, bytes });
+        tensors.push(TensorInfo {
+            name,
+            dtype,
+            ne,
+            bytes,
+        });
     }
 
     // Tensor data must fit in the file (catches truncated downloads).
@@ -518,7 +582,9 @@ fn parse_gguf<R: Read>(r: R, file_size: u64) -> Result<HeaderInfo, DetectError> 
         let avail = file_size.saturating_sub(data_start);
         for (offset, bytes) in ranges {
             if offset.checked_add(bytes).is_none_or(|end| end > avail) {
-                return Err(DetectError::Malformed("GGUF tensor data runs past the end of the file".into()));
+                return Err(DetectError::Malformed(
+                    "GGUF tensor data runs past the end of the file".into(),
+                ));
             }
         }
     }
@@ -526,7 +592,11 @@ fn parse_gguf<R: Read>(r: R, file_size: u64) -> Result<HeaderInfo, DetectError> 
 }
 
 /// Read one GGUF value; returns a short display string (arrays are summarised).
-fn read_gguf_value<R: Read>(rd: &mut Bounded<R>, vtype: u32, depth: u32) -> Result<String, DetectError> {
+fn read_gguf_value<R: Read>(
+    rd: &mut Bounded<R>,
+    vtype: u32,
+    depth: u32,
+) -> Result<String, DetectError> {
     use gguf_type::*;
     Ok(match vtype {
         UINT8 => rd.u8()?.to_string(),
@@ -540,10 +610,15 @@ fn read_gguf_value<R: Read>(rd: &mut Bounded<R>, vtype: u32, depth: u32) -> Resu
         UINT64 => rd.u64()?.to_string(),
         INT64 => (rd.u64()? as i64).to_string(),
         FLOAT64 => f64::from_bits(rd.u64()?).to_string(),
-        STRING => truncate_chars(&rd.string(MAX_GGUF_STRING, "string value")?, MAX_META_VALUE_CHARS),
+        STRING => truncate_chars(
+            &rd.string(MAX_GGUF_STRING, "string value")?,
+            MAX_META_VALUE_CHARS,
+        ),
         ARRAY => {
             if depth >= MAX_ARRAY_DEPTH {
-                return Err(DetectError::Malformed("GGUF arrays nested too deeply".into()));
+                return Err(DetectError::Malformed(
+                    "GGUF arrays nested too deeply".into(),
+                ));
             }
             let etype = rd.u32()?;
             let count = rd.u64()?;
@@ -555,28 +630,40 @@ fn read_gguf_value<R: Read>(rd: &mut Bounded<R>, vtype: u32, depth: u32) -> Resu
             } else if etype == STRING {
                 // Every string costs at least its 8-byte length.
                 if count > rd.remaining() / 8 {
-                    return Err(DetectError::Malformed("GGUF array is longer than the header".into()));
+                    return Err(DetectError::Malformed(
+                        "GGUF array is longer than the header".into(),
+                    ));
                 }
                 for _ in 0..count {
                     let len = rd.u64()?;
                     if len > MAX_GGUF_STRING {
-                        return Err(DetectError::Malformed("GGUF string in array is too long".into()));
+                        return Err(DetectError::Malformed(
+                            "GGUF string in array is too long".into(),
+                        ));
                     }
                     rd.skip(len)?;
                 }
             } else if etype == ARRAY {
                 if count > rd.remaining() / 12 {
-                    return Err(DetectError::Malformed("GGUF array is longer than the header".into()));
+                    return Err(DetectError::Malformed(
+                        "GGUF array is longer than the header".into(),
+                    ));
                 }
                 for _ in 0..count {
                     read_gguf_value(rd, ARRAY, depth + 1)?;
                 }
             } else {
-                return Err(DetectError::Malformed(format!("unknown GGUF array element type {etype}")));
+                return Err(DetectError::Malformed(format!(
+                    "unknown GGUF array element type {etype}"
+                )));
             }
             format!("[{}; {count}]", name(etype))
         }
-        other => return Err(DetectError::Malformed(format!("unknown GGUF value type {other}"))),
+        other => {
+            return Err(DetectError::Malformed(format!(
+                "unknown GGUF value type {other}"
+            )))
+        }
     })
 }
 
@@ -599,12 +686,18 @@ impl<'a> Names<'a> {
             .iter()
             .map(|n| (n.as_str(), n.strip_prefix(DIFFUSION_PREFIX).unwrap_or(n)))
             .collect();
-        let ne = header.tensors.iter().map(|t| (t.name.as_str(), t.ne.as_slice())).collect();
+        let ne = header
+            .tensors
+            .iter()
+            .map(|t| (t.name.as_str(), t.ne.as_slice()))
+            .collect();
         Self { names, ne }
     }
 
     fn any(&self, pattern: &str) -> bool {
-        self.names.iter().any(|(raw, stripped)| name_matches(pattern, raw, stripped))
+        self.names
+            .iter()
+            .any(|(raw, stripped)| name_matches(pattern, raw, stripped))
     }
 }
 
@@ -626,7 +719,8 @@ fn pattern_matches(pattern: &str, name: &str) -> bool {
 }
 
 fn name_matches(pattern: &str, raw: &str, stripped: &str) -> bool {
-    pattern_matches(pattern, raw) || (stripped.len() != raw.len() && pattern_matches(pattern, stripped))
+    pattern_matches(pattern, raw)
+        || (stripped.len() != raw.len() && pattern_matches(pattern, stripped))
 }
 
 /// Evaluate one family's rules against a header.
@@ -644,7 +738,12 @@ fn rules_match_names(rules: &DetectRules, names: &Names<'_>) -> bool {
     if !rules.all_tensor.iter().all(|p| names.any(p)) {
         return false;
     }
-    if !rules.all_of_any.iter().filter(|g| !g.is_empty()).all(|g| g.iter().any(|p| names.any(p))) {
+    if !rules
+        .all_of_any
+        .iter()
+        .filter(|g| !g.is_empty())
+        .all(|g| g.iter().any(|p| names.any(p)))
+    {
         return false;
     }
     if rules.none_tensor.iter().any(|p| names.any(p)) {
@@ -681,11 +780,21 @@ pub fn detect(registry: &Registry, header: &HeaderInfo) -> Detection {
     let has_vae_prefixed = raw.iter().any(|n| is_vae_name(n));
     let has_te_prefixed = raw.iter().any(|n| is_text_encoder_name(n));
 
-    let candidates = if is_lora { Vec::new() } else { match_families(registry, &names) };
-    let is_component =
-        if is_lora || has_diffusion || !candidates.is_empty() { None } else { component_kind(header, &raw) };
+    let candidates = if is_lora {
+        Vec::new()
+    } else {
+        match_families(registry, &names)
+    };
+    let is_component = if is_lora || has_diffusion || !candidates.is_empty() {
+        None
+    } else {
+        component_kind(header, &raw)
+    };
 
-    let layout = if !is_lora && (has_diffusion || !candidates.is_empty()) && (has_vae_prefixed || has_te_prefixed) {
+    let layout = if !is_lora
+        && (has_diffusion || !candidates.is_empty())
+        && (has_vae_prefixed || has_te_prefixed)
+    {
         Layout::AllInOne
     } else {
         Layout::DiffusionOnly
@@ -729,14 +838,32 @@ fn looks_like_lora(names: &[&str]) -> bool {
     }
     let lora = names.iter().filter(|n| is_lora_tensor(n)).count();
     // `.alpha` scalars only count when real LoRA tensors are present.
-    lora > 0 && lora * 2 >= names.len() && names.iter().any(|n| is_lora_tensor(n) && !n.ends_with(".alpha"))
+    lora > 0
+        && lora * 2 >= names.len()
+        && names
+            .iter()
+            .any(|n| is_lora_tensor(n) && !n.ends_with(".alpha"))
 }
 
 fn is_lora_tensor(n: &str) -> bool {
     const MARKERS: &[&str] = &[
-        "lora_down", "lora_up", "lora_mid", ".lora_A.", ".lora_B.", ".lora.down.", ".lora.up.",
-        "lora_A.weight", "lora_B.weight", ".hada_w1", ".hada_w2", ".hada_t1", ".lokr_w1", ".lokr_w2",
-        ".dora_scale", ".diff_b", ".lora_linear_layer.",
+        "lora_down",
+        "lora_up",
+        "lora_mid",
+        ".lora_A.",
+        ".lora_B.",
+        ".lora.down.",
+        ".lora.up.",
+        "lora_A.weight",
+        "lora_B.weight",
+        ".hada_w1",
+        ".hada_w2",
+        ".hada_t1",
+        ".lokr_w1",
+        ".lokr_w2",
+        ".dora_scale",
+        ".diff_b",
+        ".lora_linear_layer.",
     ];
     n.starts_with("lora_unet_")
         || n.starts_with("lora_te")
@@ -754,8 +881,18 @@ fn is_vae_name(n: &str) -> bool {
 /// the prefixes `convert_tensor_name()` maps onto it).
 fn is_text_encoder_name(n: &str) -> bool {
     const PREFIXES: &[&str] = &[
-        "cond_stage_model.", "conditioner.embedders.", "text_encoders.", "text_encoder.", "text_encoder_2.",
-        "te.", "te1.", "te2.", "te3.", "clip_l.", "clip_g.", "t5xxl.",
+        "cond_stage_model.",
+        "conditioner.embedders.",
+        "text_encoders.",
+        "text_encoder.",
+        "text_encoder_2.",
+        "te.",
+        "te1.",
+        "te2.",
+        "te3.",
+        "clip_l.",
+        "clip_g.",
+        "t5xxl.",
     ];
     PREFIXES.iter().any(|p| n.starts_with(p))
 }
@@ -766,9 +903,14 @@ fn component_kind(header: &HeaderInfo, names: &[&str]) -> Option<String> {
     if names.is_empty() {
         return None;
     }
-    let arch = header.metadata.get("general.architecture").map(|s| s.to_ascii_lowercase());
+    let arch = header
+        .metadata
+        .get("general.architecture")
+        .map(|s| s.to_ascii_lowercase());
     let any = |p: &str| names.iter().any(|n| n.contains(p));
-    let share = |pred: &dyn Fn(&str) -> bool| names.iter().filter(|n| pred(n)).count() * 10 >= names.len() * 9;
+    let share = |pred: &dyn Fn(&str) -> bool| {
+        names.iter().filter(|n| pred(n)).count() * 10 >= names.len() * 9
+    };
 
     // GGUF companions (llama.cpp naming).
     if let Some(a) = arch.as_deref() {
@@ -789,23 +931,41 @@ fn component_kind(header: &HeaderInfo, names: &[&str]) -> Option<String> {
         return Some("t5xxl".into());
     }
 
-    // Safetensors companions (HF / ComfyUI naming).
+    // Safetensors companions (HF / ComfyUI naming). T5 first: its `encoder.block.*`
+    // names would otherwise pass the VAE prefix test.
+    if any("encoder.block.") && (any("SelfAttention") || any("layer.0.")) {
+        return Some("t5xxl".into());
+    }
     let vae_like = share(&|n: &str| {
-        ["encoder.", "decoder.", "quant_conv.", "post_quant_conv.", "conv1.", "conv2.", "first_stage_model.", "vae.", "taesd_"]
-            .iter()
-            .any(|p| n.starts_with(p))
+        [
+            "encoder.",
+            "decoder.",
+            "quant_conv.",
+            "post_quant_conv.",
+            "conv1.",
+            "conv2.",
+            "first_stage_model.",
+            "vae.",
+            "taesd_",
+        ]
+        .iter()
+        .any(|p| n.starts_with(p))
     });
     if vae_like && any("decoder") {
         // TAESD / TAEF1 / TAEHV are a few MB; real VAEs are 80+ MB.
-        return Some(if header.tensor_bytes > 0 && header.tensor_bytes < 50 * 1024 * 1024 { "taesd" } else { "vae" }.into());
-    }
-    if any("encoder.block.") && (any("SelfAttention") || any("layer.0.")) {
-        return Some("t5xxl".into());
+        return Some(
+            if header.tensor_bytes > 0 && header.tensor_bytes < 50 * 1024 * 1024 {
+                "taesd"
+            } else {
+                "vae"
+            }
+            .into(),
+        );
     }
     if any("model.layers.") && any("self_attn") {
         return Some("llm".into());
     }
-    if any("visual.blocks.") || any("vision_model.encoder.") && !any("text_model.") {
+    if any("visual.blocks.") || (any("vision_model.encoder.") && !any("text_model.")) {
         return Some("llm_vision".into());
     }
     if any("text_model.encoder.layers.") || any("transformer.resblocks.") {
@@ -829,7 +989,10 @@ fn clip_kind(header: &HeaderInfo, names: &[&str]) -> &'static str {
     let layers = names
         .iter()
         .filter_map(|n| {
-            let rest = n.split("encoder.layers.").nth(1).or_else(|| n.split("resblocks.").nth(1))?;
+            let rest = n
+                .split("encoder.layers.")
+                .nth(1)
+                .or_else(|| n.split("resblocks.").nth(1))?;
             rest.split('.').next()?.parse::<u32>().ok()
         })
         .max()

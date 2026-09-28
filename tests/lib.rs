@@ -233,8 +233,9 @@ fn scan_path(path: &Path, needles: &[&str], hits: &mut Vec<Hit>) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            // Windows may hold transient locks on temp files owned by other processes.
-            if e.kind() != std::io::ErrorKind::PermissionDenied {
+            // Windows may hold transient locks on temp files owned by other processes,
+            // and other processes may delete their temp files while we scan.
+            if !matches!(e.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound) {
                 hits.push(Hit { needle: String::new(), path: path.to_path_buf(), location: format!("unreadable: {e}") });
             }
             return;

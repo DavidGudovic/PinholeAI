@@ -670,17 +670,17 @@ pub(crate) mod tests {
         let page = page();
         let by_id = |id: u64| page.items.iter().find(|m| m.id == id).unwrap();
         let q = |look: &str| BrowseQuery { look: Some(look.into()), ..Default::default() };
-        assert!(f.keep_model(&q("realistic"), by_id(4201)));
-        assert!(!f.keep_model(&q("anime"), by_id(4201)));
+        assert!(f.keep_model(&q("realistic"), by_id(139562)));
+        assert!(!f.keep_model(&q("anime"), by_id(139562)));
         assert!(f.keep_model(&q("anime"), by_id(777001)), "tag `2d`");
         assert!(f.keep_model(&q("three_d"), by_id(800002)));
         assert!(f.keep_model(&q("illustration"), by_id(618692)));
         // Brand: product tags AND commercial Image.
         assert!(f.keep_model(&q("brand"), by_id(800002)), "product tag + {{Image,Sell}}");
         assert!(!f.keep_model(&q("brand"), by_id(618692)), "product tag but no commercial use");
-        assert!(!f.keep_model(&q("brand"), by_id(4201)), "commercial but no product tag");
+        assert!(!f.keep_model(&q("brand"), by_id(139562)), "commercial but no product tag");
         // Unknown look keys are ignored rather than hiding everything.
-        assert!(f.keep_model(&q("nope"), by_id(4201)));
+        assert!(f.keep_model(&q("nope"), by_id(139562)));
     }
 
     #[test]
