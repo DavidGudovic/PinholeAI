@@ -16,6 +16,7 @@ pub mod browse;
 pub mod cards;
 pub mod families;
 pub mod filters;
+pub mod gallery;
 pub mod inventory;
 pub mod lenient;
 pub mod local;

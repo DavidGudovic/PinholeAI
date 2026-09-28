@@ -8,6 +8,7 @@ import { onSettingsChanged } from "../../settings/events";
 import { CatalogCardView } from "./CatalogCardView";
 import { AdultConfirmDialog, Chip, EmptyState, FilterGroup, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
+import { ModelDetails } from "./ModelDetails";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
 import {
   COMMERCIAL_OPTIONS,
@@ -41,6 +42,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const [error, setError] = useState<CoreError | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [installFor, setInstallFor] = useState<CatalogCard | null>(null);
+  const [detailsFor, setDetailsFor] = useState<CatalogCard | null>(null);
   const [installedVersions, setInstalledVersions] = useState<Set<number>>(new Set());
 
   const filtersRef = useRef(filters);
@@ -135,6 +137,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
   const showPrice = showPriceBadge(filters.price);
   const onInstall = useCallback((c: CatalogCard) => setInstallFor(c), []);
+  const onOpen = useCallback((c: CatalogCard) => setDetailsFor(c), []);
 
   return (
     <div className="space-y-4">
@@ -248,6 +251,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
                 showPrice={showPrice}
                 installed={c.installed || installedVersions.has(c.versionId)}
                 onInstall={onInstall}
+                onOpen={onOpen}
               />
             ))}
           </Grid>
@@ -269,6 +273,15 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         </div>
       )}
 
+      {detailsFor && (
+        <ModelDetails
+          card={detailsFor}
+          content={filters.content}
+          installed={detailsFor.installed || installedVersions.has(detailsFor.versionId)}
+          onInstall={onInstall}
+          onClose={() => setDetailsFor(null)}
+        />
+      )}
       <InstallDialog versionId={installFor?.versionId ?? null} title={installFor?.name} onClose={() => setInstallFor(null)} />
       <AdultConfirmDialog
         open={pendingContent !== null}

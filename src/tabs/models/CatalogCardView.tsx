@@ -34,12 +34,15 @@ export const CatalogCardView = memo(function CatalogCardView({
   showPrice,
   installed,
   onInstall,
+  onOpen,
 }: {
   card: CatalogCard;
   content: ContentMode;
   showPrice: boolean;
   installed: boolean;
   onInstall: (card: CatalogCard) => void;
+  /** Open the model's details page. */
+  onOpen: (card: CatalogCard) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const near = useNearViewport(ref);
@@ -83,41 +86,50 @@ export const CatalogCardView = memo(function CatalogCardView({
 
   return (
     <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
-      <div ref={ref} className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
-        {preview.src ? (
-          <img src={preview.src} alt="" draggable={false} className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
-        ) : card.previewIsVideo ? (
-          <Placeholder icon={<Film className="h-6 w-6" />} text="Video preview" />
-        ) : preview.failed || !card.previewUrl ? (
-          <Placeholder icon={<ImageOff className="h-6 w-6" />} text="No preview" />
-        ) : (
-          <div className="absolute inset-0 animate-pulse bg-neutral-200 dark:bg-neutral-800" />
-        )}
-        {blur && preview.src && (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-              <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
-            </span>
-          </div>
-        )}
-        <div className="absolute top-2 left-2 flex flex-wrap gap-1">
-          {card.styleBadge && <Overlay>{card.styleBadge}</Overlay>}
-          {isLora && <Overlay>Style add-on</Overlay>}
-        </div>
-        <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
-          {showPrice && card.earlyAccess && <Overlay tone="amber">Early access · paid</Overlay>}
-          {installed && (
-            <Overlay tone="green">
-              <Check className="h-3 w-3" /> Installed
-            </Overlay>
+      <button
+        type="button"
+        onClick={() => onOpen(card)}
+        aria-label={`Show ${card.name} details`}
+        className="relative block aspect-[4/5] w-full cursor-pointer overflow-hidden bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none focus-visible:ring-inset dark:bg-neutral-800"
+      >
+        <div ref={ref} className="absolute inset-0">
+          {preview.src ? (
+            <img src={preview.src} alt="" draggable={false} className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
+          ) : card.previewIsVideo ? (
+            <Placeholder icon={<Film className="h-6 w-6" />} text="Video preview" />
+          ) : preview.failed || !card.previewUrl ? (
+            <Placeholder icon={<ImageOff className="h-6 w-6" />} text="No preview" />
+          ) : (
+            <div className="absolute inset-0 animate-pulse bg-neutral-200 dark:bg-neutral-800" />
           )}
+          {blur && preview.src && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
+                <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
+              </span>
+            </div>
+          )}
+          <div className="absolute top-2 left-2 flex flex-wrap gap-1">
+            {card.styleBadge && <Overlay>{card.styleBadge}</Overlay>}
+            {isLora && <Overlay>Style add-on</Overlay>}
+          </div>
+          <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
+            {showPrice && card.earlyAccess && <Overlay tone="amber">Early access · paid</Overlay>}
+            {installed && (
+              <Overlay tone="green">
+                <Check className="h-3 w-3" /> Installed
+              </Overlay>
+            )}
+          </div>
         </div>
-      </div>
+      </button>
 
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-50" title={card.name}>
-            {card.name}
+            <button type="button" onClick={() => onOpen(card)} className="block max-w-full truncate text-left hover:underline focus-visible:underline focus-visible:outline-none">
+              {card.name}
+            </button>
           </h3>
           <p className="truncate text-[11px] text-neutral-500" title={`${card.baseModel} · ${card.versionName}`}>
             {card.baseModel} · {card.versionName}

@@ -266,6 +266,24 @@ model in small text.
 5. For LoRAs, save trigger words from the version's `trainedWords` into `installed.json`,
    and offer a toggle "Add trigger words automatically".
 
+#### Model details
+Clicking a card's preview or name opens the model's details page (Back or Esc returns to the
+grid where it was):
+- The card's facts (rating, downloads, size, VRAM needed with the fit badge, licence, client-work
+  badge, LoRA trigger words) and the same Install button.
+- **Example images**: the version's preview images from CivitAI, fetched through the Rust client
+  like every preview. In Safe only mode 18+ images are left out (with a count); videos are skipped.
+  Images come from `GET /api/v1/model-versions/{id}`, the only endpoint that still returns each
+  image's generation data (`/models` and `/images` send `meta: null`, checked 2026-09-28).
+- Clicking an image shows it larger with its prompt and main settings, plus two buttons:
+  **Use these settings** (turns the image's generation data into "Copy generation data" text and
+  runs it through Paste from CivitAI, so Create fills the prompt and settings, selects this model
+  or offers to install it, and shows what was applied) and **Edit this image** (the full-size image
+  goes into the in-memory session and opens in Edit). The generation data is held in memory only.
+- **Open on CivitAI** opens the model's page in the system browser: `civitai.red` for NSFW models,
+  `civitai.com` for everything else. The URL is built in Rust from the model id; the WebView
+  never navigates.
+
 #### Installed
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
 after confirmation), and **Add a file I already have** (pick a .safetensors/.gguf in the file

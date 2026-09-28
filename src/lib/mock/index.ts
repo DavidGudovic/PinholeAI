@@ -26,6 +26,7 @@ export async function installMocks(): Promise<void> {
     import("./app").then((m) => m.default as MockTable),
     import("./models").then((m) => m.default as MockTable),
     import("./catalog").then((m) => m.default as MockTable),
+    import("./gallery").then((m) => m.default as MockTable),
     import("./generate").then((m) => m.default as MockTable),
     import("./library").then((m) => m.default as MockTable),
     import("./describe").then((m) => m.default as MockTable),

@@ -16,6 +16,7 @@ use pinhole_net::NetError;
 use pinhole_store::keychain;
 
 pub use pinhole_catalog::filters::{BrowseQuery, CatalogKind, ContentMode, PriceMode};
+pub use pinhole_catalog::gallery::ModelGallery;
 pub use pinhole_catalog::view::{BrowsePage, CatalogCard, CatalogFilterOptions, InstallPlan};
 
 use crate::{AppCore, CoreError, CoreResult, InstallStarted};
@@ -124,6 +125,30 @@ pub async fn fetch_preview(core: &AppCore, url: &str) -> CoreResult<Vec<u8>> {
 
 pub use pinhole_catalog::api::is_preview_url;
 
+// ------------------------------------------------------------------ details
+
+/// The details page's gallery: the version's preview images with their
+/// generation data (in memory only). Anonymous, like browsing. Offline mode:
+/// no request, `offline: true`.
+pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode, model_nsfw: bool) -> CoreResult<ModelGallery> {
+    if core.offline.get() {
+        return Ok(ModelGallery { items: Vec::new(), hidden_nsfw: 0, trained_words: Vec::new(), offline: true });
+    }
+    let filters = filters(core)?;
+    let client = CivitaiClient::new(core.http.clone(), None);
+    let version = client.model_version(version_id).await.map_err(net_error)?;
+    Ok(pinhole_catalog::gallery::gallery(&version, content, model_nsfw, filters.preview_width))
+}
+
+/// `https://civitai.com/models/…` (civitai.red for NSFW models), for the
+/// system browser. Built here so the UI can't open arbitrary URLs.
+pub fn civitai_page_url(model_id: u64, version_id: Option<u64>, nsfw: bool) -> CoreResult<String> {
+    if model_id == 0 {
+        return Err(CoreError::invalid("That model has no CivitAI page."));
+    }
+    Ok(pinhole_catalog::gallery::civitai_page_url(model_id, version_id, nsfw))
+}
+
 // ------------------------------------------------------------------ install
 
 async fn fetch_version(client: &CivitaiClient, version_id: u64) -> CoreResult<(pinhole_catalog::api::ModelVersion, Option<pinhole_catalog::api::Model>)> {
@@ -214,6 +239,7 @@ mod tests {
         assert_eq!(fetch_preview(&core, "https://image.civitai.com/x/width=450/1.jpeg").await.unwrap_err().code, "offline");
         assert_eq!(plan_civitai_install(&core, 1).await.unwrap_err().code, "offline");
         assert_eq!(install_civitai(&core, 1, None).await.unwrap_err().code, "offline");
+        assert!(model_gallery(&core, 1, ContentMode::Safe, false).await.unwrap().offline);
     }
 
     #[test]
