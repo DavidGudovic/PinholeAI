@@ -12,6 +12,8 @@
 //! in `installed.json`.
 
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -40,6 +42,13 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const POLL_EVERY: Duration = Duration::from_millis(300);
 /// Registry component id of the ESRGAN upscaler.
 pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
+/// sd-server has no authentication and keeps every finished job (base64 images
+/// included) at `GET /sdcpp/v1/jobs/{id}` for 600 s. So once a job ran on a
+/// Pinhole-started engine, the engine is stopped this long after the last
+/// generate / upscale (and on Clear session); the next Generate reloads it.
+pub const IDLE_STOP_AFTER: Duration = Duration::from_secs(5 * 60);
+/// Another process answered on the port we started an engine on.
+pub const PORT_TAKEN_MESSAGE: &str = "Another program is using Pinhole's engine port — try again.";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
 
@@ -195,6 +204,9 @@ pub(crate) struct EngineSlot {
     pub proc: Option<EngineProcess>,
     pub args: Vec<String>,
     pub model_id: Option<String>,
+    /// An img_gen job was submitted to this process, so it may hold finished
+    /// results (see [`IDLE_STOP_AFTER`]).
+    pub results_cached: bool,
 }
 
 /// sd-server process + current generation job.
@@ -211,6 +223,13 @@ pub struct GenState {
     /// Tests: talk to an already-running (mock) server instead of spawning one.
     pub(crate) external: parking_lot::Mutex<Option<String>>,
     pub(crate) config: parking_lot::Mutex<Option<Arc<EngineConfig>>>,
+    /// Bumped when a generate / upscale starts; an armed idle stop only fires
+    /// when nothing started since.
+    pub(crate) activity: AtomicU64,
+    /// [`IDLE_STOP_AFTER`] (tests shorten it).
+    pub(crate) idle_stop_after: parking_lot::Mutex<Duration>,
+    /// Clear session happened while a job was running: stop the engine after it.
+    pub(crate) clear_pending: AtomicBool,
 }
 
 impl Default for GenState {
@@ -224,6 +243,9 @@ impl Default for GenState {
             logs: Arc::new(LogBuffer::default()),
             external: parking_lot::Mutex::new(None),
             config: parking_lot::Mutex::new(None),
+            activity: AtomicU64::new(0),
+            idle_stop_after: parking_lot::Mutex::new(IDLE_STOP_AFTER),
+            clear_pending: AtomicBool::new(false),
         }
     }
 }
@@ -258,6 +280,117 @@ pub async fn unload_model(core: &AppCore, model_id: &str) {
         drop(f);
         engine_setup::emit_status(core);
     }
+}
+
+/// Stop sd-server if it ran a job since it was launched (its finished jobs,
+/// images included, stay readable at `GET /sdcpp/v1/jobs/{id}` for 600 s).
+/// External (test) engines are never stopped. Returns whether one was stopped.
+pub(crate) async fn stop_if_results_cached(core: &AppCore) -> bool {
+    let mut slot = core.gen.slot.lock().await;
+    if !slot.results_cached || slot.proc.is_none() {
+        return false;
+    }
+    if let Some(p) = slot.proc.take() {
+        p.stop().await;
+    }
+    *slot = EngineSlot::default();
+    {
+        let mut f = core.gen.flags.lock();
+        f.running = false;
+        f.loaded_model_id = None;
+    }
+    drop(slot);
+    engine_setup::emit_status(core);
+    true
+}
+
+/// Clear session: stop sd-server so its cached results go with the session.
+/// While a job runs, the stop happens right after it instead.
+pub(crate) async fn clear_engine_results(core: &AppCore) {
+    match core.gen.run_lock.try_lock() {
+        Ok(_run) => {
+            core.gen.clear_pending.store(false, Ordering::SeqCst);
+            stop_if_results_cached(core).await;
+        }
+        Err(_) => core.gen.clear_pending.store(true, Ordering::SeqCst),
+    }
+}
+
+/// A job just ended (run lock still held): honour a pending Clear session and
+/// arm the idle stop.
+async fn after_job(core: &Arc<AppCore>, epoch: u64) {
+    if core.gen.clear_pending.swap(false, Ordering::SeqCst) {
+        stop_if_results_cached(core).await;
+    }
+    arm_idle_stop(core, epoch);
+}
+
+/// After [`IDLE_STOP_AFTER`] without a new generate / upscale, stop sd-server
+/// if it holds finished results.
+fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
+    let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+    let after = *core.gen.idle_stop_after.lock();
+    let weak = Arc::downgrade(core);
+    rt.spawn(async move {
+        tokio::time::sleep(after).await;
+        let Some(core) = weak.upgrade() else { return };
+        if core.gen.activity.load(Ordering::SeqCst) != epoch {
+            return;
+        }
+        // Holding the run lock keeps a new job from starting mid-stop.
+        let Ok(_run) = core.gen.run_lock.try_lock() else { return };
+        if core.gen.activity.load(Ordering::SeqCst) == epoch {
+            stop_if_results_cached(&core).await;
+        }
+    });
+}
+
+/// Model path sd-server reports in `/sdcpp/v1/capabilities` for these launch
+/// args: `--model`, else `--diffusion-model` (upstream `resolve_display_model_path`).
+pub(crate) fn launched_model_path(args: &[String]) -> Option<&str> {
+    let value_of = |flags: &[&str]| args.windows(2).find(|w| flags.contains(&w[0].as_str())).map(|w| w[1].as_str());
+    value_of(&["--model", "-m"]).or_else(|| value_of(&["--diffusion-model"]))
+}
+
+/// Same file? Exact string, canonical paths, or (when the reported path can't
+/// be resolved, e.g. re-encoded by the engine) the same file name.
+pub(crate) fn same_file_path(reported: &str, expected: &str) -> bool {
+    let (reported, expected) = (reported.trim(), expected.trim());
+    if reported.is_empty() || expected.is_empty() {
+        return false;
+    }
+    if reported == expected {
+        return true;
+    }
+    let (r, e) = (Path::new(reported), Path::new(expected));
+    match (r.canonicalize(), e.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        (Err(_), _) => {
+            let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+            name(r).is_some() && name(r) == name(e)
+        }
+        _ => false,
+    }
+}
+
+/// After `wait_ready`: the server answering on the port must be the child we
+/// started (still running, reporting the model we launched it with).
+pub(crate) async fn verify_engine_identity(proc: &mut EngineProcess, client: &SdClient, args: &[String]) -> CoreResult<()> {
+    let taken = || CoreError::new("engine_failed", PORT_TAKEN_MESSAGE);
+    if !proc.is_running() {
+        return Err(taken().with_details("the engine exited while another program answered on its port"));
+    }
+    if let Some(expected) = launched_model_path(args) {
+        let caps = client.capabilities().await.map_err(|e| taken().with_details(format!("capabilities check failed: {e}")))?;
+        let reported = caps.model.map(|m| m.path).unwrap_or_default();
+        if !same_file_path(&reported, expected) {
+            return Err(taken().with_details("the server on the engine's port reports a different model"));
+        }
+    }
+    if !proc.is_running() {
+        return Err(taken().with_details("the engine exited"));
+    }
+    Ok(())
 }
 
 /// Cancel the running generation (or model load). No-op when idle.
@@ -526,6 +659,13 @@ pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineC
     args
 }
 
+/// Why a freshly started engine isn't usable.
+enum ReadyFailure {
+    Ready(ReadyError),
+    /// Another program answered on the port ([`verify_engine_identity`]).
+    NotOurs(CoreError),
+}
+
 /// Make sure sd-server runs with exactly `wiring_args` (restart otherwise) and
 /// is ready. Returns its base URL.
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
@@ -591,6 +731,11 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         )
         .await;
     core.gen.flags.lock().loading = false;
+    // Port squatting: whoever answered must be our child with our model.
+    let ready = match ready {
+        Ok(()) => verify_engine_identity(&mut proc, &client, &args).await.map_err(ReadyFailure::NotOurs),
+        Err(e) => Err(ReadyFailure::Ready(e)),
+    };
     match ready {
         Ok(()) => {
             slot.proc = Some(proc);
@@ -606,12 +751,20 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         }
         Err(e) => {
             let code = proc.exit_code();
-            proc.stop().await;
             let err = match e {
-                ReadyError::Cancelled => CoreError::new("cancelled", "Cancelled."),
-                ReadyError::Timeout => CoreError::new("engine_failed", "The model took too long to load. Try again, or try a smaller version of this model.")
-                    .with_details(core.gen.logs.tail_text(40)),
-                ReadyError::Exited { .. } => engine_failure(&core.gen.logs, code),
+                ReadyFailure::NotOurs(err) => {
+                    proc.kill().await;
+                    err
+                }
+                ReadyFailure::Ready(e) => {
+                    proc.stop().await;
+                    match e {
+                        ReadyError::Cancelled => CoreError::new("cancelled", "Cancelled."),
+                        ReadyError::Timeout => CoreError::new("engine_failed", "The model took too long to load. Try again, or try a smaller version of this model.")
+                            .with_details(core.gen.logs.tail_text(40)),
+                        ReadyError::Exited { .. } => engine_failure(&core.gen.logs, code),
+                    }
+                }
             };
             if err.code != "cancelled" {
                 core.gen.flags.lock().error = Some(err.message.clone());
@@ -699,6 +852,7 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
     let _run = core.gen.run_lock.lock().await;
+    let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
@@ -711,6 +865,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
         Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
         Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
     }
+    after_job(core, epoch).await;
     result
 }
 
@@ -827,6 +982,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     emit_progress(core, GenPhase::Queued, &label, None, None, t0);
     let job_id = client.submit(&body).await.map_err(|e| api_failure(core, e))?;
     drop(body);
+    // From now on the engine may hold this job's images (IDLE_STOP_AFTER).
+    core.gen.slot.lock().await.results_cached = true;
 
     // Poll.
     let steps = params.steps.max(1);
@@ -928,7 +1085,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
 }
 
 fn lowered(secrets: &[String]) -> Vec<String> {
-    secrets.iter().map(|s| s.trim().to_lowercase()).filter(|s| s.chars().count() >= 4).collect()
+    pinhole_engine::logbuf::expand_secrets(secrets)
 }
 
 /// Cancel the job; sd-server can't interrupt a running job, so kill the engine then.
@@ -983,10 +1140,12 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     let upscaler = ensure_upscaler(core).await?;
 
     let _run = core.gen.run_lock.lock().await;
+    let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let res = upscale_inner(core, &src, &upscaler, factor, &cancel).await;
     *core.gen.active.lock() = None;
+    after_job(core, epoch).await;
     res
 }
 

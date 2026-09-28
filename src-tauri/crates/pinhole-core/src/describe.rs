@@ -67,6 +67,8 @@ pub(crate) struct LlamaSlot {
     proc: EngineProcess,
     model: PathBuf,
     mmproj: PathBuf,
+    /// Per-launch API key (memory only; handed to llama-server via its environment).
+    api_key: String,
 }
 
 /// Captioner (llama-server) state.
@@ -298,8 +300,7 @@ pub async fn describe_image(core: &Arc<AppCore>, image_id: &str, style: Describe
 }
 
 async fn describe_inner(core: &Arc<AppCore>, instruction: &str, mime: &str, bytes: &[u8], style: DescribeStyle) -> CoreResult<String> {
-    let base = ensure_llama(core).await?;
-    let client = LlamaClient::new(core.local.clone(), base);
+    let client = ensure_llama(core).await?;
     let max_tokens = if style == DescribeStyle::Tags { 200 } else { 300 };
     let text = client.describe(instruction, mime, bytes, max_tokens).await.map_err(|e| {
         let tail = core.describe.logs.tail_text(30);
@@ -314,10 +315,34 @@ async fn describe_inner(core: &Arc<AppCore>, instruction: &str, mime: &str, byte
     Ok(text)
 }
 
-/// Start llama-server if needed; returns its base URL.
-async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<String> {
+/// 32 random bytes as hex: llama-server's API key for one launch.
+fn new_api_key() -> String {
+    rand::random::<[u8; 32]>().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// After `wait_ready`: our child must still be running and the server on the
+/// port must report the model we launched it with (`GET /v1/models`, which also
+/// needs our API key) — otherwise another program holds the port.
+async fn verify_llama_identity(proc: &mut EngineProcess, client: &LlamaClient, model: &std::path::Path) -> CoreResult<()> {
+    let taken = || CoreError::new("engine_failed", crate::generate::PORT_TAKEN_MESSAGE);
+    if !proc.is_running() {
+        return Err(taken().with_details("the describe engine exited while another program answered on its port"));
+    }
+    let ids = client.model_ids().await.map_err(|e| taken().with_details(format!("model check failed: {e}")))?;
+    let expected = model.to_string_lossy();
+    if !ids.iter().any(|id| crate::generate::same_file_path(id, &expected)) {
+        return Err(taken().with_details("the server on the describe engine's port reports a different model"));
+    }
+    if !proc.is_running() {
+        return Err(taken().with_details("the describe engine exited"));
+    }
+    Ok(())
+}
+
+/// Start llama-server if needed; returns a client for it (with its API key).
+async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
     if let Some(url) = core.describe.external.lock().clone() {
-        return Ok(url);
+        return Ok(LlamaClient::new(core.local.clone(), url));
     }
     if let Some(msg) = core.describe.last_error.lock().clone() {
         return Err(CoreError::new("engine_failed", msg));
@@ -328,7 +353,7 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<String> {
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
         if s.proc.is_running() && s.model == model && s.mmproj == mmproj {
-            return Ok(s.proc.base_url());
+            return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
         }
     }
     if let Some(old) = slot.take() {
@@ -340,16 +365,20 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<String> {
     let mut args: Vec<String> = cfg.llama_cpp.launch_defaults.iter().filter(|a| *a != "--host" && *a != "127.0.0.1").cloned().collect();
     args.extend(llama::launch_args(&model, &mmproj, port, &engine.backend, CTX_SIZE));
     core.describe.logs.clear();
-    let mut proc = EngineProcess::spawn(&engine.exe, &args, port, core.describe.logs.clone())
+    let api_key = new_api_key();
+    let mut proc = EngineProcess::spawn_with_env(&engine.exe, &args, &[(llama::API_KEY_ENV, api_key.as_str())], port, core.describe.logs.clone())
         .map_err(|e| CoreError::new("engine_failed", "The describe engine couldn't be started.").with_details(e.to_string()))?;
-    let client = LlamaClient::new(core.local.clone(), proc.base_url());
+    let client = LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
     let cancel = tokio_util::sync::CancellationToken::new();
     match proc.wait_ready(|| client.is_ready(), LOAD_TIMEOUT, &cancel, |_| {}).await {
         Ok(()) => {
-            let url = proc.base_url();
-            *slot = Some(LlamaSlot { proc, model, mmproj });
+            if let Err(e) = verify_llama_identity(&mut proc, &client, &model).await {
+                proc.kill().await;
+                return Err(e);
+            }
+            *slot = Some(LlamaSlot { proc, model, mmproj, api_key });
             *core.describe.last_used.lock() = Instant::now();
-            Ok(url)
+            Ok(client)
         }
         Err(e) => {
             let code = proc.exit_code();

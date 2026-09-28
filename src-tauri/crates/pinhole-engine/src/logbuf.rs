@@ -1,7 +1,8 @@
 //! In-memory ring buffer for engine stdout/stderr (CLAUDE.md privacy rule 6).
 //! Never written to disk. Every line is redacted before it is stored:
 //! * lines containing the current prompt / negative prompt (or a long piece of
-//!   it) are replaced by `[redacted]`;
+//!   it, or any of its lines / comma-separated parts of 8+ characters) are
+//!   replaced by `[redacted]`;
 //! * anything after `prompt:` / `prompt=` / `"prompt"` / ` -p ` is cut;
 //! * sd.cpp's `json parse failed <body>` error (which would echo the request
 //!   body) is cut after the marker.
@@ -21,6 +22,8 @@ pub const DEFAULT_LINES: usize = 200;
 const MAX_LINE_CHARS: usize = 400;
 /// Pieces of a secret at least this long are matched inside lines.
 const WINDOW_CHARS: usize = 20;
+/// Lines / comma-separated parts of a secret at least this long are secrets too.
+const PART_CHARS: usize = 8;
 pub const REDACTED: &str = "[redacted]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,12 +89,8 @@ impl LogBuffer {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        let mut g = self.inner.lock();
-        g.secrets = secrets
-            .into_iter()
-            .map(|s| s.as_ref().trim().to_lowercase())
-            .filter(|s| s.chars().count() >= 4)
-            .collect();
+        let secrets = expand_secrets(secrets);
+        self.inner.lock().secrets = secrets;
     }
 
     pub fn clear_secrets(&self) {
@@ -244,6 +243,34 @@ pub fn parse_progress(seg: &str) -> Option<(ProgressKind, u32, u32)> {
     Some((kind, step, total))
 }
 
+/// Lowercased secrets for [`redact_line`]: each text (4+ characters) plus every
+/// line and every comma-separated part of it with 8+ characters, so a
+/// multi-line prompt echoed one line (or one tag) at a time is still caught.
+pub fn expand_secrets<I, S>(secrets: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |s: &str, min: usize| {
+        let s = s.trim();
+        if s.chars().count() >= min && !out.iter().any(|o| o == s) {
+            out.push(s.to_string());
+        }
+    };
+    for secret in secrets {
+        let lower = secret.as_ref().to_lowercase();
+        add(&lower, 4);
+        for line in lower.lines() {
+            add(line, PART_CHARS);
+            for part in line.split(',') {
+                add(part, PART_CHARS);
+            }
+        }
+    }
+    out
+}
+
 /// Redact a single line (see module docs). `secrets` must be lowercase.
 pub fn redact_line(line: &str, secrets: &[String]) -> String {
     let lower = line.to_lowercase();
@@ -340,6 +367,29 @@ mod tests {
         assert!(!all.to_lowercase().contains("lowres"), "{all}");
         assert!(all.contains("out of memory"));
         assert_eq!(b.tail(5).iter().filter(|l| *l == REDACTED).count(), 4);
+        b.clear_secrets();
+    }
+
+    #[test]
+    fn multi_line_prompt_parts_are_secrets_too() {
+        let b = LogBuffer::new(50);
+        let prompt = "PINHOLE_SENTINEL_7f3a\nmisty harbour, golden hour\nshort\nbokeh";
+        b.set_secrets([prompt, "low quality, watermark"]);
+        // Each line / tag is echoed on its own (no 20-char window of the whole prompt).
+        b.push_line("[DEBUG] line 1: pinhole_sentinel_7f3a");
+        b.push_line("[DEBUG] tag: misty harbour");
+        b.push_line("[DEBUG] tag: GOLDEN HOUR");
+        b.push_line("[DEBUG] neg tag: watermark");
+        b.push_line("[DEBUG] neg tag: low quality");
+        // Parts under 8 characters are not secrets on their own.
+        b.push_line("[INFO ] short bokeh");
+        let tail = b.tail(10);
+        assert_eq!(tail.iter().filter(|l| *l == REDACTED).count(), 5, "{tail:?}");
+        assert_eq!(tail.last().map(String::as_str), Some("[INFO ] short bokeh"));
+        let expanded = expand_secrets([prompt]);
+        assert!(expanded.contains(&"misty harbour, golden hour".to_string()));
+        assert!(expanded.contains(&"golden hour".to_string()));
+        assert!(!expanded.iter().any(|s| s == "short" || s == "bokeh"));
         b.clear_secrets();
     }
 

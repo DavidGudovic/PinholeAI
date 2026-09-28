@@ -21,7 +21,8 @@ use crate::{AppCore, CoreError, CoreResult};
 #[derive(Debug, Clone)]
 pub struct SessionImage {
     pub id: String,
-    /// PNG for generated images (text chunks scrubbed); original bytes for imports.
+    /// Always a PNG: generated images with text chunks scrubbed, imported
+    /// PNGs scrubbed, imported JPEG/WebP re-encoded (EXIF/XMP dropped).
     pub bytes: Arc<Vec<u8>>,
     pub kind: Kind,
     pub width: u32,
@@ -82,14 +83,20 @@ impl Session {
 // ---------------------------------------------------------------- service fns
 
 /// Put user-provided image bytes (PNG/JPEG/WebP) into the session. Rejects
-/// files over 64 MB or 50 megapixels (from the header, before decoding). PNG
-/// text chunks are dropped (they may hold someone's prompt); JPEG/WebP are kept as-is.
+/// files over 64 MB or 50 megapixels (from the header, before decoding). Every
+/// session image is a PNG without metadata: PNG text/eXIf chunks are dropped
+/// (they may hold someone's prompt or location), JPEG/WebP are decoded (EXIF
+/// orientation applied) and re-encoded, which drops EXIF / XMP (GPS, camera).
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
-    let bytes = if info.kind == Kind::Png { pinhole_engine::png::scrub(&bytes).map_err(|_| CoreError::invalid("The PNG file is damaged."))? } else { bytes };
+    let (bytes, width, height) = if info.kind == Kind::Png {
+        (pinhole_engine::png::scrub(&bytes).map_err(|_| CoreError::invalid("The PNG file is damaged."))?, info.width, info.height)
+    } else {
+        img::reencode_png(&bytes).map_err(|e| CoreError::invalid("This image couldn't be read. Try saving it as PNG first.").with_details(e.to_string()))?
+    };
     let id = uuid::Uuid::new_v4().to_string();
-    core.session.insert(SessionImage { id: id.clone(), bytes: Arc::new(bytes), kind: info.kind, width: info.width, height: info.height, meta: None });
-    Ok(ImportedImage { id, width: info.width, height: info.height })
+    core.session.insert(SessionImage { id: id.clone(), bytes: Arc::new(bytes), kind: Kind::Png, width, height, meta: None });
+    Ok(ImportedImage { id, width, height })
 }
 
 /// Bytes of a session image (PNG for generated images).
@@ -101,11 +108,16 @@ pub fn discard(core: &AppCore, id: &str) {
     core.session.remove(id);
 }
 
-/// Clear session: drop every image immediately (and the engines' output buffers).
-pub fn clear(core: &AppCore) {
+/// Clear session: drop every image immediately (and the engines' output
+/// buffers), and stop sd-server if it ran a job — it keeps finished results
+/// for 600 s behind an unauthenticated API (`generate::IDLE_STOP_AFTER`). The
+/// next Generate reloads the model. If a job is running, the engine stops
+/// right after it.
+pub async fn clear(core: &AppCore) {
     core.session.clear();
     core.gen.logs.clear();
     core.describe.logs.clear();
+    crate::generate::clear_engine_results(core).await;
 }
 
 /// RGBA8 pixels for the clipboard.

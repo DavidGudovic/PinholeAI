@@ -4,7 +4,8 @@
 
 use std::io::Cursor;
 
-use image::{ExtendedColorType, ImageEncoder, ImageFormat, ImageReader, Limits};
+use image::metadata::Orientation;
+use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits};
 
 /// Import limits (SPEC: reject > 50 MP or > 64 MB).
 pub const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
@@ -114,6 +115,24 @@ pub fn decode_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), ImageError> {
     Ok((rgba.into_raw(), w, h))
 }
 
+/// Decode an accepted image (PNG/JPEG/WebP) and re-encode it as a plain PNG:
+/// pixels only, with the EXIF orientation applied first, so EXIF, XMP, ICC and
+/// comment metadata are all dropped. Returns the PNG and its (oriented) size.
+pub fn reencode_png(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), ImageError> {
+    let kind = kind_of(bytes).ok_or(ImageError::Unsupported)?;
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), kind.format());
+    reader.limits(limits());
+    let corrupt = |e: image::ImageError| ImageError::Corrupt(short(&e.to_string()));
+    let mut decoder = reader.into_decoder().map_err(corrupt)?;
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(decoder).map_err(corrupt)?;
+    img.apply_orientation(orientation);
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let png = encode_png_rgba(rgba.as_raw(), w, h)?;
+    Ok((png, w, h))
+}
+
 /// Encode RGBA8 as PNG (no metadata chunks). Uses RGB when fully opaque.
 pub fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, ImageError> {
     if rgba.len() as u64 != u64::from(width) * u64::from(height) * 4 {
@@ -130,6 +149,40 @@ pub fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, 
     };
     res.map_err(|e| ImageError::Corrupt(short(&e.to_string())))?;
     Ok(out)
+}
+
+/// Test helper: a `w`×`h` grey JPEG with an APP1 EXIF segment (Orientation 6 =
+/// rotate 90° clockwise, plus `text` as ImageDescription) — like a phone photo
+/// carrying GPS / camera details.
+#[cfg(any(test, feature = "test-util"))]
+pub fn jpeg_with_exif(w: u32, h: u32, text: &str) -> Vec<u8> {
+    let mut plain = Vec::new();
+    let rgb = vec![128u8; (w * h * 3) as usize];
+    image::codecs::jpeg::JpegEncoder::new(&mut plain).write_image(&rgb, w, h, ExtendedColorType::Rgb8).expect("jpeg");
+    // TIFF (little endian): IFD0 with ImageDescription (0x010e) and Orientation (0x0112).
+    let text = format!("{text}\0");
+    let mut tiff = b"II*\0".to_vec();
+    tiff.extend_from_slice(&8u32.to_le_bytes());
+    tiff.extend_from_slice(&2u16.to_le_bytes());
+    let text_off: u32 = 8 + 2 + 2 * 12 + 4;
+    tiff.extend_from_slice(&0x010eu16.to_le_bytes());
+    tiff.extend_from_slice(&2u16.to_le_bytes());
+    tiff.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    tiff.extend_from_slice(&text_off.to_le_bytes());
+    tiff.extend_from_slice(&0x0112u16.to_le_bytes());
+    tiff.extend_from_slice(&3u16.to_le_bytes());
+    tiff.extend_from_slice(&1u32.to_le_bytes());
+    tiff.extend_from_slice(&[6, 0, 0, 0]);
+    tiff.extend_from_slice(&0u32.to_le_bytes());
+    tiff.extend_from_slice(text.as_bytes());
+    let mut app1 = b"Exif\0\0".to_vec();
+    app1.extend_from_slice(&tiff);
+    let mut out = plain[..2].to_vec();
+    out.extend_from_slice(&[0xff, 0xe1]);
+    out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(&app1);
+    out.extend_from_slice(&plain[2..]);
+    out
 }
 
 /// Halve both sides by averaging 2×2 blocks (odd trailing row/column dropped).
@@ -191,6 +244,21 @@ mod tests {
         assert_eq!(sniff(&png).unwrap_err(), ImageError::TooManyPixels);
         let big = vec![0u8; MAX_IMPORT_BYTES + 1];
         assert_eq!(sniff(&big).unwrap_err(), ImageError::TooManyBytes);
+    }
+
+    #[test]
+    fn reencode_drops_exif_and_applies_orientation() {
+        let j = jpeg_with_exif(8, 4, "GPS 52.52N PINHOLE_EXIF_SECRET");
+        assert!(j.windows(19).any(|w| w == b"PINHOLE_EXIF_SECRET"));
+        assert_eq!(sniff(&j).unwrap(), ImageInfo { kind: Kind::Jpeg, width: 8, height: 4 });
+        let (png, w, h) = reencode_png(&j).unwrap();
+        assert_eq!((w, h), (4, 8), "rotated by the EXIF orientation");
+        assert_eq!(kind_of(&png), Some(Kind::Png));
+        assert!(!png.windows(19).any(|w| w == b"PINHOLE_EXIF_SECRET"));
+        let kinds: Vec<String> = crate::png::chunks(&png).unwrap().iter().map(|c| c.kind_str()).collect();
+        assert!(kinds.iter().all(|k| ["IHDR", "IDAT", "IEND"].contains(&k.as_str())), "{kinds:?}");
+        assert_eq!(sniff(&png).unwrap(), ImageInfo { kind: Kind::Png, width: 4, height: 8 });
+        assert_eq!(reencode_png(b"nope").unwrap_err(), ImageError::Unsupported);
     }
 
     #[test]

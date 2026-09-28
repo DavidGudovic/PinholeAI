@@ -307,6 +307,9 @@ async fn fetch_verified(
         attempt += 1;
         let r = try_once(client, spec, &dir, &part, expected.as_deref(), cancel, progress, phase, &mut carried).await;
         match r {
+            // The user cancelled while this attempt was failing (e.g. still connecting):
+            // report the cancel, not the transport error it raced with.
+            Err(_) if cancel.is_cancelled() => return Err(DownloadError::Cancelled),
             Err(e) if attempt < MAX_ATTEMPTS && is_retryable(&e) && !cancel.is_cancelled() => {
                 let wait = Duration::from_secs(1 << (attempt - 1));
                 tokio::select! {
@@ -395,7 +398,12 @@ async fn try_once(
         if offset > 0 {
             rb = rb.header(reqwest::header::RANGE, format!("bytes={offset}-"));
         }
-        let resp = client.send_unchecked_status(rb).await?;
+        // Cancel must not wait for a slow connect / an unresponsive server.
+        let resp = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(DownloadError::Cancelled),
+            r = client.send_unchecked_status(rb) => r?,
+        };
         let status = resp.status().as_u16();
         if offset > 0 && status == 416 {
             // Our `.part` is at (or past) the end according to the server.

@@ -99,10 +99,10 @@ pub async fn discard_image(core: Core<'_>, id: String) -> Result<(), CoreError> 
     Ok(())
 }
 
-/// Drops every in-memory image immediately.
+/// Drops every in-memory image immediately (and stops sd-server if it holds results).
 #[tauri::command]
 pub async fn clear_session(core: Core<'_>) -> Result<(), CoreError> {
-    session::clear(&core);
+    session::clear(&core).await;
     Ok(())
 }
 

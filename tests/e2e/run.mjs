@@ -1030,9 +1030,17 @@ try {
     }, 60000, "describer download never started or failed");
     note(`download group: "${g.label}" state=${g.state} files=${g.fileCount} total=${(g.totalBytes / 1e9).toFixed(2)} GB`);
     if (g.state === "downloading" || g.state === "verifying") {
-      await invoke("cancel_download", { groupId: g.groupId });
-      await driver.wait(async () => (await invoke("list_downloads")).find((x) => x.groupId === g.groupId)?.state === "cancelled", 30000, "not cancelled");
-      note("cancelled");
+      // Cancel from the UI right away (while it may still be connecting).
+      await shot("30a-describe-downloading");
+      const btn = await driver.findElements(By.xpath("//*[@id='tab-describe']//button[normalize-space(.)='Cancel' or starts-with(@aria-label,'Cancel')]"));
+      if (btn.length) await btn[0].click();
+      else await invoke("cancel_download", { groupId: g.groupId });
+      note(`cancelled via ${btn.length ? "the Describe card's Cancel button" : "cancel_download IPC"}`);
+      const fin = async () => (await invoke("list_downloads")).find((x) => x.groupId === g.groupId);
+      await driver.wait(async () => ["cancelled", "failed", "done"].includes((await fin())?.state), 30000, "cancel had no effect");
+      const end = await fin();
+      note(`after cancel: state=${end.state} error=${JSON.stringify(end.error)}`);
+      assert(end.state === "cancelled", `cancelled download ended as "${end.state}"`);
     } else {
       await driver.wait(async () => ["failed", "cancelled", "done"].includes((await invoke("list_downloads")).find((x) => x.groupId === g.groupId)?.state), 60000);
       g = (await invoke("list_downloads")).find((x) => x.groupId === g.groupId);

@@ -3,7 +3,7 @@
 import { discardImage, getImage, importImage } from "../api";
 import type { ImgRef } from "./model";
 
-/** get_image returns PNG for generated images, but imported ones keep their bytes (PNG/JPEG/WebP). */
+/** get_image returns PNG for every session image (imported JPEG/WebP are re-encoded in Rust); sniffing is a fallback. */
 export function imageMime(buf: ArrayBuffer): string {
   const b = new Uint8Array(buf, 0, Math.min(12, buf.byteLength));
   if (b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";

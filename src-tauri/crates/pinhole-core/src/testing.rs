@@ -276,7 +276,7 @@ mod tests {
         assert!(!all.contains(SENTINEL));
 
         // Clear session drops everything.
-        session::clear(&core);
+        session::clear(&core).await;
         assert!(session::get(&core, &res.images[1].id).is_err());
     }
 

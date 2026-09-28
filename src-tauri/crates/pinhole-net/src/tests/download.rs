@@ -236,6 +236,34 @@ async fn cancel_keeps_part_and_resume_completes() {
 }
 
 #[tokio::test]
+async fn cancel_while_waiting_for_the_server_reports_cancelled() {
+    // Accepts connections and never answers (a stalled connect / slow host): cancel
+    // must end the download at once, as Cancelled rather than a network error.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let hold = tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            open.push(sock);
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("m.safetensors");
+    let s = spec(format!("http://127.0.0.1:{port}/m"), &dest, None, Some(10));
+    let cancel = CancellationToken::new();
+    let c2 = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        c2.cancel();
+    });
+    let r = tokio::time::timeout(Duration::from_secs(5), download_file(&client(), &s, &cancel, &|_, _| {})).await;
+    hold.abort();
+    let r = r.expect("cancel did not stop a download stuck waiting for the server");
+    assert!(matches!(r, Err(DownloadError::Cancelled)), "{r:?}");
+    assert!(!dest.exists());
+}
+
+#[tokio::test]
 async fn offline_download_touches_nothing() {
     let srv = MockServer::start(|_| MockResponse::ok("x")).await;
     let client = HttpClient::new_for_tests(OfflineFlag::new(true), true).unwrap();
