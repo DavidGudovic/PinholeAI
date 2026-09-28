@@ -26,8 +26,19 @@ const PICKLE_EXTENSIONS: &[&str] = &["ckpt", "pt", "pth", "bin", "pkl", "pickle"
 /// download by the header check (`pinhole_registry::detect::unsupported_weights`).
 const UNSUPPORTED_SAFETENSORS_FP: &[&str] = &["nf4", "int4", "fp4", "nvfp4", "svdq", "mxfp4"];
 
-/// CivitAI file types that hold model weights.
-const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model"];
+/// CivitAI file types that hold the model's own weights. Newer uploads (Flux,
+/// Qwen-Image, Z-Image, Krea…) list a standalone diffusion model as
+/// `Diffusion Model` or `UNet`; the family's other parts (VAE, text encoders)
+/// come from the registry, as for any standalone diffusion file. Other types
+/// (`VAE`, `Text Encoder`, `Training Data`, `Config`…) are never the model.
+const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model", "diffusion model", "unet"];
+
+/// Weight files that hold only the diffusion model. A full checkpoint of the
+/// same version is always preferred: all-in-one families (SD 1.5, SDXL, Pony…)
+/// need the text encoders and VAE it carries.
+fn is_diffusion_only(f: &ModelFile) -> bool {
+    ["diffusion model", "unet"].iter().any(|t| f.kind.trim().eq_ignore_ascii_case(t))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Verdict {
@@ -138,7 +149,8 @@ pub const NO_HASH_REASON: &str =
 /// Pick the file to install, or a plain-language reason why none is safe.
 ///
 /// Ranking among safe files: files without a SHA-256 last (they can't be
-/// verified, and installs refuse them — see [`NO_HASH_REASON`]), then fp32 files
+/// verified, and installs refuse them — see [`NO_HASH_REASON`]), then diffusion-only files
+/// (`Diffusion Model` / `UNet`) when a full checkpoint exists, then fp32 files
 /// (a half-precision copy is the same model at half the download), then the
 /// primary file, then fp16/bf16 → fp8 → unknown → fp32, then pruned → unknown →
 /// full, then the smaller file.
@@ -156,7 +168,7 @@ pub fn select_file<'a>(files: &'a [ModelFile], allowed_formats: &[String]) -> Re
         }
     }
     ok.into_iter()
-        .min_by_key(|f| (f.sha256().is_none(), fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
+        .min_by_key(|f| (f.sha256().is_none(), is_diffusion_only(f), fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
         .ok_or_else(|| reason(best_problem.unwrap_or(Verdict::Unsupported)).to_string())
 }
 
@@ -375,8 +387,31 @@ mod tests {
         vae.kind = "VAE".into();
         let model = file("m.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 6e6);
         assert_eq!(select_file(&[zip, vae, model], &allowed()).unwrap().name, "m.safetensors");
+        let mut te = file("t5xxl.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 9e6);
+        te.kind = "Text Encoder".into();
+        assert_eq!(select_file(std::slice::from_ref(&te), &allowed()).unwrap_err(), NO_FILE_REASON);
         let diffusers = file("m.zip", Some("Diffusers"), None, None, true, 1.0);
         assert!(select_file(&[diffusers], &allowed()).unwrap_err().contains(".safetensors or .gguf"));
+    }
+
+    #[test]
+    fn standalone_diffusion_model_files_are_weights() {
+        // Flux / Qwen-Image / Z-Image uploads: the main file's type is
+        // "Diffusion Model" (or "UNet"), next to optional VAE / text encoders.
+        for kind in ["Diffusion Model", "UNet", "diffusion model"] {
+            let mut dm = file("flux_dev_fp8.safetensors", Some("SafeTensor"), Some("fp8"), None, true, 11e6);
+            dm.kind = kind.into();
+            let mut vae = file("ae.safetensors", Some("SafeTensor"), None, None, false, 3e5);
+            vae.kind = "VAE".into();
+            let mut te = file("t5xxl_fp16.safetensors", Some("SafeTensor"), Some("fp16"), None, false, 9e6);
+            te.kind = "Text Encoder".into();
+            assert_eq!(select_file(&[vae, te, dm], &allowed()).unwrap().name, "flux_dev_fp8.safetensors", "{kind}");
+        }
+        // A full checkpoint beats a smaller, primary, half-precision UNet-only file.
+        let full = file("sdxl_full_fp32.safetensors", Some("SafeTensor"), Some("fp32"), Some("full"), false, 13e6);
+        let mut unet = file("sdxl_unet_fp16.safetensors", Some("SafeTensor"), Some("fp16"), Some("pruned"), true, 5e6);
+        unet.kind = "UNet".into();
+        assert_eq!(select_file(&[unet, full], &allowed()).unwrap().name, "sdxl_full_fp32.safetensors");
     }
 
     #[test]

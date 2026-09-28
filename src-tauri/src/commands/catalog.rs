@@ -2,9 +2,11 @@
 
 use std::sync::Arc;
 
-use pinhole_core::catalog::{BrowsePage, BrowseQuery, CatalogFilterOptions, InstallPlan};
+use pinhole_core::catalog::{BrowsePage, BrowseQuery, CatalogFilterOptions, ContentMode, InstallPlan};
+use pinhole_core::gallery::ModelGallery;
 use pinhole_core::{AppCore, CoreError, InstallStarted};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub async fn catalog_filters(core: State<'_, Arc<AppCore>>) -> Result<CatalogFilterOptions, CoreError> {
@@ -21,6 +23,32 @@ pub async fn browse_catalog(core: State<'_, Arc<AppCore>>, query: BrowseQuery) -
 pub async fn fetch_preview(core: State<'_, Arc<AppCore>>, url: String) -> Result<tauri::ipc::Response, CoreError> {
     let bytes = pinhole_core::catalog::fetch_preview(&core, &url).await?;
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Model details page: the version's preview images + generation data (memory only).
+#[tauri::command]
+pub async fn model_gallery(
+    core: State<'_, Arc<AppCore>>,
+    version_id: u64,
+    content: ContentMode,
+    model_nsfw: bool,
+) -> Result<ModelGallery, CoreError> {
+    pinhole_core::gallery::model_gallery(&core, version_id, content, model_nsfw).await
+}
+
+/// Open the model's CivitAI page in the system browser (the URL is built in Rust).
+#[tauri::command]
+pub async fn open_civitai_page(
+    handle: AppHandle,
+    model_id: u64,
+    version_id: Option<u64>,
+    nsfw: bool,
+) -> Result<(), CoreError> {
+    let url = pinhole_core::gallery::civitai_page(model_id, version_id, nsfw)?;
+    handle
+        .opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|e| CoreError::new("io", format!("Couldn't open your browser. The page is {url}")).with_details(e.to_string()))
 }
 
 #[tauri::command]
@@ -58,6 +86,8 @@ super::area_commands![
     catalog_filters,
     browse_catalog,
     fetch_preview,
+    model_gallery,
+    open_civitai_page,
     plan_civitai_install,
     install_civitai,
     has_civitai_key,

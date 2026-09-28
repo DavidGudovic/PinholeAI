@@ -1,5 +1,7 @@
 # Pinhole CI, tiered to keep Actions minutes low (private repo; Windows minutes bill 2x):
 #   every push ............. frontend + privacy lint, Rust tests on Linux        (~4 min)
+#   branch push touching Windows-specific code, the workflows, or with "[windows]"
+#                            in a commit message: + Rust tests on Windows
 #   push to main ........... + Rust tests on Windows, engine smoke (Linux +
 #                              Windows), real-app e2e                           (~40 billed min)
 #   Run workflow (manual) .. choose "full" checks and/or "installers"
@@ -42,6 +44,38 @@ defaults:
     shell: bash
 
 jobs:
+  # Decides whether the Windows unit tests run. Always on for main and manual "full" runs;
+  # on other branches only when the change touches code with Windows-specific behaviour
+  # (cfg(windows), process/engine handling, hardware, data dir, updater, the workflows) or
+  # the head commit message contains "[windows]".
+  plan:
+    name: Plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      windows: ${{ steps.plan.outputs.windows }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          ALWAYS: ${{ ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.full)) && 'yes' || 'no' }}
+        run: |
+          win=false
+          if [ "$ALWAYS" = yes ]; then
+            win=true
+          elif ! git fetch --quiet origin main; then
+            echo "::warning::could not fetch main, running Windows tests to be safe"
+            win=true
+          elif git log origin/main..HEAD --format=%B | grep -qiF '[windows]'; then
+            win=true
+          elif git diff --name-only origin/main...HEAD | grep -qE '^(\.github/workflows/|Cargo\.(toml|lock)$|src-tauri/tauri\.conf\.json$|src-tauri/src/lib\.rs$|src-tauri/crates/pinhole-(engine|hardware|store|net)/|src-tauri/crates/pinhole-core/src/(app|generate|update|downloads)\.rs$|tests/)'; then
+            win=true
+          fi
+          echo "windows=$win" >> "$GITHUB_OUTPUT"
+          echo "Windows unit tests: $win"
+
   frontend:
     name: Frontend + privacy lint
     runs-on: ubuntu-22.04
@@ -76,11 +110,12 @@ jobs:
 
   rust:
     name: Rust tests (${{ matrix.os }})
+    needs: plan
     strategy:
       fail-fast: false
       matrix:
-        # Windows only on full runs (push to main / manual "full").
-        os: ${{ fromJSON(((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.full)) && '["ubuntu-22.04","windows-latest"]' || '["ubuntu-22.04"]') }}
+        # Windows per the plan job (always on main / manual "full").
+        os: ${{ fromJSON(needs.plan.outputs.windows == 'true' && '["ubuntu-22.04","windows-latest"]' || '["ubuntu-22.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:

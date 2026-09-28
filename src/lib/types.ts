@@ -482,6 +482,29 @@ export interface BrowsePage {
   hiddenBySize?: number;
 }
 
+/** One preview image on a model's details page. */
+export interface GalleryItem {
+  index: number;
+  /** Small rendition for the grid — fetch via fetchPreview(). */
+  thumbUrl: string;
+  /** Full-size image for "Edit this" — fetch via fetchPreview(). */
+  fullUrl: string;
+  width: number | null;
+  height: number | null;
+  nsfw: boolean;
+  /** CivitAI generation data (prompt, settings, resources). prompt-bearing: memory only, never log or store. */
+  generation: Record<string, unknown> | null;
+}
+
+export interface ModelGallery {
+  items: GalleryItem[];
+  /** 18+ images left out because 18+ content is off. */
+  hiddenNsfw: number;
+  /** LoRA trigger words. */
+  trainedWords: string[];
+  offline: boolean;
+}
+
 export interface InstallPlan {
   versionId: number;
   modelName: string;
