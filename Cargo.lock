@@ -3161,6 +3161,7 @@ name = "pinhole-tests"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "flate2",
  "pinhole-core",
  "pinhole-engine",
  "pinhole-net",
@@ -3168,8 +3169,11 @@ dependencies = [
  "pinhole-store",
  "png 0.17.16",
  "serde_json",
+ "serde_yaml",
  "tempfile",
  "tokio",
+ "tokio-util",
+ "uuid",
 ]
 
 [[package]]

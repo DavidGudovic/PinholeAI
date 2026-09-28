@@ -1,7 +1,7 @@
 // Drop / paste / pick an image. HTML5 drag & drop (Tauri's native drag-drop is
 // disabled), clipboard paste of image files, and a file picker. Bytes go
 // straight to Rust (`import_image`); nothing is written to disk.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ImagePlus } from "lucide-react";
 import { imageFromTransfer } from "../lib/state/images";
 import { modKey } from "../lib/state/platform";
@@ -53,7 +53,7 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
 export function DropTarget({ onFile, children, className = "", label = "Drop the image here" }: { onFile: (f: File) => void; children: ReactNode; className?: string; label?: string }) {
   const [over, setOver] = useState(false);
   const depth = useRef(0);
-  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
   return (
     <div
       className={cx("relative", className)}

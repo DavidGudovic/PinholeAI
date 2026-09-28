@@ -247,8 +247,6 @@ struct FiltersYaml {
     period: Vec<ApiOption>,
     #[serde(default = "default_formats")]
     allowed_file_formats: Vec<String>,
-    #[serde(default = "yes")]
-    require_scans_success: bool,
     #[serde(default = "default_page_size")]
     page_size: u32,
     #[serde(default = "default_extra")]
@@ -262,9 +260,6 @@ fn default_lora_types() -> Vec<String> {
 }
 fn default_formats() -> Vec<String> {
     vec!["SafeTensor".into(), "GGUF".into()]
-}
-fn yes() -> bool {
-    true
 }
 fn default_page_size() -> u32 {
     24
