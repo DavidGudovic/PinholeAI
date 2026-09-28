@@ -35,7 +35,7 @@
     },
     "licenseFile": "../LICENSE",
     "shortDescription": "Simple, private, offline AI image generator",
-    "category": "Graphics",
+    "category": "GraphicsAndDesign",
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper"
