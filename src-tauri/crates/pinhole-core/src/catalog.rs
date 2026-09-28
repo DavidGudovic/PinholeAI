@@ -198,7 +198,7 @@ pub async fn plan_civitai_install(core: &AppCore, version_id: u64) -> CoreResult
         Some(f) if !f.download_url.is_empty() => matches!(client.probe_download(&f.download_url).await, Ok(401 | 403)),
         _ => false,
     };
-    let free = local::free_space(&core.data.root.join("models"));
+    let free = local::free_space(&core.data.models_root());
     let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
     Ok(plan::build_plan(&env, &version, model.as_ref(), free, needs_api_key))
 }

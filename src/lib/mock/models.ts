@@ -739,6 +739,17 @@ const table: MockTable = {
     await sleep(80);
     return state().loras.map(toLora);
   },
+  list_helpers: async () => {
+    await sleep(60);
+    return captionerInstalled ? [{ id: "describe", friendlyName: "Describe model", purpose: "describe", sizeBytes: (1930 + 845) * 1_000_000 }] : [];
+  },
+  delete_helper: async (a) => {
+    await sleep(300);
+    if (String(a.helperId) !== "describe" || !captionerInstalled) throw err("not_found", "That helper isn't installed any more.");
+    captionerInstalled = false;
+    modelsChanged();
+  },
+  open_models_folder: async () => undefined,
   get_recommended: async () => {
     await sleep(250);
     return ["realistic", "anime", "edit", "describe"].map(recommendedFor);

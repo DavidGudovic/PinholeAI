@@ -47,6 +47,9 @@ export interface Settings {
    *  auto = graphics card, moved to the processor for a model (this app session)
    *  after it runs out of graphics memory; on = always the processor; off = always the card. */
   textEncoderOnCpu: "auto" | "on" | "off";
+  /** Models folder the user picked (absolute), null = Data/models. Read-only here:
+   *  it only changes through changeModelsFolder, which moves the models. */
+  modelsFolder: string | null;
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";
@@ -160,6 +163,40 @@ export interface InstalledLora {
   trainedWords: string[];
   sizeBytes: number;
   civitaiVersionId: number | null;
+}
+
+/** A helper model that isn't picked on Generate (Describe model, upscaler). */
+export interface InstalledHelper {
+  /** "describe" or the installed file id. */
+  id: string;
+  friendlyName: string;
+  purpose: "describe" | "upscale";
+  sizeBytes: number;
+}
+
+export interface ModelsFolderInfo {
+  path: string;
+  /** A folder the user picked (not Data/models). */
+  custom: boolean;
+  /** missing = drive not connected / mounted; readOnly = can't write (e.g. NTFS mounted read-only). */
+  problem: "missing" | "readOnly" | null;
+}
+
+export interface ModelsFolderPreview {
+  path: string;
+  isDefault: boolean;
+  files: number;
+  /** Bytes that actually move (files the target already has aren't copied). */
+  bytes: number;
+  /** Models already in that folder, e.g. from Pinhole on your other operating system. */
+  existingModels: number;
+  sameDrive: boolean;
+}
+
+export interface ModelsMoveProgress {
+  doneBytes: number;
+  totalBytes: number;
+  fileName: string;
 }
 
 export interface FamilyChoice {

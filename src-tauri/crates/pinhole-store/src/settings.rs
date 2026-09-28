@@ -31,6 +31,10 @@ pub struct Settings {
     /// session if the card runs out of memory while reading the prompt),
     /// `on` (always the processor), `off` (always the graphics card).
     pub text_encoder_on_cpu: String,
+    /// Models folder the user picked (Settings → Models folder), absolute; `None` =
+    /// `Data/models/`. Only changed by moving the models (`set_models_folder`
+    /// in pinhole-core), never by a plain settings save.
+    pub models_folder: Option<String>,
 }
 
 impl Default for Settings {
@@ -47,6 +51,7 @@ impl Default for Settings {
             first_run_done: false,
             engine_backend: "auto".into(),
             text_encoder_on_cpu: "auto".into(),
+            models_folder: None,
         }
     }
 }
@@ -81,6 +86,7 @@ impl Settings {
         if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
             self.text_encoder_on_cpu = d.text_encoder_on_cpu;
         }
+        self.models_folder = self.models_folder.filter(|p| std::path::Path::new(p.trim()).is_absolute()).map(|p| p.trim().to_string());
         self
     }
 
@@ -173,6 +179,7 @@ mod tests {
             first_run_done: true,
             engine_backend: "vulkan".into(),
             text_encoder_on_cpu: "on".into(),
+            models_folder: Some(if cfg!(windows) { r"D:\Shared\Pinhole Models" } else { "/mnt/shared/Pinhole Models" }.into()),
         };
         save(&d, &s).unwrap();
         assert_eq!(load(&d).unwrap(), s);

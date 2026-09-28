@@ -1,9 +1,23 @@
 // Models → Installed: installed models + style add-ons, delete, "Add a file I already have".
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { CircleCheck, Compass, FilePlus2, Puzzle, Trash2, TriangleAlert } from "lucide-react";
-import { addLocalModel, asCoreError, confirmFamily, deleteModel, listLoras, listModels, onModelsChanged, previewDelete } from "../../lib/api";
-import type { AddFileResult, CoreError, DeletePreview, InstalledLora, InstalledModel } from "../../lib/types";
+import { CircleCheck, Compass, FilePlus2, FolderOpen, Puzzle, Trash2, TriangleAlert, Wrench } from "lucide-react";
+import {
+  addLocalModel,
+  asCoreError,
+  confirmFamily,
+  deleteHelper,
+  deleteModel,
+  listHelpers,
+  listLoras,
+  listModels,
+  modelsFolderInfo,
+  onModelsChanged,
+  openModelsFolder,
+  previewDelete,
+} from "../../lib/api";
+import type { AddFileResult, CoreError, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, ModelsFolderInfo } from "../../lib/types";
+import { FOLDER_PROBLEM } from "../../settings/ModelsFolderSection";
 import { formatBytes } from "../../lib/format";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge } from "../../components/ui";
@@ -21,6 +35,9 @@ type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
 export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
   const [models, setModels] = useState<InstalledModel[] | null>(null);
   const [loras, setLoras] = useState<InstalledLora[] | null>(null);
+  const [helpers, setHelpers] = useState<InstalledHelper[]>([]);
+  const [folder, setFolder] = useState<ModelsFolderInfo | null>(null);
+  const [helperTarget, setHelperTarget] = useState<InstalledHelper | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [missingFor, setMissingFor] = useState<InstalledModel | null>(null);
@@ -32,9 +49,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, l] = await Promise.all([listModels(), listLoras()]);
+      const [m, l, h, f] = await Promise.all([listModels(), listLoras(), listHelpers(), modelsFolderInfo()]);
       setModels(m);
       setLoras(l);
+      setHelpers(h);
+      setFolder(f);
       setError(null);
     } catch (e) {
       setError(asCoreError(e));
@@ -94,8 +113,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
     }
   };
 
-  const nothing = models !== null && loras !== null && models.length === 0 && loras.length === 0;
-  const totalBytes = (models ?? []).reduce((a, m) => a + m.sizeBytes, 0) + (loras ?? []).reduce((a, l) => a + l.sizeBytes, 0);
+  // No image models or add-ons: offer the recommended picks (helpers alone don't count).
+  const noModels = models !== null && loras !== null && models.length === 0 && loras.length === 0;
+  const nothing = noModels && helpers.length === 0;
+  const totalBytes =
+    (models ?? []).reduce((a, m) => a + m.sizeBytes, 0) + (loras ?? []).reduce((a, l) => a + l.sizeBytes, 0) + helpers.reduce((a, h) => a + h.sizeBytes, 0);
 
   return (
     <div className="space-y-5">
@@ -105,9 +127,14 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
             ? "Loading…"
             : nothing
               ? "Nothing installed yet."
-              : `${models.length} ${models.length === 1 ? "model" : "models"} · ${loras.length} style ${loras.length === 1 ? "add-on" : "add-ons"} · ${formatBytes(totalBytes)} on disk`}
+              : `${models.length} ${models.length === 1 ? "model" : "models"} · ${loras.length} style ${loras.length === 1 ? "add-on" : "add-ons"}${
+                  helpers.length ? ` · ${helpers.length} ${helpers.length === 1 ? "helper" : "helpers"}` : ""
+                } · ${formatBytes(totalBytes)} on disk`}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => void openModelsFolder().catch((e) => setError(asCoreError(e)))} title={folder?.path}>
+            <FolderOpen className="h-4 w-4" /> Open folder
+          </Button>
           <Button onClick={() => void pickFile()} disabled={!!adding}>
             <FilePlus2 className="h-4 w-4" /> Add a file I already have
           </Button>
@@ -136,13 +163,21 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           </button>
         </div>
       )}
-      {error && <ErrorNotice error={error} />}
+      {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+      {folder?.problem && (
+        <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200" role="note">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {FOLDER_PROBLEM[folder.problem]} <span className="font-mono text-xs break-all">{folder.path}</span>
+          </span>
+        </p>
+      )}
 
-      {nothing && (
+      {noModels && (
         <section className="space-y-3">
           <div>
             <h2 className="text-base font-semibold">Start with a recommended model</h2>
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing is installed yet. These are the best picks for {machinePlain(hw)} — one click each.</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">{nothing ? "Nothing is installed yet." : "No image models yet."} These are the best picks for {machinePlain(hw)} — one click each.</p>
           </div>
           <RecommendedCards />
         </section>
@@ -257,13 +292,45 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
         </TableCard>
       )}
 
-      {nothing && (
+      {helpers.length > 0 && (
+        <TableCard title="Helpers" icon={<Wrench className="h-4 w-4 text-neutral-400" />}>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-neutral-500">
+                <Th>Name</Th>
+                <Th>Used for</Th>
+                <Th>Size</Th>
+                <Th className="w-10">
+                  <span className="sr-only">Actions</span>
+                </Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
+              {helpers.map((h) => (
+                <tr key={h.id} className="align-top hover:bg-neutral-50 dark:hover:bg-neutral-800/40">
+                  <Td className="font-medium text-neutral-900 dark:text-neutral-100">{h.friendlyName}</Td>
+                  <Td className="text-neutral-600 dark:text-neutral-400">{h.purpose === "describe" ? "Describe: turns a picture into a prompt" : "Making pictures bigger"}</Td>
+                  <Td className="whitespace-nowrap text-neutral-600 tabular-nums dark:text-neutral-400">{formatBytes(h.sizeBytes)}</Td>
+                  <Td>
+                    <IconButton size="sm" label={`Delete ${h.friendlyName}`} onClick={() => setHelperTarget(h)}>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </TableCard>
+      )}
+
+      {noModels && (
         <EmptyState icon={<FilePlus2 className="h-6 w-6" />} title="Already have a model file?">
           Use <b>Add a file I already have</b> to pick a .safetensors or .gguf file. Pinhole works out what kind of model it is.
         </EmptyState>
       )}
 
       <DeleteDialog target={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={() => void refresh()} />
+      <DeleteHelperDialog target={helperTarget} onClose={() => setHelperTarget(null)} onDeleted={() => void refresh()} />
       <FamilyChoiceDialog
         choice={choice}
         onClose={() => setChoice(null)}
@@ -374,6 +441,55 @@ function DeleteDialog({ target, onClose, onDeleted }: { target: { id: string; na
           </ul>
         </div>
       )}
+      {error && (
+        <div className="mt-3">
+          <ErrorNotice error={error} />
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function DeleteHelperDialog({ target, onClose, onDeleted }: { target: InstalledHelper | null; onClose: () => void; onDeleted: () => void }) {
+  const [error, setError] = useState<CoreError | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => setError(null), [target]);
+
+  const confirm = async () => {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteHelper(target.id);
+      onDeleted();
+      onClose();
+    } catch (e) {
+      setError(asCoreError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={!!target}
+      onClose={onClose}
+      title={`Delete “${target?.friendlyName ?? ""}”?`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={() => void confirm()} disabled={busy}>
+            {busy ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-4 w-4" />} Delete{target ? ` · frees ${formatBytes(target.sizeBytes)}` : ""}
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-neutral-700 dark:text-neutral-300">
+        {target?.purpose === "describe" ? "The Describe tab will offer to download it again when you need it." : "Pinhole downloads it again the next time you need it."}
+      </p>
       {error && (
         <div className="mt-3">
           <ErrorNotice error={error} />

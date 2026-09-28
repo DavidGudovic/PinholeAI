@@ -13,7 +13,7 @@
 //   ?lowdisk        only 9 GB free on the Data drive (see catalog.ts)
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
-import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, Settings } from "../types";
+import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, Settings } from "../types";
 import { startMockDownload } from "./models";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -54,6 +54,7 @@ export function mockSettings(): Settings {
       firstRunDone: f.skipFirstRun,
       engineBackend: "auto",
       textEncoderOnCpu: "auto",
+      modelsFolder: null,
     };
     settings = initial;
     return initial;
@@ -76,6 +77,14 @@ function normalizeSettings(s: Settings): Settings {
     engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),
     textEncoderOnCpu: pick(s.textEncoderOnCpu, ["auto", "on", "off"], "auto"),
   };
+}
+
+// ---------------------------------------------------------------- models folder
+const DEFAULT_MODELS = "C:\\Users\\Alex\\AppData\\Local\\Pinhole\\Data\\models";
+
+function modelsFolderInfo(): ModelsFolderInfo {
+  const custom = mockSettings().modelsFolder;
+  return { path: custom ?? DEFAULT_MODELS, custom: custom != null, problem: null };
 }
 
 // ---------------------------------------------------------------- hardware
@@ -264,7 +273,8 @@ const table: MockTable = {
   get_settings: async () => ({ ...mockSettings() }),
   set_settings: async (a) => {
     await sleep(60);
-    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings) });
+    // Like Rust: the Models folder only changes by moving the models.
+    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings), modelsFolder: mockSettings().modelsFolder });
     settings = next;
     return { ...next };
   },
@@ -273,13 +283,31 @@ const table: MockTable = {
     return hardwareView();
   },
   open_data_folder: async () => undefined,
+  models_folder_info: async (): Promise<ModelsFolderInfo> => modelsFolderInfo(),
+  preview_models_folder: async (a): Promise<ModelsFolderPreview> => {
+    await sleep(150);
+    const folder = (a.folder as string | null) ?? null;
+    if (folder != null && folder === mockSettings().modelsFolder) throw err("invalid", "Your models are already in that folder.");
+    return { path: folder ?? DEFAULT_MODELS, isDefault: folder == null, files: 9, bytes: 31_400_000_000, existingModels: folder ? 1 : 0, sameDrive: false };
+  },
+  change_models_folder: async (a) => {
+    const total = 31_400_000_000;
+    for (let i = 1; i <= 10; i++) {
+      await sleep(250);
+      mockEmit("models-move-progress", { doneBytes: (total * i) / 10, totalBytes: total, fileName: "z_image_turbo-Q8_0.gguf" });
+    }
+    settings = { ...mockSettings(), modelsFolder: (a.folder as string | null) ?? null };
+  },
   open_outputs_folder: async () => undefined,
   engine_status: async () => ({ ...engineState() }),
   install_engine: () => installEngine(),
   "plugin:dialog|open": async (a) => {
     await sleep(300);
     // Only the "Add a file I already have" picker (model filters) gets a fake path; others look cancelled.
-    const filters = ((a.options as { filters?: { extensions: string[] }[] } | undefined)?.filters ?? []).flatMap((f) => f.extensions);
+    const opts = a.options as { filters?: { extensions: string[] }[]; directory?: boolean } | undefined;
+    // Settings → Models folder → "Change…" gets a fake shared-drive folder.
+    if (opts?.directory) return "D:\\Shared\\Pinhole Models";
+    const filters = (opts?.filters ?? []).flatMap((f) => f.extensions);
     if (!filters.includes("safetensors")) return null;
     return FAKE_PICKS[pickCount++ % FAKE_PICKS.length];
   },

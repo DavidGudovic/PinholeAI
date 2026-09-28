@@ -35,6 +35,14 @@ export const cancelDownload = (groupId: string) => invoke<void>("cancel_download
 // ---------------------------------------------------------------- models (catalog agent)
 export const listModels = () => invoke<T.InstalledModel[]>("list_models");
 export const listLoras = () => invoke<T.InstalledLora[]>("list_loras");
+export const listHelpers = () => invoke<T.InstalledHelper[]>("list_helpers");
+export const deleteHelper = (helperId: string) => invoke<void>("delete_helper", { helperId });
+export const openModelsFolder = () => invoke<void>("open_models_folder");
+export const modelsFolderInfo = () => invoke<T.ModelsFolderInfo>("models_folder_info");
+/** What moving the models to `folder` (null = back to the default) would do. */
+export const previewModelsFolder = (folder: string | null) => invoke<T.ModelsFolderPreview>("preview_models_folder", { folder });
+/** Moves every model to `folder` (progress via onModelsMove), then Pinhole restarts. Resolves only on failure paths that return. */
+export const changeModelsFolder = (folder: string | null) => invoke<void>("change_models_folder", { folder });
 export const getRecommended = () => invoke<T.RecommendedPick[]>("get_recommended");
 export const installRecommended = (role: string) => invoke<T.InstallStarted>("install_recommended", { role });
 /** "Add a file I already have": detects the family, then copies the file into Data/models/<kind>/ (hash computed while copying). */
@@ -105,6 +113,8 @@ export const onEngine = (cb: (s: T.EngineStatus) => void): Promise<UnlistenFn> =
   listen<T.EngineStatus>("engine-status", (e) => cb(e.payload));
 export const onModelsChanged = (cb: () => void): Promise<UnlistenFn> => listen("models-changed", () => cb());
 export const onHardwareReady = (cb: () => void): Promise<UnlistenFn> => listen("hardware-ready", () => cb());
+export const onModelsMove = (cb: (p: T.ModelsMoveProgress) => void): Promise<UnlistenFn> =>
+  listen<T.ModelsMoveProgress>("models-move-progress", (e) => cb(e.payload));
 
 /** Normalise anything thrown by invoke into a CoreError. */
 export function asCoreError(e: unknown): T.CoreError {

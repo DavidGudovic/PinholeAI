@@ -69,6 +69,18 @@ pub enum CoreEvent {
     Engine(EngineStatus),
     ModelsChanged,
     HardwareReady,
+    /// Moving the models to another Models folder (Settings → Models folder).
+    ModelsMove(ModelsMoveProgress),
+}
+
+/// `ModelsMoveProgress` in src/lib/types.ts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsMoveProgress {
+    pub done_bytes: u64,
+    pub total_bytes: u64,
+    /// File being moved (a model file name, never user text).
+    pub file_name: String,
 }
 
 impl CoreEvent {
@@ -80,6 +92,7 @@ impl CoreEvent {
             CoreEvent::Engine(_) => "engine-status",
             CoreEvent::ModelsChanged => "models-changed",
             CoreEvent::HardwareReady => "hardware-ready",
+            CoreEvent::ModelsMove(_) => "models-move-progress",
         }
     }
 }
