@@ -61,4 +61,14 @@ describe("UpdateSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
     expect(await screen.findByText(/Network problem/)).toBeTruthy();
   });
+
+  it("explains when GitHub doesn't show the releases and offers the release page", async () => {
+    api.checkForUpdates.mockRejectedValue({ code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub, because the project isn't public yet.", details: "HTTP 404" });
+    api.openReleasePage.mockResolvedValue();
+    render(<UpdateSection offline={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open release page/i }));
+    expect(api.openReleasePage).toHaveBeenCalledWith(null);
+    expect(screen.queryByText(/HTTP 404/)).toBeNull();
+  });
 });

@@ -542,7 +542,8 @@ build is shared.
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
-  the next start. The checksum list protects against broken or swapped downloads, not against a
+  the next start. While the repository is private, GitHub answers the unauthenticated check with 404:
+  the app says the releases can't be seen yet and offers the release page. The checksum list protects against broken or swapped downloads, not against a
   compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
   Prompts are never sent to a server for moderation.
