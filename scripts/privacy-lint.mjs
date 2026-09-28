@@ -50,6 +50,10 @@ export const PROMPT_TYPES = [
   "SdGenRequest",
   "CaptionRequest",
   "PastedGenerationData",
+  "GalleryItem",
+  "ModelGallery",
+  "VersionImage",
+  "VersionImages",
 ];
 
 /** Identifier parts (split on `_` and camelCase) that count as prompt-ish. */

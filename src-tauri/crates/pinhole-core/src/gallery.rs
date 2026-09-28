@@ -12,7 +12,8 @@
 //! passed through to the UI in memory, where the user can copy it into Create.
 //! It is never logged or written anywhere.
 
-use pinhole_catalog::api::{is_preview_url, API_BASE, NSFW_LEVEL_MIN};
+use pinhole_catalog::api::{civitai_auth_header, is_preview_url, ModelImage, API_BASE};
+use pinhole_net::NetError;
 use pinhole_catalog::cards::thumbnail_url;
 use pinhole_catalog::filters::ContentMode;
 use pinhole_catalog::lenient;
@@ -31,55 +32,43 @@ pub struct VersionImages {
     pub images: Vec<VersionImage>,
 }
 
+/// A version image: the catalog's [`ModelImage`] plus its generation data.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
 pub struct VersionImage {
-    #[serde(deserialize_with = "lenient::string")]
-    pub url: String,
-    #[serde(deserialize_with = "lenient::opt_u64")]
-    pub width: Option<u64>,
-    #[serde(deserialize_with = "lenient::opt_u64")]
-    pub height: Option<u64>,
-    #[serde(deserialize_with = "lenient::nsfw_level")]
-    pub nsfw_level: Option<u32>,
-    /// Older responses: bool or a level string.
-    #[serde(deserialize_with = "lenient::nsfw_level_or_bool")]
-    pub nsfw: Option<bool>,
-    #[serde(rename = "type", deserialize_with = "lenient::opt_string")]
-    pub kind: Option<String>,
+    #[serde(flatten)]
+    pub image: ModelImage,
     /// Generation data (prompt, settings, resources). In memory only.
-    #[serde(deserialize_with = "lenient::opt_obj")]
+    #[serde(default, deserialize_with = "lenient::opt_obj")]
     pub meta: Option<Map<String, Value>>,
 }
 
 impl VersionImage {
-    fn is_video(&self) -> bool {
-        if self.kind.as_deref().is_some_and(|k| k.eq_ignore_ascii_case("video")) {
-            return true;
-        }
-        let path = self.url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
-        path.ends_with(".mp4") || path.ends_with(".webm") || path.ends_with(".mov")
-    }
-
+    /// Unrated images of an NSFW model count as NSFW (same rule as the cards).
     fn is_nsfw(&self, model_nsfw: bool) -> bool {
-        match (self.nsfw_level, self.nsfw) {
-            (Some(level), _) => level >= NSFW_LEVEL_MIN,
-            (None, Some(flag)) => flag,
-            // Unrated images of an NSFW model count as NSFW (same rule as the cards).
-            (None, None) => model_nsfw,
-        }
+        self.image.is_nsfw() || (self.image.nsfw_level.is_none() && self.image.nsfw.is_none() && model_nsfw)
     }
 }
 
-/// The details page's gallery. Anonymous, like browsing. Offline mode: no
-/// request, `offline: true`.
+/// The details page's gallery. Asked anonymously first; on 401/403 (a
+/// sign-in-only version) asked once more with the API key, like install
+/// planning. Offline mode: no request, `offline: true`.
 pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode, model_nsfw: bool) -> CoreResult<ModelGallery> {
     if core.offline.get() {
         return Ok(ModelGallery { items: Vec::new(), hidden_nsfw: 0, trained_words: Vec::new(), offline: true });
     }
     let filters = crate::catalog::filters(core)?;
     let url = format!("{API_BASE}/model-versions/{version_id}");
-    let version: VersionImages = core.http.get_json(&url, &[]).await.map_err(crate::catalog::net_error)?;
+    let version: VersionImages = match core.http.get_json(&url, &[]).await {
+        Err(NetError::Unauthorized(_)) | Err(NetError::Status(401 | 403)) => {
+            let key = crate::catalog::api_key(core).await;
+            match civitai_auth_header(key.as_deref(), &url) {
+                Some((k, v)) => core.http.get_json(&url, &[(k.as_str(), v.as_str())]).await,
+                None => Err(NetError::Unauthorized(401)),
+            }
+        }
+        other => other,
+    }
+    .map_err(crate::catalog::net_error)?;
     Ok(gallery(&version, content, model_nsfw, filters.preview_width))
 }
 
@@ -119,6 +108,8 @@ const KEPT_META_KEYS: &[&str] = &[
     "Hires upscaler",
     "VAE",
     "VAE hash",
+    "Lora hashes",
+    "TI hashes",
 ];
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,7 +160,8 @@ pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, 
     ModelGallery { items, hidden_nsfw, trained_words: version.trained_words.clone(), offline: false }
 }
 
-fn item(index: usize, i: &VersionImage, model_nsfw: bool, thumb_width: u32) -> Option<GalleryItem> {
+fn item(index: usize, v: &VersionImage, model_nsfw: bool, thumb_width: u32) -> Option<GalleryItem> {
+    let i = &v.image;
     if i.url.trim().is_empty() || i.is_video() || !is_preview_url(&i.url) {
         return None;
     }
@@ -179,8 +171,8 @@ fn item(index: usize, i: &VersionImage, model_nsfw: bool, thumb_width: u32) -> O
         full_url: original_url(&i.url),
         width: i.width,
         height: i.height,
-        nsfw: i.is_nsfw(model_nsfw),
-        generation: i.meta.as_ref().and_then(kept_meta),
+        nsfw: v.is_nsfw(model_nsfw),
+        generation: v.meta.as_ref().and_then(kept_meta),
     })
 }
 
@@ -225,7 +217,8 @@ mod tests {
          "meta": {"VAE": "vae-ft-mse.safetensors", "Size": "512x768", "seed": 3277121308, "Model": "RVHYPO", "steps": 6,
                   "hashes": {"model": "0928b30687"}, "prompt": "a lighthouse at dusk", "Version": "v1.7.0",
                   "sampler": "DPM++ SDE Karras", "cfgScale": 1.5, "resources": [{"hash": "0928b30687", "name": "RVHYPO", "type": "model"}],
-                  "Model hash": "0928b30687", "negativePrompt": "blurry", "ADetailer model": "face_yolov8n.pt"}},
+                  "Model hash": "0928b30687", "negativePrompt": "blurry", "ADetailer model": "face_yolov8n.pt",
+                  "Lora hashes": "detail_tweaker: abc1234567"}},
         {"id": null, "url": "https://image.civitai.com/xG1/1c65/original=true/12221824.jpeg", "nsfwLevel": 8, "type": "image", "meta": null},
         {"id": null, "url": "https://image.civitai.com/xG1/9eb1/original=true/9eb1.mp4", "nsfwLevel": 1, "type": "video"},
         {"id": null, "url": "https://evil.example/4.jpeg", "nsfwLevel": 1, "type": "image"},
@@ -253,7 +246,7 @@ mod tests {
         let g = gallery(&version(), ContentMode::Safe, false, 450);
         let m = g.items[0].generation.as_ref().unwrap();
         assert_eq!(m.get("steps"), Some(&Value::from(6)));
-        assert!(m.contains_key("prompt") && m.contains_key("Model hash"));
+        assert!(m.contains_key("prompt") && m.contains_key("Model hash") && m.contains_key("Lora hashes"));
         assert!(!m.contains_key("ADetailer model") && !m.contains_key("Version"));
         // Only a model name: nothing to apply.
         assert!(g.items[1].generation.is_none());
@@ -271,7 +264,10 @@ mod tests {
     #[test]
     fn unrated_images_of_nsfw_models_are_nsfw() {
         let v = VersionImages {
-            images: vec![VersionImage { url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(), ..Default::default() }],
+            images: vec![VersionImage {
+                image: ModelImage { url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(), ..Default::default() },
+                meta: None,
+            }],
             ..Default::default()
         };
         assert!(gallery(&v, ContentMode::Safe, true, 450).items.is_empty());

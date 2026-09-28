@@ -59,6 +59,20 @@ describe("galleryGenerationText", () => {
     expect(p.resources.find((r) => r.type === "lora")).toMatchObject({ modelVersionId: 77, weight: 1 });
   });
 
+  it("doesn't add a LoRA page's LoRA twice when the image names it by hash", () => {
+    const meta = {
+      prompt: "paper cut style, a fox <lora:papercut_v1:0.7>",
+      steps: 20,
+      cfgScale: 5,
+      resources: [{ type: "lora", name: "papercut_v1", hash: "1122334455", weight: 0.7 }],
+      "Lora hashes": "papercut_v1: 1122334455",
+    };
+    const p = parseGenerationData(galleryGenerationText(meta, { type: "LORA", versionId: 77, modelName: "Paper Cut", versionName: "v1" })!)!;
+    const loras = p.resources.filter((r) => r.type === "lora");
+    expect(loras).toHaveLength(1);
+    expect(loras[0].hash?.toLowerCase()).toBe("1122334455");
+  });
+
   it("keeps commas inside values", () => {
     const p = parseGenerationData(galleryGenerationText({ prompt: "x", steps: 10, Model: "Juggernaut, v9", seed: 1 }, null)!)!;
     expect(p.modelName).toBe("Juggernaut, v9");

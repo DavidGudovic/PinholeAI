@@ -27,6 +27,8 @@ const SETTINGS: [string, string[]][] = [
   ["Model hash", ["Model hash"]],
   ["VAE", ["VAE"]],
   ["VAE hash", ["VAE hash"]],
+  ["Lora hashes", ["Lora hashes"]],
+  ["TI hashes", ["TI hashes"]],
   ["Denoising strength", ["Denoising strength"]],
   ["Hires upscale", ["Hires upscale"]],
   ["Hires steps", ["Hires steps"]],
@@ -65,7 +67,15 @@ function resources(meta: Meta, source: GallerySource | null): Meta[] {
     const t = normType(source.type);
     const kind = t === "checkpoint" ? "checkpoint" : t === "lora" || t === "locon" || t === "dora" ? "lora" : null;
     const already = out.some((r) => Number(r.modelVersionId ?? r.versionId) === source.versionId);
-    if (kind && !already) {
+    // A LoRA named only by file name or hash (resources, "Lora hashes", a <lora:…> tag) can't be
+    // matched to this page's version id; adding ours too would apply the same LoRA twice. Images on
+    // a LoRA's page almost always use it, so trust the image's own list when it has one.
+    const namesLora =
+      kind === "lora" &&
+      (out.some((r) => normType(r.type) === "lora" || normType(r.type) === "locon" || normType(r.type) === "lycoris") ||
+        scalar(meta["Lora hashes"]) != null ||
+        /<(lora|lyco):/i.test(String(meta.prompt ?? "")));
+    if (kind && !already && !namesLora) {
       // This page's checkpoint wins over one named only by hash; a LoRA joins the others.
       const mine: Meta = { type: kind, modelVersionId: source.versionId, modelName: source.modelName, modelVersionName: source.versionName };
       if (kind === "lora") mine.weight = 1;

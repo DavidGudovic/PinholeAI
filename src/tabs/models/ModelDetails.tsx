@@ -3,7 +3,7 @@
 // the model's CivitAI page opens in the system browser.
 // PRIVACY: image generation data (prompts) stays in memory; nothing is logged.
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ArrowLeft, Check, Download, ExternalLink, EyeOff, ImageOff, RotateCw, ShieldAlert, SlidersHorizontal, ThumbsUp, Wand2 } from "lucide-react";
+import { ArrowLeft, Check, Download, ExternalLink, ImageOff, RotateCw, ShieldAlert, SlidersHorizontal, ThumbsUp, Wand2 } from "lucide-react";
 import * as api from "../../lib/api";
 import type { CatalogCard, ContentMode, CoreError, GalleryItem, ModelGallery } from "../../lib/types";
 import { formatBytes, formatCount } from "../../lib/format";
@@ -18,8 +18,9 @@ import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { isActive, ratioPercent } from "./lib/words";
 
 // Image loading is local to this page (not ./lib/preview) so it doesn't depend
-// on the Browse grid's loader. At most a few fetches run at once; bytes come
-// from Rust and live only as blob: URLs while the page is open.
+// on the Browse grid's loader. At most a few fetches run at once. Bytes come
+// from Rust and are kept as Blobs only while the page is open, so the viewer and
+// "Edit this image" reuse what the grid already fetched.
 const MAX_PARALLEL = 4;
 let running = 0;
 const waiting: (() => void)[] = [];
@@ -34,26 +35,37 @@ async function limited<T>(job: () => Promise<T>): Promise<T> {
   }
 }
 
+const blobs = new Map<string, Promise<Blob>>();
+function loadBlob(url: string): Promise<Blob> {
+  let p = blobs.get(url);
+  if (!p) {
+    p = limited(() => api.fetchPreview(url)).then((buf) => new Blob([buf]));
+    p.catch(() => blobs.delete(url));
+    blobs.set(url, p);
+  }
+  return p;
+}
+
 function useImage(url: string | null): { src: string | null; failed: boolean } {
-  const [state, setState] = useState<{ src: string | null; failed: boolean }>({ src: null, failed: false });
+  const [state, setState] = useState<{ url: string | null; src: string | null; failed: boolean }>({ url: null, src: null, failed: false });
   useEffect(() => {
     if (!url) return;
     let alive = true;
     let objectUrl: string | null = null;
-    setState({ src: null, failed: false });
-    limited(() => (alive ? api.fetchPreview(url) : Promise.resolve(null)))
-      .then((buf) => {
-        if (!alive || !buf) return;
-        objectUrl = URL.createObjectURL(new Blob([buf]));
-        setState({ src: objectUrl, failed: false });
+    loadBlob(url)
+      .then((blob) => {
+        if (!alive) return;
+        objectUrl = URL.createObjectURL(blob);
+        setState({ url, src: objectUrl, failed: false });
       })
-      .catch(() => alive && setState({ src: null, failed: true }));
+      .catch(() => alive && setState({ url, src: null, failed: true }));
     return () => {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [url]);
-  return state;
+  // Never hand back another URL's (already revoked) blob.
+  return state.url === url && url ? state : { src: null, failed: false };
 }
 
 export function ModelDetails({
@@ -95,12 +107,15 @@ export function ModelDetails({
 
   useEffect(() => {
     rootRef.current?.focus();
+    return () => blobs.clear();
   }, []);
 
   // Esc goes back (unless the image viewer is open: it closes itself first).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !open && !document.querySelector("[role=dialog]")) onClose();
+      // Tabs stay mounted: ignore Esc while the Models tab is hidden.
+      const shown = !!rootRef.current && rootRef.current.getClientRects().length > 0;
+      if (e.key === "Escape" && shown && !open && !document.querySelector("[role=dialog]")) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -129,14 +144,16 @@ export function ModelDetails({
     setBusy("edit");
     setActionError(null);
     try {
-      let buf: ArrayBuffer;
+      let blob: Blob;
       try {
-        buf = await api.fetchPreview(item.fullUrl);
-      } catch {
-        // The full-size file can be too big to fetch; the grid rendition still works.
-        buf = await api.fetchPreview(item.thumbUrl);
+        blob = await loadBlob(item.fullUrl);
+      } catch (e) {
+        // Only a full-size file over the size cap falls back to the smaller copy, and says so.
+        if (api.asCoreError(e).code !== "invalid") throw e;
+        blob = await loadBlob(item.thumbUrl);
+        actions.toast("The full-size image is too large, so a smaller copy was opened in Edit.");
       }
-      await actions.importToEdit(new Blob([buf]));
+      await actions.importToEdit(blob);
       setOpen(null);
       actions.setTab("edit");
     } catch (e) {
@@ -191,7 +208,7 @@ export function ModelDetails({
             <>
               <div className="columns-[220px] gap-4">
                 {gallery.items.map((it) => (
-                  <Tile key={it.index} item={it} blur={it.nsfw && content === "safe"} onOpen={() => setOpen(it)} />
+                  <Tile key={it.index} item={it} onOpen={() => setOpen(it)} />
                 ))}
               </div>
               {gallery.hiddenNsfw > 0 && (
@@ -285,7 +302,8 @@ function Header({
   );
 }
 
-const Tile = memo(function Tile({ item, blur, onOpen }: { item: GalleryItem; blur: boolean; onOpen: () => void }) {
+// 18+ images never reach the page in Safe only mode (Rust leaves them out), so there is nothing to blur.
+const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) {
   const preview = useImage(item.thumbUrl);
   const ratio = item.width && item.height ? `${item.width} / ${item.height}` : "3 / 4";
   return (
@@ -297,20 +315,13 @@ const Tile = memo(function Tile({ item, blur, onOpen }: { item: GalleryItem; blu
       style={{ aspectRatio: ratio }}
     >
       {preview.src ? (
-        <img src={preview.src} alt="" draggable={false} className={`h-full w-full object-cover transition-transform group-hover:scale-[1.02] ${blur ? "scale-125 blur-2xl" : ""}`} />
+        <img src={preview.src} alt="" draggable={false} className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]" />
       ) : preview.failed ? (
         <span className="absolute inset-0 flex items-center justify-center text-neutral-400">
           <ImageOff className="h-6 w-6" />
         </span>
       ) : (
         <span className="absolute inset-0 animate-pulse bg-neutral-200 dark:bg-neutral-800" />
-      )}
-      {blur && preview.src && (
-        <span className="absolute inset-0 flex items-center justify-center">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-            <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
-          </span>
-        </span>
       )}
       {item.generation && (
         <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
