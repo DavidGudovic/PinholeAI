@@ -1,13 +1,13 @@
 # Manual helper for development sessions whose container can't reach CivitAI / Hugging Face:
 # fetches GET URLs on a runner and prints the (optionally jq-filtered) responses to the log.
-# Read-only: no secrets are used and only civitai.com, huggingface.co and api.github.com are allowed.
+# Read-only: no secrets are used and only civitai.com, civitai.red, huggingface.co and api.github.com are allowed.
 name: API probe
 
 on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "Space/newline-separated GET URLs (https://civitai.com, https://huggingface.co, https://api.github.com only)"
+        description: "Space/newline-separated GET URLs (https://civitai.com, https://civitai.red, https://huggingface.co, https://api.github.com only)"
         required: true
         type: string
       jq:
@@ -31,7 +31,7 @@ jobs:
         run: |
           for u in $URLS; do
             case "$u" in
-              https://civitai.com/*|https://huggingface.co/*|https://api.github.com/*) ;;
+              https://civitai.com/*|https://civitai.red/*|https://huggingface.co/*|https://api.github.com/*) ;;
               *) echo "skip (host not allowed): $u"; continue ;;
             esac
             echo "===== GET $u"
