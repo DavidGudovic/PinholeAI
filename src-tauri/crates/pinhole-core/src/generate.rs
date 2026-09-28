@@ -6,24 +6,36 @@
 //! `embed_image_metadata: false` → poll every 300 ms → decode, scrub every PNG
 //! text chunk, keep in the RAM [`Session`](crate::session::Session).
 //!
+//! Out of memory (docs/ARCHITECTURE.md §4): before sd-server starts, leftover
+//! engines under `Data/engine/` are killed, an idle describe engine is stopped
+//! and (NVIDIA) graphics memory used by other programs is measured. A job that
+//! runs out of memory is retried with each memory-saving choice at most once:
+//! reading the prompt → the text encoder moves to the processor
+//! (`--backend te=cpu`, remembered per model for the app session; Settings
+//! `textEncoderOnCpu` can force it on or off); any other stage →
+//! `--vae-tiling` if it isn't on yet. Otherwise the error is `vram` with a
+//! message that says what to do next (never the generic "couldn't make this
+//! image").
+//!
 //! PRIVACY: `GenerateRequest`, `FinalPromptPreview` and the engine request body
 //! carry prompt text. They are never logged, never written to disk and never
 //! put into a `CoreError`. The only disk write here is `last_used` (a number)
 //! in `installed.json`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use pinhole_engine::failure::{classify, Failure};
+use pinhole_engine::failure::{classify, memory_failure, Failure, Stage};
 use pinhole_engine::install::EngineKind;
 use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
 use pinhole_engine::pins::EngineConfig;
 use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
-use pinhole_engine::sdapi::{ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, JobStatus, LoraRef, SampleParams, SdClient, UpscaleRequest, VaeTilingRequest};
+use pinhole_engine::sdapi::{ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef, SampleParams, SdClient, UpscaleRequest, VaeTilingRequest};
+use pinhole_hardware::OtherGpuUse;
 use pinhole_registry::style::FinalPrompt;
 use pinhole_registry::wiring::{self, Dials, FamilyUi, FineTune, GenMode, HwContext, LaunchExtras, ModelFiles, Quality, Shape};
 use pinhole_registry::{Family, Layout};
@@ -49,6 +61,18 @@ pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
 pub const IDLE_STOP_AFTER: Duration = Duration::from_secs(5 * 60);
 /// Another process answered on the port we started an engine on.
 pub const PORT_TAKEN_MESSAGE: &str = "Another program is using Pinhole's engine port — try again.";
+/// The graphics card ran out of memory (no numbers about other programs).
+pub const VRAM_MESSAGE: &str = "Your graphics card ran out of memory. Close other programs that use the graphics card (games, other AI apps) and try again, or pick the smaller version of this model in Models.";
+/// System memory ran out (CPU engine, or the text encoder already on the processor).
+pub const RAM_MESSAGE: &str = "Your computer ran out of memory. Close other programs and try again, or pick the smaller version of this model in Models.";
+/// Reading the prompt ran out of graphics memory while Settings keeps the text encoder on the card.
+pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Run the text encoder on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
+/// A job that doesn't say why it failed.
+pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).";
+pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
+pub(crate) const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
+const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE];
+const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Run the text encoder on the processor”).";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
 
@@ -190,6 +214,34 @@ pub struct SavedImage {
 
 // ================================================================ state
 
+/// Memory-saving launch choices made automatically for one model (RAM only,
+/// kept for the rest of the app session).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct MemFallback {
+    /// `--backend te=cpu`: the text encoder runs on the processor.
+    pub te_on_cpu: bool,
+    /// `--vae-tiling`
+    pub vae_tiling: bool,
+}
+
+/// Settings `textEncoderOnCpu`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TeChoice {
+    Auto,
+    On,
+    Off,
+}
+
+impl TeChoice {
+    pub(crate) fn current(core: &AppCore) -> Self {
+        match core.settings.read().text_encoder_on_cpu.as_str() {
+            "on" => TeChoice::On,
+            "off" => TeChoice::Off,
+            _ => TeChoice::Auto,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct EngineFlags {
     pub installing: bool,
@@ -231,6 +283,14 @@ pub struct GenState {
     pub(crate) idle_stop_after: parking_lot::Mutex<Duration>,
     /// Clear session happened while a job was running: stop the engine after it.
     pub(crate) clear_pending: AtomicBool,
+    /// Automatic memory fallbacks per model id (RAM only, app session).
+    pub(crate) mem_fallback: parking_lot::Mutex<HashMap<String, MemFallback>>,
+    /// Notes shown with the current job's progress (plain language, no prompt).
+    pub(crate) job_note: parking_lot::Mutex<Vec<String>>,
+    /// Graphics memory used by other programs when the running engine started (NVIDIA).
+    pub(crate) gpu_others: parking_lot::Mutex<Option<OtherGpuUse>>,
+    /// Tests: the launch args each run asked an external engine for.
+    pub(crate) external_launches: parking_lot::Mutex<Vec<Vec<String>>>,
 }
 
 impl Default for GenState {
@@ -247,6 +307,10 @@ impl Default for GenState {
             activity: AtomicU64::new(0),
             idle_stop_after: parking_lot::Mutex::new(IDLE_STOP_AFTER),
             clear_pending: AtomicBool::new(false),
+            mem_fallback: parking_lot::Mutex::new(HashMap::new()),
+            job_note: parking_lot::Mutex::new(Vec::new()),
+            gpu_others: parking_lot::Mutex::new(None),
+            external_launches: parking_lot::Mutex::new(Vec::new()),
         }
     }
 }
@@ -568,8 +632,11 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
     };
     let components_optional = layout == Layout::AllInOne && family.layout == Layout::DiffusionOnly;
     let reg = core.registry();
-    let required = wiring::required_components(&reg, family, hw);
     let idx = core.installed.lock();
+    // Another installed option of a VRAM-dependent choice (e.g. the bf16 text
+    // encoder on a 16 GB card) is used rather than asking for a download.
+    let installed = |id: &str| idx.find_component(id).is_some_and(|f| idx.abs_path(&core.data, f).is_file());
+    let required = wiring::required_components_with(&reg, family, hw, &installed);
     let main = idx.abs_path(&core.data, model);
     if !main.is_file() {
         return Err(CoreError::not_found(format!("The file for “{}” is missing from the Data folder. Reinstall it from Models.", model.friendly_name)));
@@ -601,6 +668,7 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
 // ================================================================ engine lifecycle
 
 fn emit_progress(core: &AppCore, phase: GenPhase, label: &str, queue: Option<u32>, step: Option<(u32, u32)>, t0: Instant) {
+    let note = core.gen.job_note.lock().join(" ");
     core.emit(CoreEvent::Generation(GenerationProgress {
         phase,
         model_label: Some(label.to_string()),
@@ -608,7 +676,202 @@ fn emit_progress(core: &AppCore, phase: GenPhase, label: &str, queue: Option<u32
         step: step.map(|s| s.0),
         total_steps: step.map(|s| s.1),
         elapsed_ms: t0.elapsed().as_millis() as u64,
+        note: (!note.is_empty()).then_some(note),
     }));
+}
+
+/// Note about other programs' graphics memory, measured at each engine start
+/// (replaces the one from an earlier start of this job; shown first).
+pub(crate) fn set_others_note(core: &AppCore, note: Option<String>) {
+    let mut n = core.gen.job_note.lock();
+    n.retain(|x| !x.starts_with(OTHERS_PREFIX));
+    if let Some(note) = note {
+        n.insert(0, note);
+    }
+}
+
+/// Show `note` for the automatic retry that is starting (replaces the note of
+/// an earlier retry of the same job; other notes stay).
+pub(crate) fn set_retry_note(core: &AppCore, note: &str) {
+    let mut n = core.gen.job_note.lock();
+    n.retain(|x| !RETRY_NOTES.contains(&x.as_str()));
+    n.push(note.to_string());
+}
+
+// ================================================================ memory
+
+/// sd.cpp module names for the text encoder (`parse_backend_module`,
+/// src/core/ggml_extend_backend.cpp; case-insensitive, `-`/`_` ignored).
+const TE_MODULES: &[&str] = &["te", "clip", "text", "textencoder", "textencoders", "conditioner", "cond", "llm", "t5", "t5xxl"];
+
+fn is_te_module(key: &str) -> bool {
+    let k: String = key.trim().chars().filter(|c| *c != '-' && *c != '_').collect::<String>().to_ascii_lowercase();
+    TE_MODULES.contains(&k.as_str())
+}
+
+/// Does sd-server run the text encoder on the CPU with these args?
+/// (`--backend` entries in order, a later one wins; `--clip-on-cpu` is
+/// prepended by sd.cpp so any explicit entry overrides it.)
+pub(crate) fn text_encoder_on_cpu(args: &[String]) -> bool {
+    let (mut default, mut te) = (None::<String>, None::<String>);
+    for w in args.windows(2).filter(|w| w[0] == "--backend") {
+        for part in w[1].split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match part.split_once('=') {
+                None => default = Some(part.to_string()),
+                Some((k, v)) if matches!(k.trim().to_ascii_lowercase().as_str(), "all" | "default" | "*") => default = Some(v.trim().to_string()),
+                Some((k, v)) if is_te_module(k) => te = Some(v.trim().to_string()),
+                Some(_) => {}
+            }
+        }
+    }
+    match te {
+        Some(b) => b.eq_ignore_ascii_case("cpu"),
+        None => args.iter().any(|a| a == "--clip-on-cpu") || default.is_some_and(|b| b.eq_ignore_ascii_case("cpu")),
+    }
+}
+
+/// Run the text encoder on the processor: every `--backend` list is merged
+/// into one, other text-encoder entries dropped and `te=cpu` added last (sd.cpp
+/// joins repeated `--backend` values with `,`; a later module entry wins).
+pub(crate) fn with_text_encoder_on_cpu(args: &mut Vec<String>) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut out = Vec::with_capacity(args.len() + 2);
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--backend" && i + 1 < args.len() {
+            let keep = args[i + 1].split(',').map(str::trim).filter(|p| !p.is_empty() && !p.split_once('=').is_some_and(|(k, _)| is_te_module(k)));
+            parts.extend(keep.map(String::from));
+            i += 2;
+        } else {
+            out.push(args[i].clone());
+            i += 1;
+        }
+    }
+    parts.push("te=cpu".into());
+    out.extend(["--backend".into(), parts.join(",")]);
+    *args = out;
+}
+
+/// This model's memory choices: Settings `textEncoderOnCpu` on / off, or (auto)
+/// what an out-of-memory retry chose earlier this session. GPU backends only.
+fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallback {
+    let mut fb = core.gen.mem_fallback.lock().get(model_id).copied().unwrap_or_default();
+    fb.te_on_cpu = gpu_backend
+        && match TeChoice::current(core) {
+            TeChoice::On => true,
+            TeChoice::Off => false,
+            TeChoice::Auto => fb.te_on_cpu,
+        };
+    fb
+}
+
+/// Wiring args with the memory choices applied.
+fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
+    let mut args = wiring_args.to_vec();
+    if fb.te_on_cpu && !text_encoder_on_cpu(&args) {
+        with_text_encoder_on_cpu(&mut args);
+    }
+    if fb.vae_tiling && !args.iter().any(|a| a == "--vae-tiling") {
+        args.push("--vae-tiling".into());
+    }
+    args
+}
+
+/// The next retry after running out of memory at `stage`, if any: text
+/// encoder → processor (Settings on Automatic, GPU backend, not there yet);
+/// anything else → VAE tiling (not on yet and allowed). Each choice is made at
+/// most once, so a job is retried at most twice. Returns the new choices and
+/// the note to show.
+fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool) -> Option<(MemFallback, &'static str)> {
+    match stage {
+        Stage::TextEncoder => (gpu_backend && te == TeChoice::Auto && !text_encoder_on_cpu(args)).then_some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
+        _ => (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE)),
+    }
+}
+
+/// `9 GB`, `8.9 GB` (MiB in, GiB out like the rest of the UI).
+fn gb_text(mib: u64) -> String {
+    let gb = (mib as f64 / 1024.0 * 10.0).round() / 10.0;
+    if gb.fract() == 0.0 {
+        format!("{gb:.0} GB")
+    } else {
+        format!("{gb:.1} GB")
+    }
+}
+
+/// "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB)."
+pub(crate) fn others_sentence(o: &OtherGpuUse) -> String {
+    let mut names: Vec<(String, Option<u64>)> = Vec::new();
+    for p in &o.processes {
+        match names.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(&p.name)) {
+            Some((_, used)) => *used = match (*used, p.used_mib) {
+                (Some(a), Some(b)) => Some(a + b),
+                (a, b) => a.or(b),
+            },
+            None => names.push((p.name.clone(), p.used_mib)),
+        }
+    }
+    let listed: Vec<String> = names
+        .iter()
+        .take(3)
+        .map(|(n, used)| match used {
+            Some(m) if *m >= 100 => format!("{n} ({})", gb_text(*m)),
+            _ => n.clone(),
+        })
+        .collect();
+    let amount = gb_text(o.others_mib);
+    if listed.is_empty() {
+        format!("Other programs are using {amount} of your graphics memory.")
+    } else {
+        format!("Other programs are using {amount} of your graphics memory: {}.", listed.join(", "))
+    }
+}
+
+/// How [`others_sentence`] starts (to replace an older note).
+const OTHERS_PREFIX: &str = "Other programs are using ";
+
+/// Shown while loading when other programs hold a lot of graphics memory.
+pub(crate) fn others_note(o: &OtherGpuUse) -> String {
+    format!("{} If pictures fail, close them and try again.", others_sentence(o))
+}
+
+/// Out of graphics memory: names other programs when the engine start saw them.
+pub(crate) fn vram_message(core: &AppCore) -> String {
+    match core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
+        Some(o) => format!(
+            "Your graphics card ran out of memory. {} Close them and try again, or pick the smaller version of this model in Models.",
+            others_sentence(&o)
+        ),
+        None => VRAM_MESSAGE.to_string(),
+    }
+}
+
+/// The final out-of-memory error for a job (after any retry).
+fn memory_error(core: &AppCore, stage: Stage, args: &[String], gpu_backend: bool) -> CoreError {
+    let msg = if !gpu_backend || (stage == Stage::TextEncoder && text_encoder_on_cpu(args)) {
+        RAM_MESSAGE.to_string()
+    } else if stage == Stage::TextEncoder && TeChoice::current(core) == TeChoice::Off {
+        TE_ON_GPU_MESSAGE.to_string()
+    } else {
+        vram_message(core)
+    };
+    CoreError::new("vram", msg)
+}
+
+/// `EngineStatus.note` for the running engine.
+pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String> {
+    if !flags.running {
+        return None;
+    }
+    let mut notes = Vec::new();
+    let te_auto = flags.loaded_model_id.as_ref().is_some_and(|id| core.gen.mem_fallback.lock().get(id).is_some_and(|f| f.te_on_cpu));
+    if te_auto && TeChoice::current(core) == TeChoice::Auto {
+        notes.push(TE_ON_CPU_NOTE.to_string());
+    }
+    if let Some(o) = core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
+        notes.push(others_sentence(&o));
+    }
+    (!notes.is_empty()).then(|| notes.join(" "))
 }
 
 /// Remove `flag` (and its value) from an argument list.
@@ -670,21 +933,33 @@ enum ReadyFailure {
 
 /// Make sure sd-server runs with exactly `wiring_args` (restart otherwise) and
 /// is ready. Returns its base URL.
+///
+/// Before a launch: the old engine has fully exited (`stop` waits), leftover
+/// engines under `Data/engine/` are killed, an idle describe engine is
+/// stopped (GPU backends) and graphics memory used by other programs is
+/// measured (NVIDIA) — a lot of it becomes a progress note.
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
     if let Some(url) = core.gen.external.lock().clone() {
+        core.gen.external_launches.lock().push(wiring_args.to_vec());
         return Ok(url);
     }
     let cfg = engine_setup::engine_config(core)?;
     let args = full_sd_args(core, wiring_args, &cfg);
+    let installed = engine_setup::installed_engine(core, EngineKind::Sd);
     let mut slot = core.gen.slot.lock().await;
     {
         let s = &mut *slot;
         if let Some(p) = s.proc.as_mut() {
-            if p.is_running() && s.args == args {
+            // Same args AND the same engine build (the backend may have changed in Settings).
+            let same_build = installed.as_ref().is_some_and(|i| i.exe == p.exe());
+            if p.is_running() && s.args == args && same_build {
                 return Ok(p.base_url());
             }
         }
     }
+    // The old engine must be gone (its graphics memory freed) before the next
+    // one starts: `stop` waits for the exit; one that outlives the wait is
+    // killed by the leftover sweep below.
     if let Some(old) = slot.proc.take() {
         old.stop().await;
     }
@@ -695,11 +970,22 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         f.loaded_model_id = None;
     }
 
-    let installed = engine_setup::installed_engine(core, EngineKind::Sd).ok_or_else(|| {
+    let installed = installed.ok_or_else(|| {
         CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
     })?;
 
     engine_setup::ensure_runtime(core, &installed)?;
+    emit_progress(core, GenPhase::LoadingModel, label, None, None, t0);
+
+    let gpu_backend = installed.backend != "cpu";
+    if gpu_backend {
+        crate::describe::stop_if_idle(core).await;
+    }
+    engine_setup::sweep_orphans(core).await;
+    let others = if gpu_backend { engine_setup::gpu_others(core).await } else { None };
+    set_others_note(core, others.as_ref().filter(|o| o.is_significant()).map(others_note));
+    *core.gen.gpu_others.lock() = others;
+
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
@@ -764,7 +1050,14 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
                         ReadyError::Cancelled => CoreError::new("cancelled", "Cancelled."),
                         ReadyError::Timeout => CoreError::new("engine_failed", "The model took too long to load. Try again, or try a smaller version of this model.")
                             .with_details(core.gen.logs.tail_text(40)),
-                        ReadyError::Exited { .. } => engine_failure(&core.gen.logs, code),
+                        ReadyError::Exited { .. } => {
+                            let err = engine_failure(&core.gen.logs, code);
+                            match err.code.as_str() {
+                                "vram" if gpu_backend => CoreError { message: vram_message(core), ..err },
+                                "vram" => CoreError { message: RAM_MESSAGE.into(), ..err },
+                                _ => err,
+                            }
+                        }
                     }
                 }
             };
@@ -785,8 +1078,22 @@ const MISSING_LIBRARY_MESSAGE: &str = "The image engine is missing a system libr
 /// Plain-language error for an engine failure (ring-buffer tail in `details`).
 pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreError {
     let tail = logs.tail_text(40);
-    let (code, msg) = match classify(&tail, exit_code) {
-        Failure::OutOfMemory => ("vram", "Not enough VRAM — try the Fast setting or the smaller version of this model"),
+    failure_error(classify(&tail, exit_code)).with_details(exit_details(tail, exit_code))
+}
+
+/// Engine output plus the exit code, for the Details toggle.
+fn exit_details(tail: String, exit_code: Option<i32>) -> String {
+    match exit_code {
+        Some(c) if !tail.is_empty() => format!("{tail}\n(exit code {c})"),
+        Some(c) => format!("exit code {c}"),
+        None => tail,
+    }
+}
+
+/// Code + message that say what to do next (no details).
+fn failure_error(failure: Failure) -> CoreError {
+    let (code, msg) = match failure {
+        Failure::OutOfMemory => ("vram", VRAM_MESSAGE),
         Failure::DriverTooOld => (
             "engine_failed",
             "Your NVIDIA driver is too old for the image engine. Update it (version 570 or newer), or switch the engine to Vulkan in Settings.",
@@ -800,12 +1107,7 @@ pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreEr
         ),
         Failure::Unknown => ("engine_failed", "The engine stopped unexpectedly. Try again; if it keeps happening, try the Fast setting or restart Pinhole."),
     };
-    let details = match exit_code {
-        Some(c) if !tail.is_empty() => format!("{tail}\n(exit code {c})"),
-        Some(c) => format!("exit code {c}"),
-        None => tail,
-    };
-    CoreError::new(code, msg).with_details(details)
+    CoreError::new(code, msg)
 }
 
 /// Kill the engine (cancel while generating, or after it died).
@@ -858,6 +1160,7 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
+    core.gen.job_note.lock().clear();
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
@@ -975,82 +1278,40 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         body.strength = Some(1.0);
     }
 
-    // Engine (restart only when the launch args differ).
-    let base = ensure_engine(core, &wiring_args, &prep.model.id, &label, cancel, t0).await?;
-    let client = SdClient::new(core.local.clone(), base);
-
-    core.gen.logs.set_secrets(&prep.secrets);
-    core.gen.logs.reset_progress();
-    if cancel.is_cancelled() {
-        return Err(CoreError::new("cancelled", "Cancelled."));
-    }
-    emit_progress(core, GenPhase::Queued, &label, None, None, t0);
-    let job_id = client.submit(&body).await.map_err(|e| api_failure(core, e))?;
-    drop(body);
-    // From now on the engine may hold this job's images (IDLE_STOP_AFTER).
-    core.gen.slot.lock().await.results_cached = true;
-
-    // Poll.
+    // Engine (restart only when the launch args differ) + job. When the graphics
+    // card runs out of memory, each memory-saving choice is tried once (text
+    // encoder on the processor, VAE tiling), so there are at most two retries.
+    // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
+    let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
+    let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
+    let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
-    let (mut passes, mut last_step) = (0u32, 0u32);
-    let mut errors = 0;
     let job = loop {
-        tokio::select! {
-            _ = tokio::time::sleep(POLL_EVERY) => {}
-            _ = cancel.cancelled() => {
-                return Err(cancel_job(core, &client, &job_id).await);
-            }
-        }
-        if let Some(code) = engine_died(core).await {
-            let err = engine_failure(&core.gen.logs, code);
-            drop_engine(core).await;
-            return Err(err);
-        }
-        match client.job(&job_id).await {
-            Ok(job) => {
-                errors = 0;
-                match job.status {
-                    JobStatus::Queued => emit_progress(core, GenPhase::Queued, &label, Some(job.queue_position), None, t0),
-                    JobStatus::Generating => {
-                        let step = core.gen.logs.progress().filter(|p| p.kind == ProgressKind::Sampling).map(|p| {
-                            if batches > 1 && p.total == steps {
-                                if p.step < last_step {
-                                    passes += 1;
-                                }
-                                last_step = p.step;
-                                ((passes.min(batches - 1)) * steps + p.step, steps * batches)
-                            } else {
-                                (p.step, p.total)
-                            }
-                        });
-                        emit_progress(core, GenPhase::Generating, &label, None, step, t0);
-                    }
-                    JobStatus::Completed => break job,
-                    JobStatus::Failed => {
-                        let msg = job.error.map(|e| e.message).unwrap_or_default();
-                        let mut err = engine_failure(&core.gen.logs, None);
-                        if classify(&msg, None) == Failure::OutOfMemory {
-                            err = CoreError::new("vram", "Not enough VRAM — try the Fast setting or the smaller version of this model");
-                        } else if err.code == "engine_failed" && classify(&core.gen.logs.tail_text(40), None) == Failure::Unknown {
-                            err = CoreError::new("engine_failed", "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).");
-                        }
-                        let details = format!("{}\n{}", pinhole_engine::logbuf::redact_line(&msg, &lowered(&prep.secrets)), core.gen.logs.tail_text(40));
-                        return Err(err.with_details(details.trim().to_string()));
-                    }
-                    JobStatus::Cancelled => return Err(CoreError::new("cancelled", "Cancelled.")),
-                    JobStatus::Unknown => {}
+        let args = with_memory_choices(&wiring_args, fb);
+        let base = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
+        let client = SdClient::new(core.local.clone(), base);
+        match run_job(core, &client, &body, &prep.secrets, &label, (steps, batches), cancel, t0).await {
+            Ok(job) => break job,
+            Err(RunError::Failed(e)) => return Err(e),
+            Err(RunError::OutOfMemory { stage, details }) => {
+                let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed) else {
+                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(details));
+                };
+                // Remember the automatic choice for this model (RAM only, app session).
+                {
+                    let mut remembered = core.gen.mem_fallback.lock();
+                    let entry = remembered.entry(prep.model.id.clone()).or_default();
+                    entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
+                    entry.vae_tiling |= next_fb.vae_tiling;
                 }
-            }
-            Err(ApiError::NotFound) => return Err(CoreError::new("engine_failed", "The engine lost track of this job. Try again.")),
-            Err(e) => {
-                errors += 1;
-                if errors >= 5 {
-                    return Err(api_failure(core, e));
-                }
+                fb = next_fb;
+                set_retry_note(core, note);
+                emit_progress(core, GenPhase::LoadingModel, &label, None, None, t0);
             }
         }
     };
+    drop(body);
 
     // Decode + scrub + keep in RAM.
     let mut images = job.result.map(|r| r.images).unwrap_or_default();
@@ -1091,6 +1352,124 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
 
 fn lowered(secrets: &[String]) -> Vec<String> {
     pinhole_engine::logbuf::expand_secrets(secrets)
+}
+
+/// Why a job produced no images.
+enum RunError {
+    /// Cancelled, an API problem, or a failure that isn't about memory.
+    Failed(CoreError),
+    /// Ran out of memory at `stage`; `details` = engine output (redacted).
+    OutOfMemory { stage: Stage, details: String },
+}
+
+/// Submit `body` and poll every 300 ms until the job ends. Failures are
+/// classified from the engine output printed during this job only.
+#[allow(clippy::too_many_arguments)]
+async fn run_job(
+    core: &Arc<AppCore>,
+    client: &SdClient,
+    body: &ImgGenRequest,
+    secrets: &[String],
+    label: &str,
+    (steps, batches): (u32, u32),
+    cancel: &CancellationToken,
+    t0: Instant,
+) -> Result<Job, RunError> {
+    core.gen.logs.set_secrets(secrets);
+    core.gen.logs.reset_progress();
+    if cancel.is_cancelled() {
+        return Err(RunError::Failed(CoreError::new("cancelled", "Cancelled.")));
+    }
+    let mark = core.gen.logs.mark();
+    emit_progress(core, GenPhase::Queued, label, None, None, t0);
+    let job_id = match client.submit(body).await {
+        Ok(id) => id,
+        Err(e) => return Err(job_failure(core, api_failure(core, e), mark)),
+    };
+    // From now on the engine may hold this job's images (IDLE_STOP_AFTER).
+    core.gen.slot.lock().await.results_cached = true;
+
+    let (mut passes, mut last_step) = (0u32, 0u32);
+    let mut errors = 0;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep(POLL_EVERY) => {}
+            _ = cancel.cancelled() => {
+                return Err(RunError::Failed(cancel_job(core, client, &job_id).await));
+            }
+        }
+        if let Some(code) = engine_died(core).await {
+            // Killing also waits for the output readers, so every line is in.
+            drop_engine(core).await;
+            let own = core.gen.logs.since_text(mark);
+            let details = exit_details(core.gen.logs.tail_text(40), code);
+            return Err(match memory_failure(&own) {
+                Some(stage) => RunError::OutOfMemory { stage, details },
+                None => RunError::Failed(failure_error(classify(&own, code)).with_details(details)),
+            });
+        }
+        match client.job(&job_id).await {
+            Ok(job) => {
+                errors = 0;
+                match job.status {
+                    JobStatus::Queued => emit_progress(core, GenPhase::Queued, label, Some(job.queue_position), None, t0),
+                    JobStatus::Generating => {
+                        let step = core.gen.logs.progress().filter(|p| p.kind == ProgressKind::Sampling).map(|p| {
+                            if batches > 1 && p.total == steps {
+                                if p.step < last_step {
+                                    passes += 1;
+                                }
+                                last_step = p.step;
+                                ((passes.min(batches - 1)) * steps + p.step, steps * batches)
+                            } else {
+                                (p.step, p.total)
+                            }
+                        });
+                        emit_progress(core, GenPhase::Generating, label, None, step, t0);
+                    }
+                    JobStatus::Completed => return Ok(job),
+                    JobStatus::Failed => {
+                        // sd-server only says "generate_image returned no results": the
+                        // reason is in the engine output. Let the readers catch up with it.
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                        let msg = job.error.map(|e| e.message).unwrap_or_default();
+                        let hidden = lowered(secrets);
+                        let msg = msg.lines().map(|l| pinhole_engine::logbuf::redact_line(l, &hidden)).collect::<Vec<_>>().join("\n");
+                        let own = format!("{msg}\n{}", core.gen.logs.since_text(mark));
+                        let details = format!("{msg}\n{}", core.gen.logs.tail_text(40)).trim().to_string();
+                        if let Some(stage) = memory_failure(&own) {
+                            return Err(RunError::OutOfMemory { stage, details });
+                        }
+                        let err = match classify(&own, None) {
+                            Failure::Unknown => CoreError::new("engine_failed", UNKNOWN_JOB_MESSAGE),
+                            other => failure_error(other),
+                        };
+                        return Err(RunError::Failed(err.with_details(details)));
+                    }
+                    JobStatus::Cancelled => return Err(RunError::Failed(CoreError::new("cancelled", "Cancelled."))),
+                    JobStatus::Unknown => {}
+                }
+            }
+            Err(ApiError::NotFound) => return Err(RunError::Failed(CoreError::new("engine_failed", "The engine lost track of this job. Try again."))),
+            Err(e) => {
+                errors += 1;
+                if errors >= 5 {
+                    return Err(job_failure(core, api_failure(core, e), mark));
+                }
+            }
+        }
+    }
+}
+
+/// A job error that may be about memory: `vram` takes the memory path, with
+/// the stage from the output printed since `mark`.
+fn job_failure(core: &AppCore, err: CoreError, mark: u64) -> RunError {
+    if err.code == "vram" {
+        let stage = pinhole_engine::failure::failed_stage(&core.gen.logs.since_text(mark));
+        RunError::OutOfMemory { stage, details: err.details.unwrap_or_default() }
+    } else {
+        RunError::Failed(err)
+    }
 }
 
 /// Cancel the job; sd-server can't interrupt a running job, so kill the engine then.
@@ -1146,6 +1525,7 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
 
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
+    core.gen.job_note.lock().clear();
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let res = upscale_inner(core, &src, &upscaler, factor, &cancel).await;
@@ -1172,6 +1552,7 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
                 use_taesd: false,
             };
             let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
+            let args = with_memory_choices(&args, memory_choices(core, &model_id, hw.backend != "cpu"));
             let r = ensure_engine(core, &args, &model_id, &prep_model.0.friendly_name, cancel, t0).await;
             emit_progress(core, if r.is_ok() { GenPhase::Done } else { GenPhase::Failed }, &prep_model.0.friendly_name, None, None, t0);
             r?
@@ -1378,7 +1759,7 @@ mod tests {
         logs.push_line("ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory");
         let e = engine_failure(&logs, Some(1));
         assert_eq!(e.code, "vram");
-        assert_eq!(e.message, "Not enough VRAM — try the Fast setting or the smaller version of this model");
+        assert_eq!(e.message, VRAM_MESSAGE);
         assert!(e.details.unwrap().contains("exit code 1"));
         let e = engine_failure(&LogBuffer::default(), None);
         assert!(e.message.starts_with("The engine stopped unexpectedly"));
@@ -1389,6 +1770,76 @@ mod tests {
         assert_eq!(e.code, "model_load");
         assert!(e.message.starts_with("This model couldn't be loaded"), "{}", e.message);
         assert!(e.details.unwrap().contains("new_sd_ctx_t failed"));
+    }
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn text_encoder_moves_to_the_processor_in_backend_lists() {
+        let mut a = v(&["--diffusion-model", "/d", "--diffusion-fa"]);
+        assert!(!text_encoder_on_cpu(&a));
+        with_text_encoder_on_cpu(&mut a);
+        assert_eq!(a, v(&["--diffusion-model", "/d", "--diffusion-fa", "--backend", "te=cpu"]));
+        assert!(text_encoder_on_cpu(&a));
+
+        // Existing lists are merged; other text-encoder entries (any alias) dropped.
+        let mut a = v(&["--backend", "diffusion=cuda0,CLIP=cuda0,vae=cpu", "--vae", "/v", "--backend", "t5_xxl=cuda0"]);
+        with_text_encoder_on_cpu(&mut a);
+        assert_eq!(a, v(&["--vae", "/v", "--backend", "diffusion=cuda0,vae=cpu,te=cpu"]));
+        let mut a = v(&["--backend", "cuda0"]);
+        with_text_encoder_on_cpu(&mut a);
+        assert_eq!(a, v(&["--backend", "cuda0,te=cpu"]));
+
+        // sd.cpp semantics: a later entry wins; --clip-on-cpu is prepended.
+        assert!(text_encoder_on_cpu(&v(&["--backend", "cpu"])));
+        assert!(text_encoder_on_cpu(&v(&["--backend", "all=cpu,diffusion=cuda0"])));
+        assert!(!text_encoder_on_cpu(&v(&["--backend", "cpu,te=cuda0"])));
+        assert!(text_encoder_on_cpu(&v(&["--clip-on-cpu"])));
+        assert!(!text_encoder_on_cpu(&v(&["--clip-on-cpu", "--backend", "llm=cuda0"])));
+        assert!(!text_encoder_on_cpu(&v(&["--backend", "vae=cpu"])));
+    }
+
+    #[test]
+    fn one_memory_retry_per_stage() {
+        let gpu = v(&["--diffusion-model", "/d"]);
+        let none = MemFallback::default();
+        let (fb, note) = next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, true, &gpu, true).unwrap();
+        assert_eq!(fb, MemFallback { te_on_cpu: true, vae_tiling: false });
+        assert_eq!(note, TE_RETRY_NOTE);
+        let args = with_memory_choices(&gpu, fb);
+        assert!(text_encoder_on_cpu(&args), "{args:?}");
+        // Already on the processor, pinned to the card by Settings, or no GPU: no TE retry.
+        assert!(next_memory_fallback(fb, Stage::TextEncoder, TeChoice::Auto, true, &args, true).is_none());
+        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Off, true, &gpu, true).is_none());
+        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true).is_none());
+        // Anything else: VAE tiling once, unless it's on or Fine-tune turned it off.
+        for stage in [Stage::Diffusion, Stage::Vae, Stage::Unknown] {
+            let (fb, note) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, true).unwrap();
+            assert_eq!((fb.vae_tiling, note), (true, TILING_RETRY_NOTE));
+            let args = with_memory_choices(&gpu, fb);
+            assert_eq!(args.iter().filter(|a| *a == "--vae-tiling").count(), 1);
+            assert!(next_memory_fallback(fb, stage, TeChoice::Auto, true, &args, true).is_none());
+            assert!(next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false).is_none());
+        }
+    }
+
+    #[test]
+    fn other_programs_are_named_with_their_memory() {
+        let p = |pid, name: &str, mib| pinhole_hardware::GpuProcess { pid, name: name.into(), used_mib: mib };
+        let o = OtherGpuUse { gpu_index: 0, total_mib: 16275, others_mib: 9216, processes: vec![p(7, "python.exe", Some(9114))] };
+        assert_eq!(others_sentence(&o), "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB).");
+        // WDDM: no per-process numbers; repeated names are listed once; at most three.
+        let o = OtherGpuUse {
+            others_mib: 10854,
+            processes: vec![p(1, "python.exe", None), p(2, "python.exe", None), p(3, "obs64.exe", None), p(4, "a.exe", None), p(5, "b.exe", None)],
+            ..o
+        };
+        assert_eq!(others_sentence(&o), "Other programs are using 10.6 GB of your graphics memory: python.exe, obs64.exe, a.exe.");
+        let o = OtherGpuUse { processes: vec![], ..o };
+        assert_eq!(others_sentence(&o), "Other programs are using 10.6 GB of your graphics memory.");
+        assert!(others_note(&o).ends_with("If pictures fail, close them and try again."));
     }
 
     #[test]

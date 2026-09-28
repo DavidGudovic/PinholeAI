@@ -17,8 +17,12 @@ pub const HARD_ALLOWED_FORMATS: &[&str] = &["SafeTensor", "GGUF"];
 const PICKLE_EXTENSIONS: &[&str] = &["ckpt", "pt", "pth", "bin", "pkl", "pickle"];
 
 /// Safetensors precisions stable-diffusion.cpp cannot load (bitsandbytes NF4,
-/// torchao/int8, SVDQuant int4, NVFP4…). GGUF quants are all fine.
-const UNSUPPORTED_SAFETENSORS_FP: &[&str] = &["nf4", "int8", "int4", "fp4", "nvfp4", "svdq", "mxfp4"];
+/// SVDQuant / ComfyUI int4, NVFP4, MXFP4…). GGUF quants are all fine. `int8`
+/// is allowed: the pinned engine runs ComfyUI `int8_tensorwise` (+ convrot)
+/// files (docs/int8_convrot.md), which is what CivitAI's int8 Krea 2 /
+/// Mage-Flow / Qwen 2.1 files are; any other int8 layout is refused after the
+/// download by the header check (`pinhole_registry::detect::unsupported_weights`).
+const UNSUPPORTED_SAFETENSORS_FP: &[&str] = &["nf4", "int4", "fp4", "nvfp4", "svdq", "mxfp4"];
 
 /// CivitAI file types that hold model weights.
 const WEIGHT_FILE_TYPES: &[&str] = &["model", "pruned model"];
@@ -114,7 +118,7 @@ fn reason(v: Verdict) -> &'static str {
         Verdict::ScanPending => "CivitAI hasn't finished its safety scan of this file yet. Try again later.",
         Verdict::ScanFailed => "CivitAI's safety scan flagged this file, so Pinhole won't install it.",
         Verdict::UnsupportedQuant => {
-            "This model only comes in a compressed format (such as NF4 or INT8) that Pinhole can't run. Look for a version with fp16, bf16, fp8 or GGUF files."
+            "This model only comes in a compressed format (such as NF4 or INT4) that Pinhole can't run. Look for a version with fp16, bf16, fp8, int8 or GGUF files."
         }
         Verdict::Pickle => {
             "This model is only available as an old-style .ckpt/.pt file, which can hide harmful code. Pinhole only installs .safetensors and .gguf files."
@@ -265,10 +269,25 @@ mod tests {
         let files = vec![file("m_nf4.safetensors", Some("SafeTensor"), Some("nf4"), Some("pruned"), true, 3e6)];
         assert!(select_file(&files, &allowed()).unwrap_err().contains("NF4"));
         let files = vec![
-            file("m_int8.safetensors", Some("SafeTensor"), Some("int8"), None, true, 6e6),
+            file("m_int4.safetensors", Some("SafeTensor"), Some("int4"), None, true, 6e6),
             file("m_bf16.safetensors", Some("SafeTensor"), Some("bf16"), None, false, 12e6),
         ];
         assert_eq!(select_file(&files, &allowed()).unwrap().name, "m_bf16.safetensors");
+        // CivitAI Krea 2 uploads: int8 (ComfyUI int8_tensorwise, runs) over int4 / nvfp4 (don't).
+        let files = vec![
+            file("k_int4.safetensors", Some("SafeTensor"), Some("int4"), None, true, 7e6),
+            file("k_nvfp4.safetensors", Some("SafeTensor"), Some("nvfp4"), None, false, 8e6),
+            file("k_int8.safetensors", Some("SafeTensor"), Some("int8"), None, false, 13e6),
+        ];
+        assert_eq!(select_file(&files, &allowed()).unwrap().name, "k_int8.safetensors");
+        let err = select_file(&files[..2], &allowed()).unwrap_err();
+        assert!(err.contains("INT4") && err.contains("int8"), "{err}");
+        // Otherwise equal: fp8 is preferred over int8.
+        let files = vec![
+            file("k_int8.safetensors", Some("SafeTensor"), Some("int8"), None, false, 13e6),
+            file("k_fp8.safetensors", Some("SafeTensor"), Some("fp8"), None, false, 13e6),
+        ];
+        assert_eq!(select_file(&files, &allowed()).unwrap().name, "k_fp8.safetensors");
     }
 
     #[test]

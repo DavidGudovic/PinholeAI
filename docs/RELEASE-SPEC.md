@@ -18,6 +18,7 @@ countries before the first release, and re-review before each major release.
 | EU AI Act Art. 50(2) (applies since 2 Aug 2026; the open-source exemption does **not** cover it) | Every generated image marked as AI-generated in a machine-readable, detectable way | §2 |
 | UK Crime and Policing Act 2026, s.99 → Sexual Offences Act 2003 s.66I | Offence to make or supply something "for use as" a generator of fake intimate images. **Defence: all reasonable steps taken to prevent non-consensual use.** Same Act also criminalises supplying CSA image generators. | §3, §4, §5 |
 | FLUX.1 [dev] / Kontext [dev] Non-Commercial License | Filters or manual review when using the model; licence acceptance | §3, §6 |
+| Krea 2 Community License v1 (§4.2) | "Reasonable and appropriate" content filters for any deployment; licence copy + notice when distributing; commercial use only under $1M revenue | §3, §6 |
 | GitHub Acceptable Use Policy (synthetic media) | No project "designed for, encourage, promote, support, or suggest" creating non-consensual intimate imagery | §8 |
 
 The goal is not an unbreakable filter (local open software can always be modified). The goal is:
@@ -154,6 +155,15 @@ blocking logic with mocked classifier scores; measure false positives on a safe 
     The configured Kontext URL is a third-party re-upload that skips Black Forest Labs' gate.
   - Qwen2.5-VL-3B (default captioner) — reportedly the Qwen Research (non-commercial) licence;
     verify, or switch to an Apache-2.0 captioner.
+  - Krea 2 (one-click `recommended.realistic_detail`, GGUF mirror realrebelai/KREA-2_GGUFs) —
+    Krea 2 Community License v1 (LICENSE.pdf in krea-ai/krea-2 and Comfy-Org/Krea-2): allows
+    use, copying, redistribution and derivatives, but §4.2 requires content filters for any
+    deployment and §2.3 limits commercial use to < $1M yearly revenue. Show the licence
+    (link to the PDF) and require acceptance; the mirror's own LICENSE file is empty, so
+    Pinhole must show it. Keep the recommendation only once §3 ships.
+  - Other non-commercial families now in the registry: FLUX.2 dev / klein 9B (FLUX
+    Non-Commercial), Anima (CircleStone Labs non-commercial), Qwen-Image 2.1 (Qwen Research),
+    SD 3.x (Stability Community License) — licence acceptance before their first download.
 - Store only the accepted licence id + version in `settings.yaml`.
 - SD 1.5 / SDXL (OpenRAIL-M / ++) use restrictions are repeated in the terms (§7).
 - `THIRD_PARTY_LICENSES` covers engines, bundled classifiers and the watermark model.
@@ -229,6 +239,9 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 - [ ] §8 wording pass over README, repo description, UI, screenshots
 - [ ] §9 `SAFETY.md` + abuse contact
 - [ ] §10 lawyer review done
+- [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign,
+      plus Authenticode for Windows) and "Update and restart" refuses a file whose signature doesn't
+      verify. Today it only checks `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").
 - [ ] SPEC.md, CLAUDE.md and the privacy tests updated to match
 
 ---

@@ -51,6 +51,8 @@ struct Inner {
     progress: Option<StepProgress>,
     /// Per-stream partial line not yet terminated by `\n` / `\r` (stdout, stderr).
     partial: [String; 2],
+    /// Lines stored since the buffer was created (never reset; see [`LogBuffer::mark`]).
+    pushed: u64,
 }
 
 /// Which pipe bytes came from (each keeps its own partial line).
@@ -157,6 +159,24 @@ impl LogBuffer {
             g.lines.pop_front();
         }
         g.lines.push_back(line);
+        g.pushed += 1;
+    }
+
+    /// A position in the output: pass it to [`LogBuffer::since`] later to get
+    /// only what the engine printed after this point (e.g. for one job).
+    pub fn mark(&self) -> u64 {
+        self.inner.lock().pushed
+    }
+
+    /// Lines stored after `mark` that are still in the ring (oldest first).
+    pub fn since(&self, mark: u64) -> Vec<String> {
+        let g = self.inner.lock();
+        let n = usize::try_from(g.pushed.saturating_sub(mark)).unwrap_or(usize::MAX).min(g.lines.len());
+        g.lines.iter().skip(g.lines.len() - n).cloned().collect()
+    }
+
+    pub fn since_text(&self, mark: u64) -> String {
+        self.since(mark).join("\n")
     }
 
     /// Latest progress bar value seen since the last [`LogBuffer::reset_progress`].
@@ -338,6 +358,25 @@ mod tests {
     use super::*;
 
     const SENTINEL: &str = "PINHOLE_SENTINEL_7f3a a red fox in the snow";
+
+    #[test]
+    fn since_mark_returns_only_newer_lines() {
+        let b = LogBuffer::new(3);
+        b.push_line("old 1");
+        let m = b.mark();
+        assert!(b.since(m).is_empty());
+        b.push_line("new 1");
+        b.push_bytes(b"new 2\n");
+        assert_eq!(b.since(m), vec!["new 1", "new 2"]);
+        b.push_line("new 3");
+        b.push_line("new 4");
+        assert_eq!(b.since(m), vec!["new 2", "new 3", "new 4"], "capped by the ring");
+        b.clear();
+        assert!(b.since(m).is_empty(), "cleared on engine restart");
+        b.push_line("after restart");
+        assert_eq!(b.since_text(m), "after restart");
+        assert_eq!(b.since_text(b.mark()), "");
+    }
 
     #[test]
     fn ring_keeps_last_n() {

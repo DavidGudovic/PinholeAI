@@ -1,7 +1,7 @@
 // Edit (img2img + instruction editing), SPEC §5.2.
 // The image lives in the Rust session (RAM); the edit chain is an in-memory undo stack.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Undo2, WandSparkles } from "lucide-react";
+import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { JobProgress } from "../../components/JobProgress";
@@ -18,14 +18,13 @@ import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import { createModels, editModels, type ChangeAmount, type EditMode } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
-import { fitEditSize, settingsSummary } from "../../lib/state/request";
+import { editOutputSize, settingsSummary, type EditSizeChoice } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
 
-type SizeChoice = "smaller" | "normal" | "larger";
-const SIZE_PIXELS: Record<SizeChoice, number> = { smaller: 640 * 640, normal: 1024 * 1024, larger: 1280 * 1280 };
+type SizeChoice = EditSizeChoice;
 
 export function EditTab() {
   const tab = useAppState((s) => s.tab);
@@ -67,7 +66,7 @@ export function EditTab() {
   const current = node ? images[node.imageId] : undefined;
   const prevNode = compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
-  const outSize = current ? fitEditSize(current.width, current.height, SIZE_PIXELS[size], sizeMultiple(model?.familyId)) : null;
+  const outSize = current ? editOutputSize(current.width, current.height, size, sizeMultiple(model?.familyId)) : null;
   const myJob = job?.kind === "edit" ? job : null;
 
   const load = async (f: File) => {
@@ -347,6 +346,9 @@ export function EditTab() {
               </IconButton>
               <IconButton label="Redo" disabled={e.index >= e.chain.length - 1} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
                 <Redo2 className="h-4 w-4" />
+              </IconButton>
+              <IconButton label="Delete this edit" disabled={e.index === 0 || !!job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
+                <Trash2 className="h-4 w-4" />
               </IconButton>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
               <Button size="sm" variant={compare && before ? "secondary" : "ghost"} disabled={!before && e.index === 0} aria-pressed={compare && !!before} onClick={() => setCompare((c) => !c)}>

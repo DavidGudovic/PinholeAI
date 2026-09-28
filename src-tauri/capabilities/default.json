@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core events, dialogs (open/save), opener (Data folder only via command), clipboard image write.",
+  "description": "Main window: core events, dialogs (open/save), opener (Data folder and the release page, only via commands), clipboard image write.",
   "windows": ["main"],
   "permissions": [
     "core:default",

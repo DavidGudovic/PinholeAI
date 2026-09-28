@@ -21,7 +21,7 @@ pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option
         return None;
     }
     let family = file.family.as_deref()?;
-    for (role, label) in [("realistic", "Realistic"), ("anime", "Anime")] {
+    for (role, label) in [("realistic", "Realistic"), ("realistic_detail", "Realistic"), ("anime", "Anime")] {
         let heads = registry
             .recommended()
             .get(role)
@@ -40,7 +40,7 @@ pub fn installed_model_view(registry: &Registry, index: &InstalledIndex, file: &
         Some(f) => {
             let (need, fit) = families::need_and_fit(registry, f, hw, families::installed_need(registry, f, file, hw), file.size_bytes);
             let missing: Vec<String> =
-                families::missing_components(registry, f, hw, index, false).into_iter().map(|(_, c)| families::component_label(c)).collect();
+                families::missing_to_run(registry, f, hw, index).into_iter().map(|(_, c)| families::component_label(c)).collect();
             let is_edit = f.role.as_deref() == Some("edit") || f.modes.iter().any(|m| m == "edit");
             (Some(need), Some(fit), missing, f.modes.clone(), is_edit, Some(f.label.clone()), f.license_note.clone())
         }
@@ -203,6 +203,18 @@ mod tests {
     }
 
     #[test]
+    fn installed_other_encoder_option_counts_as_complete() {
+        // Regression: bf16 Qwen3-4B installed before 16 GB moved to Q8 → no "Get".
+        let reg = registry();
+        let zit = model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors");
+        let idx = index(vec![zit.clone(), component(&reg, "flux_ae"), component(&reg, "qwen3_4b")]);
+        assert!(installed_model_view(&reg, &idx, &zit, &hw(16.0)).missing_components.is_empty());
+        let idx = index(vec![zit.clone(), component(&reg, "flux_ae")]);
+        let v = installed_model_view(&reg, &idx, &zit, &hw(16.0));
+        assert!(v.missing_components[0].contains("Qwen3-4B-Q8_0.gguf"), "{:?}", v.missing_components);
+    }
+
+    #[test]
     fn installed_model_view_fields() {
         let reg = registry();
         let mut zit = model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo-Q8_0.gguf");
@@ -216,7 +228,8 @@ mod tests {
         assert_eq!(v.vram.unwrap().gb, 12.0, "registry figure for the Q8 file");
         assert_eq!(v.fit, Some(Fit::Tight));
         assert_eq!(v.missing_components.len(), 1);
-        assert!(v.missing_components[0].contains("qwen_3_4b.safetensors"));
+        // 8 GB: the Q4_K_M GGUF text encoder (bf16 only from 20 GB).
+        assert!(v.missing_components[0].contains("Qwen3-4B-Q4_K_M.gguf"), "{:?}", v.missing_components);
         assert_eq!(v.license_note.as_deref(), Some("Apache 2.0"));
         assert_eq!(v.last_used, Some(42));
 

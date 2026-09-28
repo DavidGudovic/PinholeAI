@@ -58,6 +58,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: bundle
+          # A tag's cache is only readable by that same tag, so saving one after a release
+          # build costs ~2 min (Windows) and is never used. Release builds restore the
+          # cache saved on main instead: run CI on main with "installers" (or Bundle
+          # by hand) after dependency changes to refresh it.
+          save-if: ${{ github.ref_type != 'tag' }}
 
       - name: Install npm dependencies
         run: npm ci

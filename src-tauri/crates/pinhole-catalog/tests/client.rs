@@ -70,9 +70,10 @@ async fn search_sends_query_without_key() {
     assert_eq!(page.items.len(), 7);
     let reqs = srv.requests();
     let r = &reqs[0];
-    assert!(r.path.contains("sort=Highest%20Rated"), "{}", r.path);
+    assert!(r.path.contains("sort=Most%20Downloaded"), "{}", r.path);
+    assert!(r.path.contains("limit=50"), "{}", r.path);
     assert!(r.path.contains("baseModels=SDXL%201.0&baseModels=Pony"), "{}", r.path);
-    assert!(r.path.contains("nsfw=false"));
+    assert!(r.path.contains("nsfw=true"), "Safe only filters client-side");
     assert!(!r.path.contains("page="));
     assert!(r.header("authorization").is_none(), "browsing is anonymous");
     assert!(!r.path.contains("secret-key"));
@@ -84,7 +85,7 @@ async fn browse_pages_by_cursor() {
     let c = client(&srv, false);
     let f = filters();
     let now = chrono::Utc::now();
-    let out = browse(&c, &f, &BrowseQuery::default(), &[], &AnyEnv, now).await.unwrap();
+    let out = browse(&c, &f, &BrowseQuery::default(), &[], &AnyEnv, now, || true).await.unwrap();
     // Fixture: 5 cards per page after filters; page 2 has no cursor → stop.
     assert_eq!(srv.requests().len(), 2);
     assert!(srv.requests()[1].path.contains("cursor=2%7C1718000000000"));

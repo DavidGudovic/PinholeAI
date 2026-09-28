@@ -352,7 +352,8 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
         .ok_or_else(|| CoreError::not_found("The describe engine isn't installed yet. Click Get on the Describe tab."))?;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
-        if s.proc.is_running() && s.model == model && s.mmproj == mmproj {
+        // Same files AND the same engine build (the backend may have changed in Settings).
+        if s.proc.is_running() && s.model == model && s.mmproj == mmproj && s.proc.exe() == engine.exe {
             return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
         }
     }
@@ -360,6 +361,7 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
         old.proc.stop().await;
     }
     engine_setup::ensure_runtime(core, &engine)?;
+    engine_setup::sweep_orphans(core).await;
     let cfg = engine_setup::engine_config(core)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
     let mut args: Vec<String> = cfg.llama_cpp.launch_defaults.iter().filter(|a| *a != "--host" && *a != "127.0.0.1").cloned().collect();
@@ -416,6 +418,22 @@ pub fn start_idle_watchdog(core: &Arc<AppCore>) {
             }
         }
     });
+}
+
+/// Stop llama-server unless it is describing right now (it holds graphics
+/// memory the image engine is about to need). Returns whether it was stopped.
+pub(crate) async fn stop_if_idle(core: &AppCore) -> bool {
+    if core.describe.busy.load(Ordering::SeqCst) {
+        return false;
+    }
+    let Ok(mut slot) = core.describe.slot.try_lock() else { return false };
+    match slot.take() {
+        Some(s) => {
+            s.proc.stop().await;
+            true
+        }
+        None => false,
+    }
 }
 
 pub async fn shutdown(core: &AppCore) {

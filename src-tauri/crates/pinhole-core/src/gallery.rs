@@ -185,12 +185,18 @@ fn kept_meta(meta: &Map<String, Value>) -> Option<Map<String, Value>> {
 }
 
 /// The full-size rendition (`original=true`) of a CivitAI image URL.
+/// Other URLs are unchanged.
 pub fn original_url(url: &str) -> String {
-    let marked = thumbnail_url(url, 1);
-    if marked == url {
+    if !is_preview_url(url) {
         return url.to_string();
     }
-    marked.replacen("/width=1/", "/original=true/", 1)
+    let (path, rest) = url.split_at(url.find(['?', '#']).unwrap_or(url.len()));
+    let is_transform = |s: &str| s.split(',').all(|p| p.contains('=')) && s.split(',').any(|p| p.starts_with("width=") || p == "original=true");
+    let mut segs: Vec<&str> = path.split('/').collect();
+    // Skip "https:", "" and the host.
+    let Some(pos) = segs.iter().skip(3).position(|s| is_transform(s)).map(|p| p + 3) else { return url.to_string() };
+    segs[pos] = "original=true";
+    format!("{}{rest}", segs.join("/"))
 }
 
 /// The model's page on CivitAI. NSFW models live on civitai.red, everything
@@ -255,9 +261,11 @@ mod tests {
     #[test]
     fn renditions() {
         let g = gallery(&version(), ContentMode::Safe, false, 450);
-        assert_eq!(g.items[0].thumb_url, "https://image.civitai.com/xG1/5403/width=450/12221833.jpeg");
+        assert_eq!(g.items[0].thumb_url, thumbnail_url("https://image.civitai.com/xG1/5403/original=true/12221833.jpeg", 450));
+        assert!(g.items[0].thumb_url.contains("/width="));
         assert_eq!(g.items[0].full_url, "https://image.civitai.com/xG1/5403/original=true/12221833.jpeg");
         assert_eq!(original_url("https://image.civitai.com/a/u/width=450/2.jpeg"), "https://image.civitai.com/a/u/original=true/2.jpeg");
+        assert_eq!(original_url("https://image.civitai.com/a/u/width=450,optimized=true/2.jpeg"), "https://image.civitai.com/a/u/original=true/2.jpeg");
         assert_eq!(original_url("https://image.civitai.com/a/u/2.jpeg"), "https://image.civitai.com/a/u/2.jpeg");
     }
 

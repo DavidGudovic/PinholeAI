@@ -47,19 +47,73 @@ price:
   default: free            # paid models hidden by default
 
 # api_nsfw: value of the `nsfw` query parameter (omit the key to not send it).
-# client_filter: only `model.nsfw == true` / `model.nsfw == false` are understood.
+# What each mode keeps is fixed in code (the YAML can't turn "Safe only" off):
+#   Safe only   → models that pass `safe_filter` below;
+#   Include 18+ → everything;
+#   18+ only    → the models "Safe only" hides.
+# All three ask CivitAI for everything (`nsfw=true`): that is the only way to get every
+# sample image with its rating, which `safe_filter` needs (with `nsfw=false` CivitAI drops
+# the non-PG images from the response). Switching modes then reuses the same pages.
 content:
-  safe:           { label: "Safe only",   api_nsfw: false, client_filter: "model.nsfw == false" }
+  safe:           { label: "Safe only",   api_nsfw: true }
   include_18plus: { label: "Include 18+", api_nsfw: true }
-  only_18plus:    { label: "18+ only",    api_nsfw: true, client_filter: "model.nsfw == true" }
+  only_18plus:    { label: "18+ only",    api_nsfw: true }
   default: safe
   confirm_once_per_session: true
   blur_nsfw_previews_when_safe: true
+
+# "Safe only" rules, like Stability Matrix's default (hide what CivitAI flags NSFW, show
+# only PG previews) plus our own checks. Tuned on live /api/v1/models data (2026-09-28;
+# samples in src-tauri/crates/pinhole-catalog/tests/fixtures/live_*.json). CivitAI's own
+# `nsfw=false` only hides models flagged NSFW, which still left many suggestive anime
+# merges on the first page. The model-level `nsfwLevel` is a bitmask of every rating its
+# images have (1 PG, 2 PG-13, 4 R, 8 X, 16 XXX, 32 blocked): Juggernaut XL is 31 like the
+# merges, so it is only used to hide models with no PG image at all. A model is hidden
+# when ANY of these match (besides `model.nsfw == true` and a `nsfwLevel` without the PG
+# bit, which are always applied):
+safe_filter:
+  # 1. It has one of these tags (whole tag, any case).
+  hide_tags: [
+    porn, porno, pornography, hentai, nude, nudes, naked, nudity, sex, sexual, erotic, erotica,
+    xxx, yiff, hardcore, lewd, ecchi, fetish, bdsm, bondage, futanari, futa, uncensored, r18,
+    breasts, "large breasts", "big breasts", boobs, tits, nipples, "large ass", vagina, penis,
+    pussy, genitals, topless, lingerie, underwear, panties, "see-through", bimbo, milf, ntr,
+    netorare, ahegao, shemale, "nude girl", "erotic pose", "sex toy", "sexual activity",
+    blowjob, cumshot, cum, creampie, bukkake, doggystyle, anal, vulva, labia, lactation,
+  ]
+  # 2. It has at least `suggestive_tags_to_hide` of these. One alone is fine: Juggernaut XL
+  #    and RealVisXL are tagged "nsfw" because they *can* do it.
+  suggestive_tags: [
+    sexy, nsfw, mature, babes, babe, seductive, seduction, sensual, bikini, swimsuit, busty,
+    curvy, pinup, pin-up, thicc, latex, "sexy woman", "sexy girl", "nsfw/sfw", "sfw/nsfw",
+  ]
+  suggestive_tags_to_hide: 2
+  # 3. Its name contains one of these words (whole words, any case: "REED_XXX_SDXL" and
+  #    "Mix (NSFW)" match, "XXMix" doesn't). Phrases match consecutive words.
+  hide_name_words: [
+    nsfw, xxx, porn, porno, hentai, lewd, uncensored, nude, nudes, naked, nudity, erotic,
+    erotica, sexy, sex, lust, lustify, harem, babes, bimbo, ntr, milf, fetish, r18, pervert,
+    perverts, ahegao, boobs, breasts, tits, hardcore, seductive, onlyfans, "milk factory",
+  ]
+  # 4. More than this share of its creator's sample images (all versions) are rated R or
+  #    above, counted once it has at least `min_rated_images` rated images. Measured:
+  #    Juggernaut XL 0.15, majicMIX realistic 0.31, Nova Anime XL 0.43, CyberRealistic Pony
+  #    0.49 (kept); RedCraft 0.51, "One obsession" 0.64, "Kodoranime" 0.95 (hidden).
+  max_mature_image_share: 0.5
+  min_rated_images: 5
+  # Card previews in "Safe only" use images rated at most this (1 = PG, like Stability
+  # Matrix; capped at 2 = PG-13). A model without one shows no preview.
+  max_preview_level: 1
 
 sort:
   - { label: "Top rated",       api: "Highest Rated" }
   - { label: "Most downloaded", api: "Most Downloaded" }
   - { label: "Newest",          api: "Newest" }
+# Opening sort + time. "Most downloaded · All time" surfaces the mainstream models (Realistic
+# Vision, DreamShaper, Juggernaut XL, …); "This month" is dominated by fresh anime merges and
+# "This week" returned only 40 checkpoints in total (2026-09-28).
+default_sort: "Most Downloaded"
+default_period: AllTime
 
 period:
   - { label: "This week",  api: Week }
@@ -69,9 +123,23 @@ period:
 
 allowed_file_formats: [SafeTensor, GGUF]   # never PickleTensor (also enforced in code)
 require_scans_success: true                # pickleScanResult and virusScanResult
+# Cards per Browse page (the grid asks for the next page while you scroll).
 page_size: 24
+# Models asked from CivitAI per request (`limit`, max 100; Stability Matrix also asks for
+# 50). Bigger than page_size because "Safe only" and the other filters drop about half:
+# the default query keeps 52 of the first 100. 50 "All time" models are ≈ 6.5 MB of JSON
+# (old models have many versions and sample images; sent gzip-compressed) and 3–5 s of
+# CivitAI server time (2026-09-28).
+api_limit: 50
 # When client-side filters drop items, fetch up to this many extra pages per
 # scroll before returning a partial page ("Load more").
 max_extra_requests: 5
-# Card preview images are requested at this width from CivitAI's image CDN.
+# Recent CivitAI answers are kept in RAM (never on disk) so switching Look, Price or
+# Content back and forth doesn't ask CivitAI again.
+cache_minutes: 5
+cache_pages: 12
+# Card preview images are requested at this width from CivitAI's image CDN, as
+# `width=450,optimized=true` — the same small compressed rendition CivitAI's own cards use,
+# so it is usually already cached there. Snapped up to the CDN's sizes (96, 320, 450, 512,
+# 800, 1200, 1600; max 1800).
 preview_width: 450

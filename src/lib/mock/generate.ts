@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import { styleById } from "./library";
+import { mockFlags, mockSettings } from "./app";
 import { touchLastUsed } from "./models";
 import { FAMILY_UI } from "../state/familyFixtures";
 import type {
@@ -22,6 +23,24 @@ import type {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const err = (code: string, message: string, details: string | null = null): CoreError => ({ code, message, details });
+
+// ---------------------------------------------------------------- out of graphics memory (?busygpu)
+// Mirrors Rust generate.rs: with 9 GB held by another program, reading the prompt runs out of
+// graphics memory once per model; Settings textEncoderOnCpu "auto" retries with the text encoder
+// on the processor (remembered per model until the app closes), "off" fails with code "vram".
+const BUSY_NOTE = "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). If pictures fail, close them and try again.";
+const TE_RETRY_NOTE = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
+const TE_ON_GPU_MESSAGE =
+  "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Run the text encoder on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
+const TE_OOM_DETAILS = [
+  "generate_image returned no results",
+  "[WARN   ] model_manager.cpp:1914 - model manager cannot make enough memory available on CUDA0: need 518.58 MB device / 6.58 MB budget, available 0.00 MB device / 7044.91 MB budget",
+  "[ERROR  ] ggml_runner.cpp:898  - qwen3 segment 1/1 (graph) failed during workspace capacity check",
+  "[ERROR  ] conditioner.hpp:2224 - LLM prompt encoding failed",
+  "[ERROR  ] image.cpp:448  - failed to encode prompt",
+].join("\n");
+/** Models whose text encoder moved to the processor after running out of memory (app session). */
+const teOnCpu = new Set<string>();
 
 // ---------------------------------------------------------------- session (RAM)
 interface SessionImage {
@@ -223,14 +242,25 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     const mask = req.maskImageId ? (session.get(req.maskImageId) ?? null) : null;
 
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).
-    if (loadedModel !== model.id) {
+    // Rust measures other programs' graphics memory (nvidia-smi) before a launch.
+    const busy = mockFlags().busyGpu;
+    const load = async (note: string | null) => {
       const tensors = 1130;
       for (let i = 0; i <= 8; i++) {
-        progress({ phase: "loadingModel", modelLabel: model.friendlyName, step: Math.round((tensors * i) / 8), totalSteps: tensors }, started);
+        progress({ phase: "loadingModel", modelLabel: model.friendlyName, step: Math.round((tensors * i) / 8), totalSteps: tensors, note }, started);
         await sleep(200);
         await checkCancel(started);
       }
       loadedModel = model.id;
+    };
+    if (loadedModel !== model.id) await load(busy ? BUSY_NOTE : null);
+    const teSetting = mockSettings().textEncoderOnCpu;
+    if (busy && teSetting !== "on" && !(teSetting === "auto" && teOnCpu.has(model.id))) {
+      progress({ phase: "queued", queuePosition: 1 }, started);
+      await sleep(400);
+      if (teSetting === "off") throw err("vram", TE_ON_GPU_MESSAGE, TE_OOM_DETAILS);
+      teOnCpu.add(model.id);
+      await load(`${BUSY_NOTE} ${TE_RETRY_NOTE}`);
     }
     progress({ phase: "queued", queuePosition: 1 }, started);
     await sleep(250);

@@ -42,6 +42,11 @@ export function JobProgress({ job, onCancel, cancelling }: { job: Job; onCancel:
           {cancelling ? "Stopping…" : "Cancel"}
         </Button>
       </div>
+      {p?.note && (
+        <p className="mt-1.5 pl-7 text-xs text-amber-900/80 dark:text-amber-200/80" role="note">
+          {p.note}
+        </p>
+      )}
       <ProgressBar className="mt-2.5" value={p?.step ?? 0} max={p?.totalSteps || 1} indeterminate={!determinate} />
     </div>
   );

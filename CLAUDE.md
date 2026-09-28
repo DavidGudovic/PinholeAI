@@ -16,7 +16,12 @@ src/              React + TypeScript UI
 config/           shipped YAML: models.yaml, catalog-filters.yaml, engine.yaml, presets/
 docs/SPEC.md      product + technical spec
 docs/RELEASE-SPEC.md  what must be done before any build is shared (marking, safety checks, licences)
-tests/            Rust integration tests + privacy tests
+docs/ARCHITECTURE.md  crates, IPC contract, flows, where each area lives
+docs/PROJECT-BRIEF.md status, decisions, roadmap (start here)
+tests/            Rust integration tests + privacy tests; tests/e2e/ drives the real app (WebDriver)
+scripts/          privacy lint, pin verification, packaging (Node, no Python)
+.claude/          session start hook for Claude Code on the web
+.github/          CI (tiered), Bundle, Release, Verify pins, API probe; issue + PR templates
 ```
 
 ## How to work
@@ -29,6 +34,32 @@ tests/            Rust integration tests + privacy tests
   input intake, result intake incl. previews, export for Save/Copy) so release safeguards can be
   added without a refactor.
 
+## Working in a Claude Code session
+- **Start with** `docs/PROJECT-BRIEF.md` (status, decisions, roadmap), then SPEC.md and
+  `docs/ARCHITECTURE.md` (where each area lives). Feature requests and bugs come in as GitHub issues
+  (templates in `.github/ISSUE_TEMPLATE/`).
+- The session start hook (`.claude/hooks/session-start.sh`) installs the Tauri Linux deps, runs
+  `npm install`, builds `dist/`, pre-compiles the Rust tests and clones the pinned
+  stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference).
+- **Local checks before every push:** `cargo test --workspace --locked`,
+  `cargo clippy --workspace --all-targets`, `npm test`, `npm run build` (includes `tsc`),
+  `node scripts/privacy-lint.mjs`. A bug fix comes with a regression test.
+- **Flow:** work on your session branch → PR to `main` (use `.github/pull_request_template.md`) →
+  merge when CI is green → the branch is deleted. One PR per issue or milestone.
+- **CI tiers:** every push/PR runs the fast tier (Linux tests + frontend + privacy lint, ~4 min).
+  Pushes to `main` run the full tier (Windows tests, engine smoke, app e2e, WebDriver e2e). For
+  engine / generation / packaging changes, run the full tier on your branch before merging:
+  Actions → CI → Run workflow (`full`; tick `installers` to get a test build). Docs-only changes run nothing.
+- **Blocked hosts:** the session container can't reach huggingface.co or civitai.com. Check live
+  data with the **API probe** workflow (GitHub MCP `actions_run_trigger`, workflow `api-probe.yml`,
+  ref `main`, inputs `urls` = space-separated GET URLs on civitai.com / huggingface.co /
+  api.github.com and an optional `jq` filter; read the output with `get_job_logs`). Never guess a
+  model URL, size or SHA-256 — verify it this way (or with the verify-pins workflow).
+- **Things a session can't do** (GitHub refuses them for this integration): create releases, push
+  tags, delete branches, change repo settings. Ask the user (e.g. "Actions → Release → Run workflow").
+- Real-GPU behaviour (CUDA/Vulkan, VRAM fitting) can't be tested in the container or CI (CPU only).
+  Say what is untested and ask the user to try a build; keep error Details useful for that.
+
 ## Non-negotiable privacy rules
 1. Never write prompt or negative-prompt text to disk, logs, presets, filenames, PNG metadata,
    crash output or `installed.json`. Don't `println!`/`log::*`/`console.log` request bodies.
@@ -36,7 +67,9 @@ tests/            Rust integration tests + privacy tests
    main prompt are separate fields and are only combined in memory at request time.
 2. Always send `"embed_image_metadata": false` to `sd-server` (its default is `true`).
 3. Generated images stay in memory (Rust `Vec<u8>` / JS Blob) until the user clicks Save.
-4. No telemetry, analytics, crash reporters, update checks, remote fonts or CDN assets.
+4. No telemetry, analytics, crash reporters, automatic update checks, remote fonts or CDN assets.
+   The only update check is the user pressing **Check for updates** (SPEC §4 rule 6), through the
+   Rust client below; no updater plugin.
 5. All network calls go through ONE Rust HTTP client wrapper that enforces Offline mode and
    an allow-list of hosts: `civitai.com`, `huggingface.co`, `github.com` (+ their download CDNs).
    The WebView makes no network calls of its own; CivitAI preview images are fetched through

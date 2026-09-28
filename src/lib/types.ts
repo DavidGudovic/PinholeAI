@@ -43,6 +43,10 @@ export interface Settings {
   firstRunDone: boolean;
   /** auto | cuda | vulkan | cpu */
   engineBackend: string;
+  /** Where the text encoder (reads the prompt) runs on a graphics-card engine:
+   *  auto = graphics card, moved to the processor for a model (this app session)
+   *  after it runs out of graphics memory; on = always the processor; off = always the card. */
+  textEncoderOnCpu: "auto" | "on" | "off";
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";
@@ -87,13 +91,16 @@ export interface EngineStatus {
   errorCode: string | null;
   /** Engine output for the "Details" toggle. */
   errorDetails: string | null;
+  /** Plain-language note about the running engine (e.g. prompt read on the processor
+   *  after running out of graphics memory; other programs using a lot of it). */
+  note?: string | null;
 }
 
 // ---------------------------------------------------------------- downloads
 export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
 
 /** What a download group fetches (match on this, never on the label). */
-export type DownloadKind = "engine" | "model" | "captioner" | "upscaler";
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate";
 
 export interface GroupStatus {
   groupId: string;
@@ -176,7 +183,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | anime | edit | describe */
+  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */
@@ -317,6 +324,9 @@ export interface GenerationProgress {
   step: number | null;
   totalSteps: number | null;
   elapsedMs: number;
+  /** Plain-language note for this job (other programs using graphics memory, an
+   *  automatic retry with memory-saving settings). */
+  note?: string | null;
 }
 
 /** prompt-bearing. */
@@ -413,6 +423,9 @@ export interface CatalogFilterOptions {
   price: { key: PriceMode; label: string }[];
   defaultContent: ContentMode;
   defaultPrice: PriceMode;
+  /** Opening sort / time (`api` values from `sorts` / `periods`). */
+  defaultSort: string;
+  defaultPeriod: string;
 }
 
 export interface CatalogCard {
@@ -428,6 +441,7 @@ export interface CatalogCard {
   creator: string | null;
   /** Preview URL — fetch bytes via fetchPreview(); never put it in an <img src>. */
   previewUrl: string | null;
+  /** The preview comes from a video: `previewUrl` is a still frame of it (a bare video file URL is never fetched). */
   previewIsVideo: boolean;
   previewNsfw: boolean;
   modelNsfw: boolean;
@@ -450,6 +464,12 @@ export interface BrowsePage {
   offline: boolean;
   /** True when client-side filtering hit the 5-extra-requests cap: show "Load more". */
   partial: boolean;
+  /** CivitAI models looked at for this page. */
+  checked: number;
+  /** …hidden by the Content mode ("Safe only" hides models made for adults). */
+  hiddenByContent: number;
+  /** …hidden by Look, price, commercial use, kind or "Works with Pinhole". */
+  hiddenByFilters: number;
 }
 
 /** One preview image on a model's details page. */
@@ -528,4 +548,22 @@ export interface ResolvedResources {
   checkpoint: ResolvedResource | null;
   loras: ResolvedResource[];
   ignored: ResolvedResource[];
+}
+
+// ---------------------------------------------------------------- updates (Rust pinhole_core::update)
+/** How this copy can update itself. manual = open the release page (the .deb, dev builds). */
+export type UpdateInstallMode = "installer" | "portable" | "appImage" | "manual";
+
+export interface UpdateInfo {
+  version: string;
+  publishedAt: string | null;
+  installMode: UpdateInstallMode;
+  /** Download size for installMode (null for manual). */
+  sizeBytes: number | null;
+}
+
+export interface UpdateCheck {
+  currentVersion: string;
+  /** null = already on the newest release. */
+  update: UpdateInfo | null;
 }

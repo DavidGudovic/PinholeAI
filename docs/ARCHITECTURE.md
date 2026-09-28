@@ -33,35 +33,30 @@ Why a workspace of small crates: each area compiles and tests independently
 (`cargo test -p pinhole-net`), dependencies are explicit, and the privacy-critical
 pieces (net, store) are small enough to audit.
 
-## 2. Ownership (parallel build)
+## 2. Where things live (by area)
 
-| Area | Owns | Depends on |
+| Area | Files | Depends on |
 |---|---|---|
-| **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (detect rules, schema) | — |
-| **net** | `crates/pinhole-net/**`, `crates/pinhole-core/src/downloads.rs`, `src-tauri/src/commands/downloads.rs` | — |
-| **store** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/app.rs`, `core/src/library.rs`, `commands/app.rs`, `commands/library.rs`, `config/presets/**` | — |
-| **engine** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
-| **catalog** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
-| **frontend A** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/paste/**`, `src/lib/mock/{generate,library,describe}.ts`, `src/lib/state/**` | api.ts |
-| **frontend B** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**`, `src/lib/mock/{app,models,catalog}.ts` | api.ts |
-| **ci** | `.github/**`, `scripts/**`, `tests/**`, `THIRD_PARTY_LICENSES`, `README.md` | everything (read) |
-| **orchestrator** | root manifests, `src-tauri/src/{lib.rs,commands/mod.rs}`, `core/src/{lib,error,events}.rs`, `src/lib/{api,types}.ts`, `src/lib/mock/index.ts`, docs | — |
+| **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (families, components, detect rules) | — |
+| **net** | `crates/pinhole-net/**`, `core/src/downloads.rs`, `commands/downloads.rs` | — |
+| **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library,update}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
+| **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
+| **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
+| **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |
+| **UI Models/Settings/First run** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**` | api.ts |
+| **IPC contract** | `src/lib/{api,types}.ts` ↔ Rust serde types (camelCase), `src/lib/mock/**` (browser mock backend, must mirror Rust behaviour) | — |
+| **app shell (Rust)** | `src-tauri/src/{lib.rs,commands/mod.rs}`, `core/src/{lib,error,events}.rs` | all |
+| **CI / tests / packaging** | `.github/**`, `scripts/**`, `tests/**`, `THIRD_PARTY_LICENSES` | all |
 
-Rules for agents:
-- Edit only files you own. Need something from another area? Code against the
-  contract (stub signatures / api.ts), and list the request in your final report.
-- Stub signatures in the crates are the cross-crate contract. Implement them; you
-  may add items; do not rename/remove/re-type existing public items.
-- Do not `git commit`/`push` (the orchestrator integrates). Do not run `npm install`
-  (dependencies are fixed; ask in your report). Rust deps: add to your own crate's
-  `Cargo.toml`; prefer `workspace = true` entries that already exist.
-- The build dir is shared: `cargo test -p <your-crate>` may wait on a file lock — that's fine.
-- The upstream stable-diffusion.cpp source is checked out read-only at
-  `/home/user/leejet/stable-diffusion.cpp` (server API: `examples/server/api.md`,
-  flags: `examples/common/common.cpp`, detection: `src/model_loader.cpp`).
-- huggingface.co and civitai.com are NOT reachable from this dev container; github.com
-  git and crates.io/npm are. Write code + tests with fixtures/mocks; real-network checks
-  run in CI (`.github/workflows/verify-pins.yml`).
+Conventions across areas:
+- Public items in the crates are the cross-crate contract: extend freely, don't rename/remove/re-type
+  without updating every caller. IPC changes update `types.ts`, the Rust type and the mocks together.
+- Rust deps go in the crate's own `Cargo.toml`, preferring existing `workspace = true` entries.
+- The upstream stable-diffusion.cpp source for the pinned engine is at `$SD_CPP_SRC` in Claude Code
+  sessions (cloned by `.claude/hooks/session-start.sh`; server API `examples/server/api.md`, flags
+  `examples/common/common.cpp`, detection `src/model_loader.cpp`, per-model `docs/*.md`).
+- Session containers can't reach huggingface.co / civitai.com: write code + tests with fixtures, and
+  check live data with the **API probe** workflow (see CLAUDE.md "Working in a Claude Code session").
 
 ## 3. Commands & events
 
@@ -127,6 +122,15 @@ Linux NVIDIA uses Vulkan).
    ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
+   Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
+   each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
+   `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
+   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; then `CoreError{code:"vram"}`
+   (message names other programs using the card, engine output in `details`).
+   Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines
+   under `Data/engine/` killed (`pinhole_engine::orphans`; also at app start; never other programs
+   or engines this app runs), an idle Describe engine stopped and NVIDIA memory used by other
+   programs measured (`nvidia-smi`, a progress note when it's a lot).
 5. Decode base64 → strip every PNG text chunk (tEXt/zTXt/iTXt) defensively → store in
    `Session` (RAM) → return `ResultImage`s. Nothing touches disk until `save_image`.
 
@@ -139,6 +143,18 @@ sampler, scheduler, size — never prompt/negative/style text.
   → the family's `stay_close_maps_to`; optional mask → `mask_image`.
 - Restyle: current Create model, `init_image` + `strength` (0.35/0.55/0.75).
 - Result images carry `parentId` for the in-memory undo chain.
+
+### Browse CivitAI (catalog)
+`browse_catalog(query)` → `core::catalog::browse` → `pinhole_catalog::browse::browse`: asks
+`GET /api/v1/models` (`limit=50`, always `nsfw=true`, repeated `baseModels`/`types` keys, cursor
+paging; JSON requested gzip-compressed) through `cache::CachedSource` (RAM-only, 12 answers / 5 min,
+compacted), turns each model into a card or a hidden count (`filters::hidden_by` → `safe::SafeFilter`
+for Safe only / 18+ only, then Look, commercial use, price, compatibility) and keeps fetching until
+24 cards or 1 + 5 requests (`partial` → "Load more"). A newer Browse request stops an older one's
+extra requests (`cancelled`). Card previews are `width=450,optimized=true` CDN URLs (video → still
+frame); `fetch_preview` returns their bytes. UI (`src/tabs/models/lib/`): `pageStore.ts` (RAM page
+cache + shared in-flight requests, next page prefetched), `previewQueue.ts` / `preview.ts` (8
+fetches at a time, on-screen first, queued fetches dropped when a card scrolls away, 48 MB RAM LRU).
 
 ### Install from CivitAI / registry (catalog agent)
 `plan_civitai_install(versionId)` → pick file (SafeTensor/GGUF, primary preferred, both scans

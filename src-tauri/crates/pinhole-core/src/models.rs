@@ -10,10 +10,12 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use pinhole_catalog::cache::PageCache;
 use pinhole_catalog::families::{self, FamilyResolution};
 use pinhole_catalog::recommend::{self, FileToGet, PickAction};
 use pinhole_catalog::{inventory, local, paste, CatalogFilters};
@@ -40,6 +42,12 @@ pub struct ModelsState {
     pub(crate) api_key: Mutex<Option<Option<String>>>,
     /// `catalog-filters.yaml`, loaded once.
     pub(crate) filters: OnceLock<Arc<CatalogFilters>>,
+    /// Recent CivitAI `/models` answers (RAM only; see `pinhole_catalog::cache`).
+    pub(crate) page_cache: OnceLock<Arc<PageCache>>,
+    /// Bumped by every Browse request; an older one still paging stops early.
+    pub(crate) browse_gen: AtomicU64,
+    /// A purge of expired cache entries is scheduled.
+    pub(crate) cache_purge_pending: Arc<AtomicBool>,
 }
 
 /// A file copied into `Data/models/` whose family the user still has to pick.
@@ -252,10 +260,15 @@ pub const INVALID_MODEL_FILE: &str = "The downloaded file isn't a valid model fi
 
 /// Download content check: the file must parse as a safetensors / GGUF model
 /// (bounded header read, see `pinhole_registry::detect::read_header`) with at
-/// least one tensor. On failure the downloader deletes the file.
+/// least one tensor, in a weight layout the engine can load
+/// (`detect::unsupported_weights`: e.g. CivitAI int8 files must be ComfyUI
+/// `int8_tensorwise`). On failure the downloader deletes the file.
 pub fn model_file_check() -> ContentCheck {
     Arc::new(|path: &Path| match detect::read_header(path) {
-        Ok(h) if !h.tensor_names.is_empty() => Ok(()),
+        Ok(h) if !h.tensor_names.is_empty() => match detect::unsupported_weights(&h) {
+            Some(why) => Err(why.to_string()),
+            None => Ok(()),
+        },
         _ => Err(INVALID_MODEL_FILE.to_string()),
     })
 }
@@ -836,6 +849,14 @@ mod tests {
         for bad in [&html, &pickle, &empty, &tmp.path().join("missing.gguf")] {
             assert_eq!(check(bad), Err(INVALID_MODEL_FILE.to_string()), "{}", bad.display());
         }
+        // Valid safetensors in a layout the engine can't load (U8-packed NVFP4 weight).
+        let nvfp4 = tmp.path().join("k_nvfp4.safetensors");
+        let h = br#"{"blocks.0.attn.wq.weight":{"dtype":"U8","shape":[4],"data_offsets":[0,4]}}"#;
+        let mut bytes = (h.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(h);
+        bytes.extend_from_slice(&[0u8; 4]);
+        std::fs::write(&nvfp4, bytes).unwrap();
+        assert_eq!(check(&nvfp4), Err(detect::UNSUPPORTED_WEIGHTS.to_string()));
     }
 
     #[test]
@@ -893,7 +914,8 @@ mod tests {
             .unwrap()
             .replace("size_mb: 6577", "size_mb: 1")
             .replace("size_mb: 335", "size_mb: 1")
-            .replace("size_mb: 8045", "size_mb: 1");
+            // 8 GB → the Qwen3-4B Q4_K_M GGUF text encoder (bf16 only from 20 GB).
+            .replace("size_mb: 2497", "size_mb: 1");
         *core.registry.write() = Arc::new(pinhole_registry::Registry::from_yaml(&yaml, None).unwrap());
         {
             let mut s = core.settings.write();

@@ -16,6 +16,12 @@ export const setSettings = (settings: T.Settings) => invoke<T.Settings>("set_set
 export const getHardware = () => invoke<T.HardwareView>("get_hardware");
 export const openDataFolder = () => invoke<void>("open_data_folder");
 export const openOutputsFolder = () => invoke<void>("open_outputs_folder");
+/** One request to GitHub's releases API. Only ever called from the "Check for updates" button. */
+export const checkForUpdates = () => invoke<T.UpdateCheck>("check_for_updates");
+/** Downloads + verifies the update (progress via onDownload, kind "appUpdate"), then Pinhole restarts. Resolves only on failure paths that return. */
+export const installUpdate = (version: string) => invoke<void>("install_update", { version });
+/** Opens the GitHub release page (or the releases list) in the system browser. */
+export const openReleasePage = (version: string | null) => invoke<void>("open_release_page", { version });
 
 // ---------------------------------------------------------------- engine (engine agent)
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");

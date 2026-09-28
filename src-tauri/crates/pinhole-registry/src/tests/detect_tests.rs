@@ -355,7 +355,7 @@ fn flux_variants() {
         .collect();
     assert_eq!(candidates(&st_header(&schnell)), vec!["flux1_schnell"]);
 
-    // Fill (img_in 384), LongCat (txt_in 3584), Chroma, FLUX.2 → not FLUX.1.
+    // Fill (img_in 384), LongCat (txt_in 3584), FLUX.2 → not FLUX.1; Chroma is its own family.
     let with = |name: &'static str, shape: &'static [u64]| {
         let mut v: Vec<(&str, &str, &[u64])> =
             dev.iter().filter(|t| t.0 != name).cloned().collect();
@@ -364,11 +364,14 @@ fn flux_variants() {
     };
     assert!(candidates(&st_header(&with("img_in.weight", &[3072, 384]))).is_empty());
     assert!(candidates(&st_header(&with("txt_in.weight", &[3072, 3584]))).is_empty());
-    assert!(candidates(&st_header(&with(
-        "distilled_guidance_layer.in_proj.weight",
-        &[5120, 64]
-    )))
-    .is_empty());
+    // The distilled guidance layer makes it Chroma (model_builders.cpp is_chroma).
+    assert_eq!(
+        candidates(&st_header(&with(
+            "distilled_guidance_layer.in_proj.weight",
+            &[5120, 64]
+        ))),
+        vec!["chroma"]
+    );
     assert!(candidates(&st_header(&with(
         "double_stream_modulation_img.lin.weight",
         &[18432, 3072]
@@ -499,7 +502,11 @@ fn qwen_image_vs_edit() {
             }
         })
         .collect();
-    assert!(candidates(&st_header(&mage)).is_empty());
+    assert_eq!(
+        candidates(&st_header(&mage)),
+        vec!["mage_flow", "mage_flow_turbo"],
+        "img_in 128 → Mage-Flow"
+    );
 
     let mut lens = q.to_vec();
     lens.push(("transformer_blocks.0.img_mlp.w1.weight", "BF16", &[8, 8]));
@@ -983,4 +990,301 @@ fn anchored_patterns() {
     assert!(detect::rules_match(&rule("weight.bar$"), &h));
     assert!(!detect::rules_match(&rule("^weight"), &h));
     assert!(!detect::rules_match(&DetectRules::default(), &h)); // no positive rule
+}
+
+// ----------------------------------------------------------------------------- families added 2026-09-28
+
+#[test]
+fn krea2_turbo_and_raw() {
+    // ComfyUI naming (model.diffusion_model. prefix) and the bare names of
+    // --diffusion-model files both hit get_sd_version()'s txtfusion projector.
+    let comfy = st_header(&[
+        ("model.diffusion_model.first.weight", "BF16", &[6144, 64]),
+        ("model.diffusion_model.blocks.0.attn.wq.weight", "BF16", &[6144, 6144]),
+        ("model.diffusion_model.txtfusion.projector.weight", "BF16", &[2560, 12]),
+    ]);
+    let d = detect::detect(shipped(), &comfy);
+    assert_eq!(d.candidates, vec!["krea2_turbo", "krea2_raw"]);
+    assert_eq!(d.layout, Layout::DiffusionOnly);
+    let alt = st_header(&[("text_fusion.projector.weight", "BF16", &[2560, 12])]);
+    assert_eq!(candidates(&alt), vec!["krea2_turbo", "krea2_raw"]);
+
+    // GGUF quant (realrebelai/KREA-2_GGUFs layout).
+    let (b, size) = gguf(
+        &[("general.architecture", GVal::Str("krea2"))],
+        &[
+            ("txtfusion.projector.weight", &[12, 2560], 0),
+            ("blocks.0.attn.wq.weight", &[6144, 6144], 8),
+        ],
+    );
+    let h = parse_header_bytes(&b, size).unwrap();
+    assert_eq!(candidates(&h), vec!["krea2_turbo", "krea2_raw"]);
+
+    // Known hashes pick the variant before CivitAI / asking.
+    let reg = shipped();
+    let turbo_int8 = "8e4eeda70dd5037ab1ba2bef6b417f9f901e26093117cf397f741fc1fdaaf3f1";
+    let raw_int8 = "5585a4a38c4bcfb6fde2d480a4aa6edf7f665721ebde56d30662c35a45f5fa5c";
+    assert_eq!(reg.known_file(turbo_int8).unwrap().family, "krea2_turbo");
+    assert_eq!(reg.known_file(raw_int8).unwrap().family, "krea2_raw");
+}
+
+#[test]
+fn anima_and_turbo() {
+    let h = st_header(&[
+        ("net.x_embedder.proj.1.weight", "BF16", &[2048, 68]),
+        (
+            "net.llm_adapter.blocks.0.cross_attn.q_proj.weight",
+            "BF16",
+            &[1024, 1024],
+        ),
+    ]);
+    let d = detect::detect(shipped(), &h);
+    assert_eq!(d.candidates, vec!["anima", "anima_turbo"]);
+    assert_eq!(d.layout, Layout::DiffusionOnly);
+    let prefixed = st_header(&[(
+        "model.diffusion_model.llm_adapter.blocks.0.cross_attn.q_proj.weight",
+        "BF16",
+        &[1024, 1024],
+    )]);
+    assert_eq!(candidates(&prefixed), vec!["anima", "anima_turbo"]);
+    assert_eq!(
+        shipped()
+            .known_file("fba11953276b57edf59d1dc4f1857ac05aa079c56f982b4d7c20298d57d3f7eb")
+            .unwrap()
+            .family,
+        "anima_turbo"
+    );
+}
+
+#[test]
+fn flux2_dev_and_klein_sizes() {
+    let flux2 = |txt_in: &'static [u64], block47: bool| {
+        let mut v: Vec<(&str, &str, &[u64])> = vec![
+            ("double_stream_modulation_img.lin.weight", "BF16", &[18432, 3072]),
+            ("double_blocks.0.img_attn.qkv.weight", "BF16", &[9216, 3072]),
+            ("single_blocks.0.linear1.weight", "BF16", &[27648, 3072]),
+            ("img_in.weight", "BF16", &[3072, 128]),
+            ("txt_in.weight", "BF16", txt_in),
+        ];
+        if block47 {
+            v.push(("single_blocks.47.linear1.weight", "BF16", &[27648, 6144]));
+        }
+        st_header(&v)
+    };
+    // 3 stacked Qwen3 hidden states: 3 × 2560 (4B) / 3 × 4096 (8B).
+    assert_eq!(
+        candidates(&flux2(&[3072, 7680], false)),
+        vec!["flux2_klein_4b", "flux2_klein_4b_base"]
+    );
+    assert_eq!(
+        candidates(&flux2(&[4096, 12288], false)),
+        vec!["flux2_klein_9b", "flux2_klein_9b_base"]
+    );
+    // FLUX.2 dev: single_blocks.47 (VERSION_FLUX2), Mistral 3 × 5120.
+    assert_eq!(candidates(&flux2(&[6144, 15360], true)), vec!["flux2_dev"]);
+    // An unknown text-encoder width is not guessed.
+    assert!(candidates(&flux2(&[3072, 9999], false)).is_empty());
+    // FLUX.2 is never FLUX.1 or Chroma.
+    let c = candidates(&flux2(&[3072, 7680], false));
+    assert!(!c.iter().any(|f| f.starts_with("flux1") || f == "chroma"));
+
+    // GGUF (leejet/FLUX.2-klein-4B-GGUF): ne already in ggml order.
+    let (b, size) = gguf(
+        &[("general.architecture", GVal::Str("flux"))],
+        &[
+            ("double_stream_modulation_img.lin.weight", &[3072, 18432], 8),
+            ("txt_in.weight", &[7680, 3072], 8),
+        ],
+    );
+    let h = parse_header_bytes(&b, size).unwrap();
+    assert_eq!(candidates(&h), vec!["flux2_klein_4b", "flux2_klein_4b_base"]);
+    assert_eq!(
+        shipped()
+            .known_file("9c5fed22b76baea749d88fc2abe3ad53245e7b21a0d353a762665eea00043b92")
+            .unwrap()
+            .family,
+        "flux2_klein_4b_base"
+    );
+
+    // SeFi-Image reuses FLUX.2 blocks → not FLUX.2.
+    let mut sefi: Vec<(&str, &str, &[u64])> = vec![
+        ("double_stream_modulation_img.lin.weight", "BF16", &[18432, 3072]),
+        ("txt_in.weight", "BF16", &[3072, 7680]),
+    ];
+    sefi.push((
+        "dual_time_embed.semantic_embedder.linear_1.weight",
+        "BF16",
+        &[8, 8],
+    ));
+    assert!(candidates(&st_header(&sefi)).is_empty());
+}
+
+#[test]
+fn chroma_and_radiance() {
+    let chroma: &[(&str, &str, &[u64])] = &[
+        ("double_blocks.0.img_attn.qkv.weight", "BF16", &[9216, 3072]),
+        ("single_blocks.0.linear1.weight", "BF16", &[21504, 3072]),
+        ("img_in.weight", "BF16", &[3072, 64]),
+        ("txt_in.weight", "BF16", &[3072, 4096]),
+        ("distilled_guidance_layer.in_proj.weight", "BF16", &[5120, 64]),
+    ];
+    assert_eq!(candidates(&st_header(chroma)), vec!["chroma"]);
+    // Chroma Radiance (pixel space) is a different engine version: not registered.
+    let mut radiance = chroma.to_vec();
+    radiance.push(("nerf_final_layer_conv.conv.weight", "BF16", &[3, 64, 3, 3]));
+    assert!(candidates(&st_header(&radiance)).is_empty());
+}
+
+#[test]
+fn qwen_image_21_is_not_qwen_image() {
+    let h = st_header(&[
+        ("img_in.weight", "BF16", &[3072, 256]),
+        ("txt_in.text_norm.weight", "BF16", &[4096]),
+        ("transformer_blocks.0.img_mod.1.weight", "BF16", &[18432, 3072]),
+    ]);
+    assert_eq!(candidates(&h), vec!["qwen_image_21"]);
+    let prefixed = st_header(&[(
+        "model.diffusion_model.txt_in.text_norm.weight",
+        "BF16",
+        &[4096],
+    )]);
+    assert_eq!(candidates(&prefixed), vec!["qwen_image_21"]);
+    // Only the exact name counts (get_sd_version compares with ==).
+    let other = st_header(&[("txt_in.text_norm.weight.extra", "BF16", &[4096])]);
+    assert!(candidates(&other).is_empty());
+}
+
+#[test]
+fn sd3_checkpoint_is_all_in_one() {
+    let h = st_header(&[
+        (
+            "model.diffusion_model.joint_blocks.0.x_block.attn.qkv.weight",
+            "F16",
+            &[4608, 1536],
+        ),
+        ("first_stage_model.decoder.conv_in.weight", "F16", &[512, 16, 3, 3]),
+        (
+            "text_encoders.clip_g.transformer.text_model.embeddings.token_embedding.weight",
+            "F16",
+            &[49408, 1280],
+        ),
+    ]);
+    let d = detect::detect(shipped(), &h);
+    assert_eq!(d.candidates, vec!["sd3", "sd35_turbo"]);
+    assert_eq!(d.layout, Layout::AllInOne);
+    assert!(d.has_vae && d.has_text_encoders);
+}
+
+#[test]
+fn hidream_o1_is_a_whole_checkpoint() {
+    // Pixel-space DiT + its own language model under `model.`: always --model.
+    let h = st_header(&[
+        ("model.x_embedder.proj1.weight", "BF16", &[4096, 3072]),
+        (
+            "model.language_model.layers.0.self_attn.q_proj.weight",
+            "BF16",
+            &[4096, 4096],
+        ),
+        ("model.language_model.embed_tokens.weight", "BF16", &[151936, 4096]),
+    ]);
+    let d = detect::detect(shipped(), &h);
+    assert_eq!(d.candidates, vec!["hidream_o1", "hidream_o1_dev"]);
+    assert_eq!(d.layout, Layout::AllInOne, "never --diffusion-model");
+    assert!(d.has_text_encoders && !d.has_vae && !d.is_lora);
+    // MiniT2I's `net.img_embedder.proj1` without a language model is not HiDream.
+    let mini = st_header(&[("net.img_embedder.proj1.weight", "BF16", &[8, 8])]);
+    assert!(candidates(&mini).is_empty());
+    // A file with the embedder but no language model does not match either.
+    let partial = st_header(&[("model.x_embedder.proj1.weight", "BF16", &[4096, 3072])]);
+    assert!(candidates(&partial).is_empty());
+    assert_eq!(detect::detect(shipped(), &partial).layout, Layout::DiffusionOnly);
+}
+
+#[test]
+fn ernie_and_mage_flow() {
+    let ernie = st_header(&[
+        ("layers.0.adaLN_sa_ln.weight", "BF16", &[4096]),
+        ("layers.0.self_attention.to_q.weight", "BF16", &[4096, 4096]),
+    ]);
+    assert_eq!(candidates(&ernie), vec!["ernie_image", "ernie_image_turbo"]);
+    let prefixed = st_header(&[(
+        "model.diffusion_model.layers.0.adaLN_sa_ln.weight",
+        "BF16",
+        &[4096],
+    )]);
+    assert_eq!(candidates(&prefixed), vec!["ernie_image", "ernie_image_turbo"]);
+
+    let mage = st_header(&[
+        ("img_in.weight", "BF16", &[3072, 128]),
+        ("transformer_blocks.0.img_mod.1.weight", "BF16", &[18432, 3072]),
+    ]);
+    assert_eq!(candidates(&mage), vec!["mage_flow", "mage_flow_turbo"]);
+}
+
+#[test]
+fn unsupported_newer_models_get_no_family() {
+    // MiniMax-H3 is video + audio only in the pinned engine (img_gen refuses it).
+    let h3 = st_header(&[
+        ("model.diffusion_model.video_patch_proj.weight", "BF16", &[5120, 96]),
+        ("model.diffusion_model.audio_patch_proj.weight", "BF16", &[5120, 64]),
+    ]);
+    assert!(candidates(&h3).is_empty());
+    // Lumina-2 finetunes (Gemma-2 caption width 2304) are not Z-Image.
+    let lumina = st_header(&[
+        ("cap_embedder.0.weight", "BF16", &[2304]),
+        ("layers.0.attention.qkv.weight", "BF16", &[6912, 2304]),
+    ]);
+    assert!(candidates(&lumina).is_empty());
+    // ...while Z-Image's 2560-wide one still is.
+    let z = st_header(&[("cap_embedder.0.weight", "BF16", &[2560])]);
+    assert_eq!(candidates(&z), vec!["z_image_turbo", "z_image_base"]);
+}
+
+#[test]
+fn every_known_file_matches_its_family_detect_class() {
+    // known_files must point at families that exist and are not LoRA-only.
+    let reg = shipped();
+    for k in reg.known_files() {
+        let f = reg.family(&k.family).unwrap();
+        assert!(f.detect.has_positive_rule(), "{}", k.family);
+        assert_eq!(k.sha256.len(), 64, "{}", k.sha256);
+        assert_eq!(k.sha256, k.sha256.to_ascii_lowercase(), "{}", k.sha256);
+    }
+}
+
+#[test]
+fn unsupported_weight_layouts() {
+    // ComfyUI int8_tensorwise + convrot (Comfy-Org/Krea-2 *_int8_convrot, CivitAI
+    // "int8" Krea 2 uploads): I8 weight + per-row scale + U8 `comfy_quant` config.
+    let int8 = st_header(&[
+        ("txtfusion.projector.weight", "BF16", &[2560, 12]),
+        ("blocks.0.attn.wq.weight", "I8", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[64, 1]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[64]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&int8), None);
+    assert_eq!(candidates(&int8), vec!["krea2_turbo", "krea2_raw"]);
+    // fp8 scaled (`weight_scale`) and plain bf16 load.
+    let fp8 = st_header(&[
+        ("blocks.0.attn.wq.weight", "F8_E4M3", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[1]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[40]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&fp8), None);
+    // I8 weights without a comfy_quant config (e.g. torchao): refused.
+    let torchao = st_header(&[
+        ("blocks.0.attn.wq.weight", "I8", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[64]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&torchao), Some(detect::UNSUPPORTED_WEIGHTS));
+    // U8-packed weights (ComfyUI NVFP4 / INT4): the engine skips U8 tensors → refused.
+    let nvfp4 = st_header(&[
+        ("blocks.0.attn.wq.weight", "U8", &[64, 128]),
+        ("blocks.0.attn.wq.weight_scale", "F8_E4M3", &[64, 16]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[30]),
+    ]);
+    assert!(detect::unsupported_weights(&nvfp4).unwrap().contains("NVFP4"));
+    // GGUF always passes (every ggml quant loads).
+    let (b, size) = gguf(&[("general.architecture", GVal::Str("krea2"))], &[("blk.0.w", &[256, 64], 8)]);
+    assert_eq!(detect::unsupported_weights(&parse_header_bytes(&b, size).unwrap()), None);
 }

@@ -566,7 +566,7 @@ export function lintPackageJson(file, src, F) {
     for (const name of Object.keys(pkg[key] || {})) {
       if (FORBIDDEN_NPM.some((re) => re.test(name))) {
         const ln = lines.findIndex((l) => l.includes(`"${name}"`)) + 1;
-        F.addPlain(file, ln, "forbidden-npm", `Package \`${name}\` is not allowed (no telemetry, analytics, crash reporting or update checks — CLAUDE.md privacy rule 4).`, (lines[ln - 1] || "").trim());
+        F.addPlain(file, ln, "forbidden-npm", `Package \`${name}\` is not allowed (no telemetry, analytics, crash reporting or updater packages — CLAUDE.md privacy rule 4).`, (lines[ln - 1] || "").trim());
       }
     }
   }
@@ -591,7 +591,7 @@ export function lintTauriConf(file, src, F) {
     }
   }
   if (conf?.plugins?.updater || conf?.bundle?.createUpdaterArtifacts) {
-    F.addPlain(file, lineOfText("updater"), "csp", "Updater configured: no update checks allowed (CLAUDE.md privacy rule 4).");
+    F.addPlain(file, lineOfText("updater"), "csp", "Updater plugin configured: updates only via the user's Check for updates button through the Pinhole HTTP client (CLAUDE.md privacy rule 4).");
   }
 }
 
