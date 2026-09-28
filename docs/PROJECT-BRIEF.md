@@ -70,10 +70,11 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
 
 ## Open work / roadmap
 1. **VRAM robustness on real GPUs** (in progress): see Status.
-2. **More model families** (in progress): Krea 2, Anima, MiniMax H3, Flux.1 Krea, Flux.2 (D, Klein),
-   Chroma, Qwen 2 / 2.1, SD 3.x — the pinned engine supports them; the registry needs family entries
-   with verified components. These dominate CivitAI's current top models, which is why browsing
-   looked thin.
+2. **More model families** (registry entries done, not yet run on a real GPU): Krea 2 (Turbo is
+   the second "Realistic" one-click pick on 12 GB+), Anima, Flux.1 Krea, Flux.2 (dev, klein 4B/9B
+   + base), Chroma, Qwen-Image 2.1, SD 3 / 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; CivitAI int8
+   (ComfyUI int8_tensorwise) files now install. Not runnable: MiniMax H3 (video + audio only in the
+   engine), "Qwen 2" (API-only on CivitAI). Needs real-GPU checks of defaults and VRAM figures.
 3. **CivitAI browser** (built, awaiting a real-app check): Safe only = Stability Matrix's default
    (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
    live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then

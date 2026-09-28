@@ -170,34 +170,46 @@ function allEntries(): Entry[] {
     if (e.createdDaysAgo > 30 && i % 3 !== 0) e.createdDaysAgo = Math.floor(rnd() * 28);
   });
   let n = 0;
+  const filler = (a: string, b: string, suffix: string) => {
+    n += 1;
+    const base = b === "Anime" ? (rnd() > 0.5 ? "Illustrious" : "Pony") : BASES[Math.floor(rnd() * BASES.length)];
+    const isLora = rnd() > 0.72;
+    out.push(
+      complete(
+        {
+          name: `${a} ${b}${base.startsWith("SDXL") || base === "Pony" || base === "Illustrious" ? " XL" : ""}${suffix}`,
+          versionName: `v${1 + Math.floor(rnd() * 6)}.${Math.floor(rnd() * 10)}`,
+          type: isLora ? "LORA" : "Checkpoint",
+          baseModel: base,
+          looks: LOOK_FOR_B[b],
+          creator: ["mira", "tobi", "kaz", "lena", "orbit", "fern"][Math.floor(rnd() * 6)],
+          thumbsUpRatio: 0.78 + rnd() * 0.21,
+          downloadCount: Math.floor(500 + rnd() * rnd() * 300_000),
+          mainMb: isLora ? 120 + Math.floor(rnd() * 200) : base === "SD 1.5" ? 2034 : base.startsWith("Flux") ? 11_900 : base === "ZImageTurbo" ? 12_300 : 6617,
+          previewNsfw: rnd() > 0.88,
+          modelNsfw: rnd() > 0.9,
+          suggestive: rnd() > 0.8,
+          earlyAccess: rnd() > 0.9,
+          trainedWords: isLora ? [b.toLowerCase()] : [],
+          createdDaysAgo: rnd() > 0.35 ? Math.floor(rnd() * 28) : Math.floor(30 + rnd() * 500),
+        },
+        100 + n,
+      ),
+    );
+  };
   for (const a of FILLER_A) {
     for (const b of FILLER_B) {
       if (rnd() > 0.34) continue;
-      n += 1;
-      const base = b === "Anime" ? (rnd() > 0.5 ? "Illustrious" : "Pony") : BASES[Math.floor(rnd() * BASES.length)];
-      const isLora = rnd() > 0.72;
-      out.push(
-        complete(
-          {
-            name: `${a} ${b}${base.startsWith("SDXL") || base === "Pony" || base === "Illustrious" ? " XL" : ""}`,
-            versionName: `v${1 + Math.floor(rnd() * 6)}.${Math.floor(rnd() * 10)}`,
-            type: isLora ? "LORA" : "Checkpoint",
-            baseModel: base,
-            looks: LOOK_FOR_B[b],
-            creator: ["mira", "tobi", "kaz", "lena", "orbit", "fern"][Math.floor(rnd() * 6)],
-            thumbsUpRatio: 0.78 + rnd() * 0.21,
-            downloadCount: Math.floor(500 + rnd() * rnd() * 300_000),
-            mainMb: isLora ? 120 + Math.floor(rnd() * 200) : base === "SD 1.5" ? 2034 : base.startsWith("Flux") ? 11_900 : base === "ZImageTurbo" ? 12_300 : 6617,
-            previewNsfw: rnd() > 0.88,
-            modelNsfw: rnd() > 0.9,
-            suggestive: rnd() > 0.8,
-            earlyAccess: rnd() > 0.9,
-            trainedWords: isLora ? [b.toLowerCase()] : [],
-            createdDaysAgo: rnd() > 0.35 ? Math.floor(rnd() * 28) : Math.floor(30 + rnd() * 500),
-          },
-          100 + n,
-        ),
-      );
+      filler(a, b, "");
+    }
+  }
+  // Older generations: several CivitAI pages, so infinite scroll and prefetch have work to do.
+  for (const suffix of [" II", " Turbo", " Pro"]) {
+    for (const a of FILLER_A) {
+      for (const b of FILLER_B) {
+        if (rnd() > 0.4) continue;
+        filler(a, b, suffix);
+      }
     }
   }
   entries = out;
