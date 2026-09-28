@@ -22,6 +22,7 @@ import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
+import { UpdateSection } from "./UpdateSection";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
 /** Settings `textEncoderOnCpu` (Rust error messages and notes use the same words). */
@@ -437,6 +438,10 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             </Button>
           </div>
         </div>
+      </Section>
+
+      <Section title="Updates">
+        <UpdateSection offline={settings.offline} />
       </Section>
 
       <Section title="Appearance">

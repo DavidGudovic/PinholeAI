@@ -39,7 +39,7 @@ pieces (net, store) are small enough to audit.
 |---|---|---|
 | **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (families, components, detect rules) | — |
 | **net** | `crates/pinhole-net/**`, `core/src/downloads.rs`, `commands/downloads.rs` | — |
-| **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
+| **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library,update}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
 | **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
 | **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
 | **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |

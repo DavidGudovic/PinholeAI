@@ -67,7 +67,9 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
    main prompt are separate fields and are only combined in memory at request time.
 2. Always send `"embed_image_metadata": false` to `sd-server` (its default is `true`).
 3. Generated images stay in memory (Rust `Vec<u8>` / JS Blob) until the user clicks Save.
-4. No telemetry, analytics, crash reporters, update checks, remote fonts or CDN assets.
+4. No telemetry, analytics, crash reporters, automatic update checks, remote fonts or CDN assets.
+   The only update check is the user pressing **Check for updates** (SPEC §4 rule 6), through the
+   Rust client below; no updater plugin.
 5. All network calls go through ONE Rust HTTP client wrapper that enforces Offline mode and
    an allow-list of hosts: `civitai.com`, `huggingface.co`, `github.com` (+ their download CDNs).
    The WebView makes no network calls of its own; CivitAI preview images are fetched through

@@ -256,6 +256,7 @@ async fn group_status_json_carries_kind() {
         (crate::download::DownloadKind::Model, "model"),
         (crate::download::DownloadKind::Captioner, "captioner"),
         (crate::download::DownloadKind::Upscaler, "upscaler"),
+        (crate::download::DownloadKind::AppUpdate, "appUpdate"),
     ] {
         assert_eq!(serde_json::to_value(kind).unwrap(), s);
     }

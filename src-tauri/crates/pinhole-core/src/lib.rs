@@ -21,6 +21,7 @@ pub mod models;
 pub mod session;
 #[cfg(feature = "test-util")]
 pub mod testing;
+pub mod update;
 
 use std::path::PathBuf;
 use std::sync::Arc;

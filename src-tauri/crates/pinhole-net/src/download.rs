@@ -654,6 +654,8 @@ pub enum DownloadKind {
     Captioner,
     /// The Real-ESRGAN upscaler.
     Upscaler,
+    /// A new version of Pinhole itself (Settings → Check for updates).
+    AppUpdate,
 }
 
 /// Progress of a group (what the UI shows as one row).
