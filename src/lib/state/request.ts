@@ -109,6 +109,25 @@ export function fitEditSize(w: number, h: number, maxPixels = 1024 * 1024, multi
   return [round(w), round(h)];
 }
 
+/** The Edit tab's "Output size" choice, relative to the source image. */
+export type EditSizeChoice = "smaller" | "normal" | "larger";
+
+const EDIT_SIZE_SCALE: Record<EditSizeChoice, number> = { smaller: 0.75, normal: 1, larger: 1.25 };
+const EDIT_MAX_PIXELS = 1280 * 1280;
+
+/**
+ * Output size for an edit from the Smaller / Normal / Larger choice. "Normal" keeps the source size
+ * (shrunk to ≤ ~1 MP); Smaller and Larger are 0.75× / 1.25× of that side length, so each choice
+ * changes the result even for small sources (Larger is capped at ~1.6 MP).
+ */
+export function editOutputSize(w: number, h: number, choice: EditSizeChoice, multiple = 16): [number, number] {
+  if (!(w > 0 && h > 0)) return [1024, 1024];
+  const base = Math.min(1, Math.sqrt((1024 * 1024) / (w * h)));
+  const wanted = Math.min(base * EDIT_SIZE_SCALE[choice], Math.sqrt(EDIT_MAX_PIXELS / (w * h)));
+  const round = (n: number) => Math.max(256, Math.round((n * wanted) / multiple) * multiple);
+  return [round(w), round(h)];
+}
+
 export function buildEditRequest(
   e: EditParams,
   opts: {

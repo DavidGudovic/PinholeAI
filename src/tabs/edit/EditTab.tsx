@@ -18,14 +18,13 @@ import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import { createModels, editModels, type ChangeAmount, type EditMode } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
-import { fitEditSize, settingsSummary } from "../../lib/state/request";
+import { editOutputSize, settingsSummary, type EditSizeChoice } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
 
-type SizeChoice = "smaller" | "normal" | "larger";
-const SIZE_PIXELS: Record<SizeChoice, number> = { smaller: 640 * 640, normal: 1024 * 1024, larger: 1280 * 1280 };
+type SizeChoice = EditSizeChoice;
 
 export function EditTab() {
   const tab = useAppState((s) => s.tab);
@@ -67,7 +66,7 @@ export function EditTab() {
   const current = node ? images[node.imageId] : undefined;
   const prevNode = compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
-  const outSize = current ? fitEditSize(current.width, current.height, SIZE_PIXELS[size], sizeMultiple(model?.familyId)) : null;
+  const outSize = current ? editOutputSize(current.width, current.height, size, sizeMultiple(model?.familyId)) : null;
   const myJob = job?.kind === "edit" ? job : null;
 
   const load = async (f: File) => {
