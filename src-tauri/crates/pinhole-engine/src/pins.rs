@@ -84,6 +84,24 @@ impl BuildSpec {
     pub fn has_urls(&self) -> bool {
         self.archives().iter().all(|a| a.url.starts_with("https://"))
     }
+
+    /// File names of archives without a real pinned SHA-256 (`TODO` / missing).
+    pub fn unverified_archives(&self) -> Vec<String> {
+        self.archives().iter().filter(|a| a.verified_sha256().is_none()).map(|a| a.file_name()).collect()
+    }
+}
+
+/// Release builds refuse to install an engine archive whose pinned SHA-256 is
+/// `TODO` or missing; debug builds allow it while a new pin is being prepared.
+pub const REQUIRE_PINNED_HASHES: bool = cfg!(not(debug_assertions));
+
+/// `Err(file names)` when `require` is set and some archive isn't hash-pinned.
+pub fn check_pinned(build: &BuildSpec, require: bool) -> Result<(), Vec<String>> {
+    let missing = build.unverified_archives();
+    if require && !missing.is_empty() {
+        return Err(missing);
+    }
+    Ok(())
 }
 
 /// One engine (sd.cpp or llama.cpp).
@@ -324,6 +342,19 @@ llama_cpp:
         assert_eq!(s.build.archives()[0].verified_sha256(), None);
         assert_eq!(s.build.archives()[0].file_name(), "a.zip");
         assert_eq!(s.build.total_bytes(), 3_000_000);
+        // Release builds refuse the TODO hash; debug builds let it through.
+        assert_eq!(check_pinned(&s.build, true), Err(vec!["a.zip".to_string()]));
+        assert_eq!(check_pinned(&s.build, false), Ok(()));
+    }
+
+    #[test]
+    fn shipped_builds_are_all_hash_pinned() {
+        let cfg = shipped();
+        for pin in [&cfg.stable_diffusion_cpp, &cfg.llama_cpp] {
+            for (key, b) in &pin.builds {
+                assert_eq!(check_pinned(b, true), Ok(()), "{key} has a TODO sha256 (release builds would refuse it)");
+            }
+        }
     }
 
     #[test]

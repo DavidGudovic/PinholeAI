@@ -211,9 +211,17 @@ pub(crate) fn engine_download_specs(core: &AppCore, kind: EngineKind) -> CoreRes
         return Ok(None);
     }
     check_glibc(&sel)?;
+    check_pinned(&sel, pins::REQUIRE_PINNED_HASHES)?;
     std::fs::create_dir_all(install::download_dir(&root))?;
     let specs = install::download_specs(&root, kind, pin, &sel);
     Ok(Some((specs, cfg, sel)))
+}
+
+const UNPINNED_MESSAGE: &str = "This version of Pinhole has an engine download that hasn't been verified, so it won't install it. Update Pinhole and try again.";
+
+/// Release builds: refuse engine archives whose pinned SHA-256 is `TODO` / missing.
+fn check_pinned(sel: &SelectedBuild, require: bool) -> CoreResult<()> {
+    pins::check_pinned(&sel.build, require).map_err(|files| CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(files.join(", ")))
 }
 
 /// Unpack already-downloaded engine archives (paths in build order).
@@ -246,6 +254,7 @@ pub(crate) async fn unpack_downloaded(
     let installed = res.map_err(|e| match e {
         pinhole_engine::EngineError::HashMismatch { .. } => CoreError::new("hash_mismatch", "The engine download was corrupted (checksum mismatch). Try again.").with_details(e.to_string()),
         pinhole_engine::EngineError::Io(io) => CoreError::new("io", "Couldn't unpack the engine into the Data folder. Check free disk space and try again.").with_details(io.to_string()),
+        pinhole_engine::EngineError::Unpinned(file) => CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(file),
         other => CoreError::new("engine_failed", "The engine download couldn't be unpacked. Try again.").with_details(other.to_string()),
     })?;
     install::cleanup_downloads(&paths);
@@ -290,4 +299,29 @@ fn check_glibc(sel: &SelectedBuild) -> CoreResult<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unpinned_engine_archives_are_refused_when_required() {
+        let yaml = r#"
+stable_diffusion_cpp:
+  repo: r
+  version: v1
+  binary: sd-server
+  builds:
+    linux_cpu: { url: "https://github.com/x/y/releases/download/v1/a.zip", sha256: TODO, size_mb: 3 }
+llama_cpp: { repo: r, version: b1, binary: llama-server }
+"#;
+        let cfg = EngineConfig::from_yaml(yaml).unwrap();
+        let sel = cfg.select_build(&cfg.stable_diffusion_cpp, "linux", "cpu").unwrap();
+        let e = check_pinned(&sel, true).unwrap_err();
+        assert_eq!(e.code, "engine_failed");
+        assert!(e.message.contains("Update Pinhole"), "{}", e.message);
+        assert_eq!(e.details.as_deref(), Some("a.zip"));
+        assert!(check_pinned(&sel, false).is_ok(), "debug builds may use TODO pins");
+    }
 }

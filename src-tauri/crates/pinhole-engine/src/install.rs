@@ -128,9 +128,11 @@ pub fn download_specs(engine_root: &Path, kind: EngineKind, pin: &EnginePin, sel
             url: a.url.clone(),
             dest: dir.join(format!("{}-{}-{}", kind.dir_name(), sanitize(&pin.version), a.file_name())),
             sha256: a.verified_sha256(),
-            size_bytes: a.bytes(),
+            // `size_bytes` in engine.yaml is exact; `size_mb` is only an estimate.
+            size_bytes: a.size_bytes,
+            approx_size_bytes: a.bytes(),
             label: if n > 1 { format!("{} ({}/{n})", kind.label(), i + 1) } else { kind.label().to_string() },
-            headers: vec![],
+            ..Default::default()
         })
         .collect()
 }
@@ -146,6 +148,9 @@ pub fn unpack_build(
     downloaded: &[(ArchiveSpec, PathBuf, String)],
 ) -> Result<InstalledEngine, EngineError> {
     for (spec, _, actual) in downloaded {
+        if crate::pins::REQUIRE_PINNED_HASHES && spec.verified_sha256().is_none() {
+            return Err(EngineError::Unpinned(spec.file_name()));
+        }
         if let Some(expected) = spec.verified_sha256() {
             if !expected.eq_ignore_ascii_case(actual) {
                 return Err(EngineError::HashMismatch { file: spec.file_name(), expected, actual: actual.clone() });

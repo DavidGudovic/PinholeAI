@@ -68,8 +68,16 @@ impl EngineProcess {
     /// Spawn `exe args…`. `args` must already contain the loopback listen flags
     /// for `port`. Output goes to `logs` only.
     pub fn spawn(exe: &Path, args: &[String], port: u16, logs: Arc<LogBuffer>) -> io::Result<Self> {
+        Self::spawn_with_env(exe, args, &[], port, logs)
+    }
+
+    /// [`EngineProcess::spawn`] with extra environment variables. Secrets (e.g.
+    /// llama-server's per-launch API key) go here, not in `args`: other local
+    /// users can read a process's command line, but not its environment.
+    pub fn spawn_with_env(exe: &Path, args: &[String], env: &[(&str, &str)], port: u16, logs: Arc<LogBuffer>) -> io::Result<Self> {
         let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
         let mut cmd = Command::new(exe);
+        cmd.envs(env.iter().copied());
         cmd.args(args)
             .current_dir(&exe_dir)
             .stdin(Stdio::null())
@@ -380,6 +388,18 @@ mod tests {
         let t = Instant::now();
         p.stop().await;
         assert!(t.elapsed() < Duration::from_secs(4), "SIGTERM stops sleep quickly");
+    }
+
+    #[tokio::test]
+    async fn secrets_go_through_the_environment_not_argv() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exe = script(tmp.path(), "echo \"key=$PINHOLE_TEST_KEY args=$*\"");
+        let logs = Arc::new(LogBuffer::default());
+        let mut p = EngineProcess::spawn_with_env(&exe, &["--port".into(), "1".into()], &[("PINHOLE_TEST_KEY", "k123")], 1, logs.clone()).unwrap();
+        let _ = p.wait_ready(|| async { false }, Duration::from_secs(10), &CancellationToken::new(), |_| {}).await;
+        assert!(logs.tail_text(5).contains("key=k123 args=--port 1"), "{}", logs.tail_text(5));
+        assert!(!p.args().iter().any(|a| a.contains("k123")));
+        p.stop().await;
     }
 
     #[test]

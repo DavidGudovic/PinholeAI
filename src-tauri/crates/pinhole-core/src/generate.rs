@@ -1116,9 +1116,11 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         url: comp.url.clone(),
         dest,
         sha256: (sha.len() == 64 && sha.chars().all(|c| c.is_ascii_hexdigit())).then_some(sha),
-        size_bytes: Some(comp.size_mb * 1_000_000),
+        // `size_mb` is rounded: an estimate only, never the exact size.
+        size_bytes: None,
+        approx_size_bytes: Some(comp.size_mb * 1_000_000),
         label: "Upscaler (Real-ESRGAN 4×)".into(),
-        headers: vec![],
+        ..Default::default()
     };
     let group = core.downloads.enqueue_kind("Upscaler (Real-ESRGAN 4×)".into(), pinhole_net::download::DownloadKind::Upscaler, vec![spec]);
     let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;

@@ -83,7 +83,7 @@ impl MockSdServer {
                         let Ok((sock, _)) = acc else { continue };
                         let (st, opts) = (st.clone(), opts.clone());
                         tokio::spawn(async move {
-                            let _ = serve(sock, move |m, p, b| sd_route(&st, &opts, m, p, b)).await;
+                            let _ = serve(sock, move |m, p, _h, b| sd_route(&st, &opts, m, p, b)).await;
                         });
                     }
                 }
@@ -230,8 +230,13 @@ struct LlamaState {
     health_polls: u32,
 }
 
-/// A fake llama-server: `/health` (503 for the first `loading_polls`) and
-/// `/v1/chat/completions` answering `reply`.
+/// Model id [`MockLlamaServer`] reports at `GET /v1/models`.
+pub const MOCK_LLAMA_MODEL: &str = "/mock/captioner.gguf";
+
+/// A fake llama-server: `/health` (503 for the first `loading_polls`),
+/// `/v1/models` and `/v1/chat/completions` answering `reply`. With an API key
+/// everything but `/health` needs `Authorization: Bearer <key>` (401 otherwise),
+/// like llama-server started with `--api-key` / `LLAMA_API_KEY`.
 pub struct MockLlamaServer {
     addr: SocketAddr,
     state: Arc<Mutex<LlamaState>>,
@@ -246,21 +251,30 @@ impl Drop for MockLlamaServer {
 
 impl MockLlamaServer {
     pub async fn start(reply: &str, loading_polls: u32) -> Self {
+        Self::start_with_key(reply, loading_polls, None).await
+    }
+
+    pub async fn start_with_key(reply: &str, loading_polls: u32, api_key: Option<&str>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind mock llama-server");
         let addr = listener.local_addr().unwrap();
         let state = Arc::new(Mutex::new(LlamaState::default()));
         let stop = CancellationToken::new();
         let (st, stop2, reply) = (state.clone(), stop.clone(), Arc::new(reply.to_string()));
+        let expected_auth = Arc::new(api_key.map(|k| format!("Bearer {k}")));
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = stop2.cancelled() => break,
                     acc = listener.accept() => {
                         let Ok((sock, _)) = acc else { continue };
-                        let (st, reply) = (st.clone(), reply.clone());
+                        let (st, reply, expected_auth) = (st.clone(), reply.clone(), expected_auth.clone());
                         tokio::spawn(async move {
-                            let _ = serve(sock, move |m, p, b| {
+                            let _ = serve(sock, move |m, p, h, b| {
                                 let mut g = st.lock();
+                                let authorized = match expected_auth.as_deref() {
+                                    None => true,
+                                    Some(want) => h.iter().any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == want),
+                                };
                                 match (m, p) {
                                     ("GET", "/health") => {
                                         g.health_polls += 1;
@@ -270,6 +284,10 @@ impl MockLlamaServer {
                                             (200, json!({"status": "ok"}))
                                         }
                                     }
+                                    _ if !authorized => {
+                                        (401, json!({"error": {"message": "Invalid API Key", "type": "authentication_error", "code": 401}}))
+                                    }
+                                    ("GET", "/v1/models") => (200, json!({"object": "list", "data": [{"id": MOCK_LLAMA_MODEL, "object": "model"}]})),
                                     ("POST", "/v1/chat/completions") => {
                                         let v: Value = serde_json::from_slice(b).unwrap_or_default();
                                         g.requests.push(v);
@@ -301,7 +319,7 @@ impl MockLlamaServer {
 
 async fn serve<F>(mut sock: TcpStream, route: F) -> std::io::Result<()>
 where
-    F: Fn(&str, &str, &[u8]) -> (u16, Value),
+    F: Fn(&str, &str, &[(String, String)], &[u8]) -> (u16, Value),
 {
     let mut buf = Vec::with_capacity(8192);
     let header_end = loop {
@@ -324,11 +342,8 @@ where
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
-    let len: usize = lines
-        .filter_map(|l| l.split_once(':'))
-        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, v)| v.trim().parse().ok())
-        .unwrap_or(0);
+    let headers: Vec<(String, String)> = lines.filter_map(|l| l.split_once(':')).map(|(k, v)| (k.trim().to_string(), v.trim().to_string())).collect();
+    let len: usize = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
     let mut body = buf[header_end + 4..].to_vec();
     while body.len() < len {
         let mut chunk = vec![0u8; (len - body.len()).min(1 << 16)];
@@ -338,12 +353,13 @@ where
         }
         body.extend_from_slice(&chunk[..n]);
     }
-    let (code, value) = route(&method, &path, &body);
+    let (code, value) = route(&method, &path, &headers, &body);
     let payload = value.to_string();
     let reason = match code {
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
         409 => "Conflict",
         503 => "Service Unavailable",
@@ -437,5 +453,21 @@ mod tests {
         let reqs = mock.requests();
         let url = reqs[0].pointer("/messages/0/content/0/image_url/url").and_then(|u| u.as_str()).unwrap();
         assert!(url.starts_with("data:image/png;base64,"));
+    }
+
+    #[tokio::test]
+    async fn llama_api_key_is_required_and_sent() {
+        let mock = MockLlamaServer::start_with_key("a cat", 0, Some("k-123")).await;
+        let anon = crate::llama::LlamaClient::new_plain_for_tests(mock.base_url());
+        assert!(anon.is_ready().await, "/health stays public");
+        let err = anon.describe("Describe.", "image/png", &solid_png(2, 2, [0, 0, 0, 255]), 8).await.unwrap_err();
+        assert!(matches!(err, crate::sdapi::ApiError::Status { code: 401, .. }), "{err:?}");
+        assert!(matches!(anon.model_ids().await, Err(crate::sdapi::ApiError::Status { code: 401, .. })));
+        let wrong = anon.clone().with_api_key("nope");
+        assert!(wrong.model_ids().await.is_err());
+        let c = anon.with_api_key("k-123");
+        assert_eq!(c.model_ids().await.unwrap(), vec![MOCK_LLAMA_MODEL.to_string()]);
+        assert_eq!(c.describe("Describe.", "image/png", &solid_png(2, 2, [0, 0, 0, 255]), 8).await.unwrap(), "a cat");
+        assert_eq!(mock.requests().len(), 1, "only the authorized chat request got through");
     }
 }

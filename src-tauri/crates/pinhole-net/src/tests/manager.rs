@@ -20,7 +20,7 @@ fn file(srv: &MockServer, path: &str, dir: &std::path::Path, body: &[u8]) -> Dow
         sha256: Some(sha(body)),
         size_bytes: Some(body.len() as u64),
         label: format!("file {path}"),
-        headers: vec![],
+        ..Default::default()
     }
 }
 

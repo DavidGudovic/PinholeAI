@@ -125,11 +125,17 @@ fn reason(v: Verdict) -> &'static str {
 
 pub const NO_FILE_REASON: &str = "This version has no model file to download.";
 
+/// A safe file CivitAI lists without a SHA-256: the download couldn't be verified.
+pub const NO_HASH_REASON: &str =
+    "CivitAI doesn't list a checksum for this file, so Pinhole can't verify the download. Try another version of this model.";
+
 /// Pick the file to install, or a plain-language reason why none is safe.
 ///
-/// Ranking among safe files: fp32 files last (a half-precision copy is the same
-/// model at half the download), then the primary file, then fp16/bf16 → fp8 →
-/// unknown → fp32, then pruned → unknown → full, then the smaller file.
+/// Ranking among safe files: files without a SHA-256 last (they can't be
+/// verified, and installs refuse them — see [`NO_HASH_REASON`]), then fp32 files
+/// (a half-precision copy is the same model at half the download), then the
+/// primary file, then fp16/bf16 → fp8 → unknown → fp32, then pruned → unknown →
+/// full, then the smaller file.
 pub fn select_file<'a>(files: &'a [ModelFile], allowed_formats: &[String]) -> Result<&'a ModelFile, String> {
     let weights: Vec<&ModelFile> = files.iter().filter(|f| is_weight_file(f)).collect();
     if weights.is_empty() {
@@ -144,7 +150,7 @@ pub fn select_file<'a>(files: &'a [ModelFile], allowed_formats: &[String]) -> Re
         }
     }
     ok.into_iter()
-        .min_by_key(|f| (fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
+        .min_by_key(|f| (f.sha256().is_none(), fp_rank(f) == 3, !f.primary, fp_rank(f), size_rank(f), f.size_bytes()))
         .ok_or_else(|| reason(best_problem.unwrap_or(Verdict::Unsupported)).to_string())
 }
 
@@ -220,6 +226,16 @@ mod tests {
         assert!(select_file(&files, &allowed()).is_ok());
         // Unless the YAML narrowed the list.
         assert!(select_file(&files, &["SafeTensor".to_string()]).is_err());
+    }
+
+    #[test]
+    fn file_with_sha256_preferred() {
+        let mut hashed = file("b.safetensors", Some("SafeTensor"), Some("fp16"), Some("pruned"), false, 2e6);
+        hashed.hashes.insert("SHA256".into(), "AB".repeat(32));
+        let bare = file("a.safetensors", Some("SafeTensor"), Some("fp16"), Some("pruned"), true, 2e6);
+        assert_eq!(select_file(&[bare.clone(), hashed], &allowed()).unwrap().name, "b.safetensors");
+        // Still selectable when it's the only one (plans/installs then refuse it).
+        assert_eq!(select_file(&[bare], &allowed()).unwrap().name, "a.safetensors");
     }
 
     #[test]

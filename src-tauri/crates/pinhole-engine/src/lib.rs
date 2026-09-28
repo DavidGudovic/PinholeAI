@@ -48,6 +48,9 @@ pub enum EngineError {
     BinaryMissing(String),
     #[error("SHA-256 mismatch for {file}")]
     HashMismatch { file: String, expected: String, actual: String },
+    /// Release builds: an archive in engine.yaml has no pinned SHA-256 (`TODO`).
+    #[error("no pinned SHA-256 for {0}")]
+    Unpinned(String),
     #[error("download: {0}")]
     Download(String),
     #[error("disk error: {0}")]

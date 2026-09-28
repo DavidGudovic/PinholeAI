@@ -3,6 +3,12 @@
 //!
 //! The only text Pinhole sends is the fixed captioner instruction from the
 //! registry (`captioner.prompts`) — never user prompt text.
+//!
+//! Every launch gets a fresh random API key, passed in the environment
+//! ([`API_KEY_ENV`], the env form of llama-server's `--api-key`, so it doesn't
+//! show up in the process list) and sent as `Authorization: Bearer <key>`:
+//! other local programs and web pages can't use the server. Only `/health`
+//! stays public (llama.cpp `server-http.cpp`).
 
 use std::path::Path;
 use std::time::Duration;
@@ -10,6 +16,10 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::sdapi::ApiError;
+
+/// Environment variable llama-server reads its API key from (`--api-key KEY`,
+/// env `LLAMA_API_KEY`, see llama.cpp `common/arg.cpp` at the pinned tag).
+pub const API_KEY_ENV: &str = "LLAMA_API_KEY";
 
 /// Launch arguments (the pin's `launch_defaults` are added by the caller).
 /// `backend == "cpu"` keeps every layer on the CPU; otherwise llama.cpp's
@@ -42,39 +52,75 @@ enum Http {
     Plain(reqwest::Client),
 }
 
-/// Client for one llama-server instance.
+/// Client for one llama-server instance. No `Debug`: it may hold the API key.
 #[derive(Clone)]
 pub struct LlamaClient {
     http: Http,
     base: String,
+    api_key: Option<String>,
 }
 
 impl LlamaClient {
     pub fn new(local: pinhole_net::LocalClient, base: impl Into<String>) -> Self {
-        Self { http: Http::Local(local), base: base.into().trim_end_matches('/').to_string() }
+        Self { http: Http::Local(local), base: base.into().trim_end_matches('/').to_string(), api_key: None }
     }
 
     #[cfg(any(test, feature = "test-util"))]
     pub fn new_plain_for_tests(base: impl Into<String>) -> Self {
         let base = base.into().trim_end_matches('/').to_string();
         assert!(base.starts_with("http://127.0.0.1:"), "test client is loopback-only");
-        Self { http: Http::Plain(reqwest::Client::builder().no_proxy().build().expect("client")), base }
+        Self { http: Http::Plain(reqwest::Client::builder().no_proxy().build().expect("client")), base, api_key: None }
+    }
+
+    /// Send `Authorization: Bearer <key>` with every request.
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into()).filter(|k| !k.is_empty());
+        self
+    }
+
+    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(k) => rb.bearer_auth(k),
+            None => rb,
+        }
     }
 
     fn get(&self, path: &str) -> Result<reqwest::RequestBuilder, ApiError> {
-        match &self.http {
-            Http::Local(c) => c.get(&self.base, path).map_err(|e| ApiError::Net(e.to_string())),
+        let rb = match &self.http {
+            Http::Local(c) => c.get(&self.base, path).map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
-            Http::Plain(c) => Ok(c.get(format!("{}{}", self.base, path))),
-        }
+            Http::Plain(c) => c.get(format!("{}{}", self.base, path)),
+        };
+        Ok(self.auth(rb))
     }
 
     fn post(&self, path: &str, body: &serde_json::Value) -> Result<reqwest::RequestBuilder, ApiError> {
-        match &self.http {
-            Http::Local(c) => c.post_json(&self.base, path, body).map_err(|e| ApiError::Net(e.to_string())),
+        let rb = match &self.http {
+            Http::Local(c) => c.post_json(&self.base, path, body).map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
-            Http::Plain(c) => Ok(c.post(format!("{}{}", self.base, path)).json(body)),
+            Http::Plain(c) => c.post(format!("{}{}", self.base, path)).json(body),
+        };
+        Ok(self.auth(rb))
+    }
+
+    /// Model ids from `GET /v1/models` (llama-server reports the `-m` path as
+    /// given, unless an alias is set). Needs the API key.
+    pub async fn model_ids(&self) -> Result<Vec<String>, ApiError> {
+        let resp = self
+            .get("/v1/models")?
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| if e.is_timeout() { ApiError::Timeout } else if e.is_connect() { ApiError::Connect } else { ApiError::Net(e.without_url().to_string()) })?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(ApiError::Status { code: status, error: String::new() });
         }
+        let v: serde_json::Value = resp.json().await.map_err(|e| ApiError::Decode(e.without_url().to_string()))?;
+        Ok(v.get("data")
+            .and_then(|d| d.as_array())
+            .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect())
+            .unwrap_or_default())
     }
 
     /// `GET /health` → 200 once the model is loaded (503 while loading).

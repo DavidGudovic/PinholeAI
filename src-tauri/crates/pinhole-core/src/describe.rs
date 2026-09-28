@@ -164,7 +164,16 @@ fn missing_parts(core: &AppCore) -> CoreResult<Vec<(DownloadSpec, Part)>> {
                 continue;
             }
             out.push((
-                DownloadSpec { url: file.url.clone(), dest: dir.join(&file.file), sha256: verified(&file.sha256), size_bytes: Some(file.size_mb * 1_000_000), label: label.into(), headers: vec![] },
+                DownloadSpec {
+                    url: file.url.clone(),
+                    dest: dir.join(&file.file),
+                    sha256: verified(&file.sha256),
+                    // `size_mb` is rounded: an estimate only, never the exact size.
+                    size_bytes: None,
+                    approx_size_bytes: Some(file.size_mb * 1_000_000),
+                    label: label.into(),
+                    ..Default::default()
+                },
                 part,
             ));
         }
@@ -187,7 +196,7 @@ pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
     if external {
         return CaptionerStatus { available: true, source: Some("default".into()), download_bytes: 0, running };
     }
-    let download_bytes = missing_parts(core).map(|p| p.iter().filter_map(|(s, _)| s.size_bytes).sum()).unwrap_or(0);
+    let download_bytes = missing_parts(core).map(|p| p.iter().filter_map(|(s, _)| s.size_hint()).sum()).unwrap_or(0);
     let engine_ok = engine_setup::installed_engine(core, EngineKind::Llama).is_some();
     CaptionerStatus { available: files.is_some() && engine_ok, source: files.map(|f| f.0.key().to_string()), download_bytes, running }
 }

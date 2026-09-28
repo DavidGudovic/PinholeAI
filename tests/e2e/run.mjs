@@ -33,11 +33,16 @@ const OUT = path.resolve(process.env.PINHOLE_E2E_OUT || path.join(repo, "target"
 const KEEP_DATA = !!process.env.PINHOLE_E2E_DATA;
 const DATA = path.resolve(process.env.PINHOLE_E2E_DATA || fs.mkdtempSync(path.join(os.tmpdir(), "pinhole-e2e-")) + "/Data");
 const WITH_ENGINE = (process.env.PINHOLE_E2E_ENGINE ?? "1") !== "0";
+// Real generation: a path to an SD 1.5 .safetensors (e.g. the CI smoke cache), or "zero" to
+// synthesize a zero-weight SD 1.5 (2.1 GB, sparse) from the installed engine's own tensor list.
+const MODEL = process.env.PINHOLE_E2E_MODEL || "";
 const ONLY = process.env.PINHOLE_E2E_ONLY ? new RegExp(process.env.PINHOLE_E2E_ONLY) : null;
 const DEPS = path.resolve(process.env.PINHOLE_E2E_DEPS || path.join(os.tmpdir(), "pinhole-e2e-deps"));
 const PORT = Number(process.env.PINHOLE_E2E_PORT || 4444);
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
+// A saved Style is the one piece of typed text allowed on disk — only in Data/styles/.
+const STYLE_SENTINEL = "PINHOLE_STYLE_91b2";
 const PROMPT = `a lighthouse on a cliff at dusk ${SENTINEL}`;
 // What CivitAI's "Copy generation data" button produces (A1111 format).
 const CIVITAI_TEXT = [
@@ -189,7 +194,7 @@ async function answerNativeOpenDialog(title, file, timeout = 10000) {
   while (!win && Date.now() - t0 < timeout) {
     await sleep(250);
     try {
-      win = x("search", "--name", title).split("\n")[0];
+      win = x("search", "--onlyvisible", "--name", title).split("\n").pop();
     } catch {
       /* not open yet */
     }
@@ -344,6 +349,59 @@ function writeFakeSd15(file) {
   const len = Buffer.alloc(8);
   len.writeBigUInt64LE(BigInt(json.length));
   fs.writeFileSync(file, Buffer.concat([len, json, Buffer.alloc(off)]));
+}
+
+/** Writes a sparse, zero-filled F16 safetensors file from { name: ne[] } (ggml order). */
+function writeZeroSafetensors(file, spec) {
+  let off = 0;
+  const header = {};
+  for (const [name, ne] of Object.entries(spec)) {
+    const n = ne.reduce((a, b) => a * b, 1) * 2;
+    header[name] = { dtype: "F16", shape: [...ne].reverse(), data_offsets: [off, off + n] };
+    off += n;
+  }
+  let json = Buffer.from(JSON.stringify(header));
+  json = Buffer.concat([json, Buffer.alloc((8 - (json.length % 8)) % 8, 0x20)]);
+  const len = Buffer.alloc(8);
+  len.writeBigUInt64LE(BigInt(json.length));
+  const fd = fs.openSync(file, "w");
+  fs.writeSync(fd, Buffer.concat([len, json]));
+  fs.ftruncateSync(fd, 8 + json.length + off);
+  fs.closeSync(fd);
+}
+
+/**
+ * A zero-weight SD 1.5 checkpoint the pinned sd.cpp accepts. The tensor names and shapes
+ * come from the engine itself: sd-cli validates every tensor and logs each missing one
+ * ("… not in model metadata") and each wrong shape ("… expected [ne0, ne1, ne2, ne3]").
+ * Generates a flat grey image — enough to exercise the whole real generate → save path.
+ */
+function makeZeroSd15(sdCli, out) {
+  const run = (model) => {
+    try {
+      return execFileSync(sdCli, ["-m", model, "-p", "x", "-W", "64", "-H", "64", "--steps", "1", "-o", "/dev/null"], { stdio: "pipe", timeout: 120000 }).toString();
+    } catch (e) {
+      return String(e.stdout) + String(e.stderr);
+    }
+  };
+  const TOK = "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight";
+  // Pass 1: just enough for get_sd_version() → "SD 1.x"; the engine lists what's missing.
+  const probe = { [TOK]: [768, 49408], "model.diffusion_model.input_blocks.0.0.weight": [1], "model.diffusion_model.middle_block.1.norm.weight": [1], "model.diffusion_model.output_blocks.7.1.norm.weight": [1], "first_stage_model.decoder.conv_in.weight": [1], "first_stage_model.encoder.conv_in.weight": [1] };
+  writeZeroSafetensors(out, probe);
+  const names = new Set(Object.keys(probe));
+  for (const m of run(out).matchAll(/tensor '([^']+)' (?:not in model metadata|has wrong shape)/g)) names.add(m[1]);
+  // Pass 2: every name at shape [1]; the engine reports every expected shape.
+  const all = Object.fromEntries([...names].map((n) => [n, n === TOK ? [768, 49408] : [1]]));
+  writeZeroSafetensors(out, all);
+  const spec = { [TOK]: [768, 49408] };
+  for (const m of run(out).matchAll(/tensor '([^']+)' has wrong shape in model metadata: got \[[^\]]*\], expected \[(\d+), (\d+), (\d+), (\d+)\]/g)) {
+    const ne = [+m[2], +m[3], +m[4], +m[5]];
+    while (ne.length > 1 && ne[ne.length - 1] === 1) ne.pop();
+    spec[m[1]] = ne;
+  }
+  if (Object.keys(spec).length < 1000 || Object.keys(spec).length !== names.size) throw new Error(`could not derive the SD 1.5 layout from sd-cli (${Object.keys(spec).length}/${names.size} tensors)`);
+  writeZeroSafetensors(out, spec);
+  return Object.keys(spec).length;
 }
 
 /** Every file under `dir` containing `needle` (raw bytes, so PNG chunks are covered). */
@@ -584,8 +642,8 @@ try {
     await selectValue("select[aria-label='Engine backend']", "vulkan");
     await waitSetting("engineBackend", "vulkan");
     await sleep(800);
-    const mism = (await bodyText()).match(/You picked[^\n]*/);
-    note(`backend → vulkan: ${mism ? mism[0] : "no mismatch hint shown"}`);
+    const mism = (await bodyText()).match(/You picked[^\n]*|Not installed[^\n]*/);
+    note(`backend → vulkan: engine box says "${mism ? mism[0] : "?"}"`);
     await shot("08b-settings-backend-mismatch");
     await selectValue("select[aria-label='Engine backend']", "auto");
     await waitSetting("engineBackend", "auto");
@@ -740,6 +798,46 @@ try {
     await shot("17-create-finetune");
   });
 
+  await step("create-style-and-preset", async (note) => {
+    await clickButton("Save as style");
+    const name = await visible("//div[@role='dialog']//input[@placeholder='e.g. Soft film look']");
+    await name.sendKeys("E2E film look");
+    const looks = await visible("//div[@role='dialog']//textarea[@placeholder='Words that describe the look']");
+    await looks.sendKeys(`35mm film photo, soft window light, ${STYLE_SENTINEL}`);
+    await shot("17b-create-save-style");
+    await clickButton("Save style");
+    await waitText("Saved style", 10000);
+    const styleFiles = fs.readdirSync(path.join(DATA, "styles"));
+    note(`Data/styles: ${styleFiles.join(", ")}`);
+    assert(styleFiles.some((f) => fs.readFileSync(path.join(DATA, "styles", f), "utf8").includes(STYLE_SENTINEL)), "saved style not in Data/styles");
+    // Select it (if saving didn't) and check the in-memory "Final prompt" preview combines both.
+    const picker = await visible("//button[starts-with(@aria-label,'Style: ')]");
+    if (!(await picker.getAttribute("aria-label")).includes("E2E film look")) {
+      await picker.click();
+      await click("//div[@role='listbox' and @aria-label='Style']//*[contains(normalize-space(.),'E2E film look')]");
+    }
+    await driver.wait(async () => (await bodyText()).includes(STYLE_SENTINEL) && (await bodyText()).includes("Final prompt"), 10000, "final prompt preview missing style").catch(() => undefined);
+    const fp = (await bodyText()).match(/Final prompt sent to the model\n([^\n]*)/);
+    note(`final prompt preview: ${fp ? fp[1].replace(SENTINEL, "<sentinel>").replace(STYLE_SENTINEL, "<style>").slice(0, 160) : "not shown"}`);
+    assert(fp && fp[1].includes(SENTINEL) && fp[1].includes(STYLE_SENTINEL), "final prompt preview doesn't combine prompt + style");
+    await shot("17c-create-final-prompt");
+
+    // Save as preset: never includes the prompt; the style is stored by reference.
+    await click("//button[starts-with(@aria-label,'Preset: ')]");
+    await click("//*[contains(normalize-space(.),'Save as preset…')][self::button or @role='menuitem']");
+    const pname = await visible("//div[@role='dialog']//input[@placeholder='e.g. Moody portraits']");
+    await pname.sendKeys("E2E preset");
+    await clickButton("Save preset");
+    await driver.wait(async () => fs.existsSync(path.join(DATA, "presets")) && fs.readdirSync(path.join(DATA, "presets")).length > 0, 10000, "preset not written");
+    await sleep(500);
+    for (const pf of fs.readdirSync(path.join(DATA, "presets"))) {
+      const y = fs.readFileSync(path.join(DATA, "presets", pf), "utf8");
+      note(`Data/presets/${pf}: ${y.split("\n").filter((l) => /^\w/.test(l)).map((l) => l.split(":")[0]).join(", ")}`);
+      assert(!y.includes(SENTINEL) && !y.includes(STYLE_SENTINEL), `prompt or style text in preset ${pf}`);
+    }
+    await closeOverlays();
+  });
+
   await step("create-paste-civitai", async (note) => {
     await clickButton("Paste from CivitAI");
     const area = await visible("//textarea[@aria-label='Generation data']");
@@ -775,15 +873,123 @@ try {
     const msg = await driver.findElement(By.css("aside[aria-label='Create settings'] [role=alert]")).getText();
     note(`generate error: ${msg.replace(/\n/g, " | ").slice(0, 300)}`);
     await shot("20-create-generate-error");
+    const details = await driver.findElements(By.xpath("//aside[@aria-label='Create settings']//*[@role='alert']//*[self::button or self::summary][normalize-space(.)='Details']"));
+    if (details.length) {
+      await details[0].click();
+      await sleep(400);
+      const d = await driver.findElement(By.css("aside[aria-label='Create settings'] [role=alert]")).getText();
+      note(`details: ${d.split("\n").slice(1).join(" | ").slice(0, 400)}`);
+      assert(!d.includes(SENTINEL), "prompt shown in engine details");
+      await shot("20b-create-generate-error-details");
+    }
+    const chip = await driver.findElements(By.xpath("//header//button[contains(normalize-space(.),'Engine problem')]"));
+    note(`top-bar engine chip: ${chip.length ? "Engine problem" : "none"}`);
   });
 
-  await step("create-clear-session", async () => {
+  await step("create-clear-session", async (note) => {
     await clickButton("Clear session");
     await sleep(800);
     const prompt = await driver.findElement(By.id("prompt")).getAttribute("value");
     assert(prompt === "", `prompt not cleared: ${prompt.length} chars left`);
+    // The negative prompt (Fine-tune) is prompt text too (SPEC §4.3).
+    if (!(await driver.findElements(By.id("ft-steps"))).length) await clickButton("Fine-tune");
+    await sleep(300);
+    const neg = await driver.executeScript("const t = [...document.querySelectorAll('#tab-create textarea')].find(t => /Default:|Nothing/.test(t.placeholder)); return t ? t.value : null");
+    note(`negative prompt after Clear session: ${neg === null ? "(Fine-tune closed)" : JSON.stringify(neg)}`);
+    assert(!neg, "negative prompt not cleared");
     await shot("21-create-cleared");
   });
+
+  // ---------------------------------------------------------------- real generation (optional)
+  let realModelName = null;
+  if (MODEL) {
+    await step("models-add-real-model", async (note) => {
+      let file = MODEL;
+      if (MODEL === "zero") {
+        const sdCli = execFileSync("find", [path.join(DATA, "engine"), "-name", "sd-cli", "-type", "f"]).toString().trim().split("\n")[0];
+        assert(sdCli, "sd-cli not found under Data/engine (engine step skipped?)");
+        file = path.join(fixtures, "zero-sd15.safetensors");
+        const n = makeZeroSd15(sdCli, file);
+        note(`synthesized zero-weight SD 1.5: ${n} tensors, ${(fs.statSync(file).size / 1e9).toFixed(2)} GB (sparse)`);
+      }
+      const before = new Set((await invoke("list_models")).map((m) => m.id));
+      await openTab("Models");
+      await click(`//div[@role='radiogroup']//button[starts-with(normalize-space(.),'Installed')]`);
+      if (hasXdotool) {
+        await clickButton("Add a file I already have");
+        await answerNativeOpenDialog("Add a model file", file);
+        await driver.wait(async () => /Which kind of model is this\?/.test(await bodyText()) || (await invoke("list_models")).length > before.size, 180000, "no result after adding the model");
+        if (/Which kind of model is this\?/.test(await bodyText())) {
+          await click(`//*[@role='dialog']//label[normalize-space(.)='Stable Diffusion 1.5']`);
+          await clickButton("Add model");
+        }
+      } else {
+        const r = await invoke("add_local_model", { path: file });
+        if (r.needsChoice) await invoke("confirm_family", { token: r.needsChoice.token, familyId: "sd15" });
+      }
+      await driver.wait(async () => (await invoke("list_models")).length > before.size, 180000, "model not registered");
+      const m = (await invoke("list_models")).find((x) => !before.has(x.id));
+      realModelName = m.friendlyName;
+      note(`added "${m.friendlyName}" [${m.familyId}] ${(m.sizeBytes / 1e9).toFixed(2)} GB`);
+    });
+
+    await step("create-generate-real", async (note) => {
+      assert(realModelName, "no real model");
+      await openTab("Create");
+      await click("//aside[@aria-label='Create settings']//button[starts-with(@aria-label,'Model: ')]");
+      await click(`//div[@role='listbox']//*[normalize-space(.)=${lit(realModelName)}]`);
+      const box = await visible("//textarea[@id='prompt']");
+      await box.clear();
+      await box.sendKeys(PROMPT);
+      if (!(await driver.findElements(By.id("ft-steps"))).length) await clickButton("Fine-tune");
+      // Small + few steps so a CPU run takes seconds, not minutes.
+      for (const [id, v] of [["ft-width", "256"], ["ft-height", "256"], ["ft-steps", "2"]]) {
+        const el = await visible(`//input[@id='${id}']`);
+        await el.clear();
+        await el.sendKeys(v);
+      }
+      await click("//div[@role='radiogroup' and @aria-label='Hires fix']//button[normalize-space(.)='Off']");
+      const t0 = Date.now();
+      await click("//aside[@aria-label='Create settings']//button[contains(normalize-space(.),'Generate')]");
+      const phases = new Set();
+      let midShot = false;
+      while (Date.now() - t0 < 10 * 60 * 1000) {
+        const st = await driver.executeScript("const s = document.querySelector(\"aside[aria-label='Create settings'] [role=status]\"); return s ? s.innerText.split('\\n')[0] : null");
+        if (st) phases.add(st.replace(/\d+ s$/, "").replace(/\d+%/, "N%").trim());
+        if (st && /step/.test(st) && !midShot) {
+          await shot("27-create-generating");
+          midShot = true;
+        }
+        if (await driver.executeScript("return !!document.querySelector(\"section[aria-label='Results'] img[src^='blob:']\")")) break;
+        const err = await driver.findElements(By.css("aside[aria-label='Create settings'] [role=alert]"));
+        if (err.length) throw new Error(`generate failed: ${(await err[0].getText()).split("\n")[0]}`);
+        await sleep(300);
+      }
+      note(`generated in ${((Date.now() - t0) / 1000).toFixed(1)} s; progress shown: ${[...phases].slice(0, 8).join(" → ")}`);
+      const img = await driver.executeScript("const i = document.querySelector(\"section[aria-label='Results'] img[src^='blob:']\"); return i && { w: i.naturalWidth, h: i.naturalHeight, alt: i.alt }");
+      note(`result: ${JSON.stringify(img)}`);
+      assert(img && img.w === 256 && img.h === 256, "no 256×256 result image");
+      await shot("28-create-result");
+
+      // Save → Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png, no text chunks (savedMetadata: none).
+      await click("//section[@aria-label='Results']//button[normalize-space(.)='Save']");
+      await driver.wait(() => fs.existsSync(path.join(DATA, "outputs")) && fs.readdirSync(path.join(DATA, "outputs")).length > 0, 15000, "nothing saved");
+      const saved = fs.readdirSync(path.join(DATA, "outputs"));
+      note(`saved: ${saved.join(", ")}`);
+      assert(saved.every((n) => /^pinhole_\d{8}_\d{6}_\d+(?:_\d+)?\.png$/.test(n)), "unexpected saved file name");
+      const png = fs.readFileSync(path.join(DATA, "outputs", saved[0]));
+      const chunks = [];
+      for (let o = 8; o < png.length; ) {
+        const len = png.readUInt32BE(o);
+        chunks.push(png.toString("latin1", o + 4, o + 8));
+        o += 12 + len;
+      }
+      note(`PNG chunks: ${[...new Set(chunks)].join(",")}`);
+      assert(!chunks.some((c) => /tEXt|iTXt|zTXt/.test(c)), "saved PNG carries text chunks");
+      await sleep(500);
+      await shot("29-create-saved");
+    });
+  }
 
   // ---------------------------------------------------------------- edit + describe
   await step("edit-import", async (note) => {
@@ -812,10 +1018,66 @@ try {
     assert(await driver.executeScript("return [...document.querySelectorAll('#tab-describe img')].some(i => i.src.startsWith('blob:') && i.naturalWidth > 0)"), "imported image not shown");
   });
 
+  await step("download-fail-or-cancel", async (note) => {
+    // Describe → "Get the describer": Hugging Face is unreachable in sandboxes (→ failed row);
+    // where it is reachable the 2.6 GB download starts and is cancelled right away.
+    await openTab("Describe");
+    await click("//*[@id='tab-describe']//button[contains(normalize-space(.),'Get the describer')]");
+    let g;
+    await driver.wait(async () => {
+      g = (await invoke("list_downloads")).find((x) => /describ|caption|vl/i.test(x.label) || x.kind === "captioner") ?? (await invoke("list_downloads")).slice(-1)[0];
+      return g && g.state !== "queued";
+    }, 60000, "describer download never started or failed");
+    note(`download group: "${g.label}" state=${g.state} files=${g.fileCount} total=${(g.totalBytes / 1e9).toFixed(2)} GB`);
+    if (g.state === "downloading" || g.state === "verifying") {
+      await invoke("cancel_download", { groupId: g.groupId });
+      await driver.wait(async () => (await invoke("list_downloads")).find((x) => x.groupId === g.groupId)?.state === "cancelled", 30000, "not cancelled");
+      note("cancelled");
+    } else {
+      await driver.wait(async () => ["failed", "cancelled", "done"].includes((await invoke("list_downloads")).find((x) => x.groupId === g.groupId)?.state), 60000);
+      g = (await invoke("list_downloads")).find((x) => x.groupId === g.groupId);
+      note(`final state=${g.state} error=${JSON.stringify(g.error)}`);
+    }
+    await sleep(800);
+    await shot("30-describe-download-result");
+    await click("//header//button[@title='Downloads']");
+    await sleep(500);
+    await shot("31-downloads-popover-failed");
+    const pop = await bodyText();
+    note(`popover: ${(pop.match(/Downloads\n[\s\S]{0,300}/) || [""])[0].replace(/\n/g, " | ")}`);
+    await driver.actions().sendKeys(Key.ESCAPE).perform();
+    await sleep(300);
+    const leftovers = fs.readdirSync(path.join(DATA, "models"), { recursive: true }).filter((f) => /\.part$/.test(String(f)));
+    note(`.part files left: ${leftovers.length}`);
+  });
+
+  await step("models-delete", async (note) => {
+    await openTab("Models");
+    await click(`//div[@role='radiogroup']//button[starts-with(normalize-space(.),'Installed')]`);
+    const models = await invoke("list_models");
+    assert(models.length, "no model to delete");
+    for (const [i, m] of models.entries()) {
+      await click(`//button[@aria-label=${lit(`Delete ${m.friendlyName}`)}]`);
+      await waitText("Delete “");
+      await sleep(600);
+      if (i === 0) await shot("26-models-delete-confirm");
+      await click("//div[@role='dialog']//button[starts-with(normalize-space(.),'Delete')]");
+      await driver.wait(async () => !(await invoke("list_models")).some((x) => x.id === m.id), 30000, `${m.friendlyName} still listed`);
+    }
+    const files = fs.readdirSync(path.join(DATA, "models"), { recursive: true }).filter((f) => /\.safetensors$/.test(String(f)));
+    note(`model files left under Data/models: ${files.length}`);
+    assert(files.length === 0, "model file not removed");
+    await waitText("Nothing installed yet", 10000);
+  });
+
   // ---------------------------------------------------------------- privacy
   await step("privacy-scan-data", async (note) => {
     const webview = path.join(DATA, "webview");
     const hits = scanFor(DATA, SENTINEL, (p) => p.startsWith(webview));
+    const styleHits = scanFor(DATA, STYLE_SENTINEL, (p) => p.startsWith(webview)).filter((p) => !p.startsWith(path.join(DATA, "styles") + path.sep));
+    note(`style text outside Data/styles: ${styleHits.length}`);
+    for (const h of styleHits) note(`  style hit: ${h}`);
+    assert(styleHits.length === 0, "style text stored outside Data/styles");
     const wvHits = scanFor(webview, SENTINEL);
     const tmpHits = scanFor(os.tmpdir(), SENTINEL, (p) => p.startsWith(path.dirname(DATA)) || !/pinhole/i.test(p));
     const logHit = fs.readFileSync(APP_LOG).includes(SENTINEL);

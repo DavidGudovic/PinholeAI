@@ -70,6 +70,9 @@ pub fn build_plan(
     let is_lora = env.filters.is_lora_type(&kind);
     let picked = select::select_file(&version.files, &env.filters.allowed_file_formats);
     let mut blocked_reason = picked.as_ref().err().cloned();
+    if picked.as_ref().is_ok_and(|f| f.sha256().is_none()) {
+        blocked_reason = Some(select::NO_HASH_REASON.into());
+    }
     let main_file = match &picked {
         Ok(f) => PlanFile { name: f.name.clone(), size_bytes: f.size_bytes(), format: select::file_format(f) },
         Err(_) => version
@@ -163,6 +166,9 @@ pub fn civitai_install_files(
     family_id: Option<&str>,
 ) -> Result<CivitaiInstall, String> {
     let file = select::select_file(&version.files, &env.filters.allowed_file_formats)?;
+    if file.sha256().is_none() {
+        return Err(select::NO_HASH_REASON.into());
+    }
     let kind = version_kind(version, model);
     let is_lora = env.filters.is_lora_type(&kind);
     let family = family_id.and_then(|id| env.registry.family(id));
@@ -287,7 +293,8 @@ mod tests {
         let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
         let (mut v, _) = jugg();
         v.base_model = "Qwen".into();
-        v.files[0].hashes.clear();
+        // An unknown (not a registry "known file") hash.
+        v.files[0].hashes.insert("SHA256".into(), "AB".repeat(32));
         let p = build_plan(&env, &v, None, u64::MAX, false);
         assert_eq!(p.family, None);
         let ids: Vec<&str> = p.family_candidates.iter().map(|c| c.family_id.as_str()).collect();
@@ -359,6 +366,23 @@ mod tests {
         let inst = civitai_install_files(&env, &v, Some(&m), Some("sdxl")).unwrap();
         assert!(inst.main_installed);
         assert!(inst.files.is_empty());
+    }
+
+    #[test]
+    fn files_without_sha256_are_blocked() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let (mut v, m) = jugg();
+        v.files[0].hashes.retain(|k, _| !k.eq_ignore_ascii_case("SHA256"));
+        let p = build_plan(&env, &v, Some(&m), u64::MAX, false);
+        assert_eq!(p.blocked_reason.as_deref(), Some(select::NO_HASH_REASON));
+        assert_eq!(civitai_install_files(&env, &v, Some(&m), Some("sdxl")).unwrap_err(), select::NO_HASH_REASON);
+        // A malformed SHA-256 counts as missing.
+        v.files[0].hashes.insert("SHA256".into(), "not-a-hash".into());
+        assert!(civitai_install_files(&env, &v, Some(&m), Some("sdxl")).is_err());
     }
 
     #[test]

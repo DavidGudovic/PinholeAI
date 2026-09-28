@@ -32,6 +32,16 @@ const STATUS_FINISHED: usize = 20;
 /// Finished groups kept for [`DownloadManager::wait`].
 const KEEP_FINISHED: usize = 100;
 const MB: u64 = 1024 * 1024;
+/// Cap for a download whose exact size is unknown (no `size_bytes`, no
+/// `Content-Length`): nothing Pinhole fetches is anywhere near this.
+pub const MAX_UNKNOWN_SIZE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+/// Free space is re-checked every this many bytes when the size is unknown.
+const SPACE_RECHECK_BYTES: u64 = 256 * MB;
+
+/// Extra check run on a finished, hash-verified file (e.g. "parses as a
+/// safetensors/GGUF model"). `Err` carries a plain-language message; the file
+/// is then deleted and the download fails with it.
+pub type ContentCheck = Arc<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
@@ -45,6 +55,12 @@ pub enum DownloadError {
     Cancelled,
     #[error("disk error: {0}")]
     Io(#[from] std::io::Error),
+    /// More bytes than the expected size allows (see [`size_limit`]).
+    #[error("the download was larger than expected")]
+    TooLarge,
+    /// The spec's [`ContentCheck`] refused the file (message is plain language).
+    #[error("{0}")]
+    Rejected(String),
 }
 
 impl DownloadError {
@@ -58,6 +74,8 @@ impl DownloadError {
             DownloadError::HashMismatch { .. } => "hash_mismatch",
             DownloadError::Cancelled => "cancelled",
             DownloadError::Io(_) => "io",
+            DownloadError::TooLarge => "too_large",
+            DownloadError::Rejected(_) => "invalid",
         }
     }
 
@@ -72,6 +90,10 @@ impl DownloadError {
             DownloadError::HashMismatch { .. } => "The download was corrupted (checksum mismatch). Try again.".into(),
             DownloadError::Cancelled => "Cancelled".into(),
             DownloadError::Io(e) => format!("Could not write the download to disk ({e}). Check the Data folder and try again."),
+            DownloadError::TooLarge => {
+                "The download was larger than expected, so Pinhole stopped it. Try again later or pick another file.".into()
+            }
+            DownloadError::Rejected(msg) => msg.clone(),
         }
     }
 }
@@ -123,18 +145,28 @@ fn net_message(e: &NetError, url: &str) -> String {
 
 /// One file to fetch. `headers` may contain an API key: never log them
 /// (`Debug` prints header names only; serialization skips them).
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DownloadSpec {
     pub url: String,
     pub dest: PathBuf,
     /// Lowercase hex. `None` (or registry `TODO`) → hash is computed and returned
     /// but not enforced; callers decide whether that is acceptable.
     pub sha256: Option<String>,
+    /// EXACT size in bytes, or `None`. It decides resume / "already downloaded"
+    /// and bounds the download, so never put a rounded value here (use
+    /// `approx_size_bytes`).
     pub size_bytes: Option<u64>,
     /// Friendly label for the UI ("Z-Image Turbo", "VAE").
     pub label: String,
     #[serde(default, skip_serializing)]
     pub headers: Vec<(String, String)>,
+    /// Rounded size (registry `size_mb`, CivitAI `sizeKB`): only for the UI
+    /// total and the up-front free-space check.
+    #[serde(default)]
+    pub approx_size_bytes: Option<u64>,
+    /// Run on the finished file before the download counts as done.
+    #[serde(skip)]
+    pub content_check: Option<ContentCheck>,
 }
 
 impl std::fmt::Debug for DownloadSpec {
@@ -145,13 +177,29 @@ impl std::fmt::Debug for DownloadSpec {
             .field("dest", &self.dest)
             .field("sha256", &self.sha256)
             .field("size_bytes", &self.size_bytes)
+            .field("approx_size_bytes", &self.approx_size_bytes)
             .field("label", &self.label)
             .field("headers", &header_names)
+            .field("content_check", &self.content_check.is_some())
             .finish()
     }
 }
 
+/// Most bytes a download may deliver: the exact size + 1 % + 1 MiB, or
+/// [`MAX_UNKNOWN_SIZE_BYTES`] when the exact size isn't known.
+pub fn size_limit(size_bytes: Option<u64>) -> u64 {
+    match size_bytes {
+        Some(s) => s.saturating_add(s / 100).saturating_add(MB),
+        None => MAX_UNKNOWN_SIZE_BYTES,
+    }
+}
+
 impl DownloadSpec {
+    /// Best size estimate for totals and disk checks (exact, else approximate).
+    pub fn size_hint(&self) -> Option<u64> {
+        self.size_bytes.or(self.approx_size_bytes)
+    }
+
     /// Expected hash when it must be enforced (not `None`, empty or `TODO`).
     pub fn expected_sha256(&self) -> Option<String> {
         let h = self.sha256.as_deref()?.trim();
@@ -197,7 +245,30 @@ pub async fn download_file(
 }
 
 /// [`download_file`] plus a phase callback (for "Verifying…" in the UI).
+/// A spec's [`ContentCheck`] runs last; a refused file is deleted.
 pub async fn download_file_with_phase(
+    client: &HttpClient,
+    spec: &DownloadSpec,
+    cancel: &CancellationToken,
+    progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    phase: &(dyn Fn(Phase) + Send + Sync),
+) -> Result<DownloadedFile, DownloadError> {
+    let file = fetch_verified(client, spec, cancel, progress, phase).await?;
+    if let Some(check) = spec.content_check.clone() {
+        phase(Phase::Verifying);
+        let path = file.path.clone();
+        let verdict = tokio::task::spawn_blocking(move || check(&path))
+            .await
+            .map_err(|e| DownloadError::Io(std::io::Error::other(e.to_string())))?;
+        if let Err(msg) = verdict {
+            remove_quietly(&file.path).await;
+            return Err(DownloadError::Rejected(msg));
+        }
+    }
+    Ok(file)
+}
+
+async fn fetch_verified(
     client: &HttpClient,
     spec: &DownloadSpec,
     cancel: &CancellationToken,
@@ -295,7 +366,7 @@ async fn try_once(
         remove_quietly(part).await;
         offset = 0;
     }
-    if let Some(size) = spec.size_bytes {
+    if let Some(size) = spec.size_hint() {
         check_free_space_async(dir, size.saturating_sub(offset)).await?;
     }
 
@@ -362,6 +433,12 @@ async fn try_once(
         Some((_, Some(t))) if status == 206 => Some(t),
         _ => resp.content_length().map(|l| l + downloaded),
     };
+    let limit = size_limit(spec.size_bytes);
+    if total.is_some_and(|t| t > limit) {
+        drop(resp);
+        remove_quietly(part).await;
+        return Err(DownloadError::TooLarge);
+    }
     if spec.size_bytes.is_none() {
         if let Some(t) = total {
             check_free_space_async(dir, t.saturating_sub(downloaded)).await?;
@@ -377,6 +454,7 @@ async fn try_once(
     phase(Phase::Downloading);
     progress(downloaded, total);
     let mut last = Instant::now();
+    let mut next_space_check = downloaded.saturating_add(SPACE_RECHECK_BYTES);
     let mut stream = resp.bytes_stream();
     loop {
         let next = tokio::select! {
@@ -401,9 +479,23 @@ async fn try_once(
                     *carried = Some((hasher, downloaded));
                     return Err(NetError::Offline.into());
                 }
+                if downloaded.saturating_add(chunk.len() as u64) > limit {
+                    drop(out);
+                    remove_quietly(part).await;
+                    return Err(DownloadError::TooLarge);
+                }
                 hasher.update(&chunk);
                 out.write_all(&chunk).await?;
                 downloaded += chunk.len() as u64;
+                // Size unknown up front: make sure the disk doesn't fill up as bytes arrive.
+                if total.is_none() && downloaded >= next_space_check {
+                    next_space_check = downloaded.saturating_add(SPACE_RECHECK_BYTES);
+                    if let Err(e) = check_free_space_async(dir, SPACE_RECHECK_BYTES).await {
+                        out.flush().await?;
+                        *carried = Some((hasher, downloaded));
+                        return Err(e);
+                    }
+                }
                 if last.elapsed() >= PROGRESS_INTERVAL {
                     last = Instant::now();
                     progress(downloaded, total);
@@ -662,7 +754,7 @@ impl DownloadManager {
             file_index: 0,
             file_count: files.len(),
             downloaded_bytes: 0,
-            total_bytes: files.iter().filter_map(|f| f.size_bytes).sum(),
+            total_bytes: files.iter().filter_map(|f| f.size_hint()).sum(),
             error: None,
         };
         let spawn = {
@@ -844,7 +936,7 @@ impl DownloadManager {
         let mut done = Vec::with_capacity(files.len());
         let mut completed: u64 = 0;
         // Sum of sizes of all files: known sizes, corrected as real sizes arrive.
-        let mut base_total: u64 = files.iter().filter_map(|f| f.size_bytes).sum();
+        let mut base_total: u64 = files.iter().filter_map(|f| f.size_hint()).sum();
         for (i, spec) in files.iter().enumerate() {
             if cancel.is_cancelled() {
                 return Err(GroupError::cancelled());
@@ -856,7 +948,7 @@ impl DownloadManager {
                 s.downloaded_bytes = completed;
                 s.total_bytes = base_total.max(completed);
             });
-            let known = spec.size_bytes;
+            let known = spec.size_hint();
             let base = base_total;
             let before = completed;
             let progress = |d: u64, t: Option<u64>| {
@@ -940,7 +1032,7 @@ impl Drop for WorkerGuard {
 async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
     let mut need = 0u64;
     for f in files {
-        let Some(size) = f.size_bytes else { continue };
+        let Some(size) = f.size_hint() else { continue };
         if tokio::fs::metadata(&f.dest).await.is_ok_and(|m| m.is_file()) {
             continue;
         }

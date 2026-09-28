@@ -12,7 +12,7 @@
 # STATUS
 # * sha256 / size of every Hugging Face file: verified 2026-09-28 by the CI
 #   probe (LFS oid + size). `size_mb` = round(bytes / 1_000_000), decimal MB.
-# * `sha256: TODO` = not verified yet (only the .pth upscaler on github.com).
+# * `sha256: TODO` = not verified yet (none left; the release workflow fails on any).
 # * CivitAI baseModel strings: checked against the live /api/v1/enums.
 # * `vram_gb` values are ESTIMATES until measured on 8/12/16 GB cards (SPEC §14).
 #

@@ -101,7 +101,7 @@ pub async fn ensure_model(http: &HttpClient, cache: &Path, model: &SmokeModel) -
         sha256: model.sha256.clone(),
         size_bytes: None,
         label: "smoke model".into(),
-        headers: vec![],
+        ..Default::default()
     };
     let cancel = CancellationToken::new();
     let last = AtomicU64::new(0);

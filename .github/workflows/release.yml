@@ -60,6 +60,15 @@ jobs:
       - name: Privacy lint
         run: node scripts/privacy-lint.mjs
 
+      - name: No unverified hashes in shipped config
+        run: |
+          # Comment lines are ignored. Any `sha256: TODO` (or empty sha256) in config/ fails the
+          # release: verify it with the "verify pins" workflow and fill in the real hash first.
+          if grep -rnE '^[^#]*\bsha256:[[:space:]]*("?TODO"?|""|)[[:space:]]*($|,|\})' config/; then
+            echo "::error::config/ still has unverified sha256 values (TODO or empty). Verify and fill them in before releasing."
+            exit 1
+          fi
+
   bundle:
     name: Installers
     needs: check

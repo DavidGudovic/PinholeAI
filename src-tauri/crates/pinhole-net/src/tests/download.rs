@@ -25,7 +25,7 @@ fn client() -> HttpClient {
 }
 
 fn spec(url: String, dest: &Path, sha256: Option<String>, size: Option<u64>) -> DownloadSpec {
-    DownloadSpec { url, dest: dest.to_path_buf(), sha256, size_bytes: size, label: "Test file".into(), headers: vec![] }
+    DownloadSpec { url, dest: dest.to_path_buf(), sha256, size_bytes: size, label: "Test file".into(), ..Default::default() }
 }
 
 type Calls = Arc<Mutex<Vec<(u64, Option<u64>)>>>;

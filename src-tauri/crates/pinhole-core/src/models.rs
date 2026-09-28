@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use pinhole_catalog::families::{self, FamilyResolution};
 use pinhole_catalog::recommend::{self, FileToGet, PickAction};
 use pinhole_catalog::{inventory, local, paste, CatalogFilters};
-use pinhole_net::download::{check_free_space, DownloadSpec, DownloadedFile};
+use pinhole_net::download::{check_free_space, ContentCheck, DownloadSpec, DownloadedFile};
 use pinhole_registry::detect;
 use pinhole_store::datadir::ModelKind;
 use pinhole_store::installed::{CivitaiRef, InstalledFile};
@@ -247,6 +247,19 @@ fn disk_space_error(e: pinhole_net::download::DownloadError, url: &str) -> CoreE
     CoreError::new(e.code(), e.user_message(url))
 }
 
+/// Shown when a downloaded model file fails [`model_file_check`].
+pub const INVALID_MODEL_FILE: &str = "The downloaded file isn't a valid model file, so Pinhole removed it.";
+
+/// Download content check: the file must parse as a safetensors / GGUF model
+/// (bounded header read, see `pinhole_registry::detect::read_header`) with at
+/// least one tensor. On failure the downloader deletes the file.
+pub fn model_file_check() -> ContentCheck {
+    Arc::new(|path: &Path| match detect::read_header(path) {
+        Ok(h) if !h.tensor_names.is_empty() => Ok(()),
+        _ => Err(INVALID_MODEL_FILE.to_string()),
+    })
+}
+
 /// Queue one download group (model + missing components), then register every
 /// file when it finishes (background task) and emit `models-changed`.
 /// Components another running group is already fetching are skipped; a second
@@ -286,13 +299,19 @@ pub(crate) async fn start_install(
             });
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url).into_iter().collect();
+            // CivitAI files (the hash only proves what the uploader sent) and model
+            // files without a pinned hash must parse as safetensors/GGUF.
+            let check = civitai.is_some() || (f.component_id.is_none() && f.sha256.is_none());
             specs.push(DownloadSpec {
                 url: f.url.clone(),
                 dest: dest.clone(),
                 sha256: f.sha256.clone(),
-                size_bytes: (f.size_bytes > 0).then_some(f.size_bytes),
+                // Registry `size_mb` and CivitAI `sizeKB` are rounded: estimates only.
+                size_bytes: None,
+                approx_size_bytes: (f.size_bytes > 0).then_some(f.size_bytes),
                 label: f.friendly_name.clone(),
                 headers,
+                content_check: check.then(model_file_check),
             });
             let reg = Registration {
                 kind: f.kind,

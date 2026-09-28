@@ -13,7 +13,7 @@ fn is_offline<T>(r: &Result<T, NetError>) -> bool {
 }
 
 fn spec(url: String, dest: std::path::PathBuf) -> DownloadSpec {
-    DownloadSpec { url, dest, sha256: None, size_bytes: None, label: "offline test".into(), headers: vec![] }
+    DownloadSpec { url, dest, sha256: None, size_bytes: None, label: "offline test".into(), ..Default::default() }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
