@@ -1,7 +1,7 @@
 // Edit (img2img + instruction editing), SPEC §5.2.
 // The image lives in the Rust session (RAM); the edit chain is an in-memory undo stack.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Undo2, WandSparkles } from "lucide-react";
+import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { JobProgress } from "../../components/JobProgress";
@@ -347,6 +347,9 @@ export function EditTab() {
               </IconButton>
               <IconButton label="Redo" disabled={e.index >= e.chain.length - 1} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
                 <Redo2 className="h-4 w-4" />
+              </IconButton>
+              <IconButton label="Delete this edit" disabled={e.index === 0 || !!job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
+                <Trash2 className="h-4 w-4" />
               </IconButton>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
               <Button size="sm" variant={compare && before ? "secondary" : "ghost"} disabled={!before && e.index === 0} aria-pressed={compare && !!before} onClick={() => setCompare((c) => !c)}>
