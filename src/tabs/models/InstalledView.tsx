@@ -1,7 +1,6 @@
 // Models → Installed: installed models + style add-ons, delete, "Add a file I already have".
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { CircleCheck, Compass, FilePlus2, Puzzle, Trash2, TriangleAlert } from "lucide-react";
 import { addLocalModel, asCoreError, confirmFamily, deleteModel, listLoras, listModels, onModelsChanged, previewDelete } from "../../lib/api";
 import type { AddFileResult, CoreError, DeletePreview, InstalledLora, InstalledModel } from "../../lib/types";
@@ -10,12 +9,16 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge } from "../../components/ui";
 import { EmptyState, FamilyPicker, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
-import { useTauriEvent } from "./lib/hooks";
-import { baseName, isModelFile, lastUsedText } from "./lib/words";
+import { useHardware, useTauriEvent } from "./lib/hooks";
+import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
 
 type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
 
-export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse: () => void }) {
+// Files are added with the native file chooser only. Dropping files onto the window
+// can't work here: the main window is created with `disable_drag_drop_handler()`
+// (src-tauri/src/lib.rs) so HTML5 image drag-and-drop works in Edit / Describe on
+// Windows, and without the native handler Tauri never reports dropped file paths.
+export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
   const [models, setModels] = useState<InstalledModel[] | null>(null);
   const [loras, setLoras] = useState<InstalledLora[] | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
@@ -25,6 +28,7 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
   const [addError, setAddError] = useState<CoreError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [choice, setChoice] = useState<NeedsChoice | null>(null);
+  const hw = useHardware();
 
   const refresh = useCallback(async () => {
     try {
@@ -90,29 +94,6 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
     }
   };
 
-  // Drag a .safetensors/.gguf onto the window while this view is on screen.
-  useEffect(() => {
-    if (!active) return;
-    let off: (() => void) | null = null;
-    let alive = true;
-    try {
-      getCurrentWebview()
-        .onDragDropEvent((e) => {
-          if (e.payload.type !== "drop") return;
-          const path = e.payload.paths.find(isModelFile);
-          if (path) void addPath(path);
-        })
-        .then((un) => (alive ? (off = un) : un()))
-        .catch(() => undefined);
-    } catch {
-      /* not running inside Tauri (browser mock) */
-    }
-    return () => {
-      alive = false;
-      off?.();
-    };
-  }, [active, addPath]);
-
   const nothing = models !== null && loras !== null && models.length === 0 && loras.length === 0;
   const totalBytes = (models ?? []).reduce((a, m) => a + m.sizeBytes, 0) + (loras ?? []).reduce((a, l) => a + l.sizeBytes, 0);
 
@@ -161,7 +142,7 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
         <section className="space-y-3">
           <div>
             <h2 className="text-base font-semibold">Start with a recommended model</h2>
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing is installed yet. These are the best picks for your graphics card — one click each.</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">Nothing is installed yet. These are the best picks for {machinePlain(hw)} — one click each.</p>
           </div>
           <RecommendedCards />
         </section>
@@ -183,7 +164,7 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
                 <Th>Name</Th>
                 <Th className="hidden lg:table-cell">Kind</Th>
                 <Th>Size</Th>
-                <Th>Graphics memory</Th>
+                <Th>{isCpuOnly(hw) ? "Memory" : "Graphics memory"}</Th>
                 <Th className="hidden md:table-cell">Last used</Th>
                 <Th className="w-10">
                   <span className="sr-only">Actions</span>
@@ -278,7 +259,7 @@ export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse:
 
       {nothing && (
         <EmptyState icon={<FilePlus2 className="h-6 w-6" />} title="Already have a model file?">
-          Use <b>Add a file I already have</b> or drop a .safetensors or .gguf file here. Pinhole works out what kind of model it is.
+          Use <b>Add a file I already have</b> to pick a .safetensors or .gguf file. Pinhole works out what kind of model it is.
         </EmptyState>
       )}
 

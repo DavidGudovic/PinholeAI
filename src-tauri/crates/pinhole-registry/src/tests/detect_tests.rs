@@ -249,8 +249,16 @@ fn sd1_tiny_unets_are_not_sd15() {
     ));
     assert_eq!(candidates(&st_header(&full)), vec!["sd15", "sd15_fast"]);
     let diffusers = st_header(&[
-        ("unet.down_blocks.0.resnets.0.conv1.weight", "F16", &[320, 320, 3, 3]),
-        ("unet.mid_block.resnets.1.conv1.weight", "F16", &[1280, 1280, 3, 3]),
+        (
+            "unet.down_blocks.0.resnets.0.conv1.weight",
+            "F16",
+            &[320, 320, 3, 3],
+        ),
+        (
+            "unet.mid_block.resnets.1.conv1.weight",
+            "F16",
+            &[1280, 1280, 3, 3],
+        ),
         (
             "te.text_model.embeddings.token_embedding.weight",
             "F16",
@@ -259,8 +267,16 @@ fn sd1_tiny_unets_are_not_sd15() {
     ]);
     assert_eq!(candidates(&diffusers), vec!["sd15", "sd15_fast"]);
     let diffusers_tiny = st_header(&[
-        ("unet.down_blocks.0.resnets.0.conv1.weight", "F16", &[320, 320, 3, 3]),
-        ("unet.mid_block.resnets.0.conv1.weight", "F16", &[1280, 1280, 3, 3]),
+        (
+            "unet.down_blocks.0.resnets.0.conv1.weight",
+            "F16",
+            &[320, 320, 3, 3],
+        ),
+        (
+            "unet.mid_block.resnets.0.conv1.weight",
+            "F16",
+            &[1280, 1280, 3, 3],
+        ),
         (
             "te.text_model.embeddings.token_embedding.weight",
             "F16",

@@ -10,10 +10,11 @@ use serde::Serialize;
 #[error("{message}")]
 pub struct CoreError {
     /// Stable machine code: `offline`, `not_found`, `disk_space`, `vram`,
-    /// `engine_missing`, `engine_failed`, `cancelled`, `unauthorized`,
+    /// `engine_missing`, `engine_failed`, `model_load`, `cancelled`, `unauthorized`,
     /// `hash_mismatch`, `invalid`, `network`, `io`, `internal`.
     /// `engine_missing` means exactly "the image engine isn't installed for the
     /// current backend": the UI offers `install_engine` as the fix.
+    /// `model_load` = the engine couldn't load the model file (UI: "Open Models").
     pub code: String,
     pub message: String,
     pub details: Option<String>,

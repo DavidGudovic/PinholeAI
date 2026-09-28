@@ -268,7 +268,9 @@ model in small text.
 
 #### Installed
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
-after confirmation), and **Add a file I already have** (drag a .safetensors/.gguf → detected).
+after confirmation), and **Add a file I already have** (pick a .safetensors/.gguf in the file
+chooser → detected). Dropping files onto the window is not supported: the native drop handler
+is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
 ---
 
@@ -308,8 +310,11 @@ finetune of a known family.
 - `config/models.yaml → recommended` holds a ranked list per **role**: Realistic, Anime,
   Edit, Describe. Each candidate has a download spec and its VRAM needs.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
-  choosing the best quant that fits (bf16 → Q8 → Q4).
-- **First run**: after the engine download, show "Recommended for your GPU (16 GB)" with one
+  choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
+  small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
+  model: there, candidates are sized against system RAM instead (§6.2).
+- **First run**: after the engine download, show "Recommended for your GPU (16 GB)" (or
+  "Recommended for your computer" without a usable GPU) with one
   card per role: model name, what it's good at, download size, VRAM needed, and a **Get** button.
   A **Get all** button downloads the Realistic + Edit picks. Skippable.
 - The same card appears wherever a role is empty (Create with no models, Edit with no edit
@@ -325,6 +330,12 @@ badge against the detected GPU:
 - **Fits** — `X ≤ VRAM − 1 GB` headroom
 - **Tight** — fits only with CPU offload / VAE tiling (Pinhole enables them automatically; slower)
 - **Too big** — will not run acceptably; install button warns before downloading
+
+Without a usable GPU (engine backend `cpu`, or no known VRAM; a VRAM override only counts with a
+GPU backend) the figure is **"Needs ~X GB memory"**: weights of the model and its components +
+activations. The badge is **Slow** ("runs on the processor — slow", i.e. Tight) when the family is
+marked `cpu_friendly` (SD 1.5) or the weights are ≤ 4 GB, and it leaves ≥ 4 GB of RAM free;
+everything else is **Too big**. The UI then says "your computer", not "your GPU".
 
 How X is computed:
 1. **Known models**: `vram_gb: { min, recommended }` from the registry (measured, not guessed).

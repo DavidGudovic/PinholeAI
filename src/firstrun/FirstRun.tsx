@@ -10,7 +10,7 @@ import { Logo } from "../components/Logo";
 import { GroupProgress } from "../tabs/models/controls";
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
-import { backendPlain, tierPlain } from "../tabs/models/lib/words";
+import { backendPlain, isCpuOnly, machinePlain, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "../settings/events";
 import { RecommendedCards } from "./RecommendedCards";
 
@@ -80,7 +80,9 @@ export function FirstRun(props: { onDone: () => void }) {
     }
   };
 
-  const vramLabel = hw?.gpu ? `${formatGb(hw.vramGb)}` : null;
+  // No usable GPU (or not detected yet): "your computer", never "your GPU (0 GB)".
+  const cpuOnly = isCpuOnly(hw);
+  const vramLabel = hw?.detected && !cpuOnly ? formatGb(hw.vramGb) : null;
   const engineReady = !!engine.status?.installed && !engine.busy;
 
   let footer: ReactNode;
@@ -162,7 +164,7 @@ export function FirstRun(props: { onDone: () => void }) {
                   Pictures stay in memory until you save them. Closing the app forgets everything else.
                 </Feature>
                 <Feature icon={<Sparkles className="h-4 w-4" />} title="No expert knowledge needed">
-                  Pinhole picks the right models and settings for your graphics card.
+                  Pinhole picks the right models and settings for your computer.
                 </Feature>
                 <Feature icon={<WifiOff className="h-4 w-4" />} title="Works offline">
                   Once your models are downloaded, you don't need the internet.
@@ -174,7 +176,7 @@ export function FirstRun(props: { onDone: () => void }) {
           {step === "hardware" && (
             <section className="mx-auto w-full max-w-xl">
               <StepHeading refObj={headingRef} title="Your computer">
-                Pinhole checks your graphics card to pick models that run well on it.
+                Pinhole checks your graphics card and memory to pick models that run well on your computer.
               </StepHeading>
               {hwError ? (
                 <div className="space-y-3">
@@ -185,7 +187,7 @@ export function FirstRun(props: { onDone: () => void }) {
                 </div>
               ) : !hw?.detected ? (
                 <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white p-5 text-sm text-neutral-600 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-400">
-                  <Spinner className="h-5 w-5 text-amber-500" /> Checking your graphics card…
+                  <Spinner className="h-5 w-5 text-amber-500" /> Checking your computer…
                 </div>
               ) : (
                 <HardwareSummary hw={hw} />
@@ -205,8 +207,9 @@ export function FirstRun(props: { onDone: () => void }) {
           {step === "models" && (
             <section className="w-full">
               <StepHeading refObj={headingRef} title={vramLabel ? `Recommended for your GPU (${vramLabel})` : "Recommended for your computer"}>
-                Each pick is the best model that fits your {hw?.gpu ? "graphics card" : "computer"}. Downloads keep going in the background, so you can start
-                right away. You can always find more in the Models tab.
+                Each pick is the best model that fits {machinePlain(hw)}.{" "}
+                {hw?.detected && cpuOnly ? "Without a graphics card, pictures are made by the processor and take a few minutes each. " : ""}Downloads keep going in the
+                background, so you can start right away. You can always find more in the Models tab.
               </StepHeading>
               {!engineReady && (
                 <p className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200">

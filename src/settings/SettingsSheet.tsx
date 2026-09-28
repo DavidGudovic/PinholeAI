@@ -20,7 +20,7 @@ import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from ".
 import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/controls";
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
-import { backendShort, tierPlain } from "../tabs/models/lib/words";
+import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
@@ -248,10 +248,19 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             options={vramOptions}
           />
         </Labeled>
+        {settings.vramOverrideGb != null && hw?.backend === "cpu" && (
+          <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300" role="note">
+            <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span>
+              Pinhole is using the processor, so this graphics memory setting is ignored. It applies once a graphics card is used — pick one above or an
+              engine version below.
+            </span>
+          </p>
+        )}
         {hw ? (
           hw.detected ? (
             <p className="text-xs text-neutral-600 dark:text-neutral-400">
-              {hw.gpu ? (
+              {!isCpuOnly(hw) ? (
                 <>
                   Pinhole plans for <b className="text-neutral-900 dark:text-neutral-100">{formatGb(hw.vramGb)}</b> — {tierPlain(hw.tier)}. Model choices, speed and
                   memory-saving options follow this.

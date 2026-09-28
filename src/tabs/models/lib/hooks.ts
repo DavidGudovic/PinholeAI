@@ -1,8 +1,9 @@
 // Small React hooks shared by Models, Settings and First run.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { asCoreError, engineStatus, installEngine, onEngine } from "../../../lib/api";
-import type { CoreError, EngineStatus, GroupStatus } from "../../../lib/types";
+import { asCoreError, engineStatus, getHardware, installEngine, onEngine, onHardwareReady } from "../../../lib/api";
+import type { CoreError, EngineStatus, GroupStatus, HardwareView } from "../../../lib/types";
+import { onSettingsChanged } from "../../../settings/events";
 import { getTagged, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
 
 /** Subscribe to a Tauri event helper from api.ts for the component's lifetime. */
@@ -23,6 +24,25 @@ export function useTauriEvent<A extends unknown[]>(subscribe: (cb: (...args: A) 
       off?.();
     };
   }, [subscribe]);
+}
+
+/**
+ * Effective hardware (`get_hardware`: GPU, VRAM, backend), refreshed when detection
+ * finishes and when Settings change (GPU / VRAM / backend overrides). null while loading.
+ */
+export function useHardware(): HardwareView | null {
+  const [hw, setHw] = useState<HardwareView | null>(null);
+  const load = useCallback(() => {
+    getHardware()
+      .then(setHw)
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    load();
+    return onSettingsChanged(() => load());
+  }, [load]);
+  useTauriEvent(onHardwareReady, load);
+  return hw;
 }
 
 export function useDebounced<T>(value: T, ms: number): T {

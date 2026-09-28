@@ -4,8 +4,10 @@ import {
   baseName,
   formatLabel,
   groupFraction,
+  isCpuOnly,
   isModelFile,
   lastUsedText,
+  machinePlain,
   progressText,
   quantPlain,
   ratioPercent,
@@ -85,5 +87,17 @@ describe("files", () => {
     expect(sniffImageType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe("image/jpeg");
     expect(sniffImageType(new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]))).toBe("image/webp");
     expect(sniffImageType(new Uint8Array([1, 2, 3]))).toBe("application/octet-stream");
+  });
+});
+
+describe("isCpuOnly / machinePlain", () => {
+  it("says your computer without a usable GPU", () => {
+    expect(isCpuOnly({ backend: "cpu", vramGb: 0 })).toBe(true);
+    expect(isCpuOnly({ backend: "cuda", vramGb: 0 })).toBe(true);
+    expect(isCpuOnly({ backend: "cuda", vramGb: 16 })).toBe(false);
+    expect(isCpuOnly(null)).toBe(false);
+    expect(machinePlain({ backend: "cpu", vramGb: 0 })).toBe("your computer");
+    expect(machinePlain({ backend: "vulkan", vramGb: 8 })).toBe("your graphics card");
+    expect(machinePlain(null)).toBe("your computer");
   });
 });

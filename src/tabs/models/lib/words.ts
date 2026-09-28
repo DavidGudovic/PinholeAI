@@ -46,6 +46,19 @@ export function tierPlain(tier: string | null | undefined): string {
   }
 }
 
+/**
+ * No usable GPU: the engine runs on the processor (backend "cpu", or no known VRAM),
+ * so models are sized against RAM and the UI says "your computer", not "your GPU".
+ */
+export function isCpuOnly(hw: Pick<HardwareView, "backend" | "vramGb"> | null | undefined): boolean {
+  return !!hw && (hw.backend === "cpu" || !(hw.vramGb > 0));
+}
+
+/** What models are picked for: "your graphics card", or "your computer" without one (or while unknown). */
+export function machinePlain(hw: Pick<HardwareView, "backend" | "vramGb"> | null | undefined): string {
+  return hw && !isCpuOnly(hw) ? "your graphics card" : "your computer";
+}
+
 /** "RTX 5070 Ti (16 GB)" / "No GPU found". */
 export function gpuSummary(hw: Pick<HardwareView, "gpu" | "vramGb"> | null): string {
   if (!hw) return "—";

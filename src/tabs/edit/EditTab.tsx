@@ -9,6 +9,8 @@ import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
 import { AutoTextarea, Button, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
+import { useHardware } from "../models/lib/hooks";
+import { isCpuOnly } from "../models/lib/words";
 import * as api from "../../lib/api";
 import { defaultStickPosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, Quality } from "../../lib/types";
@@ -48,6 +50,8 @@ export function EditTab() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const mask = useRef<MaskHandle>(null);
+  const hw = useHardware();
+  const noGpu = !!hw?.detected && isCpuOnly(hw);
 
   const edits = useMemo(() => editModels(models), [models]);
   const creates = useMemo(() => createModels(models), [models]);
@@ -152,8 +156,12 @@ export function EditTab() {
             needsEditModel ? (
               <div className="space-y-3">
                 <div className="rounded-xl bg-neutral-50 p-3 text-sm dark:bg-neutral-800/50">
-                  <div className="font-medium">Get the best edit model for your GPU</div>
-                  <p className="mt-0.5 text-xs text-neutral-500">Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have.</p>
+                  <div className="font-medium">{noGpu ? "Describing a change needs a graphics card" : "Get the best edit model for your GPU"}</div>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    {noGpu
+                      ? "Pinhole didn't find one it can use, and edit models are too big for the processor. Switch to Restyle — it works with the model you already have."
+                      : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
+                  </p>
                 </div>
                 <RecommendedCards roles={["edit"]} compact />
               </div>

@@ -319,13 +319,16 @@ function writeTestPng(file, w = 96, h = 64) {
 
 /**
  * A header-only "SD 1.5" safetensors file: the tensor names the registry's detect
- * rules look for (UNet + CLIP-L token embedding with ne0 = 768) and tiny data.
+ * rules look for (UNet with middle_block.1 + CLIP-L token embedding with ne0 = 768)
+ * and tiny data.
  * Enough for "Add a file I already have" → detection → installed.json; the engine
  * cannot actually load it (that error path is tested too).
  */
 function writeFakeSd15(file) {
   const tensors = {
     "model.diffusion_model.input_blocks.0.0.weight": { dtype: "F16", shape: [1, 4] },
+    // Without the second middle-block ResNet sd.cpp (and Pinhole) call it SDXS / a tiny UNet.
+    "model.diffusion_model.middle_block.1.norm.weight": { dtype: "F16", shape: [1, 4] },
     "cond_stage_model.transformer.text_model.embeddings.token_embedding.weight": { dtype: "F16", shape: [1, 768] },
     "first_stage_model.decoder.conv_in.weight": { dtype: "F16", shape: [1, 4] },
   };

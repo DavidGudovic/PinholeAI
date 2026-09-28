@@ -175,9 +175,17 @@ pub fn fit_cpu(family: &Family, weights_bytes: u64, ram_gb: f32) -> Fit {
 /// ([`fit`]). Without one ([`HwContext::cpu_only`]): the RAM need of
 /// `weights_bytes` (main file + every component the family loads) against
 /// system RAM ([`cpu_need`], [`fit_cpu`]).
-pub fn need_and_fit(family: &Family, need: VramNeed, weights_bytes: u64, hw: &HwContext) -> (VramNeed, Fit) {
+pub fn need_and_fit(
+    family: &Family,
+    need: VramNeed,
+    weights_bytes: u64,
+    hw: &HwContext,
+) -> (VramNeed, Fit) {
     if hw.cpu_only() {
-        (cpu_need(family, weights_bytes), fit_cpu(family, weights_bytes, hw.ram_gb))
+        (
+            cpu_need(family, weights_bytes),
+            fit_cpu(family, weights_bytes, hw.ram_gb),
+        )
     } else {
         (need, fit(&need, hw.vram_gb))
     }

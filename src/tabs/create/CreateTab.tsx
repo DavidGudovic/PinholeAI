@@ -6,6 +6,8 @@ import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { ModelPicker } from "../../components/ModelPicker";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
+import { useHardware } from "../models/lib/hooks";
+import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
 import type { CoreError } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
@@ -38,6 +40,7 @@ export function CreateTab() {
 
 function NoModels() {
   const actions = useActions();
+  const hw = useHardware();
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-6 py-10">
@@ -46,7 +49,10 @@ function NoModels() {
             <Sparkles className="h-6 w-6" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">Get a model to start creating</h1>
-          <p className="mt-1 text-sm text-neutral-500">Pick one that fits your graphics card. It downloads once and works offline from then on.</p>
+          <p className="mt-1 text-sm text-neutral-500">
+            Pick one that fits {machinePlain(hw)}. It downloads once and works offline from then on.
+            {hw?.detected && isCpuOnly(hw) ? " Without a graphics card, each picture takes a few minutes." : ""}
+          </p>
         </div>
         <RecommendedCards roles={["realistic", "anime"]} compact />
         <div className="mt-6 text-center">

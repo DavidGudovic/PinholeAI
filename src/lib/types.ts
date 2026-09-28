@@ -9,8 +9,9 @@
 // ---------------------------------------------------------------- errors
 export interface CoreError {
   /** offline | not_found | disk_space | vram | engine_missing | engine_failed |
-   *  cancelled | unauthorized | hash_mismatch | invalid | network | io | internal.
-   *  engine_missing = the image engine isn't installed (fix: installEngine). */
+   *  model_load | cancelled | unauthorized | hash_mismatch | invalid | network | io | internal.
+   *  engine_missing = the image engine isn't installed (fix: installEngine).
+   *  model_load = the engine couldn't load the model file (fix: Models → Installed). */
   code: string;
   /** Plain language, says what to do next. */
   message: string;
@@ -80,7 +81,12 @@ export interface EngineStatus {
   running: boolean;
   loading: boolean;
   loadedModelId: string | null;
+  /** Plain-language message of the last engine failure (CoreError.message). */
   error: string | null;
+  /** CoreError.code of that failure (engine_failed | model_load | vram | …). */
+  errorCode: string | null;
+  /** Engine output for the "Details" toggle. */
+  errorDetails: string | null;
 }
 
 // ---------------------------------------------------------------- downloads
@@ -110,6 +116,9 @@ export interface VramNeed {
   gb: number;
   minGb: number;
   estimate: boolean;
+  /** No usable GPU: gb/minGb are system RAM the model needs on the processor,
+   *  and the badge is judged against RAM ("tight" = runs on the processor, slowly). */
+  onCpu?: boolean;
 }
 
 // ---------------------------------------------------------------- models

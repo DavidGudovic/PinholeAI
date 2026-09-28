@@ -166,14 +166,20 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
             </Section>
 
             {(plan.vram || !plan.isLora) && (
-              <Section title="Your graphics card">
+              <Section title={plan.vram?.onCpu ? "Your computer" : "Your graphics card"}>
                 {plan.vram ? <VramBadge vram={plan.vram} fit={plan.fit} /> : <span className="text-xs text-neutral-500">Pinhole will estimate this after the download.</span>}
                 {plan.fit === "tight" && (
-                  <p className="mt-1.5 text-xs text-neutral-500">It fits with memory-saving options, which Pinhole turns on automatically. Pictures take a bit longer.</p>
+                  <p className="mt-1.5 text-xs text-neutral-500">
+                    {plan.vram?.onCpu
+                      ? "Pinhole didn't find a graphics card, so this runs on the processor. Expect a few minutes per picture."
+                      : "It fits with memory-saving options, which Pinhole turns on automatically. Pictures take a bit longer."}
+                  </p>
                 )}
                 {tooBig && (
                   <Callout tone="amber" icon={<TriangleAlert className="h-4 w-4" />}>
-                    This model is probably too big for your graphics card. It may be very slow or fail to load. You can still download it.
+                    {plan.vram?.onCpu
+                      ? "Pinhole didn't find a graphics card, and this model is too big to run on the processor. You can still download it, but it won't run well here."
+                      : "This model is probably too big for your graphics card. It may be very slow or fail to load. You can still download it."}
                   </Callout>
                 )}
               </Section>

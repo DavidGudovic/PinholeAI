@@ -213,3 +213,46 @@ describe("tokenizeSettings", () => {
     expect(tokenizeSettings('P: "say \\"hi\\", ok"')).toEqual([["P", 'say "hi", ok']]);
   });
 });
+
+describe("LoRA de-duplication across Civitai resources / Lora hashes / Hashes", () => {
+  const loras = (text: string) => parseGenerationData(text)!.resources.filter((r) => r.type === "lora");
+
+  it("lists a LoRA once when CivitAI and Lora hashes name it differently (real CivitAI copy)", () => {
+    const text = [
+      "portrait of a knight, dramatic lighting",
+      "Negative prompt: lowres",
+      'Steps: 28, Sampler: DPM++ 2M Karras, CFG scale: 6.5, Seed: 1234567, Size: 512x768, Model hash: 6ce0161689, Model: v1-5-pruned-emaonly, Lora hashes: "detail_tweaker: e3f9c2b1a8d7", Civitai resources: [{"type":"checkpoint","modelVersionId":128713,"modelName":"DreamShaper","modelVersionName":"8"},{"type":"lora","weight":0.6,"modelVersionId":62833,"modelName":"Detail Tweaker LoRA","modelVersionName":"v1.0"}], Version: v1.9.4',
+    ].join("\n");
+    expect(loras(text)).toEqual([
+      { type: "lora", modelVersionId: 62833, modelName: "Detail Tweaker LoRA", modelVersionName: "v1.0", hash: "e3f9c2b1a8d7", weight: 0.6 },
+    ]);
+  });
+
+  it("pairs the one leftover CivitAI LoRA with the one leftover hashed LoRA", () => {
+    const text =
+      'x <lora:ftw_v3:0.7>\nSteps: 20, Seed: 1, Lora hashes: "ftw_v3: 0123456789ab", Civitai resources: [{"type":"lora","modelVersionId":77,"modelName":"Film Look"}]';
+    expect(loras(text)).toEqual([{ type: "lora", modelVersionId: 77, modelName: "Film Look", modelVersionName: null, hash: "0123456789ab", weight: 0.7 }]);
+  });
+
+  it("keeps LoRAs apart when they really differ", () => {
+    const text =
+      'x\nSteps: 20, Seed: 1, Lora hashes: "alpha_style: 111111111111, beta: 222222222222", Civitai resources: [{"type":"lora","modelVersionId":1,"modelName":"Alpha Style"}]';
+    const got = loras(text);
+    expect(got).toHaveLength(2);
+    expect(got[0]).toMatchObject({ modelVersionId: 1, modelName: "Alpha Style", hash: "111111111111" });
+    expect(got[1]).toMatchObject({ modelVersionId: null, modelName: "beta", hash: "222222222222" });
+    // Hashes that disagree are never paired.
+    const clash =
+      'x\nSteps: 20, Seed: 1, Lora hashes: "zzz: 333333333333", Civitai resources: [{"type":"lora","modelVersionId":9,"modelName":"Other","hash":"444444444444"}]';
+    expect(loras(clash)).toHaveLength(2);
+  });
+
+  it("merges the same file named twice (Hashes JSON + Lora hashes, CivitAI hash)", () => {
+    const text =
+      'x\nSteps: 20, Seed: 1, Lora hashes: "Add_Detail: aaaaaaaaaaaa", Hashes: {"lora:add_detail": "aaaaaaaaaaaa", "model": "bbbbbbbbbb"}';
+    expect(loras(text)).toEqual([{ type: "lora", modelVersionId: null, modelName: "Add_Detail", modelVersionName: null, hash: "aaaaaaaaaaaa", weight: null }]);
+    const withId =
+      'x\nSteps: 20, Seed: 1, Lora hashes: "some_file: cccccccccccc", Civitai resources: [{"type":"lora","modelVersionId":3,"modelName":"Unrelated Name","hash":"cccccccccccc","weight":0.5}]';
+    expect(loras(withId)).toEqual([{ type: "lora", modelVersionId: 3, modelName: "Unrelated Name", modelVersionName: null, hash: "cccccccccccc", weight: 0.5 }]);
+  });
+});

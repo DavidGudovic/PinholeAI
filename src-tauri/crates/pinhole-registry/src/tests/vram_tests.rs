@@ -128,16 +128,26 @@ fn cpu_fit_uses_system_ram_for_small_models() {
     assert_eq!(fit_cpu(sd15, bytes, 7.7), Fit::Tight);
     assert_eq!(fit_cpu(sd15, bytes, 7.0), Fit::Tight);
     assert_eq!(fit_cpu(sd15, bytes, 6.0), Fit::TooBig);
-    assert_eq!(fit_cpu(sd15, bytes, 0.0), Fit::Tight, "RAM unknown → size rule only");
+    assert_eq!(
+        fit_cpu(sd15, bytes, 0.0),
+        Fit::Tight,
+        "RAM unknown → size rule only"
+    );
     // A full-precision SD 1.5 (7.7 GB) is still offered: the family is cpu_friendly.
     assert_eq!(fit_cpu(sd15, 7_700_000_000, 32.0), Fit::Tight);
     // Big families: too slow on the processor, however much RAM there is.
-    assert_eq!(fit_cpu(sdxl, 7_105_000_000 + 335_000_000, 64.0), Fit::TooBig);
+    assert_eq!(
+        fit_cpu(sdxl, 7_105_000_000 + 335_000_000, 64.0),
+        Fit::TooBig
+    );
     // …unless the whole model is small (≤ 4 GiB of weights).
     assert_eq!(fit_cpu(sdxl, 3 * GIB, 64.0), Fit::Tight);
     assert_eq!(fit_cpu(sdxl, 5 * GIB, 64.0), Fit::TooBig);
     let z = reg.family("z_image_turbo").unwrap();
-    assert_eq!(fit_cpu(z, 3_864_000_000 + 335_000_000 + 8_045_000_000, 64.0), Fit::TooBig);
+    assert_eq!(
+        fit_cpu(z, 3_864_000_000 + 335_000_000 + 8_045_000_000, 64.0),
+        Fit::TooBig
+    );
 }
 
 #[test]
@@ -153,7 +163,10 @@ fn need_and_fit_picks_vram_or_ram() {
     // GPU: the registry figure against VRAM.
     let (n, f) = need_and_fit(sd15, gpu_need, 2 * GIB, &hw(8.0, "cuda"));
     assert_eq!((n, f), (gpu_need, Fit::Fits));
-    assert_eq!(need_and_fit(sd15, gpu_need, 2 * GIB, &hw(4.0, "vulkan")).1, Fit::Tight);
+    assert_eq!(
+        need_and_fit(sd15, gpu_need, 2 * GIB, &hw(4.0, "vulkan")).1,
+        Fit::Tight
+    );
     // CPU (backend cpu, or no known VRAM): RAM need against system RAM.
     for h in [hw(0.0, "cpu"), hw(0.0, "cuda"), hw(8.0, "cpu")] {
         assert!(h.cpu_only());

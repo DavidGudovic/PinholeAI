@@ -4,7 +4,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { asCoreError, setCivitaiKey } from "../../lib/api";
 import type { CoreError, FamilyChoice, Fit, GroupStatus, VramNeed } from "../../lib/types";
-import { formatGb } from "../../lib/format";
+import { fitWords } from "../../lib/format";
 import { Badge, Button, Dialog, ErrorNotice, ProgressBar, Select as UiSelect, Spinner, focusRing, inputClass } from "../../components/ui";
 import { groupFraction, isActive, progressText, stateLabel } from "./lib/words";
 
@@ -261,17 +261,14 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
   );
 }
 
-/** Same words as the shared VramBadge ("Needs ~X GB VRAM" + Fits / Tight / Too big), but wraps in narrow cards. */
+/** Same words as the shared VramBadge (`fitWords`), but wraps in narrow cards. */
 export function VramLine({ vram, fit }: { vram: VramNeed | null; fit: Fit | null }) {
   if (!vram) return null;
-  const label = fit === "fits" ? "Fits" : fit === "tight" ? "Tight" : fit === "tooBig" ? "Too big" : null;
-  const tone = fit === "fits" ? "green" : fit === "tight" ? "amber" : "red";
+  const w = fitWords(vram, fit);
   return (
-    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-      <span>
-        Needs ~{formatGb(vram.gb)} VRAM{vram.estimate && <span className="text-neutral-400 dark:text-neutral-500"> (estimate)</span>}
-      </span>
-      {label && <Badge tone={tone}>{label}</Badge>}
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400" title={w.title}>
+      <span>{w.need}</span>
+      {w.badge && <Badge tone={w.tone}>{w.badge}</Badge>}
     </div>
   );
 }

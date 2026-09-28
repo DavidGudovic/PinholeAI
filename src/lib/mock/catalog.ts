@@ -3,7 +3,7 @@
 import type { MockTable } from "./index";
 import type { BrowsePage, BrowseQuery, CatalogCard, CatalogFilterOptions, CoreError, InstallPlan, VramNeed } from "../types";
 import { mockFlags, mockSettings } from "./app";
-import { COMPONENTS, FAMILIES, fitFor, installedComponents, isVersionInstalled, modelsChanged, registerLora, registerModel, startMockDownload } from "./models";
+import { COMPONENTS, FAMILIES, installedComponents, sizeFor, isVersionInstalled, modelsChanged, registerLora, registerModel, startMockDownload } from "./models";
 
 const MB = 1024 * 1024;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -209,7 +209,7 @@ function vramFor(e: Entry): VramNeed | null {
 }
 
 function toCard(e: Entry): CatalogCard {
-  const vram = vramFor(e);
+  const { vram, fit } = sizeFor(vramFor(e), e.familyId, e.mainMb * MB);
   const badgeLook = e.looks.find((l) => BADGE[l]);
   return {
     modelId: e.modelId,
@@ -229,7 +229,7 @@ function toCard(e: Entry): CatalogCard {
     downloadCount: e.downloadCount,
     downloadBytes: e.mainMb * MB,
     vram,
-    fit: fitFor(vram),
+    fit,
     earlyAccess: e.earlyAccess,
     commercialOk: e.commercialOk,
     licenseNote: e.licenseNote,
@@ -470,7 +470,7 @@ function plan(versionId: number): InstallPlan {
   const mainBytes = e.mainMb * MB;
   const total = mainBytes + components.filter((c) => !c.installed).reduce((a, c) => a + c.sizeBytes, 0);
   const free = (mockFlags().lowDisk ? 9.2 : 214.6) * 1024 * MB;
-  const vram = vramFor(e);
+  const { vram, fit } = sizeFor(vramFor(e), e.familyId, mainBytes);
   const slug = e.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
   return {
     versionId,
@@ -489,7 +489,7 @@ function plan(versionId: number): InstallPlan {
     freeDiskBytes: free,
     enoughDisk: total + 1024 * MB < free,
     vram,
-    fit: fitFor(vram),
+    fit,
     licenseNote: e.licenseNote,
     isLora,
     trainedWords: e.trainedWords,

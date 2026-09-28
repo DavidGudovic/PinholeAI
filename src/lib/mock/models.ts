@@ -21,7 +21,7 @@ import type {
   ResolvedResources,
   VramNeed,
 } from "../types";
-import { effectiveVramGb, mockFlags, mockSettings } from "./app";
+import { effectiveVramGb, mockFlags, mockRamGb, mockSettings } from "./app";
 import { catalogEntryByVersion } from "./catalog";
 
 const MB = 1024 * 1024;
@@ -82,6 +82,23 @@ export const COMPONENTS: Record<string, { label: string; mb: number; path: strin
   qwen25_vl_7b_mmproj: { label: "Qwen2.5-VL vision adapter", mb: 850, path: "models/text_encoders/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf" },
   sdxl_vae_fp16_fix: { label: "SDXL VAE (fp16 fix)", mb: 335, path: "models/vae/sdxl_vae_fp16_fix.safetensors" },
 };
+
+/**
+ * Mirrors Rust `need_and_fit` (SPEC §6.2): the VRAM need against the GPU; without one,
+ * the RAM for main file + components + activations against system RAM — SD 1.5 (or
+ * ≤ 4 GB of weights) runs on the processor ("tight" = slow), everything else is too big.
+ */
+export function sizeFor(vram: VramNeed | null, familyId: string | null | undefined, mainBytes: number): { vram: VramNeed | null; fit: Fit | null } {
+  if (!vram) return { vram: null, fit: null };
+  if (effectiveVramGb() > 0) return { vram, fit: fitFor(vram) };
+  const fam = familyId ? FAMILIES[familyId] : undefined;
+  const weights = mainBytes + (fam?.components ?? []).reduce((a, c) => a + (COMPONENTS[c]?.mb ?? 0) * 1e6, 0);
+  const gib = weights / 2 ** 30;
+  const activation = familyId?.startsWith("sd15") ? 1 : 2;
+  const gb = Math.ceil((gib + activation) * 10) / 10;
+  const small = !!familyId?.startsWith("sd15") || gib <= 4;
+  return { vram: { gb, minGb: gb, estimate: true, onCpu: true }, fit: small && gb + 4 <= mockRamGb() ? "tight" : "tooBig" };
+}
 
 /** Fits / Tight / Too big against the mock GPU (SPEC §6.2). */
 export function fitFor(vram: VramNeed | null): Fit | null {
@@ -233,7 +250,8 @@ function missingFor(familyId: string | null): string[] {
 function toInstalled(m: ModelRow): InstalledModel {
   const { relPath: _relPath, ...rest } = m;
   void _relPath;
-  return { ...rest, fit: fitFor(m.vram), missingComponents: missingFor(m.familyId).map((c) => COMPONENTS[c].label) };
+  const sized = sizeFor(m.vram, m.familyId, m.sizeBytes);
+  return { ...rest, vram: sized.vram, fit: sized.fit, missingComponents: missingFor(m.familyId).map((c) => COMPONENTS[c].label) };
 }
 
 function toLora(l: LoraRow): InstalledLora {
@@ -398,18 +416,22 @@ function pickFor(role: string): RecCandidate | null {
       if (v >= 12) return { ...base, quant: "bf16", mainMb: 12300, vram: { min: 12, rec: 16 } };
       if (v >= 8) return { ...base, quant: "q8_0", mainMb: 7200, vram: { min: 8, rec: 12 } };
       if (v >= 5) return { ...base, quant: "q4_k", mainMb: 4000, vram: { min: 5, rec: 8 } };
-      return {
-        ...base,
-        title: "RealVisXL V5.0",
-        familyId: "sdxl",
-        goodAt: "Realistic photos on smaller graphics cards.",
-        quant: null,
-        mainMb: 6617,
-        vram: { min: 6, rec: 10 },
-        licenseNote: "CreativeML Open RAIL++-M",
-      };
+      // Like config/models.yaml: the last realistic candidate, for no GPU (sized against RAM) or < 5 GB.
+      if (v >= 4 || v <= 0)
+        return {
+          ...base,
+          title: "Stable Diffusion 1.5 (small, runs on any computer)",
+          familyId: "sd15",
+          goodAt: "Photos and lifelike pictures",
+          quant: "fp16",
+          mainMb: 2034,
+          vram: { min: 4, rec: 6 },
+          licenseNote: null,
+        };
+      return null;
     }
     case "anime":
+      if (v < 6) return null;
       return {
         role,
         roleLabel: "Anime",
@@ -422,6 +444,7 @@ function pickFor(role: string): RecCandidate | null {
         licenseNote: "Illustrious license — check before commercial use",
       };
     case "edit":
+      if (v < 6) return null;
       if (v >= 12)
         return {
           role,
@@ -502,12 +525,12 @@ function recommendedFor(role: string): RecommendedPick {
       installed: false,
       quant: null,
       licenseNote: null,
-      unavailableReason: "No model for this yet.",
+      unavailableReason: tooBigReason(role),
     };
   const installed = s.models.some((m) => m.familyId === c.familyId && m.friendlyName.startsWith(c.title));
   const missing = FAMILIES[c.familyId]?.components.filter((id) => !s.components.has(id)) ?? [];
   const bytes = installed ? 0 : c.mainMb * MB + missing.reduce((a, id) => a + COMPONENTS[id].mb * MB, 0);
-  const vram: VramNeed = { gb: c.vram.rec, minGb: c.vram.min, estimate: false };
+  const sized = sizeFor({ gb: c.vram.rec, minGb: c.vram.min, estimate: false }, c.familyId, c.mainMb * MB);
   return {
     role,
     roleLabel: c.roleLabel,
@@ -515,14 +538,22 @@ function recommendedFor(role: string): RecommendedPick {
     familyId: c.familyId,
     goodAt: c.goodAt,
     downloadBytes: bytes,
-    vram,
-    fit: fitFor(vram),
+    vram: sized.vram,
+    fit: sized.fit,
     installed,
     quant: c.quant,
     licenseNote: c.licenseNote,
-    unavailableReason:
-      !installed && role === "edit" && effectiveVramGb() < 6 ? "Editing needs a graphics card with at least 6 GB of memory." : null,
+    unavailableReason: null,
   };
+}
+
+/** Same words as Rust recommend.rs `too_big_reason` (no "go to the Models tab": the cards show there too). */
+function tooBigReason(role: string): string {
+  const v = effectiveVramGb();
+  if (v > 0) return `None of the recommended models fit in ${v} GB of graphics memory. Smaller ones are available when you browse CivitAI.`;
+  if (role === "edit")
+    return "Editing by description needs a graphics card, and Pinhole didn't find one it can use. Restyle still works with a Create model, slowly, on the processor.";
+  return `The recommended ${role} models need a graphics card, and Pinhole didn't find one it can use. Only small models such as Stable Diffusion 1.5 run on the processor, slowly.`;
 }
 
 const activeRecommended = new Map<string, string>();
@@ -555,7 +586,9 @@ async function installRecommended(role: string) {
   const s = state();
   const missing = FAMILIES[c.familyId].components.filter((id) => !s.components.has(id));
   const mainName =
-    c.familyId === "z_image_turbo"
+    c.familyId === "sd15"
+      ? "v1-5-pruned-emaonly-fp16.safetensors"
+      : c.familyId === "z_image_turbo"
       ? c.quant === "bf16"
         ? "z_image_turbo_bf16.safetensors"
         : `z_image_turbo-${c.quant?.toUpperCase()}.gguf`
@@ -571,7 +604,8 @@ async function installRecommended(role: string) {
         friendlyName: c.title,
         familyId: c.familyId,
         familyLabel: FAMILIES[c.familyId].label,
-        styleBadge: role === "anime" ? "Anime" : role === "realistic" ? "Realistic" : null,
+        // Rust gives the badge only to the family that heads the role (not the SD 1.5 fallback).
+        styleBadge: role === "anime" ? "Anime" : role === "realistic" && c.familyId !== "sd15" ? "Realistic" : null,
         modes: FAMILIES[c.familyId].modes,
         isEditModel: !!c.isEdit,
         sizeBytes: c.mainMb * MB,
@@ -580,7 +614,7 @@ async function installRecommended(role: string) {
         civitaiModelId: null,
         civitaiVersionId: null,
         baseModel: null,
-        relPath: `models/${c.familyId.startsWith("sdxl") ? "checkpoints" : "diffusion"}/${mainName}`,
+        relPath: `models/${c.familyId.startsWith("sdxl") || c.familyId === "sd15" ? "checkpoints" : "diffusion"}/${mainName}`,
       });
       modelsChanged();
     },

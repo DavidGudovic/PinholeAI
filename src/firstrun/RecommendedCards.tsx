@@ -1,4 +1,4 @@
-// OWNER: frontend B. "Recommended for your GPU" cards (SPEC §6.1), reused by the
+// OWNER: frontend B. "Recommended for your GPU / computer" cards (SPEC §6.1), reused by the
 // Create / Edit / Describe empty states (frontend A). Keep this export signature.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Camera, CircleCheck, Download, RotateCw, ScanText, Sparkles, WandSparkles } from "lucide-react";
@@ -8,8 +8,8 @@ import { formatBytes } from "../lib/format";
 import { Button, ErrorNotice, Spinner, VramBadge } from "../components/ui";
 import { GroupProgress, Skeleton } from "../tabs/models/controls";
 import { cancelGroup, getTagged, tagGroup, useDownloadsVersion, useTaggedGroup } from "../tabs/models/lib/downloads";
-import { useTauriEvent } from "../tabs/models/lib/hooks";
-import { isActive, quantPlain } from "../tabs/models/lib/words";
+import { useHardware, useTauriEvent } from "../tabs/models/lib/hooks";
+import { isActive, machinePlain, quantPlain } from "../tabs/models/lib/words";
 
 const ROLE_ICON: Record<string, ReactNode> = {
   realistic: <Camera className="h-4 w-4" />,
@@ -33,6 +33,7 @@ export function RecommendedCards(props: {
   const [loadError, setLoadError] = useState<CoreError | null>(null);
   const [errors, setErrors] = useState<Record<string, CoreError | null>>({});
   const [starting, setStarting] = useState<Record<string, boolean>>({});
+  const hw = useHardware();
 
   const load = useCallback(async () => {
     try {
@@ -104,7 +105,7 @@ export function RecommendedCards(props: {
       )}
       <div className={compact ? (shown.length > 1 ? "grid gap-3 @lg:grid-cols-2" : "grid max-w-xl gap-3") : "grid gap-4 @xl:grid-cols-2"}>
         {shown.map((p) => (
-          <PickCard key={p.role} pick={p} compact={compact} starting={!!starting[p.role]} error={errors[p.role] ?? null} onGet={() => void get(p.role)} onDismissError={() => setErrors((x) => ({ ...x, [p.role]: null }))} />
+          <PickCard key={p.role} pick={p} compact={compact} machine={machinePlain(hw)} starting={!!starting[p.role]} error={errors[p.role] ?? null} onGet={() => void get(p.role)} onDismissError={() => setErrors((x) => ({ ...x, [p.role]: null }))} />
         ))}
       </div>
     </div>
@@ -112,7 +113,9 @@ export function RecommendedCards(props: {
 }
 
 function useRoleGroup(pick: RecommendedPick): GroupStatus | null {
-  return useTaggedGroup(`rec:${pick.role}`, (g) => !!pick.title && g.label === pick.title);
+  // The describer may have been started from the Describe tab: match its group by kind
+  // (its label is "Describe model", not the pick title).
+  return useTaggedGroup(`rec:${pick.role}`, (g) => (pick.role === "describe" ? g.kind === "captioner" : !!pick.title && g.label === pick.title));
 }
 
 function GetAllBar({
@@ -161,6 +164,7 @@ function GetAllBar({
 function PickCard({
   pick,
   compact,
+  machine,
   starting,
   error,
   onGet,
@@ -168,6 +172,8 @@ function PickCard({
 }: {
   pick: RecommendedPick;
   compact: boolean;
+  /** "your graphics card" | "your computer" */
+  machine: string;
   starting: boolean;
   error: CoreError | null;
   onGet: () => void;
@@ -202,13 +208,13 @@ function PickCard({
           {ROLE_ICON[pick.role] ?? null}
           {pick.roleLabel}
         </span>
-        {compact && <span className="text-xs text-neutral-500">Best for your GPU</span>}
+        {compact && <span className="text-xs text-neutral-500">Best for {machine}</span>}
       </div>
 
       {unavailable ? (
         <div className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
           <div className="font-medium text-neutral-800 dark:text-neutral-200">{pick.title ?? "Nothing fits yet"}</div>
-          <p className="mt-1">{pick.unavailableReason ?? "There's no model for this that fits your computer yet."}</p>
+          <p className="mt-1">{pick.unavailableReason ?? `There's no model for this that fits ${machine} yet.`}</p>
         </div>
       ) : (
         <>

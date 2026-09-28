@@ -614,27 +614,37 @@ function buildResources(src: {
     res.unshift({ type: "checkpoint", modelVersionId: null, modelName: src.modelName, modelVersionName: null, hash: modelHash, weight: null });
   }
 
-  // 4. LoRAs from tags + hashes, merged by name with CivitAI's list.
+  // 4. LoRAs from tags + hashes, merged with CivitAI's list: one entry per LoRA,
+  //    CivitAI's kept (it has the version id), hash and weight filled in from the others.
   const civitaiLoras = res.filter((r) => r.type === "lora");
+  const claimed = new Set<PastedResource>();
+  const unmatched: PastedResource[] = [];
   const names: string[] = [];
   for (const t of src.loraTags) if (!names.includes(t.name)) names.push(t.name);
   for (const n of loraHashes.keys()) if (!names.includes(n)) names.push(n);
   for (const name of names) {
     const hash = loraHashes.get(name) ?? null;
     const tag = src.loraTags.find((t) => t.name === name);
-    const key = normName(name);
-    const match = civitaiLoras.find(
-      (r) => (r.modelName && normName(r.modelName) === key) || (r.modelVersionName && normName(r.modelVersionName) === key) || (hash && r.hash === hash),
-    );
+    const entry: PastedResource = { type: "lora", modelVersionId: null, modelName: name, modelVersionName: null, hash, weight: tag ? tag.weight : null };
+    const match = matchCivitaiLora(civitaiLoras, name, hash);
     if (match) {
-      if (!match.hash && hash) match.hash = hash;
-      if (match.weight == null && tag) match.weight = tag.weight;
+      mergeInto(match, entry);
+      claimed.add(match);
       continue;
     }
     // When CivitAI listed its LoRAs, a bare tag without a hash is most likely one of them under a file name.
     if (civitaiLoras.length && !hash) continue;
-    res.push({ type: "lora", modelVersionId: null, modelName: name, modelVersionName: null, hash, weight: tag ? tag.weight : null });
+    unmatched.push(entry);
   }
+  // Both lists describe the same picture. One CivitAI LoRA nobody named plus one named LoRA
+  // CivitAI doesn't list = the same LoRA under its file name ("detail_tweaker" vs
+  // "Detail Tweaker LoRA"), unless their hashes disagree.
+  const leftover = civitaiLoras.filter((r) => !claimed.has(r));
+  if (leftover.length === 1 && unmatched.length === 1 && (!leftover[0].hash || !unmatched[0].hash || sameHash(leftover[0].hash, unmatched[0].hash))) {
+    mergeInto(leftover[0], unmatched[0]);
+    unmatched.length = 0;
+  }
+  res.push(...unmatched);
 
   // 5. Embeddings and VAE (resolved or ignored by the backend).
   for (const [name, hash] of tiHashes) {
@@ -644,5 +654,74 @@ function buildResources(src: {
   if (vaeHash && !res.some((r) => r.type === "vae")) {
     res.push({ type: "vae", modelVersionId: null, modelName: src.vaeName, modelVersionName: null, hash: vaeHash, weight: null });
   }
-  return res;
+  return dedupeLoras(res);
+}
+
+/** Same file hash (full SHA-256 vs AutoV2/AutoV3 prefixes count as equal). */
+function sameHash(a: string | null, b: string | null): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return Math.min(a.length, b.length) >= 10 && (a.startsWith(b) || b.startsWith(a));
+}
+
+/**
+ * A LoRA name the way people write it, for fuzzy matching: lowercase words
+ * without "LoRA"/"LyCORIS" and version tokens ("Detail Tweaker LoRA v1.0" and
+ * "detail_tweaker" → "detailtweaker").
+ */
+function looseName(s: string): string {
+  return s
+    .replace(/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i, "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w && !["lora", "lycoris", "locon", "lyco", "dora"].includes(w) && !/^v?\d+$/.test(w))
+    .join("")
+    .replace(/(.{4,})(lora|lycoris|locon)$/, "$1"); // "DetailTweakerLoRA"
+}
+
+/** CivitAI's entry for a LoRA named in the prompt tags / "Lora hashes": exact name or hash, then loose name. */
+function matchCivitaiLora(list: PastedResource[], name: string, hash: string | null): PastedResource | undefined {
+  const key = normName(name);
+  const exact = list.find(
+    (r) => (r.modelName && normName(r.modelName) === key) || (r.modelVersionName && normName(r.modelVersionName) === key) || sameHash(r.hash, hash),
+  );
+  if (exact) return exact;
+  const loose = looseName(name);
+  if (loose.length < 4) return undefined;
+  const names = (r: PastedResource) => [r.modelName, r.modelVersionName].filter((n): n is string => !!n).map(looseName);
+  return (
+    list.find((r) => names(r).some((n) => n === loose)) ??
+    list.find((r) => names(r).some((n) => n.length >= 6 && loose.length >= 6 && (n.includes(loose) || loose.includes(n))))
+  );
+}
+
+/** Fill what `into` lacks from `from` (same LoRA). */
+function mergeInto(into: PastedResource, from: PastedResource) {
+  into.modelVersionId ??= from.modelVersionId;
+  into.hash ??= from.hash;
+  into.weight ??= from.weight;
+  into.modelName ??= from.modelName;
+  into.modelVersionName ??= from.modelVersionName;
+}
+
+/** One entry per LoRA: entries with the same version id or file hash are merged, keeping the one with a version id. */
+function dedupeLoras(res: PastedResource[]): PastedResource[] {
+  const out: PastedResource[] = [];
+  for (const r of res) {
+    const i = r.type !== "lora" ? -1 : out.findIndex((x) => x.type === "lora" && sameLora(x, r));
+    if (i < 0) {
+      out.push(r);
+    } else if (out[i].modelVersionId == null && r.modelVersionId != null) {
+      mergeInto(r, out[i]);
+      out[i] = r;
+    } else {
+      mergeInto(out[i], r);
+    }
+  }
+  return out;
+}
+
+function sameLora(a: PastedResource, b: PastedResource): boolean {
+  if (a.modelVersionId != null && b.modelVersionId != null) return a.modelVersionId === b.modelVersionId;
+  return sameHash(a.hash, b.hash);
 }

@@ -15,7 +15,7 @@ import {
 import { createPortal } from "react-dom";
 import { ChevronDown, CircleAlert, X } from "lucide-react";
 import type { CoreError, Fit, VramNeed } from "../../lib/types";
-import { formatGb } from "../../lib/format";
+import { fitWords } from "../../lib/format";
 
 export const cx = (...c: (string | false | null | undefined)[]) => c.filter(Boolean).join(" ");
 
@@ -108,17 +108,14 @@ export function Badge({ tone = "neutral", children }: { tone?: "neutral" | "gree
 }
 
 /** "Needs ~X GB VRAM" + Fits / Tight / Too big (SPEC §6.2). */
+/** "Needs ~X GB VRAM" + Fits / Tight / Too big — or, without a usable GPU (`vram.onCpu`), "Needs ~X GB memory" + Slow / Too big. */
 export function VramBadge({ vram, fit, compact = false }: { vram: VramNeed | null; fit: Fit | null; compact?: boolean }) {
   if (!vram) return null;
-  const label = fit === "fits" ? "Fits" : fit === "tight" ? "Tight" : fit === "tooBig" ? "Too big" : null;
-  const tone = fit === "fits" ? "green" : fit === "tight" ? "amber" : "red";
+  const w = fitWords(vram, fit);
   return (
-    <span
-      className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400"
-      title={`Needs ~${formatGb(vram.gb)} VRAM${vram.estimate ? " (estimate)" : ""}`}
-    >
-      {compact ? `~${formatGb(vram.gb)} VRAM` : `Needs ~${formatGb(vram.gb)} VRAM${vram.estimate ? " (estimate)" : ""}`}
-      {label && <Badge tone={tone}>{label}</Badge>}
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-neutral-500 dark:text-neutral-400" title={w.title}>
+      {compact ? w.short : w.need}
+      {w.badge && <Badge tone={w.tone}>{w.badge}</Badge>}
     </span>
   );
 }

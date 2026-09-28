@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
-import { AutoTextarea, Button, Kbd, ProgressBar, Segmented, Spinner } from "../../components/ui";
+import { AutoTextarea, Button, Kbd, Segmented, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
+import { GroupProgress } from "../models/controls";
 import * as api from "../../lib/api";
 import { formatBytes } from "../../lib/format";
 import type { CaptionerStatus, CoreError, DescribeStyle } from "../../lib/types";
@@ -49,7 +50,11 @@ export function DescribeTab() {
   useEffect(() => {
     void refreshStatus();
   }, [models, refreshStatus]);
-  const dl = installGroup ? downloads.find((x) => x.groupId === installGroup) : undefined;
+  // The describer download started here, or anywhere else (Recommended cards, First run):
+  // its group kind is "captioner".
+  const dl =
+    (installGroup ? downloads.find((x) => x.groupId === installGroup) : undefined) ??
+    [...downloads].reverse().find((x) => x.kind === "captioner" && isActiveDownload(x));
   useEffect(() => {
     if (dl?.state === "done") void refreshStatus();
   }, [dl?.state, refreshStatus]);
@@ -96,6 +101,16 @@ export function DescribeTab() {
       setError(api.asCoreError(e));
     } finally {
       setInstalling(false);
+    }
+  };
+
+  const cancelInstall = async (groupId: string) => {
+    try {
+      await api.cancelDownload(groupId);
+    } catch (e) {
+      setError(api.asCoreError(e));
+    } finally {
+      void actions.refreshDownloads().catch(() => undefined);
     }
   };
 
@@ -160,12 +175,7 @@ export function DescribeTab() {
                 {status.downloadBytes > 0 ? `A one-time ${formatBytes(status.downloadBytes)} download. ` : ""}If you install the Qwen Image Edit model, Describe reuses it for free.
               </p>
               {installingNow && dl ? (
-                <div className="space-y-1.5">
-                  <ProgressBar value={dl.downloadedBytes} max={dl.totalBytes || 1} indeterminate={!dl.totalBytes} />
-                  <p className="text-xs text-neutral-500">
-                    Downloading… {formatBytes(dl.downloadedBytes)} of {formatBytes(dl.totalBytes)}
-                  </p>
-                </div>
+                <GroupProgress group={dl} compact onCancel={() => void cancelInstall(dl.groupId)} />
               ) : (
                 <Button variant="primary" onClick={() => void install()} disabled={installing}>
                   {installing ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-4 w-4" />}

@@ -7,7 +7,8 @@ import { useActions } from "../lib/state/AppProvider";
 import { isActiveDownload, type TabId } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { Logo } from "./Logo";
-import { Button, ErrorNotice, IconButton, Popover, ProgressBar, Spinner, cx, focusRing } from "./ui";
+import { ErrorWithFix } from "./ErrorWithFix";
+import { Button, IconButton, Popover, ProgressBar, Spinner, cx, focusRing } from "./ui";
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   { id: "create", label: "Create", icon: <Sparkles className="h-4 w-4" /> },
@@ -141,7 +142,8 @@ function EngineChip() {
         )}
       >
         <div className="p-2">
-          <ErrorNotice error={{ code: "engine_failed", message: "The engine stopped unexpectedly. Try generating again — Pinhole restarts it.", details: engine.error }} />
+          {/* The real failure (e.g. "This model couldn't be loaded…"), engine output behind Details, and a fix where there is one. */}
+          <ErrorWithFix error={{ code: engine.errorCode ?? "engine_failed", message: engine.error, details: engine.errorDetails ?? null }} />
         </div>
       </Popover>
     );

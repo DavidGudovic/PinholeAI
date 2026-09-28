@@ -82,7 +82,7 @@ export function ModelsTab() {
             </div>
           )
         ) : (
-          <InstalledView active={visible} onBrowse={() => setView("browse")} />
+          <InstalledView onBrowse={() => setView("browse")} />
         )}
       </div>
     </div>

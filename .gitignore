@@ -22,3 +22,4 @@ release-assets/
 portable/
 pins-report.json
 src-tauri/vcrt/*.dll
+*.tsbuildinfo

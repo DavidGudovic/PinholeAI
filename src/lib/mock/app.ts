@@ -99,10 +99,16 @@ function selectedGpu(): GpuInfo | null {
   return best;
 }
 
-/** Effective VRAM after overrides (0 = CPU only). Used by the models/catalog mocks for Fits/Tight/Too big. */
+/** Effective VRAM after overrides (0 = CPU only). Used by the models/catalog mocks for Fits/Tight/Too big.
+ *  Like Rust: whenever the backend is "cpu" there is no GPU and the VRAM override is ignored. */
 export function effectiveVramGb(): number {
-  if (cpuOnly()) return 0;
+  if (backendFor(selectedGpu()) === "cpu") return 0;
   return mockSettings().vramOverrideGb ?? selectedGpu()?.vramGb ?? 0;
+}
+
+/** System RAM of the mock PC (?nogpu machines are small laptops). */
+export function mockRamGb(): number {
+  return mockFlags().noGpu ? 15.6 : 64;
 }
 
 function tierFor(vram: number): string {
@@ -133,10 +139,11 @@ export function hardwareView(): HardwareView {
         mockFlags().slowHw ? 4000 : 1300,
       );
   }
-  const g = selectedGpu();
+  // Rust effective_hardware: the CPU backend means no GPU at all.
+  const g = backendFor(selectedGpu()) === "cpu" ? null : selectedGpu();
   const vram = effectiveVramGb();
   return {
-    detected: hwReady ? { gpus: gpus(), ramGb: 64, cpuThreads: 24, os: "Windows 11 Pro 24H2" } : null,
+    detected: hwReady ? { gpus: gpus(), ramGb: mockRamGb(), cpuThreads: 24, os: "Windows 11 Pro 24H2" } : null,
     vramGb: hwReady ? vram : 0,
     gpu: hwReady ? g : null,
     backend: backendFor(hwReady ? g : null),
@@ -152,12 +159,14 @@ export function hardwareView(): HardwareView {
 // no-op when that build is already installed.
 const ENGINE_VERSION = "master-3a9b1c2";
 let installedBackends: Set<string> | null = null;
-let engineFlags: Pick<EngineStatus, "installing" | "running" | "loading" | "loadedModelId" | "error"> = {
+let engineFlags: Pick<EngineStatus, "installing" | "running" | "loading" | "loadedModelId" | "error" | "errorCode" | "errorDetails"> = {
   installing: false,
   running: false,
   loading: false,
   loadedModelId: null,
   error: null,
+  errorCode: null,
+  errorDetails: null,
 };
 let failEngineOnce: boolean | null = null;
 
@@ -205,7 +214,7 @@ function downloadEngine(backend: string): Promise<EngineStatus> {
         ? [{ name: `sd-${ENGINE_VERSION}-bin-win-vulkan-x64.zip`, bytes: 31 * MB }]
         : [{ name: `sd-${ENGINE_VERSION}-bin-win-cpu-x64.zip`, bytes: 9 * MB }];
   const label = `Image engine (${backend === "cuda" ? "NVIDIA CUDA" : backend === "vulkan" ? "Vulkan" : "CPU"})`;
-  setEngine({ installing: true, error: null });
+  setEngine({ installing: true, error: null, errorCode: null, errorDetails: null });
   const fail = failEngineOnce;
   failEngineOnce = false;
   return new Promise<EngineStatus>((resolve, reject) => {
@@ -215,11 +224,11 @@ function downloadEngine(backend: string): Promise<EngineStatus> {
       failAt: fail ? 0.45 : undefined,
       onDone: () => {
         backends().add(backend);
-        setEngine({ installing: false, error: null });
+        setEngine({ installing: false, error: null, errorCode: null, errorDetails: null });
         resolve(engineState());
       },
       onFail: (e) => {
-        setEngine({ installing: false, error: e.message });
+        setEngine({ installing: false, error: e.message, errorCode: e.code, errorDetails: e.details ?? null });
         reject(e);
       },
       onCancel: () => {
