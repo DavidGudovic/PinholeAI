@@ -212,7 +212,9 @@ GPU" — one-click download of the top edit model that fits (§6.1), showing its
 and VRAM need.
 
 **Edit chain**: each edit result can be edited again. Keep an in-memory undo stack
-(original → edit 1 → edit 2…) with a before/after comparison slider.
+(original → edit 1 → edit 2…) with a before/after comparison slider. Click any step in the
+history strip to work from it; **Delete this edit** removes the shown edit (never the original) and
+frees its image from memory; remaining edits are renumbered.
 
 ### 5.3 Describe (img2text)
 

@@ -139,6 +139,21 @@ describe("reducer", () => {
     expect(Object.keys(s.images).sort()).toEqual(["b1", "o"]);
   });
 
+  it("edit chain: delete an edit", () => {
+    const base = run(withModels(), { type: "editLoad", ref: ref("o") }, { type: "editPush", ref: ref("e1") }, { type: "editPush", ref: ref("e2") }, { type: "editPush", ref: ref("e3") });
+    // Deleting the shown edit steps back to the one before it and frees its image.
+    let s = run(base, { type: "editDelete", index: 3 });
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["o", "e1", "e2"]);
+    expect(s.edit.index).toBe(2);
+    expect(Object.keys(s.images).sort()).toEqual(["e1", "e2", "o"]);
+    // Deleting a middle edit renumbers and keeps the same image selected.
+    s = run(base, { type: "editDelete", index: 1 });
+    expect(s.edit.chain.map((n) => [n.imageId, n.label])).toEqual([["o", "Original"], ["e2", "Edit 1"], ["e3", "Edit 2"]]);
+    expect(s.edit.chain[s.edit.index].imageId).toBe("e3");
+    // The original cannot be deleted.
+    expect(run(base, { type: "editDelete", index: 0 })).toBe(base);
+  });
+
   it("Clear session wipes prompts, results, edit chain and description", () => {
     let s = withModels();
     s = run(
