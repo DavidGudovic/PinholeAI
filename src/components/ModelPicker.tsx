@@ -47,21 +47,21 @@ export function ModelPicker({
             focusRing,
           )}
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-800">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-800">
             <Layers className="h-4 w-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-[11px] font-medium text-neutral-500">{hint ?? label}</span>
-            <span className="flex items-center gap-2">
-              <span className="truncate text-sm font-semibold">{current?.friendlyName ?? emptyText}</span>
+            <span className="flex items-center gap-1.5 text-[11px] font-medium text-neutral-500">
+              {hint ?? label}
               {current && <StyleBadge badge={current.styleBadge} />}
             </span>
+            <span className="block truncate text-sm font-semibold">{current?.friendlyName ?? emptyText}</span>
+            {current?.vram && (
+              <span className="mt-0.5 block">
+                <VramBadge vram={current.vram} fit={current.fit} />
+              </span>
+            )}
           </span>
-          {current && (
-            <span className="hidden shrink-0 xl:block">
-              <VramBadge vram={current.vram} fit={current.fit} compact />
-            </span>
-          )}
           <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400 transition-transform group-aria-expanded:rotate-180" />
         </button>
       )}

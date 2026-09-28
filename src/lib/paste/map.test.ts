@@ -75,7 +75,7 @@ describe("mapSampler", () => {
 
 describe("dial math", () => {
   it("maps the registry default into a dial position and back", () => {
-    const ui = FAMILY_UI.sd15; // cfg 4…11, default 7
+    const ui = FAMILY_UI.sd15; // cfg 4…11, default position 3/7 = CFG 7
     const pos = defaultStickPosition(ui);
     expect(pos).toBeCloseTo(3 / 7);
     expect(stickValue(ui, pos)).toBe(7);
@@ -160,11 +160,13 @@ describe("planPaste", () => {
     expect(plan.ignoredKeys.some((k) => k.startsWith("ADetailer"))).toBe(false);
   });
 
-  it("marks a non-chip size as custom", () => {
+  it("marks a non-chip size as custom, rounded for the family", () => {
     const plan = planPaste(parseGenerationData("x\nSteps: 5, Seed: 1, Size: 1000x1500")!, FAMILY_UI.sdxl);
-    expect(plan.fineTune.width).toBe(1000);
-    expect(plan.fineTune.height).toBe(1504);
+    expect(plan.fineTune.width).toBe(1024); // SDXL: multiples of 64
+    expect(plan.fineTune.height).toBe(1472);
     expect(plan.shape).toBe("portrait");
+    const flux = planPaste(parseGenerationData("x\nSteps: 5, Seed: 1, Size: 1000x1500")!, FAMILY_UI.flux1_dev);
+    expect([flux.fineTune.width, flux.fineTune.height]).toEqual([1008, 1504]); // others: multiples of 16
   });
 
   it("works without a model (no family checks)", () => {

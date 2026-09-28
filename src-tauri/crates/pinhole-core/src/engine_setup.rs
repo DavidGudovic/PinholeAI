@@ -54,10 +54,25 @@ pub fn engine_root(core: &AppCore) -> PathBuf {
     core.data.engine()
 }
 
-/// The installed engine matching the current backend choice, if any.
+/// The installed engine for the current backend choice; if that backend isn't
+/// installed, any installed backend of the pinned version (better than
+/// refusing to run — e.g. hardware detection still running, or the Settings
+/// backend changed but the new engine isn't downloaded yet).
 pub fn installed_engine(core: &AppCore, kind: EngineKind) -> Option<InstalledEngine> {
     let (cfg, sel) = selected_build(core, kind).ok()?;
-    install::find_installed(&engine_root(core), kind, &kind.pin(&cfg).version, &sel.backend)
+    let version = &kind.pin(&cfg).version;
+    let root = engine_root(core);
+    install::find_installed(&root, kind, version, &sel.backend)
+        .or_else(|| install::find_any_installed(&root, kind, version, &cfg.backend_candidates(kind.pin(&cfg), &sel.backend)))
+}
+
+/// Wait (bounded) for hardware detection so the backend choice is real, unless
+/// the user picked a backend in Settings.
+async fn settle_backend(core: &AppCore) {
+    let explicit = matches!(core.settings.read().engine_backend.as_str(), "cuda" | "vulkan" | "cpu");
+    if !explicit && core.hardware.read().is_none() {
+        crate::app::wait_for_hardware(core, std::time::Duration::from_secs(30)).await;
+    }
 }
 
 /// Current status (cheap: reads a marker file).
@@ -80,7 +95,17 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
             st.version = Some(pin.version.clone());
             st.backend = Some(sel.backend.clone());
             if !external {
-                st.installed = install::find_installed(&engine_root(core), EngineKind::Sd, &pin.version, &sel.backend).is_some();
+                let root = engine_root(core);
+                let exact = install::find_installed(&root, EngineKind::Sd, &pin.version, &sel.backend);
+                st.installed = exact.is_some();
+                // Before hardware detection finishes the backend guess is "cpu";
+                // report an already-installed GPU engine instead of "missing".
+                if exact.is_none() && core.hardware.read().is_none() {
+                    if let Some(any) = install::find_any_installed(&root, EngineKind::Sd, &pin.version, &[]) {
+                        st.installed = true;
+                        st.backend = Some(any.backend);
+                    }
+                }
             }
         }
         Err(e) if !external => {
@@ -119,6 +144,7 @@ pub async fn install_engine(core: &Arc<AppCore>) -> CoreResult<EngineStatus> {
 
 /// Install (if needed) the engine of `kind` for the current backend.
 pub(crate) async fn install_kind(core: &Arc<AppCore>, kind: EngineKind) -> CoreResult<InstalledEngine> {
+    settle_backend(core).await;
     let lock = match kind {
         EngineKind::Sd => &core.gen.install_lock,
         EngineKind::Llama => &core.describe.install_lock,
@@ -143,9 +169,10 @@ pub(crate) async fn install_kind(core: &Arc<AppCore>, kind: EngineKind) -> CoreR
     res
 }
 
-/// Queue the engine archives as one download group (returns its id) — used
-/// when the engine is part of a bigger install (captioner).
-pub(crate) fn engine_download_specs(core: &AppCore, kind: EngineKind) -> CoreResult<Option<(Vec<pinhole_net::download::DownloadSpec>, Arc<EngineConfig>, SelectedBuild)>> {
+/// Engine archives still to download, with the config + build they belong to.
+pub(crate) type EngineDownload = (Vec<pinhole_net::download::DownloadSpec>, Arc<EngineConfig>, SelectedBuild);
+
+pub(crate) fn engine_download_specs(core: &AppCore, kind: EngineKind) -> CoreResult<Option<EngineDownload>> {
     let (cfg, sel) = selected_build(core, kind)?;
     let pin = kind.pin(&cfg);
     let root = engine_root(core);

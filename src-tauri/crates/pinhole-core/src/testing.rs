@@ -303,7 +303,7 @@ mod tests {
 
         generate::generate(&core, req).await.unwrap();
         let body = &mock.requests()[0];
-        assert_eq!(body["lora"][0]["path"].as_str().unwrap().starts_with("fake-lora-"), true);
+        assert!(body["lora"][0]["path"].as_str().unwrap().starts_with("fake-lora-"));
         assert!((body["lora"][0]["multiplier"].as_f64().unwrap() - 0.7).abs() < 1e-6);
         assert!(body["prompt"].as_str().unwrap().contains("zxc_trigger"));
         assert!(!body["prompt"].as_str().unwrap().contains("<lora:"));
@@ -449,6 +449,55 @@ mod tests {
         let instruction = body.pointer("/messages/0/content/1/text").and_then(|t| t.as_str()).unwrap();
         assert!(instruction.contains("Describe this image"), "registry instruction is used");
         assert!(describe::captioner_status(&core).available);
+    }
+
+    #[tokio::test]
+    async fn sd_args_force_loopback_and_privacy_flags() {
+        let (_tmp, core, _) = new_core();
+        let cfg = crate::engine_setup::engine_config(&core).unwrap();
+        let wiring: Vec<String> = ["--model", "/m.safetensors", "--listen-ip", "0.0.0.0", "--listen-port", "80", "--vae-tiling"].iter().map(|s| s.to_string()).collect();
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        let ips: Vec<&String> = args.iter().enumerate().filter(|(i, a)| *a == "--listen-ip" && *i + 1 < args.len()).map(|(i, _)| &args[i + 1]).collect();
+        assert_eq!(ips, vec!["127.0.0.1"], "{args:?}");
+        assert!(!args.iter().any(|a| a == "--listen-port" || a == "80" || a == "0.0.0.0"), "{args:?}");
+        assert_eq!(args.iter().filter(|a| *a == "--disable-image-metadata").count(), 1);
+        assert_eq!(args.iter().filter(|a| *a == "--log-level").count(), 1);
+        assert!(args.windows(2).any(|w| w[0] == "--lora-model-dir" && w[1].ends_with("loras")));
+        assert!(args.windows(2).any(|w| w[0] == "--hires-upscalers-dir" && w[1].ends_with("upscalers")));
+        assert!(args.contains(&"--vae-tiling".to_string()));
+    }
+
+    /// Drives the REAL sd-server (Linux) through `generate` when
+    /// `PINHOLE_SD_ARCHIVE` points at the pinned `…-bin-Linux-Ubuntu-24.04-x86_64.zip`:
+    /// install from the archive, launch with a bogus model file, expect the
+    /// plain-language "couldn't be loaded" error with the engine output in details.
+    #[tokio::test]
+    async fn real_engine_bogus_model_gives_plain_error() {
+        let Ok(archive) = std::env::var("PINHOLE_SD_ARCHIVE") else { return };
+        let (_tmp, core, rec) = new_core();
+        let (cfg, sel) = crate::engine_setup::selected_build(&core, pinhole_engine::install::EngineKind::Sd).unwrap();
+        assert_eq!(sel.key, "linux_cpu");
+        let sha = pinhole_net::download::sha256_file(std::path::Path::new(&archive)).unwrap();
+        let installed = pinhole_engine::install::unpack_build(
+            &core.data.engine(),
+            pinhole_engine::install::EngineKind::Sd,
+            &cfg.stable_diffusion_cpp,
+            &sel,
+            &[(sel.build.archives()[0].clone(), PathBuf::from(&archive), sha)],
+        )
+        .unwrap();
+        assert!(installed.exe.ends_with("sd-server"));
+        assert!(crate::engine_setup::engine_status(&core).installed);
+        let model = register_fake_model(&core, "sd15");
+        let err = generate::generate(&core, GenerateRequest::txt2img(model, "a cat")).await.unwrap_err();
+        assert_eq!(err.code, "engine_failed", "{err:?}");
+        assert!(err.message.contains("couldn't be loaded"), "{}", err.message);
+        assert!(err.details.as_deref().unwrap_or("").contains("new_sd_ctx_t failed"), "{:?}", err.details);
+        let phases: Vec<GenPhase> = rec.0.lock().iter().filter_map(|e| if let CoreEvent::Generation(p) = e { Some(p.phase) } else { None }).collect();
+        assert_eq!(phases.first(), Some(&GenPhase::LoadingModel));
+        assert_eq!(phases.last(), Some(&GenPhase::Failed));
+        let st = crate::engine_setup::engine_status(&core);
+        assert!(!st.running && st.error.is_some());
     }
 
     #[tokio::test]

@@ -42,6 +42,24 @@ fn exe_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// The main window is built here rather than in tauri.conf.json so it can be
+/// private: incognito means the WebView keeps no cookies, cache or storage on
+/// disk, and in portable mode its profile folder lives inside `Data/` instead
+/// of the user's profile.
+fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::Result<()> {
+    let mut builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+        .title("Pinhole")
+        .inner_size(1280.0, 860.0)
+        .min_inner_size(900.0, 640.0)
+        .disable_drag_drop_handler()
+        .incognito(true);
+    if let Some(dir) = webview_dir {
+        builder = builder.data_directory(dir);
+    }
+    builder.build()?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -52,7 +70,9 @@ pub fn run() {
             let handle = app.handle().clone();
             let shipped = shipped_paths(&handle);
             let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
+            let webview_dir = data.portable.then(|| data.root.join("webview"));
             let core = AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone()))).map_err(|e| e.message)?;
+            create_main_window(&handle, webview_dir)?;
             {
                 let core = core.clone();
                 tauri::async_runtime::block_on(async move { core.start_background() });

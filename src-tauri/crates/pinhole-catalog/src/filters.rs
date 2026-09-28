@@ -155,7 +155,7 @@ impl Look {
     pub fn matches_tags(&self, tags: &[String]) -> bool {
         tags.iter().any(|t| {
             let t = t.trim().to_ascii_lowercase();
-            self.tags.iter().any(|l| *l == t)
+            self.tags.contains(&t)
         })
     }
 }

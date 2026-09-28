@@ -19,5 +19,6 @@ hex = { workspace = true }
 fs2 = { workspace = true }
 
 [dev-dependencies]
+pinhole-net = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }

@@ -268,10 +268,10 @@ export function VramLine({ vram, fit }: { vram: VramNeed | null; fit: Fit | null
   const tone = fit === "fits" ? "green" : fit === "tight" ? "amber" : "red";
   return (
     <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-neutral-500 dark:text-neutral-400">
-      {label && <Badge tone={tone}>{label}</Badge>}
       <span>
         Needs ~{formatGb(vram.gb)} VRAM{vram.estimate && <span className="text-neutral-400 dark:text-neutral-500"> (estimate)</span>}
       </span>
+      {label && <Badge tone={tone}>{label}</Badge>}
     </div>
   );
 }

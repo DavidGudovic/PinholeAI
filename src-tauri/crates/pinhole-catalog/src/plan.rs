@@ -220,3 +220,159 @@ pub fn civitai_install_files(
     };
     Ok(CivitaiInstall { label, files, civitai, main_installed })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::filters::tests::filters;
+    use crate::testkit::{component, hw, index, registry};
+    use pinhole_registry::vram::Fit;
+
+    fn jugg() -> (ModelVersion, Model) {
+        (
+            serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap(),
+            serde_json::from_str(include_str!("../tests/fixtures/model.json")).unwrap(),
+        )
+    }
+
+    #[test]
+    fn checkpoint_plan() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let (v, m) = jugg();
+        let p = build_plan(&env, &v, Some(&m), 100_000_000_000, false);
+        assert_eq!(p.version_id, 1759168);
+        assert_eq!(p.model_name, "Juggernaut XL");
+        assert_eq!(p.version_name, "Ragnarok");
+        assert_eq!(p.main_file.name, "juggernautXL_ragnarok.safetensors");
+        assert_eq!(p.main_file.format, "SafeTensor");
+        assert_eq!(p.family.as_ref().unwrap().family_id, "sdxl", "known hash");
+        assert!(p.family_candidates.is_empty());
+        assert_eq!(p.components.len(), 1);
+        assert_eq!(p.components[0].component_id, "sdxl_vae_fp16_fix");
+        assert!(!p.components[0].installed);
+        assert_eq!(p.total_download_bytes, 7_105_349_736 + 335_000_000);
+        assert!(p.enough_disk);
+        assert_eq!(p.vram.unwrap().gb, 10.0);
+        assert_eq!(p.fit, Some(Fit::Tight));
+        assert_eq!(p.license_note.as_deref(), Some("The creator doesn't allow commercial use."));
+        assert!(!p.is_lora);
+        assert_eq!(p.blocked_reason, None);
+        assert!(!p.needs_api_key);
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["mainFile"]["sizeBytes"], 7_105_349_736u64);
+        assert_eq!(json["components"][0]["componentId"], "sdxl_vae_fp16_fix");
+
+        // Component already installed (matched by SHA-256) + little disk.
+        let mut vae = component(&reg, "sdxl_vae_fp16_fix");
+        vae.component_id = None;
+        let idx = index(vec![vae]);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let p = build_plan(&env, &v, Some(&m), 7_000_000_000, true);
+        assert!(p.components[0].installed);
+        assert_eq!(p.total_download_bytes, 7_105_349_736);
+        assert!(!p.enough_disk);
+        assert!(p.needs_api_key);
+    }
+
+    #[test]
+    fn ambiguous_and_unsupported_plans() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(16.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let (mut v, _) = jugg();
+        v.base_model = "Qwen".into();
+        v.files[0].hashes.clear();
+        let p = build_plan(&env, &v, None, u64::MAX, false);
+        assert_eq!(p.family, None);
+        let ids: Vec<&str> = p.family_candidates.iter().map(|c| c.family_id.as_str()).collect();
+        assert_eq!(ids, ["qwen_image", "qwen_image_edit_2511"]);
+        assert!(!p.components.is_empty(), "estimated with the first candidate");
+        assert_eq!(p.blocked_reason, None);
+
+        v.base_model = "SD 3.5 Large".into();
+        let p = build_plan(&env, &v, None, u64::MAX, false);
+        assert_eq!(p.blocked_reason.as_deref(), Some("Pinhole can't run SD 3.5 Large models yet."));
+
+        v.base_model = "Other".into();
+        let p = build_plan(&env, &v, None, u64::MAX, false);
+        assert!(p.family_candidates.len() > 5, "Other → ask among every family");
+        assert_eq!(p.blocked_reason, None);
+    }
+
+    #[test]
+    fn lora_plan_and_install_files() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let v: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
+        let p = build_plan(&env, &v, None, u64::MAX, false);
+        assert!(p.is_lora);
+        assert_eq!(p.family.as_ref().unwrap().family_id, "sd15");
+        assert!(p.components.is_empty());
+        assert_eq!(p.trained_words, ["watercolor"]);
+        assert_eq!(p.vram, None);
+        assert_eq!(p.model_name, "Soft Watercolor");
+
+        let inst = civitai_install_files(&env, &v, None, Some("sd15")).unwrap();
+        assert_eq!(inst.files.len(), 1);
+        assert_eq!(inst.files[0].kind, ModelKind::Lora);
+        assert_eq!(inst.civitai.trained_words, ["watercolor"]);
+        assert_eq!(inst.civitai.model_id, 81234);
+        assert_eq!(inst.civitai.base_model.as_deref(), Some("SD 1.5"));
+    }
+
+    #[test]
+    fn checkpoint_install_files() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let (v, m) = jugg();
+        let inst = civitai_install_files(&env, &v, Some(&m), Some("sdxl")).unwrap();
+        assert_eq!(inst.label, "Juggernaut XL · Ragnarok");
+        assert_eq!(inst.files.len(), 2);
+        let main = &inst.files[0];
+        assert_eq!(main.kind, ModelKind::Checkpoint);
+        assert_eq!(main.file_name, "juggernautXL_ragnarok.safetensors");
+        assert_eq!(main.url, "https://civitai.com/api/download/models/1759168");
+        assert_eq!(main.sha256.as_deref(), Some("dd08fa32f98d05a2443ca1419e46df1575a0811f6e3b246d9dd47ff20f5eb66a"));
+        assert_eq!(main.family.as_deref(), Some("sdxl"));
+        assert_eq!(main.dtype.as_deref(), Some("fp16"));
+        assert_eq!(inst.files[1].component_id.as_deref(), Some("sdxl_vae_fp16_fix"));
+        assert_eq!(inst.civitai.license.as_deref(), Some("No commercial use"));
+        assert!(civitai_install_files(&env, &v, Some(&m), None).is_err(), "family must be decided");
+
+        // Already installed main file → only missing components.
+        let mut have = crate::testkit::model("j", "sdxl", ModelKind::Checkpoint, "j.safetensors");
+        have.sha256 = "dd08fa32f98d05a2443ca1419e46df1575a0811f6e3b246d9dd47ff20f5eb66a".into();
+        let idx = index(vec![have, component(&reg, "sdxl_vae_fp16_fix")]);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let inst = civitai_install_files(&env, &v, Some(&m), Some("sdxl")).unwrap();
+        assert!(inst.main_installed);
+        assert!(inst.files.is_empty());
+    }
+
+    #[test]
+    fn blocked_files_refuse_install() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let (mut v, m) = jugg();
+        v.files[0].name = "juggernaut.ckpt".into();
+        v.files[0].metadata.format = Some("PickleTensor".into());
+        let p = build_plan(&env, &v, Some(&m), u64::MAX, false);
+        assert!(p.blocked_reason.unwrap().contains(".ckpt"));
+        assert!(civitai_install_files(&env, &v, Some(&m), Some("sdxl")).unwrap_err().contains(".ckpt"));
+    }
+}

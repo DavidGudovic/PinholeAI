@@ -470,8 +470,16 @@ export function AutoTextarea({
   className = "",
   value,
   ref: outerRef,
+  bare = false,
   ...rest
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { minRows?: number; maxRows?: number; value: string; ref?: Ref<HTMLTextAreaElement> }) {
+}: TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  minRows?: number;
+  maxRows?: number;
+  value: string;
+  ref?: Ref<HTMLTextAreaElement>;
+  /** No border/background of its own (inside a styled container). */
+  bare?: boolean;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const setRef = useCallback(
     (el: HTMLTextAreaElement | null) => {
@@ -503,7 +511,13 @@ export function AutoTextarea({
       autoComplete="off"
       autoCorrect="off"
       autoCapitalize="off"
-      className={cx(inputClass, "resize-none leading-relaxed", className)}
+      className={cx(
+        bare
+          ? "block w-full bg-transparent px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 dark:text-neutral-100 dark:placeholder:text-neutral-500"
+          : inputClass,
+        "resize-none leading-relaxed",
+        className,
+      )}
       value={value}
       {...rest}
     />

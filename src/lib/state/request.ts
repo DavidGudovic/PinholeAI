@@ -82,12 +82,12 @@ export function variationRequest(req: GenerateRequest): GenerateRequest {
   return { ...req, fineTune };
 }
 
-/** Output size for an edit: keep the aspect ratio, ≤ ~1 MP, multiples of 16. */
-export function fitEditSize(w: number, h: number, maxPixels = 1024 * 1024): [number, number] {
+/** Output size for an edit: keep the aspect ratio, ≤ ~maxPixels, multiples of `multiple` (16, or 64 for SD families). */
+export function fitEditSize(w: number, h: number, maxPixels = 1024 * 1024, multiple = 16): [number, number] {
   if (!(w > 0 && h > 0)) return [1024, 1024];
   const scale = Math.min(1, Math.sqrt(maxPixels / (w * h)));
-  const r16 = (n: number) => Math.max(256, Math.round((n * scale) / 16) * 16);
-  return [r16(w), r16(h)];
+  const round = (n: number) => Math.max(256, Math.round((n * scale) / multiple) * multiple);
+  return [round(w), round(h)];
 }
 
 export function buildEditRequest(
@@ -230,9 +230,10 @@ export function applyPreset(
 
 /** One-line settings summary for a result card (never the prompt). */
 export function settingsSummary(r: ResultImage): string {
-  const parts = [r.modelLabel, `${r.width}×${r.height}`, `${r.steps} steps`];
+  const parts = [r.modelLabel, `${r.width}×${r.height}`];
+  if (r.steps > 0) parts.push(`${r.steps} steps`);
   if (r.guidance != null) parts.push(`guidance ${fmt(r.guidance)}`);
-  if (r.cfg != null && (r.guidance == null || r.cfg !== 1)) parts.push(`CFG ${fmt(r.cfg)}`);
+  if (r.cfg > 0 && (r.guidance == null || r.cfg !== 1)) parts.push(`CFG ${fmt(r.cfg)}`);
   const s = [r.sampler, r.scheduler].filter(Boolean).join(" ");
   if (s) parts.push(s);
   parts.push(`seed ${r.seed}`);

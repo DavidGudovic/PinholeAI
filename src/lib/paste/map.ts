@@ -46,6 +46,11 @@ export const SD_SCHEDULERS: { id: string; label: string }[] = [
   { id: "kl_optimal", label: "KL optimal" },
   { id: "lcm", label: "LCM" },
   { id: "beta", label: "Beta" },
+  { id: "bong_tangent", label: "Bong tangent" },
+  { id: "logit_normal", label: "Logit-normal" },
+  { id: "flux", label: "Flux" },
+  { id: "flux2", label: "Flux 2" },
+  // ltx2 (video) and llada_image (LLaDA) exist in sd.cpp but don't apply to Pinhole's families.
 ];
 
 export const samplerLabel = (id: string | null | undefined) =>
@@ -220,16 +225,10 @@ export function mapSampler(rawSampler: string | null | undefined, rawScheduler: 
 
 // ------------------------------------------------------------------ dial math (shared with the UI)
 
-/** Dial position (0…1) of the family's default "Stick to prompt" value. */
+/** Dial position (0…1) of the family's default "Stick to prompt" — `stickDefault` is already a position. */
 export function defaultStickPosition(ui: FamilyUi | null | undefined): number {
-  if (!ui) return 0.5;
-  const [lo, hi] = ui.stickRange;
-  const d = ui.stickDefault;
-  if (!(hi > lo)) return 0.5;
-  if (d >= lo && d <= hi) return clamp01((d - lo) / (hi - lo));
-  // Some backends may already send a 0…1 position.
-  if (d >= 0 && d <= 1) return d;
-  return 0.5;
+  if (!ui || !Number.isFinite(ui.stickDefault)) return 0.5;
+  return clamp01(ui.stickDefault);
 }
 
 /** Concrete CFG/guidance value for a dial position. */
@@ -302,7 +301,7 @@ const QUIET_KEYS = new Set([
   "draft",
   "fluxmode",
   "flux mode",
-  "baseModel".toLowerCase(),
+  "basemodel",
   "remixofid",
   "hires resize",
   "ensd",
@@ -411,8 +410,9 @@ export function planPaste(p: ParsedGeneration, ui: FamilyUi | null): PastePlan {
 
   // Size → shape chip or custom size
   if (p.width != null && p.height != null) {
-    const w = roundTo(p.width, 8);
-    const h = roundTo(p.height, 8);
+    const mult = sizeMultiple(ui?.familyId);
+    const w = roundTo(p.width, mult);
+    const h = roundTo(p.height, mult);
     const m = shapeFor(ui, w, h);
     shape = m.shape;
     if (m.exact) {
@@ -472,6 +472,11 @@ export function planPaste(p: ParsedGeneration, ui: FamilyUi | null): PastePlan {
   if (adetailer) skipped.push({ what: "ADetailer (face fix)", why: "not available in Pinhole yet" });
 
   return { prompt: p.prompt, fineTune: ft, shape, stick, keepLook, applied, skipped, ignoredKeys };
+}
+
+/** sd-server wants multiples of 64 for SD1.5/SDXL families and 16 otherwise. */
+export function sizeMultiple(familyId: string | null | undefined): number {
+  return familyId && /^sd(15|xl)/.test(familyId) ? 64 : 16;
 }
 
 function roundTo(n: number, m: number): number {

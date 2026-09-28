@@ -82,8 +82,8 @@ impl Session {
 // ---------------------------------------------------------------- service fns
 
 /// Put user-provided image bytes (PNG/JPEG/WebP) into the session. Rejects
-/// > 64 MB or > 50 MP (from the header, before decoding). PNG text chunks are
-/// dropped (they may hold someone's prompt); JPEG/WebP are kept as-is.
+/// files over 64 MB or 50 megapixels (from the header, before decoding). PNG
+/// text chunks are dropped (they may hold someone's prompt); JPEG/WebP are kept as-is.
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
     let bytes = if info.kind == Kind::Png { pinhole_engine::png::scrub(&bytes).map_err(|_| CoreError::invalid("The PNG file is damaged."))? } else { bytes };
@@ -101,9 +101,11 @@ pub fn discard(core: &AppCore, id: &str) {
     core.session.remove(id);
 }
 
-/// Clear session: drop every image immediately.
+/// Clear session: drop every image immediately (and the engines' output buffers).
 pub fn clear(core: &AppCore) {
     core.session.clear();
+    core.gen.logs.clear();
+    core.describe.logs.clear();
 }
 
 /// RGBA8 pixels for the clipboard.

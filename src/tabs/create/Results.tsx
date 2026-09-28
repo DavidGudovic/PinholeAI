@@ -23,7 +23,7 @@ export function Results() {
   const pending = generating ? (job?.kind === "upscale" ? 1 : count) : 0;
 
   return (
-    <section aria-label="Results" className="flex min-h-0 min-w-0 flex-col">
+    <section aria-label="Results" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selected && images[selected.id] ? (
         <Preview result={selected} img={images[selected.id]} />
       ) : generating ? (
@@ -45,13 +45,11 @@ function EmptyResults() {
         <Logo className="h-12 w-12" />
       </div>
       <h2 className="text-lg font-semibold tracking-tight">Your images appear here</h2>
-      <p className="mt-1.5 max-w-sm text-sm text-neutral-500">
-        Describe what you want to see and press <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate</span>
-        <span className="mx-1 inline-flex translate-y-[-1px] gap-0.5 text-neutral-500">
-          <Kbd>{modKey}</Kbd>
-          <Kbd>Enter</Kbd>
-        </span>
-        . Images stay in memory until you save them.
+      <p className="mt-1.5 max-w-sm text-sm text-neutral-500">Describe what you want to see, then press Generate. Images stay in memory until you save them.</p>
+      <p className="mt-3 inline-flex items-center gap-1 text-xs text-neutral-400">
+        <Kbd>{modKey}</Kbd>
+        <Kbd>Enter</Kbd>
+        <span className="ml-1">generates from anywhere in this tab</span>
       </p>
     </div>
   );

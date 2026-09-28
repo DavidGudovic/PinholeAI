@@ -217,7 +217,7 @@ pub struct RecommendedPick {
 // ------------------------------------------------------------------ paste from CivitAI
 
 /// A resource from pasted generation data (ids/hashes only — never prompt text).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PastedResource {
     /// `checkpoint` | `lora` | `embed` | `vae` | …
@@ -229,12 +229,6 @@ pub struct PastedResource {
     /// AutoV2 (10 hex) or full SHA-256.
     pub hash: Option<String>,
     pub weight: Option<f64>,
-}
-
-impl Default for PastedResource {
-    fn default() -> Self {
-        Self { kind: String::new(), model_version_id: None, model_name: None, model_version_name: None, hash: None, weight: None }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

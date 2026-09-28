@@ -281,5 +281,5 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 }
 
 function Grid({ children }: { children: ReactNode }) {
-  return <div className="grid grid-cols-[repeat(auto-fill,minmax(210px,1fr))] gap-4">{children}</div>;
+  return <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">{children}</div>;
 }

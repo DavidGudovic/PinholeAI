@@ -9,7 +9,7 @@ import { StylePicker } from "../../components/StylePicker";
 import { AutoTextarea, Button, ErrorNotice, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import * as api from "../../lib/api";
-import { defaultStickPosition } from "../../lib/paste/map";
+import { defaultStickPosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, Quality } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
@@ -50,7 +50,7 @@ export function EditTab() {
 
   const edits = useMemo(() => editModels(models), [models]);
   const creates = useMemo(() => createModels(models), [models]);
-  // eslint-free: `models` is the real dependency (autoEditModel reads it from the store).
+  // `models` is the real dependency: autoEditModel() reads the current list from the store.
   const autoEdit = useMemo(() => (models ? actions.autoEditModel() : null), [actions, models]);
   const mode: EditMode = e.mode ?? (autoEdit ? "instruction" : "restyle");
   const editModelId = e.editModelId ?? autoEdit?.id ?? null;
@@ -62,7 +62,7 @@ export function EditTab() {
   const current = node ? images[node.imageId] : undefined;
   const prevNode = compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
-  const outSize = current ? fitEditSize(current.width, current.height, SIZE_PIXELS[size]) : null;
+  const outSize = current ? fitEditSize(current.width, current.height, SIZE_PIXELS[size], sizeMultiple(model?.familyId)) : null;
   const myJob = job?.kind === "edit" ? job : null;
 
   const load = async (f: File) => {
@@ -178,8 +178,8 @@ export function EditTab() {
                     ariaLabel="Stay close to original"
                     value={e.stayClose ?? defaultStickPosition(ui)}
                     onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
-                    left="Freer"
-                    right="Closer"
+                    left="Loose"
+                    right="Close"
                   />
                 </div>
               </>

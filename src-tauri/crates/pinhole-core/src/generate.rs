@@ -486,6 +486,11 @@ pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineC
     if !args.iter().any(|a| a == "--log-level") {
         args.extend(["--log-level".into(), "warn".into()]);
     }
+    // Privacy safeguard #2 (besides `embed_image_metadata: false` per request):
+    // server-wide default off, even if engine.yaml is edited.
+    if !args.iter().any(|a| a == "--disable-image-metadata") {
+        args.push("--disable-image-metadata".into());
+    }
     if !args.iter().any(|a| a == "--lora-model-dir") {
         args.extend(["--lora-model-dir".into(), core.data.models(ModelKind::Lora).to_string_lossy().into_owned()]);
     }
@@ -596,7 +601,10 @@ pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreEr
     let tail = logs.tail_text(40);
     let (code, msg) = match classify(&tail, exit_code) {
         Failure::OutOfMemory => ("vram", "Not enough VRAM — try the Fast setting or the smaller version of this model"),
-        Failure::DriverTooOld => ("engine_failed", "Your NVIDIA driver is too old for the image engine. Update it (version 570 or newer) and try again."),
+        Failure::DriverTooOld => (
+            "engine_failed",
+            "Your NVIDIA driver is too old for the image engine. Update it (version 570 or newer), or switch the engine to Vulkan in Settings.",
+        ),
         Failure::NoGpu => ("engine_failed", "The image engine couldn't use your graphics card. Update your graphics driver, or switch the engine to CPU in Settings."),
         Failure::GlibcTooOld => ("engine_failed", "The image engine needs Ubuntu 24.04 or newer. Please update your system."),
         Failure::MissingLibrary => (
@@ -644,14 +652,14 @@ async fn engine_died(core: &AppCore) -> Option<Option<i32>> {
 
 // ================================================================ generate
 
-/// Size for img2img / edit: keep the source aspect ratio at about the dial's area,
-/// multiples of 16 (Flux/Qwen need 16, SD needs 8).
-fn size_like(src_w: u32, src_h: u32, target_area: u64) -> (u32, u32) {
+/// Size for img2img / edit: keep the source aspect ratio at about the dial's
+/// area, rounded to the family's size multiple (SD1.5/SDXL 64, others 16).
+fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u32) {
     let aspect = src_w.max(1) as f64 / src_h.max(1) as f64;
     let area = (target_area.max(256 * 256)) as f64;
     let h = (area / aspect).sqrt();
     let w = h * aspect;
-    let r = |v: f64| (((v / 16.0).round() as u32) * 16).clamp(256, 2048);
+    let r = |v: f64| wiring::round_to_multiple((v.round() as u32).clamp(256, 2048), multiple);
     (r(w), r(h))
 }
 
@@ -736,7 +744,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     let (mut width, mut height) = (params.width, params.height);
     if let Some(src) = &source {
         if req.fine_tune.width.is_none() && req.fine_tune.height.is_none() {
-            (width, height) = size_like(src.width, src.height, u64::from(params.width) * u64::from(params.height));
+            let multiple = wiring::size_multiple(&prep.family);
+            (width, height) = size_like(src.width, src.height, u64::from(params.width) * u64::from(params.height), multiple);
         }
     }
     let seed: i64 = match req.fine_tune.seed {
@@ -1098,13 +1107,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn size_like_keeps_aspect_in_multiples_of_16() {
-        let (w, h) = size_like(1920, 1080, 1024 * 1024);
+    fn size_like_keeps_aspect_in_family_multiples() {
+        let (w, h) = size_like(1920, 1080, 1024 * 1024, 16);
         assert_eq!((w % 16, h % 16), (0, 0));
         let ratio = w as f64 / h as f64;
         assert!((ratio - 16.0 / 9.0).abs() < 0.05, "{w}x{h}");
         assert!((w as u64 * h as u64) as f64 / (1024.0 * 1024.0) > 0.9);
-        assert_eq!(size_like(10, 10, 1), (256, 256));
+        let (w, h) = size_like(1920, 1080, 1024 * 1024, 64);
+        assert_eq!((w % 64, h % 64), (0, 0));
+        assert_eq!(size_like(10, 10, 1, 64), (256, 256));
     }
 
     #[test]

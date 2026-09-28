@@ -16,3 +16,8 @@ src-tauri/target/
 
 # Tauri generated
 src-tauri/gen/
+.smoke-cache/
+smoke-out/
+release-assets/
+portable/
+pins-report.json

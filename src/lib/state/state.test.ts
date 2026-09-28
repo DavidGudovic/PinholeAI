@@ -224,6 +224,7 @@ describe("requests", () => {
     expect(fitEditSize(4000, 3000)).toEqual([1184, 880]);
     expect(fitEditSize(300, 200)).toEqual([304, 256]);
     for (const n of fitEditSize(3000, 1999)) expect(n % 16).toBe(0);
+    for (const n of fitEditSize(3000, 1999, 1024 * 1024, 64)) expect(n % 64).toBe(0);
   });
 });
 

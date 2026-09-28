@@ -318,3 +318,120 @@ mod tests {
         assert_eq!(display_name(&r), "Unknown model (ABCDEF0123)");
     }
 }
+
+#[cfg(test)]
+mod resolve_tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::filters::tests::filters;
+    use crate::testkit::{hw, index, model, registry};
+    use pinhole_registry::vram::Fit;
+    use pinhole_store::datadir::ModelKind;
+
+    struct FakeLookup {
+        by_id: HashMap<u64, ModelVersion>,
+        by_hash: HashMap<String, ModelVersion>,
+        fail: bool,
+    }
+
+    impl VersionLookup for FakeLookup {
+        fn version(&self, id: u64) -> impl Future<Output = Result<ModelVersion, NetError>> + Send {
+            let r = if self.fail { Err(NetError::Timeout) } else { self.by_id.get(&id).cloned().ok_or(NetError::Status(404)) };
+            async move { r }
+        }
+        fn by_hash(&self, hash: &str) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
+            let r = if self.fail { Err(NetError::Timeout) } else { Ok(self.by_hash.get(&hash.to_ascii_uppercase()).cloned()) };
+            async move { r }
+        }
+    }
+
+    fn lookup(fail: bool) -> FakeLookup {
+        let jugg: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap();
+        let lora: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
+        FakeLookup { by_id: HashMap::from([(1759168, jugg)]), by_hash: HashMap::from([("0F4168490E".to_string(), lora)]), fail }
+    }
+
+    fn res(kind: &str, vid: Option<u64>, hash: Option<&str>) -> PastedResource {
+        PastedResource { kind: kind.into(), model_version_id: vid, hash: hash.map(Into::into), weight: Some(0.8), ..Default::default() }
+    }
+
+    #[tokio::test]
+    async fn resolves_installable_and_flags_mismatched_loras() {
+        let reg = registry();
+        let f = filters();
+        let mut pony = model("pony-lora", "sdxl_pony", ModelKind::Lora, "p.safetensors");
+        pony.sha256 = "1b6405d1ef5a816105210b20a8f0fc129869a25876e45c0891e4f6d972bf74c2".into();
+        let idx = index(vec![pony]);
+        let h = hw(12.0);
+        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let l = lookup(false);
+        let out = resolve_resources(
+            &env,
+            Some(&l),
+            &[
+                res("checkpoint", Some(1759168), Some("DD08FA32F9")),
+                res("lora", None, Some("0F4168490E")),
+                res("lora", None, Some("1B6405D1EF")),
+                res("embed", Some(5), None),
+                res("checkpoint", Some(1), None),
+                res("lora", Some(99), Some("ABCDEF1234")),
+            ],
+        )
+        .await;
+        let ckpt = out.checkpoint.unwrap();
+        assert_eq!(ckpt.installed_id, None);
+        assert_eq!(ckpt.installable_version_id, Some(1759168));
+        assert_eq!(ckpt.display_name, "Juggernaut XL · Ragnarok");
+        assert_eq!(ckpt.family_id.as_deref(), Some("sdxl"));
+        assert_eq!(ckpt.download_bytes, Some(7_105_349_736));
+        assert_eq!(ckpt.fit, Some(Fit::Fits));
+        assert_eq!(ckpt.problem, None);
+        assert_eq!(ckpt.resource.weight, Some(0.8));
+
+        assert_eq!(out.loras.len(), 3);
+        let sd15 = &out.loras[0];
+        assert_eq!(sd15.installable_version_id, Some(91234));
+        assert_eq!(sd15.family_id.as_deref(), Some("sd15"));
+        assert_eq!(sd15.problem.as_deref(), Some("This Stable Diffusion 1.5 add-on doesn't work with SDXL models."));
+        let pony = &out.loras[1];
+        assert_eq!(pony.installed_id.as_deref(), Some("pony-lora"), "installed LoRA matched by AutoV2");
+        assert_eq!(pony.problem, None, "Pony LoRAs are SDXL-architecture");
+        let unknown = &out.loras[2];
+        assert_eq!(unknown.problem.as_deref(), Some("Not installed, and CivitAI doesn't know this file."));
+
+        assert_eq!(out.ignored.len(), 2);
+        assert!(out.ignored.iter().any(|r| r.problem.as_deref() == Some("Only one model can be used at a time.")));
+        assert!(out.ignored.iter().any(|r| r.problem.as_deref().is_some_and(|p| p.contains("embeddings"))));
+        let json = serde_json::to_value(&out.loras[0]).unwrap();
+        assert_eq!(json["resource"]["type"], "lora");
+        assert!(json.get("installableVersionId").is_some());
+    }
+
+    #[tokio::test]
+    async fn installed_checkpoint_by_version_id() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![crate::testkit::with_civitai(model("jugg", "sdxl", ModelKind::Checkpoint, "j.safetensors"), 1759168)]);
+        let h = hw(8.0);
+        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let out = resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)]).await;
+        let c = out.checkpoint.unwrap();
+        assert_eq!(c.installed_id.as_deref(), Some("jugg"));
+        assert_eq!(c.fit, Some(Fit::Tight));
+    }
+
+    #[tokio::test]
+    async fn offline_and_network_errors() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let out = resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)]).await;
+        assert!(out.checkpoint.unwrap().problem.unwrap().contains("Offline mode"));
+        let l = lookup(true);
+        let out = resolve_resources(&env, Some(&l), &[res("checkpoint", Some(1759168), None)]).await;
+        assert!(out.checkpoint.unwrap().problem.unwrap().contains("Couldn't reach CivitAI"));
+    }
+}

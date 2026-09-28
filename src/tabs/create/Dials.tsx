@@ -18,7 +18,7 @@ export const qualityIndex = (q: Quality) => QUALITIES.indexOf(q);
 
 export function DialRow({ label, children, htmlFor }: { label: ReactNode; children: ReactNode; htmlFor?: string }) {
   return (
-    <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-3">
+    <div className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
       <label htmlFor={htmlFor} className="text-sm text-neutral-600 dark:text-neutral-400">
         {label}
       </label>
@@ -29,11 +29,11 @@ export function DialRow({ label, children, htmlFor }: { label: ReactNode; childr
 
 export function ShapeChips({ value, onChange, shapes }: { value: Shape; onChange: (s: Shape) => void; shapes: Record<string, [number, number]> }) {
   return (
-    <div role="radiogroup" aria-label="Shape" className="flex flex-wrap gap-1.5">
+    <div role="radiogroup" aria-label="Shape" className="grid grid-cols-4 gap-1.5">
       {SHAPES.map((s) => {
         const [w, h] = shapes[s] ?? FALLBACK_SHAPES[s];
         const active = s === value;
-        const max = 14;
+        const max = 18;
         const iw = w >= h ? max : Math.round((max * w) / h);
         const ih = h >= w ? max : Math.round((max * h) / w);
         return (
@@ -45,15 +45,15 @@ export function ShapeChips({ value, onChange, shapes }: { value: Shape; onChange
             title={`${w}×${h}`}
             onClick={() => onChange(s)}
             className={cx(
-              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-sm transition-colors",
+              "flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border text-xs transition-colors",
               focusRing,
               active
-                ? "border-amber-500 bg-amber-50 text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
-                : "border-neutral-200 bg-white text-neutral-700 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-600",
+                ? "border-amber-500 bg-amber-50 font-medium text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
+                : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white",
             )}
           >
-            <span className="flex h-4 w-4 items-center justify-center" aria-hidden>
-              <span className={cx("rounded-[3px] border-[1.5px]", active ? "border-amber-600 dark:border-amber-400" : "border-current opacity-70")} style={{ width: iw, height: ih }} />
+            <span className="flex h-5 w-5 items-center justify-center" aria-hidden>
+              <span className={cx("rounded-[3px] border-[1.5px]", active ? "border-amber-600 bg-amber-500/15 dark:border-amber-400" : "border-current opacity-70")} style={{ width: iw, height: ih }} />
             </span>
             {SHAPE_LABEL[s]}
           </button>
@@ -105,30 +105,38 @@ export function Dials({ ui }: { ui: FamilyUi | null }) {
         </DialRow>
       )}
       <DialRow label="How many">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <Segmented
-            ariaLabel="How many"
-            value={c.count}
-            onChange={(v) => dispatch({ type: "setDial", dial: "count", value: v })}
-            options={[
-              { value: 1 as const, label: "1" },
-              { value: 2 as const, label: "2" },
-              { value: 4 as const, label: "4" },
-            ]}
+        <Segmented
+          ariaLabel="How many"
+          value={c.count}
+          onChange={(v) => dispatch({ type: "setDial", dial: "count", value: v })}
+          options={[
+            { value: 1 as const, label: "1" },
+            { value: 2 as const, label: "2" },
+            { value: 4 as const, label: "4" },
+          ]}
+        />
+      </DialRow>
+      <DialRow label="Keep this look">
+        <span title={canLock ? undefined : "Generate and select an image first"} className="inline-flex">
+          <Toggle
+            checked={seedLocked}
+            disabled={!canLock}
+            onChange={(on) => dispatch({ type: "keepLook", on })}
+            label={
+              <span className="inline-flex items-center gap-1 text-xs text-neutral-500">
+                {seedLocked ? (
+                  <>
+                    <Lock className="h-3 w-3 text-amber-600" /> Seed {c.fineTune.seed}
+                  </>
+                ) : canLock ? (
+                  "Reuse the selected image’s seed"
+                ) : (
+                  "Select an image first"
+                )}
+              </span>
+            }
           />
-          <span title={canLock ? undefined : "Generate and select an image first"}>
-            <Toggle
-              checked={seedLocked}
-              disabled={!canLock}
-              onChange={(on) => dispatch({ type: "keepLook", on })}
-              label={
-                <span className="inline-flex items-center gap-1 text-neutral-700 dark:text-neutral-300">
-                  {seedLocked && <Lock className="h-3 w-3 text-amber-600" />}Keep this look
-                </span>
-              }
-            />
-          </span>
-        </div>
+        </span>
       </DialRow>
     </div>
   );

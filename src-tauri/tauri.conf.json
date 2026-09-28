@@ -10,16 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Pinhole",
-        "width": 1280,
-        "height": 860,
-        "minWidth": 900,
-        "minHeight": 640,
-        "dragDropEnabled": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost; font-src 'self'; object-src 'none'; frame-src 'none'"
     }
@@ -39,12 +30,16 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../config/": "config/"
+      "../config/": "config/",
+      "../THIRD_PARTY_LICENSES": "THIRD_PARTY_LICENSES.txt"
     },
     "licenseFile": "../LICENSE",
     "shortDescription": "Simple, private, offline AI image generator",
     "category": "Graphics",
     "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
       "nsis": {
         "installMode": "currentUser"
       }

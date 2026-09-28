@@ -131,6 +131,7 @@ function GetAllBar({
   const todo = picks.filter((p) => !busy(p.role));
   const total = todo.reduce((a, p) => a + p.downloadBytes, 0);
   const names = GET_ALL_ROLES.map((r) => allPicks.find((p) => p.role === r)?.roleLabel ?? r).join(" + ");
+  const todoNames = todo.map((p) => p.roleLabel).join(" + ");
   const allDone = GET_ALL_ROLES.every((r) => allPicks.find((p) => p.role === r)?.installed);
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-900/60 dark:bg-amber-500/5">
@@ -140,7 +141,7 @@ function GetAllBar({
           {allDone
             ? "Your realistic and edit models are ready."
             : todo.length
-              ? `${names} — about ${formatBytes(total)} in total. Shared parts are downloaded once.`
+              ? `${todoNames} — about ${formatBytes(total)} in total. Shared parts are downloaded once.`
               : "Downloading… you can keep going; downloads continue in the background."}
         </div>
       </div>

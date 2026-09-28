@@ -195,6 +195,10 @@ pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
 /// Queue the default captioner (+ the llama.cpp engine if missing) as one
 /// download group; files are registered / unpacked when it finishes.
 pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted> {
+    let explicit = matches!(core.settings.read().engine_backend.as_str(), "cuda" | "vulkan" | "cpu");
+    if !explicit && core.hardware.read().is_none() {
+        crate::app::wait_for_hardware(core, Duration::from_secs(30)).await;
+    }
     let parts = missing_parts(core)?;
     let (specs, roles): (Vec<DownloadSpec>, Vec<Part>) = parts.into_iter().unzip();
     std::fs::create_dir_all(core.data.models(ModelKind::Captioner))?;

@@ -547,3 +547,274 @@ pub async fn resolve_civitai_resources(core: &AppCore, resources: Vec<PastedReso
     let client = if core.offline.get() { None } else { Some(crate::catalog::civitai_client(core).await) };
     Ok(paste::resolve_resources(&env, client.as_ref(), &resources).await)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::{test_core, Recorder};
+
+    /// Minimal safetensors file with these tensor names (F16, 2 elements each).
+    fn safetensors(path: &Path, names: &[&str]) {
+        let mut header = serde_json::Map::new();
+        for (i, n) in names.iter().enumerate() {
+            header.insert(
+                n.to_string(),
+                serde_json::json!({ "dtype": "F16", "shape": [2], "data_offsets": [i * 4, i * 4 + 4] }),
+            );
+        }
+        let h = serde_json::to_vec(&serde_json::Value::Object(header)).unwrap();
+        let mut bytes = (h.len() as u64).to_le_bytes().to_vec();
+        bytes.extend_from_slice(&h);
+        bytes.extend(std::iter::repeat_n(0u8, names.len() * 4));
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    const SDXL_TENSORS: &[&str] = &[
+        "model.diffusion_model.input_blocks.0.0.weight",
+        "conditioner.embedders.1.model.ln_final.weight",
+        "conditioner.embedders.0.transformer.text_model.embeddings.token_embedding.weight",
+    ];
+
+    fn events(rec: &Recorder) -> usize {
+        rec.0.lock().iter().filter(|e| **e == "models-changed").count()
+    }
+
+    #[test]
+    fn register_download_round_trip() {
+        let rec = Arc::new(Recorder::default());
+        let (_t, core) = test_core(rec.clone());
+        let dir = core.data.models(ModelKind::Checkpoint);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("m.safetensors");
+        std::fs::write(&path, b"abc").unwrap();
+        let file = DownloadedFile { path: path.clone(), sha256: "AB".repeat(32), size_bytes: 3 };
+        let reg = Registration {
+            kind: ModelKind::Checkpoint,
+            friendly_name: "My model".into(),
+            family: Some("sdxl".into()),
+            component_id: None,
+            civitai: Some(CivitaiRef {
+                model_id: 1,
+                version_id: 2,
+                model_name: Some("M".into()),
+                version_name: None,
+                base_model: Some("SDXL 1.0".into()),
+                trained_words: vec![],
+                license: None,
+            }),
+            dtype: Some("f16".into()),
+        };
+        let entry = register_download(&core, &file, reg.clone()).unwrap();
+        assert_eq!(entry.rel_path, "models/checkpoints/m.safetensors");
+        assert_eq!(entry.sha256, "ab".repeat(32));
+        assert!(uuid::Uuid::parse_str(&entry.id).is_ok());
+        assert_eq!(events(&rec), 1);
+
+        // Persisted: reload from disk.
+        let reloaded = pinhole_store::InstalledIndex::load(&core.data).unwrap();
+        assert_eq!(reloaded.files, vec![entry.clone()]);
+        let text = std::fs::read_to_string(core.data.installed_file()).unwrap();
+        assert!(!text.contains(&core.data.root.to_string_lossy().to_string()), "paths are Data-relative");
+
+        // Same path again → same id (no duplicates).
+        let again = register_download(&core, &file, reg).unwrap();
+        assert_eq!(again.id, entry.id);
+        assert_eq!(core.installed.lock().files.len(), 1);
+
+        // Listed as an installed model.
+        let models = list_models(&core).unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].family_label.as_deref(), Some("SDXL"));
+        assert_eq!(models[0].civitai_version_id, Some(2));
+        assert!(!models[0].missing_components.is_empty(), "the SDXL fp16-fix VAE isn't installed");
+
+        // Files outside Data are refused.
+        let outside = DownloadedFile { path: _t.path().join("elsewhere.safetensors"), sha256: "cd".repeat(32), size_bytes: 1 };
+        let reg = Registration { kind: ModelKind::Lora, friendly_name: "x".into(), family: None, component_id: None, civitai: None, dtype: None };
+        assert_eq!(register_download(&core, &outside, reg).unwrap_err().code, "invalid");
+    }
+
+    #[tokio::test]
+    async fn add_local_file_copies_hashes_and_asks_or_resolves() {
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        core.offline.set(true); // no CivitAI lookup in tests
+
+        // Wrong extension.
+        let bad = tmp.path().join("m.ckpt");
+        std::fs::write(&bad, b"x").unwrap();
+        assert_eq!(add_local_model(&core, bad.to_str().unwrap()).await.unwrap_err().code, "invalid");
+
+        // SDXL-shaped header → a family is resolved or the user is asked.
+        let src = tmp.path().join("My Model (v2).safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let before = std::fs::read(&src).unwrap();
+        let out = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+        assert_eq!(std::fs::read(&src).unwrap(), before, "the user's file is untouched");
+        let model = match out.needs_choice {
+            Some(choice) => {
+                assert_eq!(choice.file_name, "My Model (v2).safetensors");
+                assert!(choice.candidates.iter().any(|c| c.family_id == "sdxl"), "{:?}", choice.candidates);
+                assert!(core.installed.lock().files.is_empty(), "nothing registered until the user picks");
+                assert_eq!(confirm_family(&core, "bogus", "sdxl").unwrap_err().code, "not_found");
+                assert_eq!(confirm_family(&core, &choice.token, "nope").unwrap_err().code, "invalid");
+                let done = confirm_family(&core, &choice.token, "sdxl_pony").unwrap();
+                assert_eq!(confirm_family(&core, &choice.token, "sdxl").unwrap_err().code, "not_found", "token is single-use");
+                done.model.unwrap()
+            }
+            None => out.model.unwrap(),
+        };
+        let idx = core.installed.lock().clone();
+        let f = idx.get(&model.id).unwrap();
+        assert_eq!(f.rel_path, "models/checkpoints/My Model (v2).safetensors");
+        assert_eq!(f.sha256, local::hash_file(&src).unwrap().0);
+        assert!(core.data.root.join(&f.rel_path).exists());
+        assert_eq!(model.friendly_name, "My Model (v2)");
+
+        // Adding the same bytes again returns the existing model, no second copy.
+        let again = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+        assert_eq!(again.model.unwrap().id, model.id);
+        let copies = std::fs::read_dir(core.data.models(ModelKind::Checkpoint)).unwrap().count();
+        assert_eq!(copies, 1);
+
+        // Unknown tensors → refused, copy cleaned up.
+        let odd = tmp.path().join("odd.safetensors");
+        safetensors(&odd, &["some.random.tensor"]);
+        let err = add_local_model(&core, odd.to_str().unwrap()).await.unwrap_err();
+        assert_eq!(err.code, "invalid", "{}", err.message);
+        let left: Vec<_> = std::fs::read_dir(core.data.root.join("models"))
+            .unwrap()
+            .flat_map(|d| std::fs::read_dir(d.unwrap().path()).unwrap())
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .filter(|n| n.starts_with("odd"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[tokio::test]
+    async fn delete_removes_model_and_orphans() {
+        let rec = Arc::new(Recorder::default());
+        let (_t, core) = test_core(rec.clone());
+        let put = |kind: ModelKind, name: &str, reg: Registration| {
+            let dir = core.data.models(kind);
+            std::fs::create_dir_all(&dir).unwrap();
+            let p = dir.join(name);
+            std::fs::write(&p, name.as_bytes()).unwrap();
+            let sha = local::hash_file(&p).unwrap().0;
+            register_download(&core, &DownloadedFile { path: p, sha256: sha, size_bytes: name.len() as u64 }, reg).unwrap()
+        };
+        let comp = |id: &str| Registration {
+            kind: ModelKind::TextEncoder,
+            friendly_name: id.into(),
+            family: None,
+            component_id: Some(id.into()),
+            civitai: None,
+            dtype: None,
+        };
+        let main = |fam: &str| Registration {
+            kind: ModelKind::Diffusion,
+            friendly_name: fam.into(),
+            family: Some(fam.into()),
+            component_id: None,
+            civitai: None,
+            dtype: None,
+        };
+        let zit = put(ModelKind::Diffusion, "zit.gguf", main("z_image_turbo"));
+        let kontext = put(ModelKind::Diffusion, "kontext.gguf", main("flux1_kontext"));
+        let ae = put(ModelKind::Vae, "ae.safetensors", Registration { kind: ModelKind::Vae, ..comp("flux_ae") });
+        let qwen3 = put(ModelKind::TextEncoder, "qwen_3_4b.safetensors", comp("qwen3_4b"));
+
+        let preview = preview_delete(&core, &zit.id).unwrap();
+        let paths: Vec<&str> = preview.files.iter().map(|f| f.rel_path.as_str()).collect();
+        assert_eq!(paths, ["models/diffusion/zit.gguf", "models/text_encoders/qwen_3_4b.safetensors"]);
+
+        delete_model(&core, &zit.id).await.unwrap();
+        let idx = core.installed.lock().clone();
+        assert!(idx.get(&zit.id).is_none() && idx.get(&qwen3.id).is_none());
+        assert!(idx.get(&kontext.id).is_some() && idx.get(&ae.id).is_some(), "shared VAE stays");
+        assert!(!core.data.root.join(&zit.rel_path).exists());
+        assert!(!core.data.root.join(&qwen3.rel_path).exists());
+        assert!(core.data.root.join(&ae.rel_path).exists());
+        assert_eq!(pinhole_store::InstalledIndex::load(&core.data).unwrap().files.len(), 2);
+        assert_eq!(preview_delete(&core, &zit.id).unwrap_err().code, "not_found");
+        assert_eq!(delete_model(&core, &zit.id).await.unwrap_err().code, "not_found");
+
+        // A hostile rel_path never deletes outside Data (the entry is just dropped).
+        let outside = _t.path().join("victim.txt");
+        std::fs::write(&outside, b"keep").unwrap();
+        {
+            let mut idx = core.installed.lock();
+            let mut evil = idx.get(&kontext.id).unwrap().clone();
+            evil.id = "evil".into();
+            evil.family = None;
+            evil.rel_path = "../victim.txt".into();
+            idx.upsert(evil);
+        }
+        delete_model(&core, "evil").await.unwrap();
+        assert!(outside.exists());
+    }
+
+    #[test]
+    fn recommended_through_core() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let picks = get_recommended(&core).unwrap();
+        assert_eq!(picks.iter().map(|p| p.role.as_str()).collect::<Vec<_>>(), ["realistic", "anime", "edit", "describe"]);
+        // Before hardware detection: CPU only → nothing fits except the captioner.
+        assert!(picks[0].unavailable_reason.is_some());
+        assert_eq!(picks[3].title.as_deref(), Some("Image describer"));
+    }
+
+    #[tokio::test]
+    async fn install_recommended_errors_are_plain() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let e = install_recommended(&core, "realistic").await.unwrap_err();
+        assert_eq!(e.code, "vram");
+        assert!(e.message.contains("graphics card"), "{}", e.message);
+        assert_eq!(install_recommended(&core, "nope").await.unwrap_err().code, "not_found");
+    }
+
+    #[tokio::test]
+    async fn install_recommended_queues_one_group_with_components() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true); // downloads fail fast, nothing leaves the machine
+        // Tiny sizes so the free-disk check passes on small CI disks.
+        let yaml = std::fs::read_to_string(core.shipped.config_dir.join("models.yaml"))
+            .unwrap()
+            .replace("size_mb: 6577", "size_mb: 1")
+            .replace("size_mb: 335", "size_mb: 1")
+            .replace("size_mb: 8045", "size_mb: 1");
+        *core.registry.write() = Arc::new(pinhole_registry::Registry::from_yaml(&yaml, None).unwrap());
+        {
+            let mut s = core.settings.write();
+            s.vram_override_gb = Some(8.0);
+            s.gpu = "auto".into();
+        }
+        let started = install_recommended(&core, "realistic").await.unwrap();
+        let status = core.downloads.status();
+        let g = status.iter().find(|g| g.group_id == started.group_id).unwrap();
+        assert_eq!(g.label, "Z-Image Turbo");
+        assert_eq!(g.file_count, 3, "model + VAE + text encoder");
+        // A second click returns the same running group.
+        let again = install_recommended(&core, "realistic").await;
+        if let Ok(again) = again {
+            assert_eq!(again.group_id, started.group_id);
+        }
+        // Offline → the group fails; nothing gets registered.
+        let _ = core.downloads.wait(&started.group_id).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(core.installed.lock().files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn paste_offline() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        let out = resolve_civitai_resources(
+            &core,
+            vec![PastedResource { kind: "checkpoint".into(), model_version_id: Some(1759168), ..Default::default() }],
+        )
+        .await
+        .unwrap();
+        assert!(out.checkpoint.unwrap().problem.unwrap().contains("Offline"));
+    }
+}

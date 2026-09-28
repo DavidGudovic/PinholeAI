@@ -323,6 +323,32 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn registry_env() {
+        use crate::testkit::{hw, index, model, registry, with_civitai};
+        let reg = registry();
+        let idx = index(vec![with_civitai(model("j", "sdxl", pinhole_store::datadir::ModelKind::Checkpoint, "j.safetensors"), 42)]);
+        let env = RegistryEnv::new(&reg, hw(8.0), &idx);
+        assert_eq!(env.family_for("SDXL 1.0", None).unwrap().id, "sdxl");
+        assert_eq!(env.family_for("Pony", None).unwrap().id, "sdxl_pony");
+        assert_eq!(env.family_for("NoobAI", None).unwrap().id, "sdxl_illustrious");
+        assert_eq!(env.family_for("Flux.1 D", None).unwrap().license_note.as_deref(), Some("Non-commercial license"));
+        assert_eq!(env.family_for("Qwen", None).unwrap().id, "qwen_image", "ambiguous: first candidate for display");
+        assert!(env.family_for("SD 3.5 Large", None).is_none());
+        assert!(env.family_for("Other", None).is_none());
+        // Known hash beats the base model.
+        let zit = "2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6";
+        assert_eq!(env.family_for("ZImageTurbo", Some(zit)).unwrap().id, "z_image_turbo");
+        assert!(env.is_installed(42, None));
+        assert!(!env.is_installed(43, None));
+        assert!(env.is_installed(1, Some(&idx.files[0].sha256.to_ascii_uppercase())));
+        let (need, fit) = env.vram_for("sdxl", 6_938_065_160).unwrap();
+        assert_eq!((need.gb, need.min_gb, need.estimate), (10.0, 6.0, false));
+        assert_eq!(fit, Fit::Tight);
+        let (need, _) = env.vram_for("flux1_dev", 12_000_000_000).unwrap();
+        assert!(need.estimate, "no registry figure for FLUX.1 dev files");
+    }
+
+    #[test]
     fn thumbnails() {
         assert_eq!(
             thumbnail_url("https://image.civitai.com/xG1/1c65/original=true/12221824.jpeg", 450),

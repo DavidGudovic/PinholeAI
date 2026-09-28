@@ -358,3 +358,224 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
         _ => Err(Skip::Broken),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testkit::{component, hw, index, model, registry, with_civitai};
+    use pinhole_registry::vram::Fit;
+
+    const MB: u64 = 1_000_000;
+
+    fn picks(vram: f32, idx: &InstalledIndex) -> Vec<PickPlan> {
+        recommend(&registry(), idx, &hw(vram))
+    }
+
+    fn role<'a>(p: &'a [PickPlan], role: &str) -> &'a PickPlan {
+        p.iter().find(|p| p.pick.role == role).unwrap()
+    }
+
+    fn summary(p: &PickPlan) -> (Option<&str>, Option<&str>, Option<Fit>) {
+        (p.pick.family_id.as_deref(), p.pick.quant.as_deref(), p.pick.fit)
+    }
+
+    #[test]
+    fn roles_in_order() {
+        let p = picks(16.0, &index(vec![]));
+        let roles: Vec<&str> = p.iter().map(|p| p.pick.role.as_str()).collect();
+        assert_eq!(roles, ["realistic", "anime", "edit", "describe"]);
+        assert_eq!(p[0].pick.role_label, "Realistic");
+        assert!(p[0].pick.good_at.is_some());
+    }
+
+    #[test]
+    fn six_gb() {
+        let p = picks(6.0, &index(vec![]));
+        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight)));
+        assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Tight)));
+        assert_eq!(summary(role(&p, "edit")), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)), "Qwen Edit needs 12 GB");
+        // z_image q4_k + flux_ae + qwen3_4b
+        assert_eq!(role(&p, "realistic").pick.download_bytes, (3864 + 335 + 8045) * MB);
+    }
+
+    #[test]
+    fn eight_gb() {
+        let p = picks(8.0, &index(vec![]));
+        let r = role(&p, "realistic");
+        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Tight)));
+        assert_eq!(r.pick.download_bytes, (6577 + 335 + 8045) * MB);
+        assert_eq!(r.pick.title.as_deref(), Some("Z-Image Turbo"));
+        assert_eq!(r.pick.license_note.as_deref(), Some("Apache 2.0"));
+        match &r.action {
+            PickAction::Download { files, .. } => {
+                assert_eq!(files[0].file_name, "z_image_turbo-Q8_0.gguf");
+                assert_eq!(files[0].kind, ModelKind::Diffusion);
+                assert_eq!(files[0].friendly_name, "Z-Image Turbo (Q8)");
+                assert_eq!(files[0].sha256.as_deref(), Some("df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1"));
+                let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
+                assert_eq!(comps.len(), 2);
+                assert!(comps.contains(&"flux_ae") && comps.contains(&"qwen3_4b"));
+                assert!(files[1..].iter().all(|f| f.family.is_none()));
+            }
+            other => panic!("{other:?}"),
+        }
+        let a = role(&p, "anime");
+        assert_eq!(a.action, PickAction::Civitai { version_id: 2940478, family_id: "sdxl_illustrious".into() });
+        assert_eq!(a.pick.download_bytes, (6939 + 335) * MB, "checkpoint + SDXL fp16-fix VAE");
+        assert_eq!(summary(role(&p, "edit")), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)));
+    }
+
+    #[test]
+    fn twelve_gb() {
+        let p = picks(12.0, &index(vec![]));
+        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Tight)), "mid tier prefers Q8");
+        assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Fits)));
+        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Tight)));
+    }
+
+    #[test]
+    fn sixteen_gb_runs_bf16_and_qwen_edit() {
+        // SPEC §6: the 16 GB tier runs Z-Image Turbo bf16 and Qwen Image Edit 2511 Q4_K_M.
+        let p = picks(16.0, &index(vec![]));
+        let r = role(&p, "realistic");
+        assert_eq!(summary(r), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Tight)));
+        assert_eq!(r.pick.download_bytes, (12310 + 335 + 8045) * MB);
+        let e = role(&p, "edit");
+        assert_eq!(summary(e), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Tight)));
+        assert_eq!(e.pick.vram.unwrap().gb, 16.0);
+        assert_eq!(e.pick.vram.unwrap().min_gb, 12.0);
+        assert!(!e.pick.vram.unwrap().estimate);
+    }
+
+    #[test]
+    fn twenty_four_gb() {
+        let p = picks(24.0, &index(vec![]));
+        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits)));
+        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q4_k"), Some(Fit::Fits)));
+    }
+
+    #[test]
+    fn cpu_only() {
+        let p = picks(0.0, &index(vec![]));
+        for r in ["realistic", "anime", "edit"] {
+            let pick = &role(&p, r).pick;
+            assert_eq!(pick.title, None, "{r}");
+            assert!(pick.unavailable_reason.as_deref().unwrap().contains("No supported graphics card"), "{r}");
+            assert_eq!(role(&p, r).action, PickAction::Nothing);
+        }
+        // The small captioner still works on the CPU.
+        let d = role(&p, "describe");
+        assert_eq!(d.pick.title.as_deref(), Some("Image describer"));
+        assert_eq!(d.pick.download_bytes, (1930 + 845) * MB);
+        assert_eq!(d.action, PickAction::Captioner);
+    }
+
+    #[test]
+    fn too_little_vram_message() {
+        let p = picks(4.0, &index(vec![]));
+        let r = &role(&p, "realistic").pick;
+        assert_eq!(r.title, None);
+        assert_eq!(
+            r.unavailable_reason.as_deref(),
+            Some("None of the recommended models fit in 4 GB of graphics memory. The Models tab shows smaller ones.")
+        );
+    }
+
+    #[test]
+    fn unverified_civitai_candidates_are_unavailable() {
+        let yaml = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/models.yaml"))
+            .replace("civitai_version_id: 2940478", "civitai_version_id: TODO")
+            .replace("civitai_version_id: 290640", "civitai_version_id: TODO");
+        let reg = Registry::from_yaml(&yaml, None).unwrap();
+        let p = recommend(&reg, &index(vec![]), &hw(16.0));
+        let a = &role(&p, "anime").pick;
+        assert_eq!(a.title, None);
+        assert_eq!(a.unavailable_reason.as_deref(), Some("No anime model has been picked for Pinhole yet. Browse the Models tab instead."));
+    }
+
+    #[test]
+    fn shared_components_counted_once_and_only_when_missing() {
+        let reg = registry();
+        // Z-Image installed with its components → realistic is done.
+        let idx = index(vec![
+            model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo-Q8_0.gguf"),
+            component(&reg, "flux_ae"),
+            component(&reg, "qwen3_4b"),
+        ]);
+        let p = recommend(&reg, &idx, &hw(8.0));
+        let r = role(&p, "realistic");
+        assert!(r.pick.installed);
+        assert_eq!(r.pick.download_bytes, 0);
+        assert_eq!(r.pick.quant.as_deref(), Some("q8_0"));
+        assert_eq!(r.action, PickAction::Nothing);
+        // Kontext reuses the installed FLUX VAE: only clip_l + t5xxl_fp8 + the model.
+        let e = role(&p, "edit");
+        assert_eq!(e.pick.download_bytes, (6932 + 246 + 4894) * MB);
+        match &e.action {
+            PickAction::Download { files, .. } => assert!(files.iter().all(|f| f.component_id.as_deref() != Some("flux_ae"))),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn installed_model_with_missing_component_is_not_complete() {
+        let reg = registry();
+        let idx = index(vec![model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"), component(&reg, "flux_ae")]);
+        let p = recommend(&reg, &idx, &hw(16.0));
+        let r = role(&p, "realistic");
+        assert!(!r.pick.installed);
+        assert_eq!(r.pick.download_bytes, 8045 * MB, "only the text encoder");
+        assert_eq!(r.pick.vram.unwrap().gb, 16.0, "registry figure for the bf16 file");
+    }
+
+    #[test]
+    fn civitai_pick_installed() {
+        let reg = registry();
+        let idx = index(vec![
+            with_civitai(model("nova", "sdxl_illustrious", ModelKind::Checkpoint, "novaAnimeXL_ilV190.safetensors"), 2940478),
+            component(&reg, "sdxl_vae_fp16_fix"),
+        ]);
+        let a = recommend_role(&reg, &idx, &hw(8.0), "anime").unwrap();
+        assert!(a.pick.installed);
+        assert_eq!(a.pick.download_bytes, 0);
+        assert_eq!(a.action, PickAction::Nothing);
+    }
+
+    #[test]
+    fn captioner_reuse() {
+        let reg = registry();
+        let idx = index(vec![component(&reg, "qwen25_vl_7b_q8"), component(&reg, "qwen25_vl_7b_mmproj")]);
+        assert!(captioner_reuse_available(&reg, &idx));
+        let d = recommend_role(&reg, &idx, &hw(16.0), "describe").unwrap();
+        assert!(d.pick.installed);
+        assert_eq!(d.pick.download_bytes, 0);
+        assert_eq!(d.action, PickAction::Nothing);
+        // Default captioner installed by file name (engine area registers it).
+        let mut f = component(&reg, "flux_ae");
+        f.rel_path = "models/captioners/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf".into();
+        f.component_id = None;
+        f.sha256 = crate::testkit::sha(1);
+        let idx = index(vec![f]);
+        let missing = missing_captioner_files(&reg, &idx);
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].file, "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf");
+    }
+
+    #[test]
+    fn pick_json_matches_types_ts() {
+        let p = picks(8.0, &index(vec![]));
+        let v = serde_json::to_value(&role(&p, "realistic").pick).unwrap();
+        for key in ["role", "roleLabel", "title", "familyId", "goodAt", "downloadBytes", "vram", "fit", "installed", "quant", "licenseNote", "unavailableReason"] {
+            assert!(v.get(key).is_some(), "{key}");
+        }
+        assert_eq!(v["fit"], "tight");
+    }
+
+    #[test]
+    fn yaml_ids() {
+        assert_eq!(yaml_id(Some(&serde_yaml::Value::from(12u64))), Some(12));
+        assert_eq!(yaml_id(Some(&serde_yaml::Value::from("TODO"))), None);
+        assert_eq!(yaml_id(Some(&serde_yaml::Value::from("34"))), Some(34));
+        assert_eq!(yaml_id(None), None);
+    }
+}

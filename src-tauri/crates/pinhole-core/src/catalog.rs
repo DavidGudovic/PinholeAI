@@ -195,3 +195,32 @@ pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Op
         .collect();
     crate::models::start_install(core, install.label, items, client.api_key().map(str::to_string)).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::tests::{test_core, Recorder};
+
+    #[tokio::test]
+    async fn offline_browse_and_preview_guard() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let opts = catalog_filters(&core).unwrap();
+        assert_eq!(opts.looks.len(), 5);
+        core.offline.set(true);
+        let page = browse(&core, BrowseQuery::default()).await.unwrap();
+        assert!(page.offline && page.items.is_empty());
+        assert_eq!(fetch_preview(&core, "https://evil.example/x.jpeg").await.unwrap_err().code, "invalid");
+        assert_eq!(fetch_preview(&core, "http://image.civitai.com/x.jpeg").await.unwrap_err().code, "invalid");
+        assert_eq!(fetch_preview(&core, "https://image.civitai.com/x/width=450/1.jpeg").await.unwrap_err().code, "offline");
+        assert_eq!(plan_civitai_install(&core, 1).await.unwrap_err().code, "offline");
+        assert_eq!(install_civitai(&core, 1, None).await.unwrap_err().code, "offline");
+    }
+
+    #[test]
+    fn plain_network_errors() {
+        assert!(net_error(NetError::Status(429)).message.contains("busy"));
+        assert_eq!(net_error(NetError::Status(404)).code, "not_found");
+        assert_eq!(net_error(NetError::Unauthorized(401)).code, "unauthorized");
+        assert_eq!(net_error(NetError::Offline).code, "offline");
+    }
+}

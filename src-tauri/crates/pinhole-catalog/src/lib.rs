@@ -23,6 +23,8 @@ pub mod paste;
 pub mod plan;
 pub mod recommend;
 pub mod select;
+#[cfg(test)]
+pub(crate) mod testkit;
 pub mod view;
 
 pub use api::CivitaiClient;
