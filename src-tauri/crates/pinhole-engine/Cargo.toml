@@ -15,11 +15,26 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 reqwest = { workspace = true }
 base64 = { workspace = true }
-png = { workspace = true }
 zip = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 parking_lot = { workspace = true }
+# PNG chunk CRCs (text-chunk scrubbing / settings chunk). Already in the tree via `png`.
+crc32fast = "1"
+# llama.cpp Linux releases are .tar.gz.
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+# Decode/encode for clipboard copy (RGBA), 2x upscale downsample, import sniffing.
+# Already in the tree via tauri-plugin-clipboard-manager (arboard).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+
+[target.'cfg(unix)'.dependencies]
+# prctl(PR_SET_PDEATHSIG) so engines die with the app; SIGTERM for graceful stop.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# Job object with KILL_ON_JOB_CLOSE so engines die with the app.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -27,5 +42,5 @@ tokio = { workspace = true }
 
 [features]
 # Exposes `testutil::MockSdServer` (a fake sd-server that embeds the prompt in
-# PNG text chunks) for privacy/integration tests.
+# PNG text chunks) and `testutil::MockLlamaServer` for privacy/integration tests.
 test-util = []

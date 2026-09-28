@@ -1,7 +1,18 @@
-# Maps the friendly "Look" filter in the Models tab to CivitAI tags.
-# A model matches a Look if it has ANY of the listed tags.
-# Tune freely; no code changes needed.
+# Maps the friendly filters in the Models tab to CivitAI API parameters and
+# client-side rules (SPEC §5.4). Tune freely; no code changes needed.
+# Read by crates/pinhole-catalog (filters.rs).
 
+# "Kind": Models · Style add-ons → `types=` (repeated parameter).
+kinds:
+  models:       { label: "Models",        api_types: [Checkpoint] }
+  style_addons: { label: "Style add-ons", api_types: [LORA] }
+
+# CivitAI model types that are installed as LoRAs (Data/models/loras) when met
+# through "Paste from CivitAI" or an install. sd.cpp also loads LyCORIS (LoCon).
+lora_types: [LORA, LoCon, DoRA]
+
+# "Look": a model matches if it has ANY of the listed tags (case-insensitive).
+# Filtered client-side (the API only takes one `tag`).
 looks:
   realistic:
     label: "Realistic"
@@ -27,14 +38,18 @@ style_badges:           # badge shown on model cards, first match wins
   - { look: three_d,      badge: "3D" }
   - { look: illustration, badge: "Illustration" }
 
+# Paid = the model's newest version is in early access (version
+# `availability: EarlyAccess`, or `earlyAccessEndsAt` in the future). Client-side.
 price:
   free:      { label: "Free" }
   include:   { label: "Include early access (paid)" }
   paid_only: { label: "Early access only" }
   default: free            # paid models hidden by default
 
+# api_nsfw: value of the `nsfw` query parameter (omit the key to not send it).
+# client_filter: only `model.nsfw == true` / `model.nsfw == false` are understood.
 content:
-  safe:           { label: "Safe only",   api_nsfw: false }
+  safe:           { label: "Safe only",   api_nsfw: false, client_filter: "model.nsfw == false" }
   include_18plus: { label: "Include 18+", api_nsfw: true }
   only_18plus:    { label: "18+ only",    api_nsfw: true, client_filter: "model.nsfw == true" }
   default: safe
@@ -52,6 +67,11 @@ period:
   - { label: "This year",  api: Year }
   - { label: "All time",   api: AllTime }
 
-allowed_file_formats: [SafeTensor, GGUF]   # never PickleTensor
+allowed_file_formats: [SafeTensor, GGUF]   # never PickleTensor (also enforced in code)
 require_scans_success: true                # pickleScanResult and virusScanResult
 page_size: 24
+# When client-side filters drop items, fetch up to this many extra pages per
+# scroll before returning a partial page ("Load more").
+max_extra_requests: 5
+# Card preview images are requested at this width from CivitAI's image CDN.
+preview_width: 450

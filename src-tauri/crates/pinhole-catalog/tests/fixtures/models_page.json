@@ -1,0 +1,393 @@
+{
+  "items": [
+    {
+      "id": 4201,
+      "name": "RealVisXL V5.0",
+      "description": "<p>Photorealistic SDXL finetune.</p>",
+      "allowNoCredit": true,
+      "allowCommercialUse": ["Image", "RentCivit", "Rent", "Sell"],
+      "allowDerivatives": true,
+      "allowDifferentLicense": true,
+      "type": "Checkpoint",
+      "minor": false,
+      "sfwOnly": false,
+      "poi": false,
+      "nsfw": false,
+      "nsfwLevel": 31,
+      "availability": "Public",
+      "cosmetic": null,
+      "supportsGeneration": true,
+      "stats": {
+        "downloadCount": 1234567,
+        "favoriteCount": 0,
+        "thumbsUpCount": 4900,
+        "thumbsDownCount": 100,
+        "commentCount": 312,
+        "ratingCount": 0,
+        "rating": 0,
+        "tippedAmountCount": 5120
+      },
+      "creator": { "username": "SG_161222", "image": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/avatar/width=96/1.jpeg" },
+      "tags": ["photorealistic", "base model", "realistic", "photography"],
+      "modelVersions": [
+        {
+          "id": 789646,
+          "index": 0,
+          "name": "V5.0 (BakedVAE)",
+          "baseModel": "SDXL 1.0",
+          "baseModelType": "Standard",
+          "createdAt": "2024-08-27T10:11:12.000Z",
+          "publishedAt": "2024-08-27T11:00:00.000Z",
+          "status": "Published",
+          "availability": "Public",
+          "nsfwLevel": 31,
+          "description": null,
+          "trainedWords": [],
+          "covered": true,
+          "stats": { "downloadCount": 456789, "ratingCount": 0, "rating": 0, "thumbsUpCount": 2100, "thumbsDownCount": 20 },
+          "files": [
+            {
+              "id": 690203,
+              "sizeKB": 6775430.712890625,
+              "name": "realvisxlV50_v50Bakedvae.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "pickleScanMessage": "No Pickle imports",
+              "virusScanResult": "Success",
+              "virusScanMessage": null,
+              "scannedAt": "2024-08-27T10:20:00.000Z",
+              "metadata": { "format": "SafeTensor", "size": "pruned", "fp": "fp16" },
+              "hashes": {
+                "AutoV1": "5D7B2C7C",
+                "AutoV2": "699B68EAB2",
+                "SHA256": "699B68EAB2B5CBA442C44501718B0E7D85E2DC22B17B37DC53C8459B270A8776",
+                "CRC32": "3A1C9E0F",
+                "BLAKE3": "F3B6C2E9A1D0B4C5E6F7A8B9C0D1E2F3A4B5C6D7E8F9A0B1C2D3E4F5A6B7C8D9",
+                "AutoV3": "A1B2C3D4E5F6"
+              },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/789646?type=Model&format=SafeTensor&size=pruned&fp=fp16"
+            },
+            {
+              "id": 690204,
+              "sizeKB": 13550861.42578125,
+              "name": "realvisxlV50_v50Bakedvae_fp32.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "SafeTensor", "size": "full", "fp": "fp32" },
+              "hashes": { "SHA256": "EE2A3832C7DEC71144508361E95675F9AF78B1A5587A9047DE5335F10E468DEE" },
+              "primary": false,
+              "downloadUrl": "https://civitai.com/api/download/models/789646?type=Model&format=SafeTensor&size=full&fp=fp32"
+            }
+          ],
+          "images": [
+            {
+              "id": 26940521,
+              "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/3a4bd3bb-0cf8-4a0e-9e4c-9a3f5b1b0c11/width=832/26940521.jpeg",
+              "nsfwLevel": 1,
+              "width": 832,
+              "height": 1216,
+              "hash": "UMF=2x~q00IU~qt7IUofM{ayt7t7",
+              "type": "image",
+              "hasMeta": true,
+              "hasPositivePrompt": true,
+              "onSite": false,
+              "remixOfId": null
+            },
+            {
+              "id": 26940522,
+              "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9b1c2d3e-0000-4a0e-9e4c-9a3f5b1b0c12/original=true/26940522.jpeg",
+              "nsfwLevel": 8,
+              "width": 832,
+              "height": 1216,
+              "type": "image"
+            }
+          ],
+          "downloadUrl": "https://civitai.com/api/download/models/789646"
+        },
+        {
+          "id": 501240,
+          "index": 1,
+          "name": "V4.0",
+          "baseModel": "SDXL 1.0",
+          "availability": "Public",
+          "files": [],
+          "images": []
+        }
+      ]
+    },
+    {
+      "id": 311111,
+      "name": "Neon Punk Style",
+      "description": null,
+      "allowNoCredit": true,
+      "allowCommercialUse": "Sell",
+      "allowDerivatives": true,
+      "type": "LORA",
+      "poi": false,
+      "nsfw": true,
+      "nsfwLevel": 28,
+      "stats": { "downloadCount": "5210", "thumbsUpCount": 610, "thumbsDownCount": 0 },
+      "creator": { "username": "neonworks" },
+      "tags": [{ "name": "anime" }, { "name": "style" }, { "name": "neon" }],
+      "modelVersions": [
+        {
+          "id": 902001,
+          "name": "v2.0",
+          "baseModel": "Pony",
+          "availability": "EarlyAccess",
+          "earlyAccessEndsAt": "2026-10-05T00:00:00.000Z",
+          "earlyAccessConfig": { "timeframe": 7, "chargeForDownload": true, "downloadPrice": 500, "chargeForGeneration": false },
+          "trainedWords": ["pnkstyle", "neon outline"],
+          "files": [
+            {
+              "id": 801001,
+              "sizeKB": 223105.37,
+              "name": "neon_punk_pony_v2.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "SafeTensor", "size": null, "fp": null },
+              "hashes": { "AutoV2": "1B6405D1EF", "SHA256": "1B6405D1EF5A816105210B20A8F0FC129869A25876E45C0891E4F6D972BF74C2" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/902001"
+            }
+          ],
+          "images": [
+            { "id": 1, "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/aaaa/width=450/1.jpeg", "nsfwLevel": 16, "type": "image" }
+          ]
+        },
+        {
+          "id": 850001,
+          "name": "v1.0",
+          "baseModel": "Pony",
+          "availability": "Public",
+          "trainedWords": ["pnkstyle"],
+          "files": [
+            {
+              "id": 750001,
+              "sizeKB": 223105.37,
+              "name": "neon_punk_pony_v1.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "SafeTensor" },
+              "hashes": { "SHA256": "0F4168490E38B8447E11BA4BD656AA11B925BD22AF30BAC464BC153FDB608501" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/850001"
+            }
+          ],
+          "images": []
+        }
+      ]
+    },
+    {
+      "id": 5000,
+      "name": "Old Anime Mix",
+      "allowCommercialUse": "None",
+      "type": "Checkpoint",
+      "nsfw": false,
+      "stats": { "downloadCount": 88000, "thumbsUpCount": 900, "thumbsDownCount": 100 },
+      "creator": { "username": "oldtimer" },
+      "tags": ["anime", "base model"],
+      "modelVersions": [
+        {
+          "id": 6000,
+          "name": "v3",
+          "baseModel": "SD 1.5",
+          "availability": "Public",
+          "files": [
+            {
+              "id": 7000,
+              "sizeKB": 2082642.7,
+              "name": "oldAnimeMix_v3.ckpt",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "PickleTensor", "size": "pruned", "fp": "fp16" },
+              "hashes": { "SHA256": "0086D1DEC8F8C75E6B9DF4A195E11A99B3FFCD12CF895A186E558EC5E0A6C72A" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/6000"
+            }
+          ],
+          "images": [
+            { "id": 2, "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/bbbb/width=450/2.jpeg", "nsfw": "None", "type": "image" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 618692,
+      "name": "Flux Fusion GGUF",
+      "description": null,
+      "allowCommercialUse": [],
+      "type": "Checkpoint",
+      "nsfw": false,
+      "stats": null,
+      "creator": null,
+      "tags": ["base model", "illustration", "product"],
+      "modelVersions": [
+        {
+          "id": 699279,
+          "name": "Q8_0",
+          "baseModel": "Flux.1 D",
+          "baseModelType": "Standard",
+          "availability": "Public",
+          "trainedWords": null,
+          "stats": null,
+          "files": [
+            {
+              "id": 610001,
+              "sizeKB": 12384650.25,
+              "name": "fluxFusion_q8_0.gguf",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "GGUF", "size": "full", "fp": null },
+              "hashes": { "SHA256": "7C8AF11C678704A33B46FFDF9AF12365781A2C3E2AB7F62B187D55CCCDD7FC77" },
+              "primary": false,
+              "downloadUrl": "https://civitai.com/api/download/models/699279?type=Model&format=GGUF&size=full"
+            },
+            {
+              "id": 610002,
+              "sizeKB": 6932142.5,
+              "name": "fluxFusion_Q4_K_M.gguf",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "GGUF", "size": "pruned", "fp": null },
+              "hashes": { "SHA256": "C7DDC94653B5AD2A25AD4A29DA4DD5EDCEB4903922B410BE3677FC7392E37A1E" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/699279?type=Model&format=GGUF&size=pruned"
+            },
+            {
+              "id": 610003,
+              "sizeKB": 1024.0,
+              "name": "training_data.zip",
+              "type": "Training Data",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "Other" },
+              "hashes": {},
+              "primary": false,
+              "downloadUrl": "https://civitai.com/api/download/models/699279?type=Training%20Data"
+            }
+          ],
+          "images": null
+        }
+      ]
+    },
+    {
+      "id": 900001,
+      "name": "SD3.5 Large Photo",
+      "allowCommercialUse": ["Image"],
+      "type": "Checkpoint",
+      "nsfw": false,
+      "stats": { "downloadCount": 1000, "thumbsUpCount": 10, "thumbsDownCount": 0 },
+      "tags": ["photorealistic"],
+      "modelVersions": [
+        {
+          "id": 900101,
+          "name": "v1",
+          "baseModel": "SD 3.5 Large",
+          "availability": "Public",
+          "files": [
+            {
+              "id": 900201,
+              "sizeKB": 16000000,
+              "name": "sd35_large_photo.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "SafeTensor", "size": "full", "fp": "fp16" },
+              "hashes": { "SHA256": "9C12D6E29551C6C8DE2094E378E078E632732D1F0AB3D2FB1EB4B381D4E45E77" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/900101"
+            }
+          ],
+          "images": []
+        }
+      ]
+    },
+    {
+      "id": 777001,
+      "name": "Fresh Illustrious Merge",
+      "allowCommercialUse": ["Image", "Sell"],
+      "type": "Checkpoint",
+      "nsfw": false,
+      "stats": { "downloadCount": 12, "thumbsUpCount": 1, "thumbsDownCount": 1 },
+      "tags": ["anime", "2d"],
+      "modelVersions": [
+        {
+          "id": 777101,
+          "name": "v0.1",
+          "baseModel": "Illustrious",
+          "availability": "Public",
+          "files": [
+            {
+              "id": 777201,
+              "sizeKB": 6775430.7,
+              "name": "freshIllustrious_v01.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Pending",
+              "virusScanResult": "Pending",
+              "metadata": { "format": "SafeTensor", "size": "pruned", "fp": "fp16" },
+              "hashes": { "SHA256": "99CF77738A304F81AE879B19FE9F427A58F58E8A65757A01860FE1B114BE9DA2" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/777101"
+            }
+          ],
+          "images": [
+            { "id": 3, "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/cccc/width=450/3.jpeg", "nsfwLevel": 2, "type": "image" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 800002,
+      "name": "Toon Render XL",
+      "allowCommercialUse": "{Image,Sell}",
+      "type": "Checkpoint",
+      "nsfw": false,
+      "nsfwLevel": 3,
+      "mode": null,
+      "stats": { "downloadCount": 40000, "thumbsUpCount": 300, "thumbsDownCount": 25 },
+      "creator": { "username": "toonmaker" },
+      "tags": ["3d", "cartoon", "product", "render"],
+      "modelVersions": [
+        {
+          "id": 800102,
+          "name": "v7",
+          "baseModel": "SDXL 1.0",
+          "availability": null,
+          "earlyAccessEndsAt": "2025-01-10T00:00:00.000Z",
+          "earlyAccessConfig": { "timeframe": 3, "chargeForDownload": true, "downloadPrice": 200 },
+          "files": [
+            {
+              "id": 800202,
+              "sizeKB": 6775430.7,
+              "name": "toonRenderXL_v7.safetensors",
+              "type": "Model",
+              "pickleScanResult": "Success",
+              "virusScanResult": "Success",
+              "metadata": { "format": "SafeTensor", "size": "pruned", "fp": "fp16" },
+              "hashes": { "SHA256": "8A1718EE736F769F7148649CD0A065C239FE8A30F9597092165A6767A840BD0A" },
+              "primary": true,
+              "downloadUrl": "https://civitai.com/api/download/models/800102"
+            }
+          ],
+          "images": [
+            { "id": 4, "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/dddd/width=450/4.mp4", "nsfwLevel": 1, "type": "video" },
+            { "id": 5, "url": "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/eeee/width=1024/5.jpeg", "nsfwLevel": 1, "type": "image" }
+          ]
+        }
+      ]
+    },
+    "this item is garbage and must be skipped"
+  ],
+  "metadata": {
+    "nextCursor": "2|1718000000000",
+    "nextPage": "https://civitai.com/api/v1/models?limit=24&sort=Highest%20Rated&cursor=2%7C1718000000000"
+  }
+}

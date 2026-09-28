@@ -25,6 +25,21 @@ pub struct RegistryFile {
     pub known_files: Vec<KnownFile>,
     #[serde(default)]
     pub test_models: BTreeMap<String, DownloadSpec>,
+    /// What the pinned `sd-server` can do that changes wiring (see YAML comments).
+    #[serde(default)]
+    pub engine_features: EngineFeatures,
+}
+
+/// Engine capabilities that influence wiring. Kept in `models.yaml` so a new
+/// engine pin can flip them without code changes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EngineFeatures {
+    /// `true` only when `sd-server` uses `--taesd` for *previews only*. The
+    /// current server builds its context with `tae_preview_only = false`
+    /// (examples/server/main.cpp), i.e. `--taesd` would replace the real VAE
+    /// for the final image — so Pinhole must not pass it.
+    #[serde(default)]
+    pub taesd_preview: bool,
 }
 
 /// A shared component file (VAE, text encoder, TAESD, upscaler…).
@@ -96,6 +111,9 @@ pub struct Family {
     pub dials: DialSpec,
     #[serde(default)]
     pub download: Option<DownloadSpec>,
+    /// Parent family this one was derived from (`inherits:`), if any.
+    #[serde(default)]
+    pub inherits: Option<String>,
 }
 
 /// Either a fixed component id, or a VRAM-dependent choice
@@ -107,18 +125,52 @@ pub enum ComponentChoice {
     ByVram(BTreeMap<String, String>),
 }
 
+/// Header-sniffing rules (SPEC §6 step 3), mirroring `get_sd_version()`.
+///
+/// **Pattern syntax.** A pattern is matched against every tensor name, both as
+/// stored and with a leading `model.diffusion_model.` removed (the loader adds
+/// that prefix to standalone diffusion files). By default it is a substring
+/// match (like upstream's `name.find(...)`); a leading `^` anchors it at the
+/// start, a trailing `$` at the end (`^…$` = exact name).
+///
+/// A family matches when it has at least one positive rule (`any_tensor`,
+/// `all_tensor`, `all_of_any`) and every rule holds.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DetectRules {
+    /// At least one pattern matches some tensor.
     #[serde(default)]
     pub any_tensor: Vec<String>,
+    /// Every pattern matches some tensor.
     #[serde(default)]
     pub all_tensor: Vec<String>,
+    /// No pattern matches any tensor.
     #[serde(default)]
     pub none_tensor: Vec<String>,
+    /// AND of ORs: every inner list needs at least one matching pattern.
+    #[serde(default)]
+    pub all_of_any: Vec<Vec<String>>,
+    /// `pattern → n`: every tensor matching `pattern` must have `ne[0] == n`
+    /// (ggml order, i.e. the *last* PyTorch dimension). Mirrors the shape
+    /// checks in `get_sd_version()`. Holds trivially when nothing matches.
+    #[serde(default)]
+    pub tensor_ne0: BTreeMap<String, u64>,
+    /// If one of these matches, this family wins over the other candidates
+    /// (e.g. the `__index_timestep_zero__` marker of Qwen-Image-Edit-2511).
+    #[serde(default)]
+    pub decisive_tensor: Vec<String>,
+    /// Families with the same tensors (informational; filled symmetrically).
     #[serde(default)]
     pub ambiguous_with: Vec<String>,
+    /// Copy another family's rules (kept as a separate family).
     #[serde(default)]
     pub same_as: Option<String>,
+}
+
+impl DetectRules {
+    /// `true` when the rules can match anything at all.
+    pub fn has_positive_rule(&self) -> bool {
+        !self.any_tensor.is_empty() || !self.all_tensor.is_empty() || self.all_of_any.iter().any(|g| !g.is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -154,6 +206,9 @@ pub struct HiresAtBest {
     pub scale: Option<f32>,
     #[serde(default)]
     pub denoising_strength: Option<f32>,
+    /// Second-pass steps; `0`/absent = reuse the main step count (server default).
+    #[serde(default)]
+    pub steps: Option<u32>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -180,6 +235,10 @@ pub struct DialSpec {
     pub stay_close_maps_to: Option<String>,
     #[serde(default)]
     pub hires_at_best: Option<HiresAtBest>,
+    /// Width/height are rounded to a multiple of this (UNet: 64, DiT: 16).
+    /// Defaults to 64, which is valid for every family.
+    #[serde(default)]
+    pub size_multiple: Option<u32>,
 }
 
 /// Downloadable file (family `download:`, captioner files, test models).
