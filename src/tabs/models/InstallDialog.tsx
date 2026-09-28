@@ -123,18 +123,8 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
       <Dialog
         open={open && !keyOpen}
         onClose={onClose}
-        title={
-          <span className="block min-w-0">
-            <span className="block truncate">Install {plan?.modelName ?? title ?? "model"}</span>
-            {plan && (
-              <span className="block truncate text-xs font-normal text-neutral-500">
-                {plan.versionName}
-                {plan.family ? ` · ${plan.family.label}` : ""}
-                {plan.isLora ? " · Style add-on" : ""}
-              </span>
-            )}
-          </span>
-        }
+        title={`Install ${plan?.modelName ?? title ?? "model"}`}
+        description={plan ? `${plan.versionName}${plan.family ? ` · ${plan.family.label}` : ""}${plan.isLora ? " · Style add-on" : ""}` : undefined}
         footer={footer}
       >
         {!plan && !error && <PlanSkeleton />}

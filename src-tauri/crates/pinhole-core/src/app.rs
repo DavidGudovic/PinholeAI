@@ -193,9 +193,71 @@ fn ensure_dir(dir: PathBuf) -> CoreResult<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::{EventSink, ShippedPaths};
+    use parking_lot::Mutex;
     use pinhole_hardware::Vendor;
+    use pinhole_store::DataDir;
+
+    /// Records event names.
+    #[derive(Default)]
+    pub(crate) struct Recorder(pub Mutex<Vec<&'static str>>);
+    impl EventSink for Recorder {
+        fn emit(&self, event: CoreEvent) {
+            self.0.lock().push(event.name());
+        }
+    }
+
+    /// A real `AppCore` over a temp Data folder and the repo's `config/`.
+    pub(crate) fn test_core(sink: Arc<dyn EventSink>) -> (tempfile::TempDir, Arc<AppCore>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let shipped = ShippedPaths { config_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config") };
+        let core = AppCore::new(shipped, DataDir::at(tmp.path().join("Data"), false), sink)
+            .unwrap_or_else(|e| panic!("AppCore::new failed: {}", e.message));
+        (tmp, core)
+    }
+
+    #[tokio::test]
+    async fn settings_hardware_and_folders_through_core() {
+        let rec = Arc::new(Recorder::default());
+        let (_t, core) = test_core(rec.clone());
+
+        // Before detection: no GPU, CPU backend.
+        let v = hardware_view(&core);
+        assert!(v.detected.is_none());
+        assert_eq!((v.vram_gb, v.backend.as_str(), v.gpu.is_none()), (0.0, "cpu", true));
+
+        // Settings are normalised, persisted, and the offline flag applies at once.
+        let mut s = get_settings(&core);
+        s.offline = true;
+        s.theme = "neon".into();
+        s.vram_override_gb = Some(16.0);
+        s.engine_backend = "vulkan".into();
+        let saved = set_settings(&core, s).unwrap();
+        assert_eq!(saved.theme, "system");
+        assert!(core.offline.get());
+        assert_eq!(get_settings(&core), saved);
+        assert_eq!(pinhole_store::settings::load(&core.data).unwrap(), saved);
+        let hw = hw_context(&core);
+        assert_eq!((hw.vram_gb, hw.backend.as_str()), (16.0, "vulkan"));
+        assert_eq!(hardware_view(&core).tier, "high");
+        set_settings(&core, Settings { offline: false, ..saved }).unwrap();
+        assert!(!core.offline.get());
+
+        // Background detection fills `hardware` and emits hardware-ready.
+        start_hardware_detection(&core);
+        assert!(wait_for_hardware(&core, Duration::from_secs(30)).await);
+        assert!(hardware_view(&core).detected.is_some());
+        assert!(rec.0.lock().contains(&"hardware-ready"));
+
+        let info = app_info(&core);
+        assert!(!info.portable);
+        assert!(info.data_dir.ends_with("Data"));
+        assert_eq!(info.os, std::env::consts::OS);
+        assert!(outputs_folder(&core).unwrap().is_dir());
+        assert_eq!(data_folder(&core).unwrap(), core.data.root);
+    }
 
     fn gpu(index: usize, vendor: Vendor, vram_gb: f32) -> GpuInfo {
         GpuInfo { index, vendor, name: format!("gpu{index}"), vram_gb }

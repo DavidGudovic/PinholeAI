@@ -7,15 +7,15 @@ import { addLocalModel, asCoreError, confirmFamily, deleteModel, listLoras, list
 import type { AddFileResult, CoreError, DeletePreview, InstalledLora, InstalledModel } from "../../lib/types";
 import { formatBytes } from "../../lib/format";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
-import { Badge, Button, Dialog, ErrorNotice, Spinner, VramBadge } from "../../components/ui";
-import { EmptyState, FamilyPicker, IconButton, Skeleton } from "./controls";
+import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge } from "../../components/ui";
+import { EmptyState, FamilyPicker, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { useTauriEvent } from "./lib/hooks";
 import { baseName, isModelFile, lastUsedText } from "./lib/words";
 
 type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
 
-export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
+export function InstalledView({ active, onBrowse }: { active: boolean; onBrowse: () => void }) {
   const [models, setModels] = useState<InstalledModel[] | null>(null);
   const [loras, setLoras] = useState<InstalledLora[] | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
@@ -90,8 +90,9 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
     }
   };
 
-  // Drag a .safetensors/.gguf onto the window while this view is open.
+  // Drag a .safetensors/.gguf onto the window while this view is on screen.
   useEffect(() => {
+    if (!active) return;
     let off: (() => void) | null = null;
     let alive = true;
     try {
@@ -110,7 +111,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
       alive = false;
       off?.();
     };
-  }, [addPath]);
+  }, [active, addPath]);
 
   const nothing = models !== null && loras !== null && models.length === 0 && loras.length === 0;
   const totalBytes = (models ?? []).reduce((a, m) => a + m.sizeBytes, 0) + (loras ?? []).reduce((a, l) => a + l.sizeBytes, 0);
@@ -217,7 +218,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   <Td>{m.vram ? <VramBadge vram={m.vram} fit={m.fit} /> : <span className="text-xs text-neutral-400">Unknown</span>}</Td>
                   <Td className="hidden whitespace-nowrap text-neutral-600 md:table-cell dark:text-neutral-400">{lastUsedText(m.lastUsed)}</Td>
                   <Td>
-                    <IconButton label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
+                    <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
                       <Trash2 className="h-4 w-4" />
                     </IconButton>
                   </Td>
@@ -262,7 +263,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   </Td>
                   <Td className="whitespace-nowrap text-neutral-600 tabular-nums dark:text-neutral-400">{formatBytes(l.sizeBytes)}</Td>
                   <Td>
-                    <IconButton label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
+                    <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
                       <Trash2 className="h-4 w-4" />
                     </IconButton>
                   </Td>

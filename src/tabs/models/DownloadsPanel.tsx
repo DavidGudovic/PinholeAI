@@ -1,6 +1,7 @@
 // Active (and recently finished) download groups with Cancel.
 import { CircleCheck, CircleX, Download, X } from "lucide-react";
-import { GroupProgress, IconButton } from "./controls";
+import { GroupProgress } from "./controls";
+import { IconButton } from "../../components/ui";
 import { cancelGroup, hideFinished, hideGroup, useVisibleDownloads } from "./lib/downloads";
 import { isActive } from "./lib/words";
 
@@ -30,7 +31,7 @@ export function DownloadsPanel() {
             <div className="flex items-center justify-between gap-3">
               <span className="truncate text-sm font-medium text-neutral-800 dark:text-neutral-200">{g.label}</span>
               {!isActive(g) && (
-                <IconButton label="Remove from list" onClick={() => hideGroup(g.groupId)}>
+                <IconButton size="sm" label="Remove from list" onClick={() => hideGroup(g.groupId)}>
                   <X className="h-3.5 w-3.5" />
                 </IconButton>
               )}

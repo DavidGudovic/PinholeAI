@@ -40,7 +40,7 @@ impl CoreError {
 
 impl From<pinhole_store::StoreError> for CoreError {
     fn from(e: pinhole_store::StoreError) -> Self {
-        Self::new("io", format!("Could not read or write Pinhole's Data folder: {e}"))
+        Self::new(e.code(), e.user_message())
     }
 }
 

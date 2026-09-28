@@ -1,6 +1,6 @@
 // OWNER: frontend B. Models tab: Browse (CivitAI) · Installed, plus the downloads list.
 // Keep this export signature.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSettings, listLoras, listModels, onModelsChanged } from "../../lib/api";
 import type { Settings } from "../../lib/types";
 import { Segmented, Spinner } from "../../components/ui";
@@ -9,6 +9,7 @@ import { BrowseView } from "./BrowseView";
 import { DownloadsPanel } from "./DownloadsPanel";
 import { InstalledView } from "./InstalledView";
 import { useTauriEvent } from "./lib/hooks";
+import { useIsVisible } from "./lib/preview";
 import { getLastView, rememberView } from "./lib/session";
 
 type View = "browse" | "installed";
@@ -18,6 +19,14 @@ export function ModelsTab() {
   const [settings, setLocalSettings] = useState<Settings | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
   const [installedCount, setInstalledCount] = useState<number | null>(null);
+  // The shell keeps every tab mounted. Don't contact CivitAI (or pop the 18+ question)
+  // until the Models tab has actually been opened.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const visible = useIsVisible(rootRef);
+  const [opened, setOpened] = useState(false);
+  useEffect(() => {
+    if (visible) setOpened(true);
+  }, [visible]);
 
   const setView = (v: View) => {
     rememberView(v);
@@ -42,7 +51,7 @@ export function ModelsTab() {
   useTauriEvent(onModelsChanged, () => void countInstalled());
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div ref={rootRef} className="h-full overflow-y-auto">
       <div className="mx-auto max-w-7xl space-y-4 px-6 py-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -64,7 +73,7 @@ export function ModelsTab() {
         <DownloadsPanel />
 
         {view === "browse" ? (
-          settingsReady ? (
+          settingsReady && opened ? (
             <BrowseView settings={settings} onShowInstalled={() => setView("installed")} />
           ) : (
             <div className="flex justify-center py-16">
@@ -72,7 +81,7 @@ export function ModelsTab() {
             </div>
           )
         ) : (
-          <InstalledView onBrowse={() => setView("browse")} />
+          <InstalledView active={visible} onBrowse={() => setView("browse")} />
         )}
       </div>
     </div>

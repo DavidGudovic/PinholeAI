@@ -68,6 +68,23 @@ export function useNearViewport<T extends Element>(ref: RefObject<T | null>, mar
   return seen;
 }
 
+/** Live visibility (false while an ancestor is `hidden` / display:none, e.g. an inactive tab). */
+export function useIsVisible<T extends Element>(ref: RefObject<T | null>): boolean {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const io = new IntersectionObserver((entries) => setVisible(entries.some((e) => e.isIntersecting)));
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return visible;
+}
+
 export type PreviewState = { src: string | null; failed: boolean; loading: boolean };
 
 export function usePreviewBlob(url: string | null, enabled: boolean): PreviewState {

@@ -4,9 +4,10 @@ import { useId, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { asCoreError, setCivitaiKey } from "../../lib/api";
 import type { CoreError, FamilyChoice, GroupStatus } from "../../lib/types";
-import { Button, Dialog, ErrorNotice, ProgressBar, Spinner, inputClass } from "../../components/ui";
+import { Button, Dialog, ErrorNotice, ProgressBar, Select as UiSelect, Spinner, focusRing, inputClass } from "../../components/ui";
 import { groupFraction, isActive, progressText, stateLabel } from "./lib/words";
 
+/** Typed wrapper around the shared native Select. */
 export function Select<T extends string | number>({
   value,
   onChange,
@@ -21,22 +22,21 @@ export function Select<T extends string | number>({
   className?: string;
 }) {
   return (
-    <select
-      aria-label={label}
-      title={label}
+    <UiSelect
+      ariaLabel={label}
+      className={className}
       value={String(value)}
-      onChange={(e) => {
-        const found = options.find((o) => String(o.value) === e.target.value);
+      onChange={(v) => {
+        const found = options.find((o) => String(o.value) === v);
         if (found) onChange(found.value);
       }}
-      className={`h-8 cursor-pointer rounded-lg border border-neutral-300 bg-white px-2 pr-7 text-sm text-neutral-800 outline-none hover:border-neutral-400 focus-visible:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500/30 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:border-neutral-600 ${className}`}
     >
       {options.map((o) => (
         <option key={String(o.value)} value={String(o.value)}>
           {o.label}
         </option>
       ))}
-    </select>
+    </UiSelect>
   );
 }
 
@@ -47,7 +47,7 @@ export function Chip({ active, onClick, children, title }: { active: boolean; on
       aria-pressed={active}
       title={title}
       onClick={onClick}
-      className={`inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 ${
+      className={`inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors ${focusRing} ${
         active
           ? "border-amber-500 bg-amber-500 text-neutral-950"
           : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-white"
@@ -146,7 +146,7 @@ export function AdultConfirmDialog({ open, onCancel, onConfirm }: { open: boolea
           <Button variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={onConfirm} autoFocus>
+          <Button variant="primary" onClick={onConfirm}>
             I'm 18 or older
           </Button>
         </>
@@ -259,20 +259,3 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
     </Dialog>
   );
 }
-
-/** Tiny round icon button. */
-export function IconButton({ label, onClick, children, disabled }: { label: string; onClick: () => void; children: ReactNode; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-neutral-200 hover:text-neutral-900 disabled:opacity-40 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-    >
-      {children}
-    </button>
-  );
-}
-
