@@ -1,4 +1,5 @@
-//! CivitAI API key in the OS keychain (`keyring`), never in `Data/`.
+//! CivitAI API key and the optional GitHub token (for updates while the
+//! repository is private) in the OS keychain (`keyring`), never in `Data/`.
 //!
 //! Backends: Windows Credential Manager, the freedesktop Secret Service on
 //! Linux (GNOME Keyring / KWallet), macOS Keychain. The calls block (D-Bus on
@@ -11,6 +12,7 @@ use crate::StoreError;
 
 pub const SERVICE: &str = "pinhole";
 pub const CIVITAI_ACCOUNT: &str = "civitai-api-key";
+pub const GITHUB_ACCOUNT: &str = "github-token";
 
 /// Longest key we accept (CivitAI keys are 32 hex characters).
 const MAX_KEY_LEN: usize = 512;
@@ -25,6 +27,36 @@ pub fn set_civitai_key(key: &str) -> Result<(), StoreError> {
 
 pub fn delete_civitai_key() -> Result<(), StoreError> {
     delete_on(&entry()?)
+}
+
+pub fn get_github_token() -> Result<Option<String>, StoreError> {
+    get_from(&github_entry()?)
+}
+
+pub fn set_github_token(token: &str) -> Result<(), StoreError> {
+    let entry = github_entry()?;
+    set_github_on(&entry, token)
+}
+
+pub fn delete_github_token() -> Result<(), StoreError> {
+    delete_on(&github_entry()?)
+}
+
+fn github_entry() -> Result<Entry, StoreError> {
+    Entry::new(SERVICE, GITHUB_ACCOUNT).map_err(map_err)
+}
+
+fn set_github_on(entry: &Entry, token: &str) -> Result<(), StoreError> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(StoreError::Invalid("Paste your GitHub token first.".into()));
+    }
+    if token.len() > MAX_KEY_LEN || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(StoreError::Invalid(
+            "That doesn't look like a GitHub token. Copy it again from GitHub → Settings → Developer settings → Personal access tokens.".into(),
+        ));
+    }
+    entry.set_password(token).map_err(map_err)
 }
 
 fn entry() -> Result<Entry, StoreError> {
@@ -112,6 +144,17 @@ mod tests {
         assert_eq!(get_from(&entry).unwrap(), None);
         // Deleting again is fine.
         delete_on(&entry).unwrap();
+    }
+
+    #[test]
+    fn github_token_round_trip_and_validation() {
+        keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
+        let entry = Entry::new(SERVICE, GITHUB_ACCOUNT).unwrap();
+        assert!(matches!(set_github_on(&entry, " "), Err(StoreError::Invalid(_))));
+        assert!(matches!(set_github_on(&entry, "ghp_abc def"), Err(StoreError::Invalid(_))));
+        assert!(matches!(set_github_on(&entry, "https://x"), Err(StoreError::Invalid(_))));
+        set_github_on(&entry, " github_pat_11ABC_def123\n").unwrap();
+        assert_eq!(get_from(&entry).unwrap().as_deref(), Some("github_pat_11ABC_def123"));
     }
 
     #[test]

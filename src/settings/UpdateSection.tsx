@@ -1,8 +1,8 @@
 // Settings → Updates. Pinhole never checks on its own (SPEC §4 rule 6): the only
 // request to GitHub happens when the user presses "Check for updates".
-import { useState } from "react";
-import { CircleCheck, Download, ExternalLink, RefreshCw } from "lucide-react";
-import { asCoreError, checkForUpdates, installUpdate, openReleasePage } from "../lib/api";
+import { useEffect, useState } from "react";
+import { CircleCheck, Download, ExternalLink, KeyRound, RefreshCw } from "lucide-react";
+import { asCoreError, checkForUpdates, clearGithubToken, hasGithubToken, installUpdate, openReleasePage, setGithubToken } from "../lib/api";
 import type { CoreError, UpdateCheck } from "../lib/types";
 import { formatBytes } from "../lib/format";
 import { Button, ErrorNotice, Spinner } from "../components/ui";
@@ -23,6 +23,12 @@ export function UpdateSection({ offline }: { offline: boolean }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [result, setResult] = useState<UpdateCheck | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
+  const [tokenSet, setTokenSet] = useState(false);
+  useEffect(() => {
+    hasGithubToken()
+      .then(setTokenSet)
+      .catch(() => setTokenSet(false));
+  }, []);
   const group = useTaggedGroup("app-update", (g) => g.kind === "appUpdate");
   // Settings was closed and reopened while an update downloads: keep showing it.
   const running = phase === "installing" || (phase === "idle" && group != null);
@@ -123,13 +129,88 @@ export function UpdateSection({ offline }: { offline: boolean }) {
       {error?.code === "updates_unavailable" ? (
         <div className="space-y-2 rounded-lg bg-neutral-100 p-3 text-xs text-neutral-600 dark:bg-neutral-800/60 dark:text-neutral-400" role="note">
           <p>{error.message}</p>
-          <Button size="sm" onClick={() => openPage(null)}>
+          <GithubTokenForm
+            onSaved={() => {
+              setTokenSet(true);
+              void check();
+            }}
+          />
+          <Button size="sm" variant="ghost" onClick={() => openPage(null)}>
             <ExternalLink className="h-3.5 w-3.5" /> Open release page
           </Button>
         </div>
       ) : (
         error && <ErrorNotice error={error} onDismiss={() => setError(null)} />
       )}
+      {tokenSet && (
+        <div className="flex items-center justify-between gap-2 text-xs text-neutral-500">
+          <span className="inline-flex items-center gap-1.5">
+            <KeyRound className="h-3.5 w-3.5" /> GitHub token saved in your system keychain
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() =>
+              void clearGithubToken()
+                .then(() => setTokenSet(false))
+                .catch((e) => setError(asCoreError(e)))
+            }
+          >
+            Remove
+          </Button>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** Paste a GitHub token (read-only access to the Pinhole repository). Stored only in the OS keychain. */
+function GithubTokenForm({ onSaved }: { onSaved: () => void }) {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<CoreError | null>(null);
+  const save = async () => {
+    if (!token.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await setGithubToken(token.trim());
+      setToken("");
+      onSaved();
+    } catch (e) {
+      setError(asCoreError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form
+      className="space-y-1.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      <label className="block">
+        <span className="sr-only">GitHub token</span>
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="GitHub token (read-only access to Pinhole)"
+          className="w-full rounded-md border border-neutral-300 bg-white px-2.5 py-1.5 font-mono text-xs text-neutral-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-100"
+        />
+      </label>
+      <p>
+        On GitHub: Settings → Developer settings → Fine-grained tokens. Pick only the Pinhole repository and give it Contents: read-only. The token stays in your
+        system keychain, never in the Data folder.
+      </p>
+      <Button size="sm" type="submit" disabled={!token.trim() || saving}>
+        {saving ? <Spinner className="h-3.5 w-3.5" /> : <KeyRound className="h-3.5 w-3.5" />} Save token and check again
+      </Button>
+      {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+    </form>
   );
 }
