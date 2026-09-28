@@ -285,15 +285,28 @@ pub fn parse_current(version: &str) -> CoreResult<semver::Version> {
     semver::Version::parse(version).map_err(|_| CoreError::internal("Pinhole couldn't read its own version.").with_details(version.to_string()))
 }
 
+/// `CoreError.code` when GitHub doesn't show Pinhole's releases (private repository).
+pub const UNAVAILABLE: &str = "updates_unavailable";
+const UNAVAILABLE_MESSAGE: &str =
+    "Pinhole can't see its releases on GitHub, because the project isn't public yet. Download new versions from the release page instead.";
+
 async fn fetch_releases(core: &AppCore) -> CoreResult<Vec<GhRelease>> {
     let headers = [("accept", "application/vnd.github+json"), ("x-github-api-version", "2022-11-28")];
-    core.http.get_json::<Vec<GhRelease>>(RELEASES_API, &headers).await.map_err(|e| match e {
+    core.http.get_json::<Vec<GhRelease>>(RELEASES_API, &headers).await.map_err(releases_error)
+}
+
+/// Plain-language error for a failed releases request.
+fn releases_error(e: pinhole_net::NetError) -> CoreError {
+    match e {
         pinhole_net::NetError::Offline => CoreError::new("offline", "Offline mode is on. Turn it off in Settings to check for updates."),
+        // GitHub answers 404 (not 401) for a private repository or one that moved:
+        // the releases can't be seen without signing in, so point to the release page.
+        pinhole_net::NetError::Status(404) => CoreError::new(UNAVAILABLE, UNAVAILABLE_MESSAGE).with_details(e.to_string()),
         pinhole_net::NetError::Unauthorized(_) | pinhole_net::NetError::Status(429) => {
             CoreError::new("network", "GitHub is limiting update checks right now. Try again in an hour.").with_details(e.to_string())
         }
         other => CoreError::from(other),
-    })
+    }
 }
 
 /// "Check for updates": one request to the GitHub releases API.
@@ -570,6 +583,16 @@ mod tests {
         assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.4.0-rc.1", InstallMode::Manual, None));
         assert_eq!(pick_update(&list, &current, &Target::Manual).unwrap().version, "0.4.0-rc.1");
         assert!(pick_update(&list, &semver::Version::parse("0.4.0").unwrap(), &win).is_none());
+    }
+
+    #[test]
+    fn private_repository_gets_a_plain_message() {
+        let e = releases_error(pinhole_net::NetError::Status(404));
+        assert_eq!(e.code, UNAVAILABLE);
+        assert!(e.message.contains("release page"), "{}", e.message);
+        assert_eq!(e.details.as_deref(), Some("HTTP 404"));
+        assert_eq!(releases_error(pinhole_net::NetError::Offline).code, "offline");
+        assert_eq!(releases_error(pinhole_net::NetError::Status(500)).code, "network");
     }
 
     #[test]

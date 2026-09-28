@@ -60,6 +60,12 @@ export const catalogFilters = () => invoke<T.CatalogFilterOptions>("catalog_filt
 export const browseCatalog = (query: T.BrowseQuery) => invoke<T.BrowsePage>("browse_catalog", { query });
 /** Preview image bytes fetched by Rust (the WebView makes no network calls). */
 export const fetchPreview = (url: string) => invoke<ArrayBuffer>("fetch_preview", { url });
+/** Model details page: preview images + their generation data (kept in memory only). */
+export const modelGallery = (versionId: number, content: T.ContentMode, modelNsfw: boolean) =>
+  invoke<T.ModelGallery>("model_gallery", { versionId, content, modelNsfw });
+/** Opens the model's CivitAI page (civitai.red for NSFW models) in the system browser. */
+export const openCivitaiPage = (modelId: number, versionId: number | null, nsfw: boolean) =>
+  invoke<void>("open_civitai_page", { modelId, versionId, nsfw });
 export const planCivitaiInstall = (versionId: number) => invoke<T.InstallPlan>("plan_civitai_install", { versionId });
 export const installCivitai = (versionId: number, familyId: string | null) =>
   invoke<T.InstallStarted>("install_civitai", { versionId, familyId });

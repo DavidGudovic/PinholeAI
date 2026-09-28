@@ -9,6 +9,10 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# Run in the background so the session can start answering at once (David, 2026-09-28).
+# Builds and tests may have to wait until this finishes; 15 min covers a cold Rust compile.
+echo '{"async": true, "asyncTimeout": 900000}'
+
 cd "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 log() { echo "[session-start] $*" >&2; }
 

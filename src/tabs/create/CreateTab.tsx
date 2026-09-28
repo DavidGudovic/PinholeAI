@@ -1,5 +1,5 @@
 // Create (txt2img), SPEC §5.1.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Layers, Sparkles, TriangleAlert, X } from "lucide-react";
 import { JobProgress } from "../../components/JobProgress";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
@@ -18,6 +18,7 @@ import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { Dials } from "./Dials";
 import { FineTuneDrawer } from "./FineTune";
 import { PasteDialog, PasteSummary } from "./PasteDialog";
+import { onGenerationHandoff } from "./handoff";
 import { applyPastedText, type PasteOutcome } from "./pasteApply";
 import { PresetPicker, type PresetNotice } from "./PresetPicker";
 import { PromptBox } from "./PromptBox";
@@ -105,6 +106,11 @@ function CreateWorkspace() {
     setPresetNotice(null);
     setError(null);
   };
+
+  // "Use these settings" from a model's details page.
+  const applyPasteRef = useRef(applyPaste);
+  applyPasteRef.current = applyPaste;
+  useEffect(() => onGenerationHandoff((t) => void applyPasteRef.current(t).catch((e) => setError(api.asCoreError(e)))), []);
 
   const myJob = job && (job.kind === "create" || job.kind === "upscale") ? job : null;
 

@@ -40,7 +40,8 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
   (templates in `.github/ISSUE_TEMPLATE/`).
 - The session start hook (`.claude/hooks/session-start.sh`) installs the Tauri Linux deps, runs
   `npm install`, builds `dist/`, pre-compiles the Rust tests and clones the pinned
-  stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference).
+  stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference). It runs in the background, so
+  a build or test right after the session starts can fail on missing deps: wait and try again.
 - **Local checks before every push:** `cargo test --workspace --locked`,
   `cargo clippy --workspace --all-targets`, `npm test`, `npm run build` (includes `tsc`),
   `node scripts/privacy-lint.mjs`. A bug fix comes with a regression test.
