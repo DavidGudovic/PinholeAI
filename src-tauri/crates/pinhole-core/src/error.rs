@@ -58,7 +58,8 @@ impl From<pinhole_net::NetError> for CoreError {
         match e {
             N::Offline => Self::new("offline", "Offline mode is on. Turn it off in Settings to browse or download."),
             N::Unauthorized(_) => Self::new("unauthorized", "CivitAI needs an API key for this download. Add one in Settings."),
-            other => Self::new("network", format!("Network problem — check your connection and try again. ({other})")),
+            // The transport text ("error sending request: tunnel error…") is for the Details toggle.
+            other => Self::new("network", "Network problem — check your connection and try again.").with_details(other.to_string()),
         }
     }
 }
@@ -66,5 +67,18 @@ impl From<pinhole_net::NetError> for CoreError {
 impl From<std::io::Error> for CoreError {
     fn from(e: std::io::Error) -> Self {
         Self::new("io", format!("Disk error: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_error_keeps_transport_text_in_details() {
+        let e = CoreError::from(pinhole_net::NetError::Transport("error sending request: tunnel error: unsuccessful".into()));
+        assert_eq!(e.code, "network");
+        assert!(!e.message.contains("tunnel"), "{}", e.message);
+        assert!(e.details.as_deref().unwrap_or_default().contains("tunnel error"));
     }
 }
