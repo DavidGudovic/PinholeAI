@@ -6,12 +6,16 @@ drives stable-diffusion.cpp (`sd-server`) and llama.cpp (`llama-server`) as side
 **Read `docs/SPEC.md` before any work.** It is the source of truth. If you need to deviate,
 update the spec in the same PR and explain why.
 
+Pinhole is a **personal test build** for now. No build is shared with anyone until everything in
+`docs/RELEASE-SPEC.md` is done.
+
 ## Repo layout (target)
 ```
 src-tauri/        Rust core (registry, detector, wiring, engine, catalog, downloads, presets, hardware)
 src/              React + TypeScript UI
 config/           shipped YAML: models.yaml, catalog-filters.yaml, engine.yaml, presets/
 docs/SPEC.md      product + technical spec
+docs/RELEASE-SPEC.md  what must be done before any build is shared (marking, safety checks, licences)
 tests/            Rust integration tests + privacy tests
 ```
 
@@ -21,6 +25,9 @@ tests/            Rust integration tests + privacy tests
   screenshots for UI changes.
 - Keep the default UI minimal. New options go in the **Fine-tune** drawer unless the spec says otherwise.
 - Prefer boring, well-maintained crates. No Python anywhere in the product.
+- Keep the four choke points from RELEASE-SPEC §1 as one function each (request builder, Edit
+  input intake, result intake incl. previews, export for Save/Copy) so release safeguards can be
+  added without a refactor.
 
 ## Non-negotiable privacy rules
 1. Never write prompt or negative-prompt text to disk, logs, presets, filenames, PNG metadata,
@@ -79,6 +86,13 @@ tests/            Rust integration tests + privacy tests
 - Every automatic choice can be seen and overridden in Fine-tune.
 - Errors must say what to do next ("Not enough VRAM — try the Fast setting or the smaller
   version of this model"), not dump engine output. Engine output is behind a "Details" toggle.
+
+## Wording rules (docs, README, UI, commits, release notes)
+- Describe privacy as "your prompts and images stay on your computer". Never "leaves no trace",
+  "untraceable", "no one will know", "uncensored", "unfiltered", "undress", "nudify", "face swap".
+- Edit examples change scenes, objects, lighting or style — never a real person's body or clothes
+  while keeping their face.
+- Screenshots and examples: safe for work, fictional subjects, no real people.
 
 ## Git
 - Conventional commits (`feat:`, `fix:`, `docs:`…).
