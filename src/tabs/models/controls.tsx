@@ -170,7 +170,7 @@ export function SafeModeOffDialog({ open, onCancel, onConfirm }: { open: boolean
     >
       <div className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
         <p>With Safe mode off, Browse also shows models and preview images on CivitAI that are made for adults. Confirm you're 18 or older to turn it off.</p>
-        <p className="text-neutral-500">Pinhole asks once and forgets your answer when you close the app.</p>
+        <p className="text-neutral-500">Pinhole asks once each time the app is opened. Your answer is not saved.</p>
       </div>
     </Dialog>
   );
