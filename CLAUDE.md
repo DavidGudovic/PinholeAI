@@ -1,0 +1,86 @@
+# CLAUDE.md — working rules for Pinhole
+
+Pinhole is a simple, private, offline AI image generator (Tauri 2 + Rust + React/TS) that
+drives stable-diffusion.cpp (`sd-server`) and llama.cpp (`llama-server`) as sidecar processes.
+
+**Read `docs/SPEC.md` before any work.** It is the source of truth. If you need to deviate,
+update the spec in the same PR and explain why.
+
+## Repo layout (target)
+```
+src-tauri/        Rust core (registry, detector, wiring, engine, catalog, downloads, presets, hardware)
+src/              React + TypeScript UI
+config/           shipped YAML: models.yaml, catalog-filters.yaml, engine.yaml, presets/
+docs/SPEC.md      product + technical spec
+tests/            Rust integration tests + privacy tests
+```
+
+## How to work
+- Build milestone by milestone (SPEC §11). One PR per milestone, or smaller.
+- Each PR: working build on Windows + Ubuntu in CI, tests pass, short PR description with
+  screenshots for UI changes.
+- Keep the default UI minimal. New options go in the **Fine-tune** drawer unless the spec says otherwise.
+- Prefer boring, well-maintained crates. No Python anywhere in the product.
+
+## Non-negotiable privacy rules
+1. Never write prompt or negative-prompt text to disk, logs, presets, filenames, PNG metadata,
+   crash output or `installed.json`. Don't `println!`/`log::*`/`console.log` request bodies.
+   **Only exception:** a Style the user explicitly saves goes to `Data/styles/`. Styles and the
+   main prompt are separate fields and are only combined in memory at request time.
+2. Always send `"embed_image_metadata": false` to `sd-server` (its default is `true`).
+3. Generated images stay in memory (Rust `Vec<u8>` / JS Blob) until the user clicks Save.
+4. No telemetry, analytics, crash reporters, update checks, remote fonts or CDN assets.
+5. All network calls go through ONE Rust HTTP client wrapper that enforces Offline mode and
+   an allow-list of hosts: `civitai.com`, `huggingface.co`, `github.com` (+ their download CDNs).
+   The WebView makes no network calls of its own; CivitAI preview images are fetched through
+   the Rust client and handed to the UI as blobs.
+6. Engines bind to `127.0.0.1` only. Engine stdout/stderr go to an in-memory ring buffer only.
+7. CivitAI API key lives in the OS keychain (`keyring` crate), never in `Data/`.
+
+**Privacy tests (must exist and pass in CI):**
+- Generate with a sentinel prompt (e.g. `PINHOLE_SENTINEL_7f3a`) plus a saved style, save the
+  image, create a preset, then recursively scan `Data/` (and the OS temp dir for Pinhole files)
+  → the sentinel prompt must not appear anywhere (including PNG chunks); the style text may
+  appear only in `Data/styles/`.
+- Static check: a script that fails CI if request/prompt structs derive `Serialize` into any
+  file-writing path, or if any logging macro receives a prompt field.
+- Offline mode test: with Offline mode on, every network call returns an error before a
+  socket opens.
+
+## Registry rules (`config/models.yaml`)
+- Model knowledge belongs in YAML, not Rust. Code reads families, components, flags, dials.
+- Before release every `sha256: TODO` and every URL must be verified by actually downloading.
+- Verify CivitAI `baseModel` strings against the live API
+  (`https://civitai.com/api/v1/enums` or real `/api/v1/models` responses); fix the YAML.
+- Header detection must mirror `get_sd_version()` in stable-diffusion.cpp
+  `src/model_loader.cpp` for the pinned engine version. Note the loader prefixes standalone
+  diffusion files with `model.diffusion_model.`; match on suffixes.
+- Families that share tensor names (Flux dev/schnell/Kontext; Qwen-Image vs Qwen-Image-Edit;
+  SDXL vs Pony/Illustrious) are disambiguated by known hash → CivitAI metadata → asking the user.
+
+## Engine rules
+- Pinned versions in `config/engine.yaml`. Verify SHA-256 before first launch.
+- Use the native async API: `POST /sdcpp/v1/img_gen`, poll `GET /sdcpp/v1/jobs/{id}`,
+  cancel with `POST /sdcpp/v1/jobs/{id}/cancel`. Read `/sdcpp/v1/capabilities` after launch.
+- LoRAs go in the structured `lora` array; `<lora:...>` prompt tags are not supported by the server.
+- Switching model = restart `sd-server` with new component paths. Show progress; never block the UI thread.
+- Keep an engine smoke test: download the smallest registered model (CI cache), generate one
+  256×256 image on CPU, assert a PNG comes back.
+
+## Security rules for downloads
+- Only `SafeTensor` and `GGUF` from CivitAI; reject `PickleTensor`/`.ckpt`/`.pt`/`.pth`.
+- Require CivitAI `pickleScanResult == Success` and `virusScanResult == Success`.
+- Resumable downloads, SHA-256 verify, check free disk space first, write to `*.part` then rename.
+- Parse safetensors headers defensively (cap header size, e.g. 100 MB; reject malformed JSON).
+
+## UX rules
+- Plain words in the UI: "Stick to prompt", "Stay close to original", "How much to change",
+  "Fits / Tight / Too big". Technical names appear only in the Fine-tune drawer.
+- Every automatic choice can be seen and overridden in Fine-tune.
+- Errors must say what to do next ("Not enough VRAM — try the Fast setting or the smaller
+  version of this model"), not dump engine output. Engine output is behind a "Details" toggle.
+
+## Git
+- Conventional commits (`feat:`, `fix:`, `docs:`…).
+- Never commit or bundle model weights, engine binaries, or anything under `Data/`. Models are
+  always one-click downloads.

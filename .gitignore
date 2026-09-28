@@ -1,0 +1,15 @@
+# Pinhole
+Data/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+*.part
+
+# Build
+node_modules/
+dist/
+target/
+src-tauri/target/
+.env
