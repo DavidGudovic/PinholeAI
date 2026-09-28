@@ -16,7 +16,7 @@ import type {
   ResultImage,
   Settings,
 } from "../types";
-import { CHANGE_STRENGTH, compactFineTune, loraCompatible, type CreateParams, type EditMode, type EditParams, type ImgRef, type PresetBase } from "./model";
+import { CHANGE_STRENGTH, compactFineTune, loraCompatible, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
 
 /** Fine-tune values that may be stored in a preset (never the negative prompt). */
 export const PRESET_FINE_TUNE_KEYS = [
@@ -215,19 +215,51 @@ export interface PresetApplication {
   missingStyle: boolean;
 }
 
-function snapshotBase(c: CreateParams): PresetBase {
-  const { modelId, styleId, shape, quality, stick, count, loras, fineTune } = c;
-  return { modelId, styleId, shape, quality, stick, count, loras, fineTune };
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const withoutNegative = (ft: FineTune): FineTune => {
+  const { negativePrompt: _n, ...rest } = ft;
+  return rest;
+};
+
+/** Record what applying `patch` over `c` changes. Hopping between presets keeps the first "before". */
+function presetBaseFor(c: CreateParams, patch: Partial<CreateParams>): PresetBase {
+  const prev = c.presetBase;
+  const before: PresetSettings = {};
+  const applied: PresetSettings = { ...prev?.applied };
+  for (const k of PRESET_KEYS) {
+    if (!(k in patch)) continue;
+    (before as Record<string, unknown>)[k] = k in (prev?.before ?? {}) ? prev!.before[k] : c[k];
+    (applied as Record<string, unknown>)[k] = patch[k];
+  }
+  return { before: { ...prev?.before, ...before }, applied };
 }
 
-/** Choosing "None": drop the preset and restore what it overrode. Keeps the user's prompt and negative prompt. */
-export function clearPreset(c: CreateParams): Partial<CreateParams> {
+/**
+ * Choosing "None": drop the preset and put back what it overrode, but only the settings still at the
+ * preset's value (later edits stay) and only things that still exist. Keeps the prompt and negative prompt.
+ */
+export function clearPreset(
+  c: CreateParams,
+  opts: { models: InstalledModel[]; loras: InstalledLora[]; styleIds: string[] },
+): Partial<CreateParams> {
+  const out: Partial<CreateParams> = { presetId: null, presetBase: null };
   const base = c.presetBase;
-  if (!base) return { presetId: null, presetBase: null };
-  const fineTune: FineTune = { ...base.fineTune };
-  delete fineTune.negativePrompt;
-  if (c.fineTune.negativePrompt) fineTune.negativePrompt = c.fineTune.negativePrompt;
-  return { ...base, fineTune, presetId: null, presetBase: null };
+  if (!base) return out;
+  for (const k of PRESET_KEYS) {
+    if (!(k in base.before) || !(k in base.applied)) continue;
+    const cur = k === "fineTune" ? withoutNegative(c.fineTune) : c[k];
+    const app = k === "fineTune" ? withoutNegative(base.applied.fineTune ?? {}) : base.applied[k];
+    if (!sameValue(cur, app)) continue;
+    (out as Record<string, unknown>)[k] = base.before[k];
+  }
+  if (out.fineTune) {
+    out.fineTune = withoutNegative(out.fineTune);
+    if (c.fineTune.negativePrompt) out.fineTune.negativePrompt = c.fineTune.negativePrompt;
+  }
+  if (out.modelId && !opts.models.some((m) => m.id === out.modelId)) delete out.modelId;
+  if (out.styleId && !opts.styleIds.includes(out.styleId)) out.styleId = null;
+  if (out.loras) out.loras = out.loras.filter((u) => opts.loras.some((l) => l.id === u.loraId));
+  return out;
 }
 
 /** Turn a preset into Create changes. Keeps the user's prompt and negative prompt. */
@@ -269,7 +301,6 @@ export function applyPreset(
   const patch: Partial<CreateParams> = {
     presetId: p.id,
     // Keep the very first snapshot when hopping between presets, so None restores the original settings.
-    presetBase: c.presetBase ?? snapshotBase(c),
     styleId: missingStyle ? c.styleId : p.styleId,
     fineTune,
     loras,
@@ -279,6 +310,7 @@ export function applyPreset(
   if (p.quality) patch.quality = p.quality;
   patch.stick = p.stick ?? null;
   if (p.count === 1 || p.count === 2 || p.count === 4) patch.count = p.count;
+  patch.presetBase = presetBaseFor(c, patch);
   return { patch, missingModel, missingLoras, missingStyle };
 }
 

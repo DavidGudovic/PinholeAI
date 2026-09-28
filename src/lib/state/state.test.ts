@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { InstalledLora, InstalledModel, ResultImage } from "../types";
+import type { InstalledLora, InstalledModel, Preset, ResultImage } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
@@ -325,33 +325,59 @@ describe("presets", () => {
 });
 
 describe("choosing None", () => {
-  const base = { id: "b", name: "B", family: null, modelId: null, civitaiVersionId: null, styleId: null, shape: "portrait" as const, quality: "best" as const, stick: 0.8, count: 4 as const, fineTune: { steps: 50 }, loras: [], builtin: true };
+  const base: Preset = { id: "b", name: "B", family: null, modelId: null, civitaiVersionId: null, styleId: null, shape: "portrait", quality: "best" as const, stick: 0.8, count: 4 as const, fineTune: { steps: 50 }, loras: [], builtin: true };
   const opts = (s: ReturnType<typeof withModels>) => ({ models: s.models!, loras: [], styleIds: [] });
+  const apply = (s: ReturnType<typeof withModels>, p = base) => run(s, { type: "patchCreate", patch: applyPreset(p, s.create, opts(s)).patch });
+  const none = (s: ReturnType<typeof withModels>) => run(s, { type: "patchCreate", patch: clearPreset(s.create, opts(s)) });
 
   it("clears the preset and restores what it overrode, keeping the user's text", () => {
     let s = run(withModels(), { type: "patchCreate", patch: { prompt: "keep me", shape: "wide", quality: "fast" } }, { type: "setFineTune", patch: { steps: 12, negativePrompt: "neg" } });
     const before = s.create;
-    s = run(s, { type: "patchCreate", patch: applyPreset(base, s.create, opts(s)).patch });
+    s = apply(s);
     expect(s.create.presetId).toBe("b");
     expect(s.create.shape).toBe("portrait");
-    s = run(s, { type: "patchCreate", patch: { fineTune: { ...s.create.fineTune, negativePrompt: "neg2" } } });
-    s = run(s, { type: "patchCreate", patch: clearPreset(s.create) });
+    s = run(s, { type: "setFineTune", patch: { negativePrompt: "neg2" } });
+    s = none(s);
     expect(s.create).toEqual({ ...before, fineTune: { steps: 12, negativePrompt: "neg2" } });
   });
 
-  it("restores the original settings after hopping between presets", () => {
-    let s = run(withModels(), { type: "patchCreate", patch: { shape: "wide" } });
-    s = run(s, { type: "patchCreate", patch: applyPreset(base, s.create, opts(s)).patch });
-    s = run(s, { type: "patchCreate", patch: applyPreset({ ...base, id: "c", shape: "square" }, s.create, opts(s)).patch });
-    s = run(s, { type: "patchCreate", patch: clearPreset(s.create) });
-    expect(s.create.shape).toBe("wide");
+  it("keeps edits made after the preset was applied", () => {
+    let s = apply(run(withModels(), { type: "patchCreate", patch: { shape: "wide" } }));
+    s = run(s, { type: "patchCreate", patch: { shape: "square" } }, { type: "setFineTune", patch: { seed: 7 } });
+    s = none(s);
+    expect(s.create.shape).toBe("square");
+    expect(s.create.quality).toBe("balanced");
     expect(s.create.presetId).toBeNull();
+  });
+
+  it("restores the original settings after hopping between presets", () => {
+    let s = apply(run(withModels(), { type: "patchCreate", patch: { shape: "wide" } }));
+    s = apply(s, { ...base, id: "c", shape: "square" });
+    s = none(s);
+    expect(s.create.shape).toBe("wide");
     expect(s.create.presetBase).toBeNull();
   });
 
-  it("changing the model or pasting settings drops the preset snapshot", () => {
-    let s = run(withModels(), { type: "patchCreate", patch: applyPreset(base, withModels().create, opts(withModels())).patch });
-    s = run(s, { type: "selectModel", modelId: "m1" });
+  it("does not bring back a deleted style or model", () => {
+    let s = run(withModels(), { type: "patchCreate", patch: { styleId: "gone" } });
+    s = apply(s);
+    expect(clearPreset(s.create, opts(s)).styleId).toBeNull();
+  });
+
+  it("changing the model drops the preset snapshot", () => {
+    const s = run(apply(withModels()), { type: "selectModel", modelId: "m1" });
+    expect(s.create.presetBase).toBeNull();
+    expect(s.create.presetId).toBeNull();
+  });
+
+  it("dropping presetId through a plain patch (paste) drops the snapshot too", () => {
+    const s = run(apply(withModels()), { type: "patchCreate", patch: { presetId: null } });
+    expect(s.create.presetBase).toBeNull();
+  });
+
+  it("deleting the active preset drops the snapshot", () => {
+    const s = run(apply(withModels()), { type: "setPresets", presets: [] });
+    expect(s.create.presetId).toBeNull();
     expect(s.create.presetBase).toBeNull();
   });
 });

@@ -33,7 +33,8 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
   };
 
   const pickNone = () => {
-    store.dispatch({ type: "patchCreate", patch: clearPreset(store.getState().create) });
+    const s = store.getState();
+    store.dispatch({ type: "patchCreate", patch: clearPreset(s.create, { models: s.models ?? [], loras: s.loras, styleIds: s.styles.map((x) => x.id) }) });
     onApplied(null);
   };
 
@@ -161,7 +162,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
       const preset = presetFromCreate(name, st.create, { model, loras: st.loras });
       const saved = await api.savePreset(preset);
       await actions.refreshPresets();
-      store.dispatch({ type: "patchCreate", patch: { presetId: saved.id } });
+      store.dispatch({ type: "patchCreate", patch: { presetId: saved.id, presetBase: null } });
       actions.toast(`Saved preset “${saved.name}”`);
       onClose();
     } catch (e) {

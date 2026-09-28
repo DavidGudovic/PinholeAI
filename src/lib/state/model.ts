@@ -34,12 +34,20 @@ export interface ImgRef {
   height: number;
 }
 
-export type PresetBase = Pick<CreateParams, "modelId" | "styleId" | "shape" | "quality" | "stick" | "count" | "loras" | "fineTune">;
+/** Create fields a preset can override (and that choosing None can restore). */
+export const PRESET_KEYS = ["modelId", "styleId", "shape", "quality", "stick", "count", "loras", "fineTune"] as const;
+export type PresetKey = (typeof PRESET_KEYS)[number];
+export type PresetSettings = Partial<Pick<CreateParams, PresetKey>>;
+/** What the active preset changed: values before it (`before`) and the values it set (`applied`). */
+export interface PresetBase {
+  before: PresetSettings;
+  applied: PresetSettings;
+}
 
 export interface CreateParams {
   modelId: string | null;
   presetId: string | null;
-  /** Settings the active preset overrode, so choosing None can put them back. Null when no preset is active. */
+  /** What the active preset overrode, so choosing None can put it back. Null when no preset is active. */
   presetBase: PresetBase | null;
   /** prompt-bearing */
   prompt: string;
