@@ -263,7 +263,7 @@ export function makeActions(store: Store) {
     if (get().job) await cancel();
     await api.clearSession().catch(() => undefined);
     dispatch({ type: "clearSession" });
-    toast("Session cleared — prompts and images are gone from memory.");
+    toast("Reset: prompt fields and unsaved images were cleared.");
   }
 
   function onEngine(engine: EngineStatus) {

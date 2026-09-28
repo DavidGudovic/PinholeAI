@@ -190,6 +190,10 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 - Never use: "leaves no trace", "untraceable", "no one will know", "uncensored", "unfiltered",
   "NSFW", "undress", "nudify", "face swap". Only exception: "NSFW" as the label of the Browse
   tag filter (CivitAI's own term, so people can find or avoid those models), never in marketing.
+- Don't frame privacy as hiding what you made from other people ("forgets everything", "wipes
+  your tracks", "nobody will see", "no history"). State facts instead: what stays on the
+  computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
+  "Clear session" or "Panic").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
   person's body or clothes while keeping their face.
 - Screenshots: safe for work, fictional subjects, no celebrities or real people.

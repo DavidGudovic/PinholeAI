@@ -60,7 +60,7 @@ First run (welcome → real hardware detection → real engine download with ren
 → friendly error; Offline → offline state), Installed (empty → add a file through the
 native chooser → family question → delete), downloads popover, Create (prompt, Fine-tune,
 save a Style + a Preset, Final-prompt preview, Paste from CivitAI with a real A1111 string,
-engine error with Details, Clear session), optional real generation + Save (PNG has no
+engine error with Details, Reset), optional real generation + Save (PNG has no
 text chunks), Edit/Describe image import, a model download cancelled mid-connect, and a
 **privacy scan**: the sentinel prompt must not appear anywhere under `Data/`, in Pinhole
 temp files or in the app's own output; the Style text only in `Data/styles/`.

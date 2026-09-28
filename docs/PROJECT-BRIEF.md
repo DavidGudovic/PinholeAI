@@ -53,7 +53,7 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   has no preview API); cancel during generation restarts the engine.
 - Privacy by construction: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
-- Hardening: engine stops after Clear session / 5 min idle (upstream sd-server has no auth and keeps
+- Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,
   imports re-encoded to PNG, downloads size-bounded, release builds refuse unpinned engines.
 - Linux engine needs Ubuntu 24.04+ (upstream builds use glibc 2.38); Linux NVIDIA uses Vulkan.

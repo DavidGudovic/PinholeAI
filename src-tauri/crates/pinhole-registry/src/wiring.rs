@@ -173,8 +173,36 @@ pub fn is_known_flag(flag: &str) -> bool {
     BOOL_FLAGS.contains(&flag) || VALUE_FLAGS.contains(&flag)
 }
 
+/// Options whose value is a weight file sd-server loads (main model,
+/// components, add-ons), e.g. to estimate how much memory the weights need.
+pub const WEIGHT_FILE_FLAGS: &[&str] = &[
+    "--model",
+    "--diffusion-model",
+    "--high-noise-diffusion-model",
+    "--uncond-diffusion-model",
+    "--clip_l",
+    "--clip_g",
+    "--clip_vision",
+    "--t5xxl",
+    "--llm",
+    "--llm_vision",
+    "--qwen2vl",
+    "--qwen2vl_vision",
+    "--vae",
+    "--audio-vae",
+    "--audio-encoder",
+    "--taesd",
+    "--tae",
+    "--control-net",
+    "--ip-adapter",
+    "--motion-module",
+    "--photo-maker",
+    "--pulid-weights",
+    "--upscale-model",
+];
+
 /// Component kind → sd-server flag, in the order they are emitted.
-const COMPONENT_FLAGS: &[(&str, &str)] = &[
+pub(crate) const COMPONENT_FLAGS: &[(&str, &str)] = &[
     ("vae", "--vae"),
     ("clip_l", "--clip_l"),
     ("clip_g", "--clip_g"),
