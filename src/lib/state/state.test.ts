@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, ResultImage } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
-import { applyPreset, buildCreateRequest, buildEditRequest, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
+import { applyPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
 
@@ -139,6 +139,21 @@ describe("reducer", () => {
     expect(Object.keys(s.images).sort()).toEqual(["b1", "o"]);
   });
 
+  it("edit chain: delete an edit", () => {
+    const base = run(withModels(), { type: "editLoad", ref: ref("o") }, { type: "editPush", ref: ref("e1") }, { type: "editPush", ref: ref("e2") }, { type: "editPush", ref: ref("e3") });
+    // Deleting the shown edit steps back to the one before it and frees its image.
+    let s = run(base, { type: "editDelete", index: 3 });
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["o", "e1", "e2"]);
+    expect(s.edit.index).toBe(2);
+    expect(Object.keys(s.images).sort()).toEqual(["e1", "e2", "o"]);
+    // Deleting a middle edit renumbers and keeps the same image selected.
+    s = run(base, { type: "editDelete", index: 1 });
+    expect(s.edit.chain.map((n) => [n.imageId, n.label])).toEqual([["o", "Original"], ["e2", "Edit 1"], ["e3", "Edit 2"]]);
+    expect(s.edit.chain[s.edit.index].imageId).toBe("e3");
+    // The original cannot be deleted.
+    expect(run(base, { type: "editDelete", index: 0 })).toBe(base);
+  });
+
   it("Clear session wipes prompts, results, edit chain and description", () => {
     let s = withModels();
     s = run(
@@ -232,6 +247,14 @@ describe("requests", () => {
     expect(fitEditSize(300, 200)).toEqual([304, 256]);
     for (const n of fitEditSize(3000, 1999)) expect(n % 16).toBe(0);
     for (const n of fitEditSize(3000, 1999, 1024 * 1024, 64)) expect(n % 64).toBe(0);
+    const sizes = (w: number, h: number) => (["smaller", "normal", "larger"] as const).map((c) => editOutputSize(w, h, c, 16));
+    // Every choice must give a different size, including for sources at or below 1 MP.
+    for (const [w, h] of [[1024, 1024], [512, 512], [832, 1216], [4000, 3000]] as const) {
+      const [s, n, l] = sizes(w, h);
+      expect(s[0] * s[1]).toBeLessThan(n[0] * n[1]);
+      expect(n[0] * n[1]).toBeLessThan(l[0] * l[1]);
+    }
+    expect(sizes(1024, 1024)).toEqual([[768, 768], [1024, 1024], [1280, 1280]]);
   });
 });
 
