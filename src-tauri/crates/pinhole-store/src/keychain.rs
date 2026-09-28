@@ -30,7 +30,7 @@ pub fn delete_civitai_key() -> Result<(), StoreError> {
 }
 
 pub fn get_github_token() -> Result<Option<String>, StoreError> {
-    get_from(&github_entry()?)
+    get_with(&github_entry()?, map_github_err)
 }
 
 pub fn set_github_token(token: &str) -> Result<(), StoreError> {
@@ -39,11 +39,11 @@ pub fn set_github_token(token: &str) -> Result<(), StoreError> {
 }
 
 pub fn delete_github_token() -> Result<(), StoreError> {
-    delete_on(&github_entry()?)
+    delete_with(&github_entry()?, map_github_err)
 }
 
 fn github_entry() -> Result<Entry, StoreError> {
-    Entry::new(SERVICE, GITHUB_ACCOUNT).map_err(map_err)
+    Entry::new(SERVICE, GITHUB_ACCOUNT).map_err(map_github_err)
 }
 
 fn set_github_on(entry: &Entry, token: &str) -> Result<(), StoreError> {
@@ -56,7 +56,7 @@ fn set_github_on(entry: &Entry, token: &str) -> Result<(), StoreError> {
             "That doesn't look like a GitHub token. Copy it again from GitHub → Settings → Developer settings → Personal access tokens.".into(),
         ));
     }
-    entry.set_password(token).map_err(map_err)
+    entry.set_password(token).map_err(map_github_err)
 }
 
 fn entry() -> Result<Entry, StoreError> {
@@ -64,13 +64,17 @@ fn entry() -> Result<Entry, StoreError> {
 }
 
 fn get_from(entry: &Entry) -> Result<Option<String>, StoreError> {
+    get_with(entry, map_err)
+}
+
+fn get_with(entry: &Entry, map: fn(KeyringError) -> StoreError) -> Result<Option<String>, StoreError> {
     match entry.get_password() {
         Ok(key) => {
             let key = key.trim();
             Ok((!key.is_empty()).then(|| key.to_string()))
         }
         Err(KeyringError::NoEntry) => Ok(None),
-        Err(e) => Err(map_err(e)),
+        Err(e) => Err(map(e)),
     }
 }
 
@@ -89,9 +93,13 @@ fn set_on(entry: &Entry, key: &str) -> Result<(), StoreError> {
 
 /// Removing a key that isn't there is fine.
 fn delete_on(entry: &Entry) -> Result<(), StoreError> {
+    delete_with(entry, map_err)
+}
+
+fn delete_with(entry: &Entry, map: fn(KeyringError) -> StoreError) -> Result<(), StoreError> {
     match entry.delete_credential() {
         Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-        Err(e) => Err(map_err(e)),
+        Err(e) => Err(map(e)),
     }
 }
 
@@ -113,6 +121,22 @@ fn map_err(e: KeyringError) -> StoreError {
             "Your system keychain refused the API key. Check the key and try again."
         }
         _ => "Your system keychain couldn't be used, so Pinhole can't store the API key.",
+    };
+    StoreError::Keychain(msg.into())
+}
+
+/// [`map_err`] for the GitHub token (Settings → Updates).
+fn map_github_err(e: KeyringError) -> StoreError {
+    let msg = match e {
+        KeyringError::PlatformFailure(_) | KeyringError::NoStorageAccess(_) => {
+            "Your system keychain isn't available, so Pinhole can't store the GitHub token. \
+             Unlock your keychain (on Linux: install or start GNOME Keyring or KWallet) and try again."
+        }
+        KeyringError::BadEncoding(_) | KeyringError::Ambiguous(_) => {
+            "The saved GitHub token couldn't be read. Remove it in Settings → Updates and add it again."
+        }
+        KeyringError::TooLong(..) | KeyringError::Invalid(..) => "Your system keychain refused the GitHub token. Check the token and try again.",
+        _ => "Your system keychain couldn't be used, so Pinhole can't store the GitHub token.",
     };
     StoreError::Keychain(msg.into())
 }
@@ -154,7 +178,12 @@ mod tests {
         assert!(matches!(set_github_on(&entry, "ghp_abc def"), Err(StoreError::Invalid(_))));
         assert!(matches!(set_github_on(&entry, "https://x"), Err(StoreError::Invalid(_))));
         set_github_on(&entry, " github_pat_11ABC_def123\n").unwrap();
-        assert_eq!(get_from(&entry).unwrap().as_deref(), Some("github_pat_11ABC_def123"));
+        assert_eq!(get_with(&entry, map_github_err).unwrap().as_deref(), Some("github_pat_11ABC_def123"));
+        mock(&entry).set_error(KeyringError::BadEncoding(vec![0xff]));
+        match get_with(&entry, map_github_err).unwrap_err() {
+            StoreError::Keychain(m) => assert!(m.contains("GitHub token") && !m.contains("CivitAI"), "{m}"),
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]

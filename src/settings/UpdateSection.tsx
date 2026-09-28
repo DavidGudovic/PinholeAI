@@ -152,7 +152,10 @@ export function UpdateSection({ offline }: { offline: boolean }) {
             variant="ghost"
             onClick={() =>
               void clearGithubToken()
-                .then(() => setTokenSet(false))
+                .then(() => {
+                  setTokenSet(false);
+                  if (error?.code === "updates_unavailable") setError(null);
+                })
                 .catch((e) => setError(asCoreError(e)))
             }
           >
