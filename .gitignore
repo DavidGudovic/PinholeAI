@@ -21,4 +21,4 @@ smoke-out/
 release-assets/
 portable/
 pins-report.json
-src-tauri/vcrt/
+src-tauri/vcrt/*.dll
