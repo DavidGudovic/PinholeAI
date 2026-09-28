@@ -997,7 +997,7 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
         None => {
             // sd-server needs a model loaded to run at all: start it with the image's
             // model, or the most recently used one.
-            let model_id = pick_model_for_upscale(core, src).ok_or_else(|| CoreError::new("engine_missing", "Install a model first — the upscaler runs inside the image engine."))?;
+            let model_id = pick_model_for_upscale(core, src).ok_or_else(|| CoreError::not_found("Install a model first — the upscaler runs inside the image engine."))?;
             let prep_model = model_and_family(core, &model_id)?;
             let hw = crate::app::hw_context(core);
             let files = model_files(core, &prep_model.0, &prep_model.1, &hw)?;

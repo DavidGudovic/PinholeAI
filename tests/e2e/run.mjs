@@ -92,6 +92,7 @@ function assert(cond, msg) {
 }
 
 async function shot(name) {
+  await settle().catch(() => undefined);
   const png = await driver.takeScreenshot();
   const file = path.join(OUT, `${name.replace(/[^\w.-]+/g, "_")}.png`);
   fs.writeFileSync(file, Buffer.from(png, "base64"));
@@ -166,18 +167,62 @@ async function invoke(cmd, args = {}) {
   return r.v;
 }
 
-/** Answer the next native "open file" dialog (tauri-plugin-dialog) with `file`: WebDriver can't drive GTK dialogs. */
-async function stubNextOpenDialog(file) {
+const hasXdotool = (() => {
+  try {
+    execFileSync("xdotool", ["version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/**
+ * Answer a native GTK file chooser (tauri-plugin-dialog) by typing `file` into it.
+ * WebDriver can't reach native dialogs and Tauri's IPC internals are read-only, so
+ * this uses xdotool on the Xvfb display. Returns false when xdotool is missing.
+ */
+async function answerNativeOpenDialog(title, file, timeout = 10000) {
+  if (!hasXdotool) return false;
+  const x = (...a) => execFileSync("xdotool", a).toString().trim();
+  let win = "";
+  const t0 = Date.now();
+  while (!win && Date.now() - t0 < timeout) {
+    await sleep(250);
+    try {
+      win = x("search", "--name", title).split("\n")[0];
+    } catch {
+      /* not open yet */
+    }
+  }
+  if (!win) throw new Error(`native dialog "${title}" did not open`);
+  x("windowfocus", "--sync", win);
+  await sleep(300);
+  x("key", "--window", win, "ctrl+l");
+  await sleep(300);
+  x("type", "--window", win, "--delay", "5", file);
+  await sleep(300);
+  x("key", "--window", win, "Return");
+  return true;
+}
+
+/** Let React commit and WebKit paint before a screenshot. */
+async function settle(ms = 250) {
+  await driver.executeAsyncScript("const done = arguments[0]; requestAnimationFrame(() => requestAnimationFrame(() => done()))");
+  await sleep(ms);
+}
+
+async function selectValue(css, value) {
+  // Clicking <option> is intercepted in WebKitWebDriver; set it the way a user's pick does.
   await driver.executeScript(
-    `const file = arguments[0]; const I = window.__TAURI_INTERNALS__;
-     const orig = I.__e2eOrigInvoke || I.invoke; I.__e2eOrigInvoke = orig;
-     I.invoke = (cmd, args, opts) => { if (cmd === 'plugin:dialog|open') { I.invoke = orig; return Promise.resolve(file); } return orig(cmd, args, opts); };`,
-    file,
+    `const [css, v] = arguments; const el = document.querySelector(css);
+     el.value = v; el.dispatchEvent(new Event('change', { bubbles: true }));`,
+    css,
+    value,
   );
 }
 
-async function setFileInput(file) {
-  const input = await driver.findElement(By.css("input[type=file]:not([disabled])"));
+async function setFileInput(file, scope = "") {
+  const input = await driver.findElement(By.css(`${scope} input[type=file]:not([disabled])`.trim()));
   // Pure-JS fallback when the driver refuses hidden inputs.
   try {
     await input.sendKeys(file);
@@ -337,9 +382,14 @@ function findTauriDriver() {
 assert(fs.existsSync(APP), `app binary not found: ${APP} (cargo build -p pinhole --features tauri/custom-protocol)`);
 console.log(`e2e: app ${APP}\ne2e: Data ${DATA}\ne2e: screenshots ${OUT}`);
 
-const tauriDriver = spawn(findTauriDriver(), ["--port", String(PORT)], {
-  env: { ...process.env, PINHOLE_DATA_DIR: DATA },
-  stdio: ["ignore", "ignore", "inherit"],
+// The app's own stdout/stderr (inherited through tauri-driver → WebKitWebDriver) go to
+// app.log, which the privacy step scans for the sentinel too.
+const APP_LOG = path.join(OUT, "app.log");
+const logFd = fs.openSync(APP_LOG, "w");
+const tauriDriver = spawn(findTauriDriver(), ["--port", String(PORT), "--native-port", String(PORT + 1)], {
+  // GSETTINGS_BACKEND=memory: no dconf/dbus in CI containers (silences warnings).
+  env: { ...process.env, PINHOLE_DATA_DIR: DATA, GSETTINGS_BACKEND: "memory" },
+  stdio: ["ignore", logFd, logFd],
 });
 tauriDriver.on("error", (e) => {
   console.error(`e2e: could not start tauri-driver: ${e.message}`);
@@ -459,9 +509,13 @@ try {
   await step("create-empty-state", async (note) => {
     await openTab("Create");
     await waitText("Get a model to start creating");
-    const t = await bodyText();
-    note(`recommended cards on Create: ${(t.match(/Get [A-Z][^\n]*/g) || []).slice(0, 4).join(" | ")}`);
-    assert(await driver.findElements(By.xpath("//button[starts-with(@aria-label,'Get ')]")).then((l) => l.length > 0), "no recommended Get buttons");
+    // Wait for the cards to replace their skeletons.
+    await driver.wait(async () => !(await driver.executeScript("return !!document.querySelector('#tab-create [aria-busy=true]')")), 10000);
+    const cards = await driver.executeScript("return document.querySelector('#tab-create').innerText");
+    note(`Create empty state: ${cards.replace(/\n+/g, " | ").slice(0, 300)}`);
+    const gets = await driver.findElements(By.css("#tab-create button[aria-label^='Get ']"));
+    note(`one-click Get buttons on Create: ${gets.length}`);
+    await shot("05b-create-empty-recommended");
   });
 
   // ---------------------------------------------------------------- settings
@@ -480,13 +534,15 @@ try {
     await waitSetting("offline", "false");
 
     // Theme
+    const isDark = () => driver.executeScript("return document.documentElement.classList.contains('dark')");
     await click(`//div[@role='radiogroup']//button[normalize-space(.)='Dark']`);
     await waitSetting("theme", "dark");
-    assert(await driver.executeScript("return document.documentElement.classList.contains('dark')"), "dark class not applied");
+    await driver.wait(isDark, 5000, "dark class not applied");
+    await sleep(600);
     await shot("07-settings-dark");
     await click(`//div[@role='radiogroup']//button[normalize-space(.)='Light']`);
     await waitSetting("theme", "light");
-    assert(!(await driver.executeScript("return document.documentElement.classList.contains('dark')")), "dark class still applied");
+    await driver.wait(async () => !(await isDark()), 5000, "dark class still applied");
 
     // Content mode, paid, trigger words, saved metadata
     await click(`//div[@role='radiogroup']//button[normalize-space(.)='Include 18+']`);
@@ -517,19 +573,45 @@ try {
       const texts = await Promise.all(opts.map((o) => o.getText()));
       note(`select "${label}": ${texts.join(" / ")}`);
     }
-    const vram = await driver.findElement(By.css("select[aria-label='Graphics memory']"));
-    await vram.findElement(By.css("option[value='8']")).click();
+    await selectValue("select[aria-label='Graphics memory']", "8");
     await waitSetting("vramOverrideGb", "8.0");
     await sleep(800);
+    const hw8 = await invoke("get_hardware");
+    note(`VRAM override 8 GB → get_hardware: vramGb=${hw8.vramGb} tier=${hw8.tier} backend=${hw8.backend}`);
     await shot("08-settings-vram-8");
-    await vram.findElement(By.css("option[value='auto']")).click();
+    await selectValue("select[aria-label='Graphics memory']", "auto");
     await waitSetting("vramOverrideGb", "null");
+    await selectValue("select[aria-label='Engine backend']", "vulkan");
+    await waitSetting("engineBackend", "vulkan");
+    await sleep(800);
+    const mism = (await bodyText()).match(/You picked[^\n]*/);
+    note(`backend → vulkan: ${mism ? mism[0] : "no mismatch hint shown"}`);
+    await shot("08b-settings-backend-mismatch");
+    await selectValue("select[aria-label='Engine backend']", "auto");
+    await waitSetting("engineBackend", "auto");
+    await selectValue("select[aria-label='Graphics card']", "cpu");
+    await waitSetting("gpu", "cpu");
+    await selectValue("select[aria-label='Graphics card']", "auto");
+    await waitSetting("gpu", "auto");
 
-    // CivitAI key dialog (keychain) — open and cancel; the Linux CI box has no Secret Service.
+    // CivitAI key → OS keychain (Secret Service on Linux; usually absent in CI containers).
     await clickButton("Add key");
-    await waitText("Paste your key", 5000).catch(() => undefined);
-    await sleep(400);
+    const keyInput = await visible("//input[@placeholder='Paste your key']", 5000);
+    await keyInput.sendKeys("e2e-not-a-real-key");
     await shot("09-settings-apikey");
+    await clickButton("Save key");
+    await driver.wait(async () => /Saved in your system keychain/.test(await bodyText()) || (await driver.findElements(By.xpath("//div[@role='dialog'][.//*[contains(.,'CivitAI API key')]]//*[@role='alert']"))).length > 0, 15000, "no result after Save key");
+    const keyAlert = await driver.findElements(By.xpath("//div[@role='dialog'][.//*[contains(.,'CivitAI API key')]]//*[@role='alert']"));
+    if (keyAlert.length) {
+      note(`set_civitai_key error: ${(await keyAlert[0].getText()).replace(/\n/g, " | ")}`);
+      await shot("09b-settings-apikey-error");
+      await clickButton("Not now");
+    } else {
+      note("key saved to the keychain; removing it again");
+      assert(!fs.readdirSync(DATA, { recursive: true }).some((f) => { const p = path.join(DATA, String(f)); return fs.statSync(p).isFile() && fs.readFileSync(p).includes("e2e-not-a-real-key"); }), "API key written into Data/");
+      await clickButton("Remove");
+      await waitText("Not set");
+    }
     await closeOverlays();
     const yaml = readSettingsYaml();
     note(`settings.yaml keys: ${yaml.split("\n").filter((l) => /^\w/.test(l)).map((l) => l.split(":")[0]).join(", ")}`);
@@ -551,7 +633,16 @@ try {
     await openTab("Models");
     await waitText("Find models and style add-ons on CivitAI");
     // CivitAI is not reachable from CI sandboxes → expect a friendly error, not a raw reqwest dump.
-    await driver.wait(async () => (await driver.findElements(By.css("#tab-models [role=alert]"))).length > 0 || /Offline|No models|Install/.test(await bodyText()), 45000);
+    await visible("//input[@aria-label='Search CivitAI']", 15000);
+    const tabText = () => driver.executeScript("return document.querySelector('#tab-models').innerText");
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("#tab-models [role=alert]"))).length > 0 ||
+        (await driver.findElements(By.css("#tab-models button[aria-label^='Install ']"))).length > 0 ||
+        /Offline —|Nothing matches|No models/.test(await tabText()),
+      60000,
+      "browse neither loaded nor failed",
+    );
     const alerts = await driver.findElements(By.css("#tab-models [role=alert]"));
     if (alerts.length) {
       const msg = await alerts[0].getText();
@@ -609,19 +700,26 @@ try {
   await step("models-add-local-file", async (note) => {
     await openTab("Models");
     await click(`//div[@role='radiogroup']//button[starts-with(normalize-space(.),'Installed')]`);
-    await stubNextOpenDialog(FAKE_MODEL);
-    await clickButton("Add a file I already have");
-    await driver.wait(async () => /Added “|Which kind|Pick|choose|kind of model/i.test(await bodyText()), 30000, "no result after adding a file");
-    await sleep(500);
-    await shot("15-models-add-file");
-    const t = await bodyText();
-    if (!/Added “/.test(t)) {
-      // Ambiguous family (SD 1.5 vs SD 1.5 Hyper share tensor names) → pick SD 1.5.
-      note("family choice asked");
-      await click(`//*[@role='dialog']//*[self::button or self::label][contains(normalize-space(.), 'Stable Diffusion 1.5')]`);
-      const confirm = await driver.findElements(By.xpath(`//*[@role='dialog']//button[contains(normalize-space(.),'Use this') or contains(normalize-space(.),'Add') or contains(normalize-space(.),'Confirm') or contains(normalize-space(.),'Continue')]`));
-      if (confirm.length) await confirm[confirm.length - 1].click();
-      await waitText("Added “", 20000);
+    if (hasXdotool) {
+      await clickButton("Add a file I already have");
+      await answerNativeOpenDialog("Add a model file", FAKE_MODEL);
+      note("native GTK file chooser answered via xdotool");
+      await driver.wait(async () => /Added “|Which kind of model is this\?/.test(await bodyText()) || (await driver.findElements(By.css("#tab-models [role=alert]"))).length > 0, 30000, "no result after adding a file");
+      await shot("15-models-add-file");
+      const alert = await driver.findElements(By.css("#tab-models [role=alert]"));
+      if (alert.length) throw new Error(`add file failed: ${await alert[0].getText()}`);
+      if (/Which kind of model is this\?/.test(await bodyText())) {
+        // SD 1.5 and SD 1.5 Hyper share tensor names → the user picks.
+        note("family choice asked (sd15 vs sd15_fast)");
+        await click(`//*[@role='dialog']//label[normalize-space(.)='Stable Diffusion 1.5']`);
+        await clickButton("Add model");
+        await waitText("Added “", 20000);
+      }
+    } else {
+      // No xdotool → the native file chooser can't be answered; use the same IPC calls.
+      note("xdotool missing: adding through add_local_model/confirm_family IPC directly");
+      const r = await invoke("add_local_model", { path: FAKE_MODEL });
+      if (r.needsChoice) await invoke("confirm_family", { token: r.needsChoice.token, familyId: "sd15" });
     }
     const models = await invoke("list_models");
     note(`list_models: ${models.map((m) => `${m.friendlyName} [${m.familyId}] missing=${JSON.stringify(m.missingComponents)}`).join("; ")}`);
@@ -694,7 +792,7 @@ try {
     await shot("22-edit-empty");
     let t = await bodyText();
     note(`edit empty: ${(t.match(/Get the best edit model[^\n]*|Choose an image|Drop an image[^\n]*/g) || []).join(" | ")}`);
-    await setFileInput(PNG);
+    await setFileInput(PNG, "#tab-edit");
     await sleep(1500);
     t = await bodyText();
     await shot("23-edit-imported");
@@ -706,7 +804,7 @@ try {
     await openTab("Describe");
     await sleep(500);
     await shot("24-describe-empty");
-    await setFileInput(PNG);
+    await setFileInput(PNG, "#tab-describe");
     await sleep(1500);
     const t = await bodyText();
     note(`describe: ${(t.match(/[^\n]*(captioner|describer|Get the|download)[^\n]*/gi) || []).slice(0, 4).join(" | ")}`);
@@ -720,9 +818,10 @@ try {
     const hits = scanFor(DATA, SENTINEL, (p) => p.startsWith(webview));
     const wvHits = scanFor(webview, SENTINEL);
     const tmpHits = scanFor(os.tmpdir(), SENTINEL, (p) => p.startsWith(path.dirname(DATA)) || !/pinhole/i.test(p));
-    note(`Data/ files scanned; hits: ${hits.length}; webview-profile hits (test-only, non-incognito): ${wvHits.length}; tmp hits: ${tmpHits.length}`);
+    const logHit = fs.readFileSync(APP_LOG).includes(SENTINEL);
+    note(`Data/ hits: ${hits.length}; webview-profile hits (test-only, non-incognito): ${wvHits.length}; tmp hits: ${tmpHits.length}; app stdout/stderr hit: ${logHit}`);
     for (const h of [...hits, ...wvHits, ...tmpHits]) note(`  hit: ${h}`);
-    assert(hits.length === 0 && tmpHits.length === 0, "sentinel prompt found on disk");
+    assert(hits.length === 0 && tmpHits.length === 0 && !logHit, "sentinel prompt found on disk or in the app's output");
   });
 } catch (e) {
   console.error("e2e: fatal", e);

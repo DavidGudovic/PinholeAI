@@ -23,7 +23,7 @@ pub fn engine_config(core: &AppCore) -> CoreResult<Arc<EngineConfig>> {
     }
     let path = core.shipped.config_dir.join("engine.yaml");
     let cfg = EngineConfig::load(&path).map_err(|e| {
-        CoreError::new("engine_missing", "Pinhole's engine list (engine.yaml) is missing or damaged. Reinstall Pinhole.").with_details(e.to_string())
+        CoreError::new("internal", "Pinhole's engine list (engine.yaml) is missing or damaged. Reinstall Pinhole.").with_details(e.to_string())
     })?;
     let cfg = Arc::new(cfg);
     *core.gen.config.lock() = Some(cfg.clone());
@@ -44,7 +44,8 @@ pub fn selected_build(core: &AppCore, kind: EngineKind) -> CoreResult<(Arc<Engin
     let cfg = engine_config(core)?;
     let backend = desired_backend(core);
     let sel = cfg.select_build(kind.pin(&cfg), pins::current_os(), &backend).map_err(|_| {
-        CoreError::new("engine_missing", "Pinhole's engine isn't available for this system (Windows 10/11 and Ubuntu 24.04+ are supported).")
+        // Not `engine_missing`: the UI answers that code with "Set up engine", which can't help here.
+        CoreError::new("engine_failed", "Pinhole's engine isn't available for this system (Windows 10/11 and Ubuntu 24.04+ are supported).")
     })?;
     Ok((cfg, sel))
 }
@@ -99,7 +100,7 @@ pub(crate) fn ensure_runtime(core: &AppCore, engine: &InstalledEngine) -> CoreRe
         return Ok(());
     }
     Err(CoreError::new(
-        "engine_missing",
+        "engine_failed",
         "The engine needs the Microsoft Visual C++ Redistributable (2015–2022, x64). Install it from Microsoft's website, then try again.",
     )
     .with_details(format!("missing: {}", missing.join(", "))))

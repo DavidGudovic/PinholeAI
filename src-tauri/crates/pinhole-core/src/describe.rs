@@ -315,7 +315,7 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<String> {
     }
     let (_, model, mmproj) = captioner_files(core).ok_or_else(|| CoreError::not_found("The describe model isn't installed yet. Click Get on the Describe tab."))?;
     let engine = engine_setup::installed_engine(core, EngineKind::Llama)
-        .ok_or_else(|| CoreError::new("engine_missing", "The describe engine isn't installed yet. Click Get on the Describe tab."))?;
+        .ok_or_else(|| CoreError::not_found("The describe engine isn't installed yet. Click Get on the Describe tab."))?;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
         if s.proc.is_running() && s.model == model && s.mmproj == mmproj {

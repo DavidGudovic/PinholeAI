@@ -12,6 +12,8 @@ pub struct CoreError {
     /// Stable machine code: `offline`, `not_found`, `disk_space`, `vram`,
     /// `engine_missing`, `engine_failed`, `cancelled`, `unauthorized`,
     /// `hash_mismatch`, `invalid`, `network`, `io`, `internal`.
+    /// `engine_missing` means exactly "the image engine isn't installed for the
+    /// current backend": the UI offers `install_engine` as the fix.
     pub code: String,
     pub message: String,
     pub details: Option<String>,

@@ -9,7 +9,8 @@
 // ---------------------------------------------------------------- errors
 export interface CoreError {
   /** offline | not_found | disk_space | vram | engine_missing | engine_failed |
-   *  cancelled | unauthorized | hash_mismatch | invalid | network | io | internal */
+   *  cancelled | unauthorized | hash_mismatch | invalid | network | io | internal.
+   *  engine_missing = the image engine isn't installed (fix: installEngine). */
   code: string;
   /** Plain language, says what to do next. */
   message: string;
