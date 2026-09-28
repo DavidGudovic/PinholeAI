@@ -15,7 +15,7 @@ mod nvidia;
 #[cfg(windows)]
 mod dxgi;
 
-pub use nvidia::parse_nvidia_smi;
+pub use nvidia::{parse_compute_apps, parse_gpu_memory, parse_nvidia_smi, query_vram_usage, GpuMemory, GpuProcess, OtherGpuUse, VramUsage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

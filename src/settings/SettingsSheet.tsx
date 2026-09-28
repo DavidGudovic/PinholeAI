@@ -1,7 +1,7 @@
 // OWNER: frontend B. Settings sheet (SPEC §8). Every change is saved immediately.
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, CircleCheck, Download, FolderOpen, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Check, CircleCheck, Download, FolderOpen, Info, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   appInfo,
   asCoreError,
@@ -24,6 +24,8 @@ import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
+/** Settings `textEncoderOnCpu` (Rust error messages and notes use the same words). */
+const TE_ON_CPU_LABEL = "Run the text encoder on the processor";
 
 export function SettingsSheet(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
@@ -141,7 +143,8 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
     const next = { ...latest.current, ...patch };
     latest.current = next;
     setLocal(next);
-    if ("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch) hwDirty.current = true;
+    // (The text-encoder choice changes the engine's note too.)
+    if ("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch || "textEncoderOnCpu" in patch) hwDirty.current = true;
     void flush();
   };
 
@@ -292,6 +295,31 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             ]}
           />
         </Labeled>
+        {/* Only with a graphics card (known once hardware detection has finished). */}
+        {hw && !isCpuOnly(hw) && (
+          <Labeled
+            label={TE_ON_CPU_LABEL}
+            hint="The text encoder reads your prompt before the picture is made. Automatic keeps it on the graphics card and moves it to the processor for a model when the card runs out of memory (until Pinhole closes). On leaves more graphics memory for the picture; reading the prompt takes a little longer."
+          >
+            <Segmented<Settings["textEncoderOnCpu"]>
+              size="sm"
+              ariaLabel={TE_ON_CPU_LABEL}
+              options={[
+                { value: "auto", label: "Automatic" },
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+              value={settings.textEncoderOnCpu}
+              onChange={(textEncoderOnCpu) => update({ textEncoderOnCpu })}
+            />
+          </Labeled>
+        )}
+        {st?.note && (
+          <p className="flex items-start gap-1.5 text-xs text-neutral-600 dark:text-neutral-400" role="note">
+            <Info className="mt-px h-3.5 w-3.5 shrink-0" />
+            <span>{st.note}</span>
+          </p>
+        )}
         <div className="rounded-lg border border-neutral-200 p-3 dark:border-neutral-800">
           <div className="flex items-center justify-between gap-3">
             <div className="min-w-0 text-sm">

@@ -50,6 +50,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
           addTriggerWords: true,
           firstRunDone: true,
           engineBackend: "auto",
+          textEncoderOnCpu: "auto",
         },
       }),
     );
