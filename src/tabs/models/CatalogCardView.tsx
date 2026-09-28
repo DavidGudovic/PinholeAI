@@ -7,7 +7,7 @@ import { Badge, Button } from "../../components/ui";
 import { GroupProgress, VramLine } from "./controls";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { usePreviewBlob, useVisibility } from "./lib/preview";
-import { shouldBlurPreview } from "./lib/query";
+import { isVideoFile, shouldBlurPreview } from "./lib/query";
 import { isActive, ratioPercent } from "./lib/words";
 
 function Overlay({ tone = "dark", children }: { tone?: "dark" | "amber" | "green"; children: ReactNode }) {
@@ -44,7 +44,9 @@ export const CatalogCardView = memo(function CatalogCardView({
   const ref = useRef<HTMLDivElement>(null);
   const visibility = useVisibility(ref);
   const blur = shouldBlurPreview(card, content);
-  const preview = usePreviewBlob(card.previewIsVideo ? null : card.previewUrl, visibility);
+  // Video previews arrive as a still frame (Rust rewrites the URL); a bare video file is never fetched.
+  const videoFile = isVideoFile(card.previewUrl);
+  const preview = usePreviewBlob(videoFile ? null : card.previewUrl, visibility);
   const group = useTaggedGroup(`civitai:${card.versionId}`);
   const downloading = !!group && isActive(group);
   const isLora = card.type.toUpperCase() === "LORA";
@@ -87,7 +89,7 @@ export const CatalogCardView = memo(function CatalogCardView({
       <div ref={ref} className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
         {preview.src ? (
           <img src={preview.src} alt="" draggable={false} decoding="async" className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
-        ) : card.previewIsVideo ? (
+        ) : card.previewIsVideo && (videoFile || preview.failed) ? (
           <Placeholder icon={<Film className="h-6 w-6" />} text="Video preview" />
         ) : preview.failed || !card.previewUrl ? (
           <Placeholder icon={<ImageOff className="h-6 w-6" />} text="No preview" />
@@ -104,6 +106,11 @@ export const CatalogCardView = memo(function CatalogCardView({
         <div className="absolute top-2 left-2 flex flex-wrap gap-1">
           {card.styleBadge && <Overlay>{card.styleBadge}</Overlay>}
           {isLora && <Overlay>Style add-on</Overlay>}
+          {card.previewIsVideo && preview.src && (
+            <Overlay>
+              <Film className="h-3 w-3" /> Video
+            </Overlay>
+          )}
         </div>
         <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
           {showPrice && card.earlyAccess && <Overlay tone="amber">Early access · paid</Overlay>}

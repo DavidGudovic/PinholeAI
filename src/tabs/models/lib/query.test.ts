@@ -7,6 +7,7 @@ import {
   FALLBACK_OPTIONS,
   filtersKey,
   isAdult,
+  isVideoFile,
   mergePage,
   NO_TOTALS,
   normalizeSearch,
@@ -144,5 +145,14 @@ describe("totals and the line above the grid", () => {
       hints: ["Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all."],
     });
     expect(resultsSummary({ kind: "models", content: "include_18plus", compatibleOnly: false }, 1200, page(50, 3, 0))).toEqual({ count: "1,200 models", hints: [] });
+  });
+});
+
+describe("isVideoFile", () => {
+  it("fetches stills of videos, never the video itself", () => {
+    expect(isVideoFile("https://image.civitai.com/x/y/anim=false,transcode=true,width=450,optimized=true/1.jpeg")).toBe(false);
+    expect(isVideoFile("https://image.civitai.com/x/v.mp4")).toBe(true);
+    expect(isVideoFile("https://image.civitai.com/x/v.WEBM?x=1")).toBe(true);
+    expect(isVideoFile(null)).toBe(false);
   });
 });

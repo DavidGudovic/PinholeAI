@@ -8,7 +8,6 @@
 //! the SHA-256 of each file is kept.
 
 use std::collections::VecDeque;
-use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -140,29 +139,26 @@ pub struct CachedSource<'a, S> {
 }
 
 impl<S: PageSource + Sync> PageSource for CachedSource<'_, S> {
-    fn fetch(&self, params: Vec<(String, String)>) -> impl Future<Output = Result<Arc<ModelsPage>, NetError>> + Send {
-        async move {
-            let key = cache_key(&params);
-            if let Some(hit) = self.cache.get(&key) {
-                return Ok(hit);
-            }
-            let page = self.inner.fetch(params).await?;
-            let page = if self.cache.enabled() {
-                let mut owned = Arc::unwrap_or_clone(page);
-                compact(&mut owned);
-                let page = Arc::new(owned);
-                self.cache.put(key, page.clone());
-                page
-            } else {
-                page
-            };
-            Ok(page)
+    async fn fetch(&self, params: Vec<(String, String)>) -> Result<Arc<ModelsPage>, NetError> {
+        let key = cache_key(&params);
+        if let Some(hit) = self.cache.get(&key) {
+            return Ok(hit);
         }
+        let page = self.inner.fetch(params).await?;
+        if !self.cache.enabled() {
+            return Ok(page);
+        }
+        let mut owned = Arc::unwrap_or_clone(page);
+        compact(&mut owned);
+        let page = Arc::new(owned);
+        self.cache.put(key, page.clone());
+        Ok(page)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;

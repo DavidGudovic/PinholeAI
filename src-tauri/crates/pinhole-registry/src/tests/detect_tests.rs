@@ -1251,3 +1251,40 @@ fn every_known_file_matches_its_family_detect_class() {
         assert_eq!(k.sha256, k.sha256.to_ascii_lowercase(), "{}", k.sha256);
     }
 }
+
+#[test]
+fn unsupported_weight_layouts() {
+    // ComfyUI int8_tensorwise + convrot (Comfy-Org/Krea-2 *_int8_convrot, CivitAI
+    // "int8" Krea 2 uploads): I8 weight + per-row scale + U8 `comfy_quant` config.
+    let int8 = st_header(&[
+        ("txtfusion.projector.weight", "BF16", &[2560, 12]),
+        ("blocks.0.attn.wq.weight", "I8", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[64, 1]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[64]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&int8), None);
+    assert_eq!(candidates(&int8), vec!["krea2_turbo", "krea2_raw"]);
+    // fp8 scaled (`weight_scale`) and plain bf16 load.
+    let fp8 = st_header(&[
+        ("blocks.0.attn.wq.weight", "F8_E4M3", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[1]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[40]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&fp8), None);
+    // I8 weights without a comfy_quant config (e.g. torchao): refused.
+    let torchao = st_header(&[
+        ("blocks.0.attn.wq.weight", "I8", &[64, 256]),
+        ("blocks.0.attn.wq.weight_scale", "F32", &[64]),
+    ]);
+    assert_eq!(detect::unsupported_weights(&torchao), Some(detect::UNSUPPORTED_WEIGHTS));
+    // U8-packed weights (ComfyUI NVFP4 / INT4): the engine skips U8 tensors → refused.
+    let nvfp4 = st_header(&[
+        ("blocks.0.attn.wq.weight", "U8", &[64, 128]),
+        ("blocks.0.attn.wq.weight_scale", "F8_E4M3", &[64, 16]),
+        ("blocks.0.attn.wq.comfy_quant", "U8", &[30]),
+    ]);
+    assert!(detect::unsupported_weights(&nvfp4).unwrap().contains("NVFP4"));
+    // GGUF always passes (every ggml quant loads).
+    let (b, size) = gguf(&[("general.architecture", GVal::Str("krea2"))], &[("blk.0.w", &[256, 64], 8)]);
+    assert_eq!(detect::unsupported_weights(&parse_header_bytes(&b, size).unwrap()), None);
+}

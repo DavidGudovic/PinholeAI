@@ -220,11 +220,10 @@ fn edge_url(url: &str, width: u32, video_still: bool) -> String {
     let Some(pos) = segs.iter().position(|s| is_transform(s)) else { return url.to_string() };
     let w = snap_width(width);
     segs[pos] = if video_still { format!("anim=false,transcode=true,width={w},optimized=true") } else { format!("width={w},optimized=true") };
-    if video_still {
-        if let Some(name) = segs.last_mut().filter(|_| pos + 1 < segs.len()) {
-            let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem).to_string();
-            *name = format!("{stem}.jpeg");
-        }
+    let has_name = pos + 1 < segs.len();
+    if let Some(name) = segs.last_mut().filter(|_| video_still && has_name) {
+        let stem = name.rsplit_once('.').map_or(name.as_str(), |(stem, _)| stem).to_string();
+        *name = format!("{stem}.jpeg");
     }
     parsed.set_path(&segs.join("/"));
     parsed.to_string()

@@ -74,9 +74,10 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
    Chroma, Qwen 2 / 2.1, SD 3.x — the pinned engine supports them; the registry needs family entries
    with verified components. These dominate CivitAI's current top models, which is why browsing
    looked thin.
-3. **CivitAI browser** (in progress): Safe mode that looks like Stability Matrix's defaults (the
-   public API has no stricter rating filter than `nsfw=false`; filter suggestive tags/names/ratings
-   ourselves), fuller pages, faster previews (thumbnails, RAM cache, prefetch).
+3. **CivitAI browser** (built, awaiting a real-app check): Safe only = Stability Matrix's default
+   (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
+   live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then
+   "Load more"); gzip JSON, CivitAI's own 450 px card renditions, RAM caches, prefetch.
 4. **Engine auth patch** (decision pending): build a patched sd-server in CI that rejects browser
    requests and requires a per-launch token — recommended before any public release.
 5. Measure real VRAM on 8 / 12 / 16 GB cards (SPEC §14) and record observed peak VRAM.

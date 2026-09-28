@@ -723,6 +723,33 @@ fn name_matches(pattern: &str, raw: &str, stripped: &str) -> bool {
         || (stripped.len() != raw.len() && pattern_matches(pattern, stripped))
 }
 
+/// Shown when [`unsupported_weights`] refuses a file.
+pub const UNSUPPORTED_WEIGHTS: &str = "This file uses a compressed format (such as NVFP4 or INT4) that Pinhole can't run, so Pinhole removed it. Look for a version with fp16, bf16, fp8, int8 or GGUF files.";
+
+/// Safetensors weights the pinned engine cannot load
+/// (`src/model_io/safetensors_io.cpp`): it skips every U8 tensor, so a
+/// `.weight` packed as U8 (ComfyUI NVFP4 / INT4 / MXFP4) would be missing at
+/// load time; I8 weights load only as ComfyUI `int8_tensorwise`, i.e. with a
+/// `<module>.comfy_quant` config next to them (docs/int8_convrot.md).
+/// `Some(message)` = refuse the file. GGUF files always pass.
+pub fn unsupported_weights(header: &HeaderInfo) -> Option<&'static str> {
+    if header.format != FileFormat::Safetensors {
+        return None;
+    }
+    let names: std::collections::HashSet<&str> =
+        header.tensor_names.iter().map(String::as_str).collect();
+    header
+        .tensors
+        .iter()
+        .filter_map(|t| Some((t, t.name.strip_suffix(".weight")?)))
+        .any(|(t, module)| match t.dtype.as_str() {
+            "u8" => true,
+            "i8" => !names.contains(format!("{module}.comfy_quant").as_str()),
+            _ => false,
+        })
+        .then_some(UNSUPPORTED_WEIGHTS)
+}
+
 /// Evaluate one family's rules against a header.
 pub fn rules_match(rules: &DetectRules, header: &HeaderInfo) -> bool {
     rules_match_names(rules, &Names::new(header))

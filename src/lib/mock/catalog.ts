@@ -225,7 +225,8 @@ function toCard(e: Entry, content?: BrowseQuery["content"]): CatalogCard {
     familyId: e.familyId,
     styleBadge: badgeLook ? BADGE[badgeLook] : null,
     creator: e.creator,
-    previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.looks[0]}.${e.previewIsVideo ? "mp4" : "jpeg"}`,
+    // Rust asks the CDN for CivitAI's own card rendition; videos come back as a still frame.
+    previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.previewIsVideo ? "anim=false,transcode=true," : ""}width=450,optimized=true/${e.looks[0]}.jpeg`,
     previewIsVideo: e.previewIsVideo,
     // "Safe only" previews are PG images (Rust: safe_filter.max_preview_level).
     previewNsfw: content === "safe" ? false : e.previewNsfw,
@@ -467,7 +468,7 @@ function drawPreview(ctx: Ctx, w: number, h: number, look: string, seed: number)
 async function fetchPreview(url: string): Promise<ArrayBuffer> {
   await sleep(150 + Math.random() * 450);
   if (mockSettings().offline) throw err("offline", "Offline mode is on.");
-  const m = /mock\/(\d+)\/([a-z_]+)\./.exec(url);
+  const m = /mock\/(\d+)\/(?:[^/]+\/)?([a-z_]+)\./.exec(url);
   const seed = hashString(url);
   const look = m?.[2] ?? "realistic";
   const w = 320;

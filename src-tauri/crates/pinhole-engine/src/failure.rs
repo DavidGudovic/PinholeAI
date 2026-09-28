@@ -37,8 +37,10 @@ const OOM: &[&str] = &[
     "not enough memory",
     "insufficient memory",
     // sd.cpp model manager / graph runner (auto-fit budgets, src/model_manager.cpp,
-    // src/core/ggml_runner.cpp): the runner could not get room for its workspace.
+    // src/core/ggml_runner.cpp): the runner could not get room for its workspace
+    // (these segment phases all set GGML_STATUS_ALLOC_FAILED).
     "cannot make enough memory available",
+    "failed during workspace preparation",
     "failed during workspace capacity check",
     "failed during allocated capacity check",
     "failed during workspace allocation",
@@ -214,5 +216,11 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
         assert_eq!(failed_stage("failed to encode prompt\nsampling for image 1/1 failed"), Stage::Diffusion);
         // Not memory: the model file is broken.
         assert_eq!(memory_failure("[ERROR] main.cpp:91  - new_sd_ctx_t failed"), None);
+        // Upstream's padded level tags; a graph runner that couldn't prepare its workspace.
+        let vae = "[ERROR  ] ggml_runner.cpp:898  - vae segment 1/1 (graph) failed during workspace preparation
+                   [ERROR  ] image.cpp:614  - decode_first_stage failed for latent 1";
+        assert_eq!(memory_failure(vae), Some(Stage::Vae));
+        // A segment that failed for another reason isn't reported as memory by itself.
+        assert_eq!(classify("[ERROR  ] ggml_runner.cpp:898  - z_image segment 2/9 (blocks) failed during input binding", None), Failure::Unknown);
     }
 }

@@ -139,6 +139,11 @@ export function shouldBlurPreview(card: Pick<CatalogCard, "previewNsfw" | "model
   return !isAdult(content) && (card.previewNsfw || card.modelNsfw);
 }
 
+/** A preview URL that points at a video file (not a still frame of it): never fetched. */
+export function isVideoFile(url: string | null): boolean {
+  return !!url && /\.(mp4|webm|mov)$/i.test(url.split(/[?#]/)[0]);
+}
+
 /** Append a page, dropping duplicates (the API can repeat items across cursor pages). */
 export function mergePage(existing: CatalogCard[], incoming: CatalogCard[]): CatalogCard[] {
   const seen = new Set(existing.map((c) => c.versionId));

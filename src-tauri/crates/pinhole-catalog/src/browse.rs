@@ -103,6 +103,7 @@ mod tests {
     use super::*;
     use crate::api::Model;
     use crate::cards::tests::FakeEnv;
+    use crate::cards::CatalogEnv;
     use crate::filters::tests::{filters, now};
     use crate::filters::ContentMode;
 
@@ -240,20 +241,79 @@ mod tests {
         assert_eq!(src.calls.lock().unwrap().len(), 1);
         assert_eq!(out.checked, 100);
         assert!(out.items.len() >= 24, "{}", out.items.len());
-        assert!(out.hidden_by_content > 30);
+        assert_eq!(out.hidden_by_content, 48);
         assert!(!out.partial);
         let names: Vec<&str> = out.items.iter().take(6).map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["Realistic Vision V6.0 B1", "DreamShaper", "Juggernaut XL", "majicMIX realistic 麦橘写实", "Pony Diffusion V6 XL", "epiCRealism"]);
-        // Every Safe preview is a PG image.
+        // Every Safe preview is a small PG image.
         let page = crate::safe::tests::live("alltime");
         for c in &out.items {
             let Some(url) = c.preview_url.as_deref() else { continue };
-            let n: String = url.rsplit('/').next().unwrap().trim_end_matches(".jpeg").to_string();
+            assert!(url.contains("/width=450,optimized=true/"), "{url}");
+            let name = url.rsplit('/').next().unwrap();
             let m = page.items.iter().find(|m| m.id == c.model_id).unwrap();
-            let img = m.model_versions[0].images.iter().find(|i| i.url.ends_with(&format!("/{n}.jpeg"))).unwrap();
+            let img = m.model_versions.iter().flat_map(|v| v.images.iter()).find(|i| i.url.ends_with(&format!("/{name}"))).unwrap();
             assert_eq!(img.nsfw_level, Some(1), "{}", c.name);
-            assert!(url.contains("/width=450/"), "{url}");
         }
+    }
+
+    /// Every base model is one Pinhole runs (the query already asked CivitAI for those).
+    struct AllCompatible;
+
+    impl CatalogEnv for AllCompatible {
+        fn family_for(&self, base: &str, _sha: Option<&str>) -> Option<crate::cards::FamilyInfo> {
+            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None })
+        }
+        fn vram_for(&self, _family: &str, _bytes: u64) -> Option<(pinhole_registry::vram::VramNeed, pinhole_registry::vram::Fit)> {
+            None
+        }
+        fn is_installed(&self, _version: u64, _sha: Option<&str>) -> bool {
+            false
+        }
+    }
+
+    /// The opening Browse page (Models · Safe only · Free · Works with Pinhole · Most
+    /// downloaded · All time) on live data: mainstream models, normal previews.
+    #[tokio::test]
+    async fn live_default_safe_page() {
+        let page = crate::safe::tests::live("alltime");
+        let src = FakeSource { pages: vec![page], calls: Mutex::new(vec![]) };
+        let q = BrowseQuery::default();
+        let out = browse(&src, &filters(), &q, &["SDXL 1.0".into()], &AllCompatible, now(), go).await.unwrap();
+        let names: Vec<&str> = out.items.iter().take(24).map(|c| c.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Realistic Vision V6.0 B1",
+                "DreamShaper",
+                "Juggernaut XL",
+                "majicMIX realistic 麦橘写实",
+                "Pony Diffusion V6 XL",
+                "epiCRealism",
+                "CyberRealistic Pony",
+                "CyberRealistic",
+                "RealVisXL V5.0",
+                "epiCRealism XL",
+                "ReV Animated",
+                "MeinaMix",
+                "Beautiful Realistic Asians",
+                "万象熔炉 | Anything XL",
+                "Nova Anime XL",
+                "Counterfeit-V3.0",
+                "SD XL",
+                "epiCPhotoGasm",
+                "FLUX",
+                "AbsoluteReality",
+                "ControlNetXL (CNXL)",
+                "NoobAI-XL (NAI-XL)",
+                "AnyLoRA - Checkpoint",
+                "Cetus-Mix",
+            ]
+        );
+        assert!(out.items.iter().all(|c| !c.model_nsfw && !c.preview_nsfw));
+        assert!(out.items.iter().all(|c| c.preview_url.is_some()), "every kept model has a PG preview");
+        let p = &src.calls.lock().unwrap()[0];
+        assert!(p.contains(&("nsfw".to_string(), "true".to_string())), "ratings of every sample image");
     }
 
     #[tokio::test]

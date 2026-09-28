@@ -236,19 +236,37 @@ Two sub-views: **Browse** and **Installed**.
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
-| Content | Safe only · Include 18+ · 18+ only | `nsfw=false` (default) · `nsfw=true` · `nsfw=true` + keep only items with `model.nsfw == true` |
+| Content | Safe only · Include 18+ · 18+ only | always `nsfw=true` (the only way to get every sample image with its rating); Safe only (default) keeps models that pass `safe_filter` (see below) · everything · only the models Safe only hides |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
-| Sort | Top rated · Most downloaded · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
-| Time | This week · This month · This year · All time | `period` |
+| Sort | Top rated · Most downloaded (default) · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
+| Time | This week · This month · This year · All time (default) | `period` |
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |
 | Search | free text | `query` |
 
-- Paging with `cursor` (page×limit > 1000 returns 429).
+- Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
+  (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`).
 - 18+ modes require a one-time confirmation per session (stored in RAM only).
 - Default content mode is **Safe only**. When 18+ is off, also blur any preview image flagged NSFW.
-- "18+ only" and "Free" are partly client-side filters: keep fetching pages until the grid is
-  full (cap at 5 extra requests per scroll, then show "Load more").
+- Content, Look and Price are partly client-side filters: keep fetching pages until the grid page
+  (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
+  stops the older one's extra requests.
+- **Safe only** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
+  nothing stricter than `nsfw=false`, which only hides models CivitAI flags, and rejects
+  `browsingLevel`): a model is hidden when CivitAI flags it NSFW, its `nsfwLevel` bitmask has
+  no PG bit, it has an adult tag (or two suggestive ones), its name has an adult word (whole
+  words), or more than half of its creator's rated sample images are R or above. The
+  model-level `nsfwLevel` alone is not used otherwise: mainstream models such as Juggernaut XL
+  are 31 (all levels) because people post every kind of image with them. Card previews in Safe
+  only are PG images only (like Stability Matrix); no PG image → no preview.
+- Opening filters are **Most downloaded · All time** (mainstream models; "This month" is
+  dominated by fresh suggestive anime merges). A line above the grid says "Showing models that
+  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe only hid.
+- Speed: CivitAI answers are requested gzip-compressed and cached in RAM (never on disk: the
+  Rust side keeps 12 answers for 5 min, the UI 80 pages for 10 min) and the next page is
+  fetched ahead. Card previews are CivitAI's own card rendition (`width=450,optimized=true`;
+  a video preview becomes a still frame), fetched by Rust 8 at a time, on-screen cards first;
+  a queued fetch is dropped when its card scrolls away; the bytes stay in a RAM-only LRU (48 MB).
 - Verify the exact early-access fields on real API responses before relying on them
   (`earlyAccess` query param, version `availability` / early-access end date).
 
