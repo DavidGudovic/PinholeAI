@@ -1,7 +1,7 @@
 # Pinhole CI, tiered to keep Actions minutes low (private repo; Windows minutes bill 2x):
 #   every push ............. frontend + privacy lint, Rust tests on Linux        (~4 min)
 #   branch push touching Windows-specific code, the workflows, or with "[windows]"
-#                            in the commit message: + Rust tests on Windows
+#                            in a commit message: + Rust tests on Windows
 #   push to main ........... + Rust tests on Windows, engine smoke (Linux +
 #                              Windows), real-app e2e                           (~40 billed min)
 #   Run workflow (manual) .. choose "full" checks and/or "installers"
@@ -65,13 +65,13 @@ jobs:
           win=false
           if [ "$ALWAYS" = yes ]; then
             win=true
-          elif git log -1 --format=%B | grep -qiF '[windows]'; then
+          elif ! git fetch --quiet origin main; then
+            echo "::warning::could not fetch main, running Windows tests to be safe"
             win=true
-          else
-            git fetch --quiet origin main || true
-            if git diff --name-only origin/main...HEAD | grep -qE '^(\.github/workflows/|src-tauri/tauri\.conf\.json$|src-tauri/src/lib\.rs$|src-tauri/crates/pinhole-(engine|hardware|store)/|src-tauri/crates/pinhole-core/src/(app|generate|update)\.rs$|tests/)'; then
-              win=true
-            fi
+          elif git log origin/main..HEAD --format=%B | grep -qiF '[windows]'; then
+            win=true
+          elif git diff --name-only origin/main...HEAD | grep -qE '^(\.github/workflows/|Cargo\.(toml|lock)$|src-tauri/tauri\.conf\.json$|src-tauri/src/lib\.rs$|src-tauri/crates/pinhole-(engine|hardware|store|net)/|src-tauri/crates/pinhole-core/src/(app|generate|update|downloads)\.rs$|tests/)'; then
+            win=true
           fi
           echo "windows=$win" >> "$GITHUB_OUTPUT"
           echo "Windows unit tests: $win"
