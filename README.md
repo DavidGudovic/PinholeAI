@@ -15,6 +15,9 @@ decision can be seen and changed in the **Fine-tune** drawer.
   Brand & product), safe-only by default, paid/early-access hidden by default, SafeTensor/GGUF only.
 - **Create** (text → image), **Edit** ("keep the face, change the shirt to a navy hoodie"),
   **Describe** (image → prompt), reusable **Styles** and **Presets**.
+- **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
+  CivitAI* in Pinhole: prompt, negative, steps, CFG, sampler, seed, size and LoRAs are applied,
+  and missing models/LoRAs are one click away. The pasted text is never stored.
 - **Private by construction.** Never stores your prompts. No telemetry. Works fully offline
   once models are downloaded.
 - **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
@@ -187,6 +190,10 @@ tests/            workspace integration tests (privacy, offline, engine smoke)
 scripts/          CI helpers (Node, no dependencies): privacy lint, pin verification, packaging
 docs/             SPEC.md (what), ARCHITECTURE.md (how)
 ```
+
+| Create | Paste from CivitAI | Models |
+|---|---|---|
+| ![Create tab](docs/screenshots/tab-create-results-light.png) | ![Paste summary](docs/screenshots/paste-summary-light.png) | ![Models browser](docs/screenshots/models-browse-dark.png) |
 
 Contributing: read [`CLAUDE.md`](CLAUDE.md) and [`docs/SPEC.md`](docs/SPEC.md) first.
 Model knowledge belongs in `config/models.yaml`, not in code.
