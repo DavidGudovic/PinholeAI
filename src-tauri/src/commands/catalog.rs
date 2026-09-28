@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use pinhole_core::catalog::{BrowsePage, BrowseQuery, CatalogFilterOptions, ContentMode, InstallPlan, ModelGallery};
+use pinhole_core::catalog::{BrowsePage, BrowseQuery, CatalogFilterOptions, ContentMode, InstallPlan};
+use pinhole_core::gallery::ModelGallery;
 use pinhole_core::{AppCore, CoreError, InstallStarted};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -32,7 +33,7 @@ pub async fn model_gallery(
     content: ContentMode,
     model_nsfw: bool,
 ) -> Result<ModelGallery, CoreError> {
-    pinhole_core::catalog::model_gallery(&core, version_id, content, model_nsfw).await
+    pinhole_core::gallery::model_gallery(&core, version_id, content, model_nsfw).await
 }
 
 /// Open the model's CivitAI page in the system browser (the URL is built in Rust).
@@ -43,7 +44,7 @@ pub async fn open_civitai_page(
     version_id: Option<u64>,
     nsfw: bool,
 ) -> Result<(), CoreError> {
-    let url = pinhole_core::catalog::civitai_page_url(model_id, version_id, nsfw)?;
+    let url = pinhole_core::gallery::civitai_page(model_id, version_id, nsfw)?;
     handle
         .opener()
         .open_url(url.as_str(), None::<&str>)

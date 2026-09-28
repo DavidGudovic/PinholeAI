@@ -15,8 +15,46 @@ import { Badge, Button, Dialog, ErrorNotice, Spinner } from "../../components/ui
 import { sendGenerationToCreate } from "../create/handoff";
 import { GroupProgress, Skeleton, VramLine } from "./controls";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
-import { useNearViewport, usePreviewBlob } from "./lib/preview";
 import { isActive, ratioPercent } from "./lib/words";
+
+// Image loading is local to this page (not ./lib/preview) so it doesn't depend
+// on the Browse grid's loader. At most a few fetches run at once; bytes come
+// from Rust and live only as blob: URLs while the page is open.
+const MAX_PARALLEL = 4;
+let running = 0;
+const waiting: (() => void)[] = [];
+async function limited<T>(job: () => Promise<T>): Promise<T> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((r) => waiting.push(r));
+  running++;
+  try {
+    return await job();
+  } finally {
+    running--;
+    waiting.shift()?.();
+  }
+}
+
+function useImage(url: string | null): { src: string | null; failed: boolean } {
+  const [state, setState] = useState<{ src: string | null; failed: boolean }>({ src: null, failed: false });
+  useEffect(() => {
+    if (!url) return;
+    let alive = true;
+    let objectUrl: string | null = null;
+    setState({ src: null, failed: false });
+    limited(() => (alive ? api.fetchPreview(url) : Promise.resolve(null)))
+      .then((buf) => {
+        if (!alive || !buf) return;
+        objectUrl = URL.createObjectURL(new Blob([buf]));
+        setState({ src: objectUrl, failed: false });
+      })
+      .catch(() => alive && setState({ src: null, failed: true }));
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [url]);
+  return state;
+}
 
 export function ModelDetails({
   card,
@@ -248,13 +286,10 @@ function Header({
 }
 
 const Tile = memo(function Tile({ item, blur, onOpen }: { item: GalleryItem; blur: boolean; onOpen: () => void }) {
-  const ref = useRef<HTMLButtonElement>(null);
-  const near = useNearViewport(ref);
-  const preview = usePreviewBlob(item.thumbUrl, near);
+  const preview = useImage(item.thumbUrl);
   const ratio = item.width && item.height ? `${item.width} / ${item.height}` : "3 / 4";
   return (
     <button
-      ref={ref}
       type="button"
       onClick={onOpen}
       aria-label={item.generation ? "Open image (settings available)" : "Open image"}
@@ -299,8 +334,8 @@ function Viewer({
   onUseSettings: (item: GalleryItem) => void;
   onEdit: (item: GalleryItem) => void;
 }) {
-  const preview = usePreviewBlob(item?.fullUrl ?? null, !!item);
-  const small = usePreviewBlob(item?.thumbUrl ?? null, !!item);
+  const preview = useImage(item?.fullUrl ?? null);
+  const small = useImage(item?.thumbUrl ?? null);
   const src = preview.src ?? small.src;
   const g = item?.generation ?? null;
   const prompt = typeof g?.prompt === "string" ? g.prompt : null;

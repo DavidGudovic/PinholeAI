@@ -332,11 +332,6 @@ pub struct ModelImage {
     pub width: Option<u64>,
     #[serde(deserialize_with = "lenient::opt_u64")]
     pub height: Option<u64>,
-    /// Generation data (prompt, settings, resources). Only sent on
-    /// `/model-versions/{id}` (not `/models` or `/images`, checked live
-    /// 2026-09-28). In memory only: never logged or stored.
-    #[serde(deserialize_with = "lenient::opt_obj")]
-    pub meta: Option<serde_json::Map<String, Value>>,
 }
 
 /// CivitAI's own split: PG and PG-13 are safe, R (4) and above are NSFW.

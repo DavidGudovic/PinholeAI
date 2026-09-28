@@ -5,16 +5,92 @@
 //! that still carries generation data (`/models` and `/images` send
 //! `meta: null`; checked live 2026-09-28).
 //!
+//! Kept apart from the catalog modules on purpose: it reads the version with
+//! its own small types, so the Browse code can change without touching this.
+//!
 //! PRIVACY: the generation data (someone else's prompt and settings) is only
 //! passed through to the UI in memory, where the user can copy it into Create.
 //! It is never logged or written anywhere.
 
+use pinhole_catalog::api::{is_preview_url, API_BASE, NSFW_LEVEL_MIN};
+use pinhole_catalog::cards::thumbnail_url;
+use pinhole_catalog::filters::ContentMode;
+use pinhole_catalog::lenient;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::api::{ModelImage, ModelVersion};
-use crate::cards::thumbnail_url;
-use crate::filters::ContentMode;
+use crate::{AppCore, CoreError, CoreResult};
+
+/// The parts of `GET /model-versions/{id}` the details page needs.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VersionImages {
+    #[serde(deserialize_with = "lenient::strings")]
+    pub trained_words: Vec<String>,
+    #[serde(deserialize_with = "lenient::vec")]
+    pub images: Vec<VersionImage>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct VersionImage {
+    #[serde(deserialize_with = "lenient::string")]
+    pub url: String,
+    #[serde(deserialize_with = "lenient::opt_u64")]
+    pub width: Option<u64>,
+    #[serde(deserialize_with = "lenient::opt_u64")]
+    pub height: Option<u64>,
+    #[serde(deserialize_with = "lenient::nsfw_level")]
+    pub nsfw_level: Option<u32>,
+    /// Older responses: bool or a level string.
+    #[serde(deserialize_with = "lenient::nsfw_level_or_bool")]
+    pub nsfw: Option<bool>,
+    #[serde(rename = "type", deserialize_with = "lenient::opt_string")]
+    pub kind: Option<String>,
+    /// Generation data (prompt, settings, resources). In memory only.
+    #[serde(deserialize_with = "lenient::opt_obj")]
+    pub meta: Option<Map<String, Value>>,
+}
+
+impl VersionImage {
+    fn is_video(&self) -> bool {
+        if self.kind.as_deref().is_some_and(|k| k.eq_ignore_ascii_case("video")) {
+            return true;
+        }
+        let path = self.url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+        path.ends_with(".mp4") || path.ends_with(".webm") || path.ends_with(".mov")
+    }
+
+    fn is_nsfw(&self, model_nsfw: bool) -> bool {
+        match (self.nsfw_level, self.nsfw) {
+            (Some(level), _) => level >= NSFW_LEVEL_MIN,
+            (None, Some(flag)) => flag,
+            // Unrated images of an NSFW model count as NSFW (same rule as the cards).
+            (None, None) => model_nsfw,
+        }
+    }
+}
+
+/// The details page's gallery. Anonymous, like browsing. Offline mode: no
+/// request, `offline: true`.
+pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode, model_nsfw: bool) -> CoreResult<ModelGallery> {
+    if core.offline.get() {
+        return Ok(ModelGallery { items: Vec::new(), hidden_nsfw: 0, trained_words: Vec::new(), offline: true });
+    }
+    let filters = crate::catalog::filters(core)?;
+    let url = format!("{API_BASE}/model-versions/{version_id}");
+    let version: VersionImages = core.http.get_json(&url, &[]).await.map_err(crate::catalog::net_error)?;
+    Ok(gallery(&version, content, model_nsfw, filters.preview_width))
+}
+
+/// `https://civitai.com/models/…` (civitai.red for NSFW models), for the
+/// system browser. Built here so the UI can't open arbitrary URLs.
+pub fn civitai_page(model_id: u64, version_id: Option<u64>, nsfw: bool) -> CoreResult<String> {
+    if model_id == 0 {
+        return Err(CoreError::invalid("That model has no CivitAI page."));
+    }
+    Ok(civitai_page_url(model_id, version_id, nsfw))
+}
 
 /// Generation-data keys the UI understands (CivitAI mixes camelCase and
 /// A1111-style keys). Everything else (ADetailer, workflow JSON, …) is dropped.
@@ -75,7 +151,7 @@ pub struct ModelGallery {
 
 /// Gallery for a version. Videos are skipped (they can't be edited), and so
 /// are 18+ images in Safe mode.
-pub fn gallery(version: &ModelVersion, content: ContentMode, model_nsfw: bool, thumb_width: u32) -> ModelGallery {
+pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, thumb_width: u32) -> ModelGallery {
     let mut hidden_nsfw = 0;
     let items = version
         .images
@@ -93,8 +169,8 @@ pub fn gallery(version: &ModelVersion, content: ContentMode, model_nsfw: bool, t
     ModelGallery { items, hidden_nsfw, trained_words: version.trained_words.clone(), offline: false }
 }
 
-fn item(index: usize, i: &ModelImage, model_nsfw: bool, thumb_width: u32) -> Option<GalleryItem> {
-    if i.url.trim().is_empty() || i.is_video() || !crate::api::is_preview_url(&i.url) {
+fn item(index: usize, i: &VersionImage, model_nsfw: bool, thumb_width: u32) -> Option<GalleryItem> {
+    if i.url.trim().is_empty() || i.is_video() || !is_preview_url(&i.url) {
         return None;
     }
     Some(GalleryItem {
@@ -103,8 +179,7 @@ fn item(index: usize, i: &ModelImage, model_nsfw: bool, thumb_width: u32) -> Opt
         full_url: original_url(&i.url),
         width: i.width,
         height: i.height,
-        // Unrated images of an NSFW model count as NSFW (same rule as the cards).
-        nsfw: i.is_nsfw() || (i.nsfw_level.is_none() && i.nsfw.is_none() && model_nsfw),
+        nsfw: i.is_nsfw(model_nsfw),
         generation: i.meta.as_ref().and_then(kept_meta),
     })
 }
@@ -158,7 +233,7 @@ mod tests {
       ]
     }"#;
 
-    fn version() -> ModelVersion {
+    fn version() -> VersionImages {
         serde_json::from_str(VERSION).unwrap()
     }
 
@@ -195,12 +270,20 @@ mod tests {
 
     #[test]
     fn unrated_images_of_nsfw_models_are_nsfw() {
-        let v = ModelVersion {
-            images: vec![ModelImage { url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(), ..Default::default() }],
+        let v = VersionImages {
+            images: vec![VersionImage { url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(), ..Default::default() }],
             ..Default::default()
         };
         assert!(gallery(&v, ContentMode::Safe, true, 450).items.is_empty());
         assert_eq!(gallery(&v, ContentMode::Safe, false, 450).items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn offline_needs_no_network() {
+        let (_t, core) = crate::app::tests::test_core(std::sync::Arc::new(crate::app::tests::Recorder::default()));
+        core.offline.set(true);
+        assert!(model_gallery(&core, 1, ContentMode::Safe, false).await.unwrap().offline);
+        assert_eq!(civitai_page(0, None, false).unwrap_err().code, "invalid");
     }
 
     #[test]
