@@ -93,7 +93,7 @@ export interface EngineStatus {
 export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
 
 /** What a download group fetches (match on this, never on the label). */
-export type DownloadKind = "engine" | "model" | "captioner" | "upscaler";
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate";
 
 export interface GroupStatus {
   groupId: string;
@@ -505,4 +505,22 @@ export interface ResolvedResources {
   checkpoint: ResolvedResource | null;
   loras: ResolvedResource[];
   ignored: ResolvedResource[];
+}
+
+// ---------------------------------------------------------------- updates (Rust pinhole_core::update)
+/** How this copy can update itself. manual = open the release page (the .deb, dev builds). */
+export type UpdateInstallMode = "installer" | "portable" | "appImage" | "manual";
+
+export interface UpdateInfo {
+  version: string;
+  publishedAt: string | null;
+  installMode: UpdateInstallMode;
+  /** Download size for installMode (null for manual). */
+  sizeBytes: number | null;
+}
+
+export interface UpdateCheck {
+  currentVersion: string;
+  /** null = already on the newest release. */
+  update: UpdateInfo | null;
 }

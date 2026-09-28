@@ -229,6 +229,9 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 - [ ] §8 wording pass over README, repo description, UI, screenshots
 - [ ] §9 `SAFETY.md` + abuse contact
 - [ ] §10 lawyer review done
+- [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign,
+      plus Authenticode for Windows) and "Update and restart" refuses a file whose signature doesn't
+      verify. Today it only checks `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").
 - [ ] SPEC.md, CLAUDE.md and the privacy tests updated to match
 
 ---

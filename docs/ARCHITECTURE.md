@@ -39,7 +39,7 @@ pieces (net, store) are small enough to audit.
 |---|---|---|
 | **registry** | `crates/pinhole-registry/**`, `config/models.yaml` (detect rules, schema) | — |
 | **net** | `crates/pinhole-net/**`, `crates/pinhole-core/src/downloads.rs`, `src-tauri/src/commands/downloads.rs` | — |
-| **store** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/app.rs`, `core/src/library.rs`, `commands/app.rs`, `commands/library.rs`, `config/presets/**` | — |
+| **store** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/app.rs`, `core/src/library.rs`, `core/src/update.rs`, `commands/app.rs`, `commands/library.rs`, `config/presets/**` | — |
 | **engine** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
 | **catalog** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
 | **frontend A** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/paste/**`, `src/lib/mock/{generate,library,describe}.ts`, `src/lib/state/**` | api.ts |

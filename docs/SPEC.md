@@ -9,8 +9,8 @@ every decision can be overridden.
 ## 1. Principles (in priority order)
 
 1. **Private by construction.** Prompts are never written anywhere. No telemetry, no analytics,
-   no crash reporting, no update pings. The only network traffic is traffic the user starts
-   (browsing CivitAI, downloading a model or engine).
+   no crash reporting, no automatic update checks. The only network traffic is traffic the user
+   starts (browsing CivitAI, downloading a model or engine, pressing "Check for updates").
 2. **Zero-knowledge default path.** A new user never has to know what a VAE, text encoder,
    sampler, scheduler or CFG is.
 3. **Light and fast.** Small installer, low idle RAM, no Python, no bundled browser.
@@ -125,7 +125,9 @@ unsaved images, logs.
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
    layer. The catalog shows "Offline" and only installed models.
-6. No telemetry SDKs, no auto-update checks, no remote fonts/CDNs in the UI (bundle everything).
+6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
+   Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
+   request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
 7. The CivitAI API key (optional) is stored in the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
 9. Saved-image metadata: **none** by default. Optional setting "Include generation settings
@@ -399,6 +401,9 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Saved-image metadata (None / Settings without prompt)
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
+- Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
+  **Update and restart** (Windows installer, Windows portable, Linux AppImage) or **Open download
+  page** (the .deb and dev builds, which can't replace themselves). See §13.
 
 ---
 
@@ -478,6 +483,16 @@ build is shared.
   (`docs/RELEASE-SPEC.md` §5).
 - **Distribution**: personal testing only for now. Any shared build is gated by
   `docs/RELEASE-SPEC.md`.
+- **Updates** (manual only): Settings → Check for updates asks
+  `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (pre-releases
+  included while every build is a test build). Download URLs are built from the repo, the tag and the
+  expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
+  the release's `SHA256SUMS.txt`, or nothing is installed. Windows installer: the engines stop and the
+  NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
+  (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
+  AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
+  the next start. The checksum list protects against broken or swapped downloads, not against a
+  compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
   Prompts are never sent to a server for moderation.
 

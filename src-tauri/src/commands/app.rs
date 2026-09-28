@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use pinhole_core::app::{self, AppInfo, HardwareView};
+use pinhole_core::update::{self, Prepared, UpdateCheck};
 use pinhole_core::{AppCore, CoreError};
 use pinhole_store::Settings;
 use tauri::{AppHandle, State};
@@ -52,5 +53,49 @@ fn open_folder(handle: &AppHandle, dir: &Path) -> Result<(), CoreError> {
     })
 }
 
+/// Settings → "Check for updates". Only ever runs on that button press.
+#[tauri::command]
+pub async fn check_for_updates(core: State<'_, Arc<AppCore>>) -> Result<UpdateCheck, CoreError> {
+    update::check_for_updates(&core).await
+}
+
+/// Download + verify `version`, put it in place, stop the engines, then run the
+/// installer / relaunch and quit. Only returns on failure (nothing is changed then).
+#[tauri::command]
+pub async fn install_update(handle: AppHandle, core: State<'_, Arc<AppCore>>, version: String) -> Result<(), CoreError> {
+    let core = core.inner().clone();
+    let prepared = update::install_update(&core, &version).await?;
+    core.shutdown().await;
+    let started = match &prepared {
+        Prepared::RunInstaller(path) => std::process::Command::new(path).args(update::INSTALLER_ARGS).spawn(),
+        Prepared::Relaunch(exe) => std::process::Command::new(exe).spawn(),
+    };
+    if let Err(e) = started {
+        return Err(CoreError::new("io", "The update is downloaded but couldn't be started. Restart Pinhole and try again.").with_details(e.to_string()));
+    }
+    handle.exit(0);
+    Ok(())
+}
+
+/// Open the GitHub release page in the system browser (the WebView never navigates).
+#[tauri::command]
+pub async fn open_release_page(handle: AppHandle, version: Option<String>) -> Result<(), CoreError> {
+    let url = update::release_page_url(version.as_deref())?;
+    handle
+        .opener()
+        .open_url(url.clone(), None::<&str>)
+        .map_err(|e| CoreError::new("io", format!("Couldn't open your browser. The page is: {url}")).with_details(e.to_string()))
+}
+
 // Declared last so every command (and its generated `__cmd__*` macro) is defined above.
-super::area_commands![app_info, get_settings, set_settings, get_hardware, open_data_folder, open_outputs_folder];
+super::area_commands![
+    app_info,
+    get_settings,
+    set_settings,
+    get_hardware,
+    open_data_folder,
+    open_outputs_folder,
+    check_for_updates,
+    install_update,
+    open_release_page
+];
