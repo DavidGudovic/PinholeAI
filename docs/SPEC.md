@@ -16,7 +16,9 @@ every decision can be overridden.
 3. **Light and fast.** Small installer, low idle RAM, no Python, no bundled browser.
 4. **Data, not code, for model knowledge.** Everything model-specific (components, defaults,
    dial ranges) lives in YAML so it can be updated without touching code.
-5. **Windows 10/11 and Ubuntu 22.04+ are first-class.** macOS is out of scope for v1.
+5. **Windows 10/11 and Ubuntu 24.04+ are first-class.** macOS is out of scope for v1.
+   (The app itself runs on 22.04, but the pinned upstream Linux engine builds need glibc 2.38 —
+   see §13.)
 
 ---
 
@@ -72,7 +74,10 @@ every decision can be overridden.
 - First-run setup detects GPU and downloads the matching build once:
   NVIDIA → CUDA 12.x build (must support Blackwell / RTX 50xx), AMD/Intel → Vulkan build,
   no GPU → CPU build (warn: very slow).
-- Stored in `Data/engine/<version>/`. Verify hash before first launch.
+- Stored in `Data/engine/{sd,llama}/<version>/<backend>/`. Verify hash before first launch.
+- Linux has no upstream CUDA build of `sd-server`: NVIDIA on Linux uses the Vulkan build.
+- Windows: the upstream builds need the MSVC runtime (VC++ 2015–2022 x64); Pinhole bundles the
+  redistributable DLLs and copies them next to an engine when the system lacks them.
 
 ---
 
@@ -174,6 +179,14 @@ VAE tiling. Each field shows the registry default and a "reset" button.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
+
+**Paste from CivitAI**: CivitAI's "Copy generation data" button yields A1111-style text (prompt,
+`Negative prompt:`, `Steps: …, Sampler: …, CFG scale: …, Seed: …, Size: …, Clip skip: …, Civitai
+resources: [...]`). A **Paste from CivitAI** button next to the prompt (and pasting such text into
+the prompt box) parses it in memory, fills prompt, negative, steps, CFG/guidance, sampler +
+scheduler (mapped to sd.cpp names), seed, size, clip skip and hires, selects the installed
+checkpoint/LoRAs (matched by CivitAI version id or hash) or offers one-click installs, and shows
+what was applied and what was skipped. The pasted text is never stored or logged.
 
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
@@ -322,7 +335,8 @@ How X is computed:
 3. After a real run, record the observed peak VRAM for that file in `installed.json`
    (a number only) and show the measured value from then on.
 
-VRAM detection: `nvidia-smi` for NVIDIA; Vulkan device memory heaps for AMD/Intel; manual
+VRAM detection: `nvidia-smi` for NVIDIA; DXGI adapter memory on Windows and sysfs on Linux for
+AMD/Intel (no Vulkan loader needed); manual
 override in Settings.
 
 ---
@@ -391,7 +405,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 ## 10. Packaging
 
 - Windows: NSIS installer + portable zip (with an empty `Data/` folder → portable mode).
-- Linux: AppImage + .deb (Ubuntu 22.04 and 24.04).
+- Linux: AppImage + .deb (built on Ubuntu 22.04; engine needs 24.04+, see §13).
 - GitHub Actions matrix build for both; release artifacts with SHA-256 sums.
 - License: MIT (compatible with stable-diffusion.cpp and llama.cpp). Include their license
   files in `THIRD_PARTY_LICENSES`.
@@ -444,6 +458,25 @@ test, packaging, README with screenshots.
 - **VRAM**: every model shows how much VRAM it needs (§6.2).
 - **Paid (early access) models**: hidden by default.
 - **Content filter**: Safe only (default) · Include 18+ · 18+ only.
+
+### Implementation decisions (v1 build-out)
+- **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the
+  final VAE decode, so the Create tab shows step progress (parsed from the engine's progress bar)
+  instead. `models.yaml → engine_features.taesd_preview` turns it on when the engine supports it.
+- **VRAM fitting uses sd.cpp auto-fit** (default in the pinned engine) instead of
+  `--offload-to-cpu`, which disables auto-fit and forces every weight into RAM. Low/mid tiers keep
+  `--vae-tiling`.
+- **Cancel while generating restarts `sd-server`** (the server answers 409 to cancelling a running
+  job); the next Generate reloads the model.
+- **Linux engine = Ubuntu 24.04+**: upstream only publishes Ubuntu 24.04 builds (glibc 2.38). Building
+  our own 22.04 engine is a possible follow-up.
+- **"Stay close to original"** maps strict → the low end of the edit family's CFG/guidance range
+  (more guidance moves the edit further from the source).
+- **WebView is private**: the main window runs incognito (no cookies/cache/storage on disk); in
+  portable mode its profile folder lives in `Data/webview`.
+- **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
+- Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
+  `docs/ARCHITECTURE.md`).
 
 ## 14. Open questions
 

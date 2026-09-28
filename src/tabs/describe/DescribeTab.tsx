@@ -1,6 +1,7 @@
 // Describe (img2text), SPEC §5.3.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "lucide-react";
+import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
 import { AutoTextarea, Button, ErrorNotice, Kbd, ProgressBar, Segmented, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
@@ -228,7 +229,7 @@ export function DescribeTab() {
               <Kbd>Enter</Kbd>
             </span>
           </Button>
-          {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+          {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void describe()} />}
         </div>
       </aside>
     </div>

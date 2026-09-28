@@ -9,6 +9,8 @@ export function jobStatusText(job: Job, elapsed: number): string {
   if (!p) return `${verb}…`;
   switch (p.phase) {
     case "loadingModel":
+      // step/totalSteps = model tensors loaded / total.
+      if (p.step != null && p.totalSteps) return `Loading ${p.modelLabel ?? "the model"}… ${Math.min(100, Math.round((p.step / p.totalSteps) * 100))}%`;
       return `Loading ${p.modelLabel ?? "the model"}… (~10–30 s)`;
     case "queued":
       return p.queuePosition ? `Waiting in line (#${p.queuePosition})…` : "Waiting in line…";
@@ -27,7 +29,7 @@ export function jobStatusText(job: Job, elapsed: number): string {
 export function JobProgress({ job, onCancel, cancelling }: { job: Job; onCancel: () => void; cancelling?: boolean }) {
   const elapsed = useElapsed(job.startedAt, true);
   const p = job.progress;
-  const determinate = p?.phase === "generating" && p.step != null && !!p.totalSteps;
+  const determinate = (p?.phase === "generating" || p?.phase === "loadingModel") && p.step != null && !!p.totalSteps;
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-500/20 dark:bg-amber-500/5" role="status" aria-live="polite">
       <div className="flex items-center gap-3">

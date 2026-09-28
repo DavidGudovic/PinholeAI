@@ -62,6 +62,27 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Collect MSVC runtime DLLs for the engines (Windows)
+        # The upstream sd-server / llama-server Windows builds import the VC++
+        # 2015-2022 runtime and do not ship it. Pinhole bundles the redistributable
+        # DLLs (resources/vcrt) and copies them next to an engine when the system
+        # lacks them, so a clean Windows install can generate without extra setup.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          $redist = Get-ChildItem "$vs\VC\Redist\MSVC" -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName "x64\Microsoft.VC143.CRT") } |
+            Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $redist) { throw "VC redist folder not found under $vs" }
+          New-Item -ItemType Directory -Force src-tauri/vcrt | Out-Null
+          Copy-Item (Join-Path $redist.FullName "x64\Microsoft.VC143.CRT\*.dll") src-tauri/vcrt/
+          Copy-Item (Join-Path $redist.FullName "x64\Microsoft.VC143.OpenMP\*.dll") src-tauri/vcrt/
+          foreach ($d in "msvcp140.dll","vcruntime140.dll","vcruntime140_1.dll","vcomp140.dll","msvcp140_codecvt_ids.dll") {
+            if (-not (Test-Path "src-tauri/vcrt/$d")) { throw "missing $d in $($redist.FullName)" }
+          }
+          Get-ChildItem src-tauri/vcrt | Format-Table Name, Length
+
       - name: Build app and installers (tauri build --bundles ${{ matrix.bundles }})
         run: npx tauri build --bundles ${{ matrix.bundles }}
         env:

@@ -91,55 +91,58 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
   }, [loadHw]);
   useTauriEvent(onHardwareReady, loadHw);
 
-  const flush = useCallback(
-    async (hardwareChanged: boolean) => {
-      if (inflight.current) {
-        dirty.current = true;
-        return;
-      }
-      inflight.current = true;
-      onSaveState("saving");
-      try {
-        do {
-          dirty.current = false;
-          const result = await saveSettings(latest.current!);
-          if (!dirty.current) {
-            latest.current = result;
-            setLocal(result);
-          }
-          emitSettingsChanged(result);
-        } while (dirty.current);
-        setError(null);
-        onSaveState("saved");
-        if (savedTimer.current) clearTimeout(savedTimer.current);
-        savedTimer.current = setTimeout(() => onSaveState("idle"), 1800);
-        if (hardwareChanged) {
-          loadHw();
-          void refreshEngine();
+  const hwDirty = useRef(false);
+
+  // Saves the latest settings; changes made while a save is in flight are coalesced.
+  const flush = useCallback(async () => {
+    if (inflight.current) {
+      dirty.current = true;
+      return;
+    }
+    inflight.current = true;
+    onSaveState("saving");
+    try {
+      do {
+        dirty.current = false;
+        const result = await saveSettings(latest.current!);
+        if (!dirty.current) {
+          latest.current = result;
+          setLocal(result);
         }
-      } catch (e) {
-        setError(asCoreError(e));
-        onSaveState("idle");
-        // Show what is really stored.
-        getSettings()
-          .then((s) => {
-            latest.current = s;
-            setLocal(s);
-          })
-          .catch(() => undefined);
-      } finally {
-        inflight.current = false;
+        emitSettingsChanged(result);
+      } while (dirty.current);
+      setError(null);
+      onSaveState("saved");
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => onSaveState("idle"), 1800);
+    } catch (e) {
+      setError(asCoreError(e));
+      onSaveState("idle");
+      // Show what is really stored.
+      getSettings()
+        .then((s) => {
+          latest.current = s;
+          setLocal(s);
+        })
+        .catch(() => undefined);
+    } finally {
+      inflight.current = false;
+      if (hwDirty.current) {
+        // GPU / VRAM / backend changed: show the new tier and engine state.
+        hwDirty.current = false;
+        loadHw();
+        void refreshEngine();
       }
-    },
-    [refreshEngine, loadHw, onSaveState],
-  );
+    }
+  }, [refreshEngine, loadHw, onSaveState]);
 
   const update = (patch: Partial<Settings>) => {
     if (!latest.current) return;
     const next = { ...latest.current, ...patch };
     latest.current = next;
     setLocal(next);
-    void flush("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch);
+    if ("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch) hwDirty.current = true;
+    void flush();
   };
 
   const removeKey = async () => {

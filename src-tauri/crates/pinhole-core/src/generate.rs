@@ -543,6 +543,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
     })?;
 
+    engine_setup::ensure_runtime(core, &installed)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
@@ -607,6 +608,11 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     }
 }
 
+#[cfg(windows)]
+const MISSING_LIBRARY_MESSAGE: &str = "The image engine is missing a system component. Install the Microsoft Visual C++ Redistributable (x64) and update your graphics driver, or switch the engine to CPU in Settings.";
+#[cfg(not(windows))]
+const MISSING_LIBRARY_MESSAGE: &str = "The image engine is missing a system library (usually the Vulkan driver: install mesa-vulkan-drivers or your GPU's driver). Or switch the engine to CPU in Settings.";
+
 /// Plain-language error for an engine failure (ring-buffer tail in `details`).
 pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreError {
     let tail = logs.tail_text(40);
@@ -618,10 +624,7 @@ pub(crate) fn engine_failure(logs: &LogBuffer, exit_code: Option<i32>) -> CoreEr
         ),
         Failure::NoGpu => ("engine_failed", "The image engine couldn't use your graphics card. Update your graphics driver, or switch the engine to CPU in Settings."),
         Failure::GlibcTooOld => ("engine_failed", "The image engine needs Ubuntu 24.04 or newer. Please update your system."),
-        Failure::MissingLibrary => (
-            "engine_failed",
-            "The image engine is missing a system component (graphics driver / Vulkan runtime). Update your graphics driver, or switch the engine to CPU in Settings.",
-        ),
+        Failure::MissingLibrary => ("engine_failed", MISSING_LIBRARY_MESSAGE),
         Failure::ModelLoad => ("engine_failed", "This model couldn't be loaded — the file may be damaged or not supported. Try downloading it again."),
         Failure::Unknown => ("engine_failed", "The engine stopped unexpectedly. Try again; if it keeps happening, try the Fast setting or restart Pinhole."),
     };
@@ -789,6 +792,13 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     body.mask_image = mask_image;
     if req.mode == GenMode::Img2img {
         body.strength = Some(req.strength.unwrap_or(0.55).clamp(0.05, 1.0));
+    }
+    // "Only change here": sd.cpp blends the denoise mask against the init latent,
+    // so an edit with a mask also sends the source as init_image at full strength
+    // (unmasked areas are kept, masked areas are regenerated).
+    if req.mode == GenMode::Edit && body.mask_image.is_some() && body.init_image.is_none() {
+        body.init_image = body.ref_images.first().cloned();
+        body.strength = Some(1.0);
     }
 
     // Engine (restart only when the launch args differ).

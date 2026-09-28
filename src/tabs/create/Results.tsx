@@ -2,8 +2,9 @@
 // and a strip of every image made this session (in memory until Save).
 import { memo, useState } from "react";
 import { ChevronDown, Copy, FolderOpen, ImageUp, Save, ScanText, Shuffle, Trash, WandSparkles } from "lucide-react";
+import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { Logo } from "../../components/Logo";
-import { Button, ErrorNotice, IconButton, Kbd, MenuItem, Popover, cx, focusRing } from "../../components/ui";
+import { Button, IconButton, Kbd, MenuItem, Popover, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
@@ -173,7 +174,7 @@ function Preview({ result, img }: { result: ResultImage; img: ImgRef }) {
       )}
       {error && (
         <div className="mx-auto w-full max-w-xl">
-          <ErrorNotice error={error} onDismiss={() => setError(null)} />
+          <ErrorWithFix error={error} onDismiss={() => setError(null)} />
         </div>
       )}
     </div>

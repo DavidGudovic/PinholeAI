@@ -343,6 +343,18 @@ mod tests {
         let body = &mock.requests()[1];
         assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
         assert!(body.get("init_image").is_none());
+
+        // With an "Only change here" mask the source also goes in as init_image.
+        let mask = session::import_image(&core, pinhole_engine::testutil::solid_png(300, 200, [255, 255, 255, 255])).unwrap();
+        let mut req = GenerateRequest::txt2img(edited.images[0].model_id.clone(), "make the sign blue");
+        req.mode = GenMode::Edit;
+        req.ref_image_ids = vec![res.images[0].id.clone()];
+        req.mask_image_id = Some(mask.id);
+        generate::generate(&core, req).await.unwrap();
+        let body = &mock.requests()[2];
+        assert!(body["mask_image"].as_str().unwrap().len() > 50);
+        assert_eq!(body["init_image"], body["ref_images"][0]);
+        assert_eq!(body["strength"], 1.0);
     }
 
     #[tokio::test]

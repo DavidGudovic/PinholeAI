@@ -75,6 +75,36 @@ async fn settle_backend(core: &AppCore) {
     }
 }
 
+/// Folders that may hold app-local MSVC runtime DLLs shipped with Pinhole
+/// (`<resources>/vcrt`, `<exe dir>/vcrt`, `<exe dir>`).
+fn bundled_runtime_dirs(core: &AppCore) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(res) = core.shipped.config_dir.parent() {
+        dirs.push(res.join("vcrt"));
+    }
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+        dirs.push(exe_dir.join("vcrt"));
+        dirs.push(exe_dir);
+    }
+    dirs
+}
+
+/// Windows pre-flight before launching an engine: the upstream builds need the
+/// MSVC runtime (VC++ 2015–2022 x64). Copies bundled DLLs next to the engine if
+/// the system lacks them; otherwise explains what to install.
+pub(crate) fn ensure_runtime(core: &AppCore, engine: &InstalledEngine) -> CoreResult<()> {
+    let exe_dir = engine.exe.parent().unwrap_or(&engine.dir);
+    let missing = install::provide_runtime_dlls(exe_dir, engine.kind, &bundled_runtime_dirs(core));
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(CoreError::new(
+        "engine_missing",
+        "The engine needs the Microsoft Visual C++ Redistributable (2015–2022, x64). Install it from Microsoft's website, then try again.",
+    )
+    .with_details(format!("missing: {}", missing.join(", "))))
+}
+
 /// Current status (cheap: reads a marker file).
 pub fn engine_status(core: &AppCore) -> EngineStatus {
     let flags = core.gen.flags.lock().clone();

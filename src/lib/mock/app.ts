@@ -232,8 +232,11 @@ const table: MockTable = {
   open_outputs_folder: async () => undefined,
   engine_status: async () => ({ ...engineState() }),
   install_engine: () => installEngine(),
-  "plugin:dialog|open": async () => {
+  "plugin:dialog|open": async (a) => {
     await sleep(300);
+    // Only the "Add a file I already have" picker (model filters) gets a fake path; others look cancelled.
+    const filters = ((a.options as { filters?: { extensions: string[] }[] } | undefined)?.filters ?? []).flatMap((f) => f.extensions);
+    if (!filters.includes("safetensors")) return null;
     return FAKE_PICKS[pickCount++ % FAKE_PICKS.length];
   },
 };

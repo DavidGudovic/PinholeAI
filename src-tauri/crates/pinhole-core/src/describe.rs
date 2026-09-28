@@ -325,6 +325,7 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<String> {
     if let Some(old) = slot.take() {
         old.proc.stop().await;
     }
+    engine_setup::ensure_runtime(core, &engine)?;
     let cfg = engine_setup::engine_config(core)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
     let mut args: Vec<String> = cfg.llama_cpp.launch_defaults.iter().filter(|a| *a != "--host" && *a != "127.0.0.1").cloned().collect();

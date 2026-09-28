@@ -55,7 +55,9 @@ export function ModelPicker({
               {hint ?? label}
               {current && <StyleBadge badge={current.styleBadge} />}
             </span>
-            <span className="block truncate text-sm font-semibold">{current?.friendlyName ?? emptyText}</span>
+            <span className="block truncate text-sm font-semibold" title={current?.friendlyName}>
+              {current?.friendlyName ?? emptyText}
+            </span>
             {current?.vram && (
               <span className="mt-0.5 block">
                 <VramBadge vram={current.vram} fit={current.fit} compact />

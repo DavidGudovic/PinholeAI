@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Undo2, WandSparkles } from "lucide-react";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
+import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { JobProgress } from "../../components/JobProgress";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
-import { AutoTextarea, Button, ErrorNotice, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
+import { AutoTextarea, Button, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import * as api from "../../lib/api";
 import { defaultStickPosition, sizeMultiple } from "../../lib/paste/map";
@@ -318,7 +319,7 @@ export function EditTab() {
           )}
           {!current && !myJob && <p className="text-center text-xs text-neutral-500">Add an image to start.</p>}
           {job && !myJob && <p className="text-center text-xs text-neutral-500">Busy creating — editing is available when it finishes.</p>}
-          {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+          {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void run()} />}
         </div>
       </aside>
 
@@ -332,7 +333,7 @@ export function EditTab() {
           </div>
         ) : (
           <>
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
+            <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
               <IconButton label="Undo" disabled={e.index === 0} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
                 <Undo2 className="h-4 w-4" />
               </IconButton>
@@ -347,8 +348,8 @@ export function EditTab() {
                 <Segmented size="sm" ariaLabel="Compare with" value={compareWith} onChange={setCompareWith} options={[{ value: "previous", label: "Previous" }, { value: "original", label: "Original" }]} />
               )}
               <div className="ml-auto flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" onClick={picker.open}>
-                  <ImagePlus className="h-3.5 w-3.5" /> New image
+                <Button size="sm" variant="ghost" onClick={picker.open} title="Edit a different image" aria-label="New image">
+                  <ImagePlus className="h-3.5 w-3.5" /> <span className="hidden xl:inline">New image</span>
                 </Button>
                 <Button size="sm" onClick={() => void actions.save(current.id).catch((err) => setError(api.asCoreError(err)))}>
                   <Save className="h-3.5 w-3.5" /> Save

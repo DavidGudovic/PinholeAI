@@ -250,6 +250,10 @@ if (platform === "windows") {
   fs.mkdirSync(path.join(stage, "Data"), { recursive: true });
   fs.copyFileSync(exe, path.join(stage, `${product}.exe`));
   copyDir(path.join(ROOT, "config"), path.join(stage, "config"));
+  // MSVC runtime DLLs for the engines (collected by the bundle workflow).
+  const vcrt = path.join(ROOT, "src-tauri", "vcrt");
+  if (fs.existsSync(vcrt)) copyDir(vcrt, path.join(stage, "vcrt"));
+  else console.warn("package: src-tauri/vcrt missing — engines will need the VC++ runtime installed");
   fs.writeFileSync(path.join(stage, "Data", "README.txt"), DATA_README.replace(/\n/g, "\r\n"));
   fs.writeFileSync(path.join(stage, "README.txt"), TOP_README.replace(/\n/g, "\r\n"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(stage, "LICENSE.txt"));

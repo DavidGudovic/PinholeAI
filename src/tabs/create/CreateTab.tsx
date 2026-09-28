@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Download, Layers, Sparkles, TriangleAlert, X } from "lucide-react";
 import { JobProgress } from "../../components/JobProgress";
+import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { ModelPicker } from "../../components/ModelPicker";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
@@ -143,7 +144,7 @@ function CreateWorkspace() {
             </Button>
           )}
           {job && !myJob && <p className="text-center text-xs text-neutral-500">Busy with an edit — Generate is available when it finishes.</p>}
-          {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
+          {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void generate()} />}
         </div>
       </aside>
 

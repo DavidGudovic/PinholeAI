@@ -68,23 +68,27 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
       </div>
 
       {pending && (
-        <div className="pinhole-pop flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-500/30 dark:bg-amber-500/10" role="alert">
-          <Sparkles className="h-4 w-4 shrink-0 text-amber-600" />
-          <span className="min-w-0 flex-1">That looks like generation data from CivitAI. Apply these settings?</span>
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => {
-              const t = pending.text;
-              setPending(null);
-              onApplyPasted(t);
-            }}
-          >
-            Apply settings
-          </Button>
-          <Button size="sm" variant="ghost" onClick={insertAsText}>
-            Paste as text
-          </Button>
+        <div className="pinhole-pop rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm dark:border-amber-500/30 dark:bg-amber-500/10" role="alert">
+          <div className="flex items-start gap-2">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <span className="min-w-0 flex-1">That looks like generation data from CivitAI. Apply its settings too?</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 pl-6">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const t = pending.text;
+                setPending(null);
+                onApplyPasted(t);
+              }}
+            >
+              Apply settings
+            </Button>
+            <Button size="sm" variant="ghost" onClick={insertAsText}>
+              Paste as text
+            </Button>
+          </div>
         </div>
       )}
     </div>

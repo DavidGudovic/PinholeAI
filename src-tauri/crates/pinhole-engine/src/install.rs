@@ -293,6 +293,46 @@ fn now_secs() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+// ------------------------------------------------------------------ Windows runtime
+
+/// MSVC runtime DLLs (VC++ 2015–2022 x64 redistributable) the upstream Windows
+/// builds import. Not included in the release zips; present on most PCs but not
+/// on a fresh Windows install.
+pub fn msvc_runtime_dlls(kind: EngineKind) -> &'static [&'static str] {
+    match kind {
+        // ggml-base / ggml-cpu use MSVC OpenMP (vcomp140); stable-diffusion.dll uses codecvt ids.
+        EngineKind::Sd => &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "msvcp140_codecvt_ids.dll"],
+        // llama.cpp ships its own libomp.dll.
+        EngineKind::Llama => &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
+    }
+}
+
+/// Windows: make sure the MSVC runtime DLLs are loadable by the engine in
+/// `exe_dir` (found there or in System32; otherwise copied from `bundled`, e.g.
+/// the app's `vcrt/` resource folder). Returns the DLLs still missing. Always
+/// empty on other systems.
+pub fn provide_runtime_dlls(exe_dir: &Path, kind: EngineKind, bundled: &[PathBuf]) -> Vec<&'static str> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let system = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32"));
+    runtime_dlls_missing_after_copy(exe_dir, msvc_runtime_dlls(kind), system.as_deref(), bundled)
+}
+
+fn runtime_dlls_missing_after_copy(exe_dir: &Path, dlls: &[&'static str], system: Option<&Path>, bundled: &[PathBuf]) -> Vec<&'static str> {
+    let mut missing = Vec::new();
+    for dll in dlls {
+        if exe_dir.join(dll).is_file() || system.map(|s| s.join(dll).is_file()).unwrap_or(false) {
+            continue;
+        }
+        let copied = bundled.iter().map(|b| b.join(dll)).find(|p| p.is_file()).map(|src| fs::copy(&src, exe_dir.join(dll)).is_ok()).unwrap_or(false);
+        if !copied {
+            missing.push(*dll);
+        }
+    }
+    missing
+}
+
 // ------------------------------------------------------------------ extraction
 
 /// A `/`- or `\`-separated archive path → safe relative path, or `None` if it
@@ -519,6 +559,25 @@ mod tests {
             t.append(&h, io::empty()).unwrap();
         }
         t.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    fn runtime_dlls_are_found_or_copied_from_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (exe_dir, system, bundle) = (tmp.path().join("engine"), tmp.path().join("System32"), tmp.path().join("vcrt"));
+        for d in [&exe_dir, &system, &bundle] {
+            fs::create_dir_all(d).unwrap();
+        }
+        fs::write(system.join("msvcp140.dll"), b"x").unwrap();
+        fs::write(bundle.join("vcomp140.dll"), b"x").unwrap();
+        let dlls = msvc_runtime_dlls(EngineKind::Sd);
+        let missing = runtime_dlls_missing_after_copy(&exe_dir, dlls, Some(&system), std::slice::from_ref(&bundle));
+        assert!(exe_dir.join("vcomp140.dll").is_file(), "copied next to the engine");
+        assert!(!missing.contains(&"msvcp140.dll") && !missing.contains(&"vcomp140.dll"));
+        assert!(missing.contains(&"vcruntime140.dll"));
+        if !cfg!(windows) {
+            assert!(provide_runtime_dlls(&exe_dir, EngineKind::Sd, &[]).is_empty());
+        }
     }
 
     #[test]

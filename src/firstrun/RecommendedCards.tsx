@@ -80,26 +80,29 @@ export function RecommendedCards(props: {
 
   if (!shown)
     return (
-      <div className={compact ? "grid gap-3" : "grid gap-4 sm:grid-cols-2"} aria-busy="true">
-        {(roles?.length ? roles : ["realistic", "anime", "edit", "describe"]).map((r) => (
-          <div key={r} className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="mt-3 h-5 w-40" />
-            <Skeleton className="mt-2 h-3 w-full" />
-            {!compact && <Skeleton className="mt-6 h-8 w-full" />}
-          </div>
-        ))}
+      <div className="@container" aria-busy="true">
+        <div className={compact ? "grid gap-3" : "grid gap-4 @xl:grid-cols-2"}>
+          {(roles?.length ? roles : ["realistic", "anime", "edit", "describe"]).map((r) => (
+            <div key={r} className="rounded-xl border border-neutral-200 bg-white p-4 dark:border-neutral-800 dark:bg-neutral-900">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="mt-3 h-5 w-40" />
+              <Skeleton className="mt-2 h-3 w-full" />
+              {!compact && <Skeleton className="mt-6 h-8 w-full" />}
+            </div>
+          ))}
+        </div>
       </div>
     );
 
   const getAllTargets = (picks ?? []).filter((p) => GET_ALL_ROLES.includes(p.role) && p.title && !p.installed && !p.unavailableReason);
 
   return (
-    <div className="space-y-4">
+    // Container queries: the same cards sit in wide pages and in narrow side panels.
+    <div className="@container space-y-4">
       {showGetAll && (
         <GetAllBar picks={getAllTargets} onGet={(role) => void get(role)} starting={starting} allPicks={picks ?? []} />
       )}
-      <div className={compact ? (shown.length > 1 ? "grid gap-3 md:grid-cols-2" : "grid max-w-xl gap-3") : "grid gap-4 sm:grid-cols-2"}>
+      <div className={compact ? (shown.length > 1 ? "grid gap-3 @lg:grid-cols-2" : "grid max-w-xl gap-3") : "grid gap-4 @xl:grid-cols-2"}>
         {shown.map((p) => (
           <PickCard key={p.role} pick={p} compact={compact} starting={!!starting[p.role]} error={errors[p.role] ?? null} onGet={() => void get(p.role)} onDismissError={() => setErrors((x) => ({ ...x, [p.role]: null }))} />
         ))}

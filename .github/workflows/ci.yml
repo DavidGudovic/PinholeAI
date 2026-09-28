@@ -166,6 +166,9 @@ jobs:
       - name: Engine smoke test (256×256, 4 steps, CPU)
         run: cargo test -p pinhole-tests --test engine_smoke --release --locked -- --nocapture
 
+      - name: App end-to-end (engine install → add model → wire → generate → save)
+        run: cargo test -p pinhole-tests --test app_e2e --release --locked -- --nocapture
+
       - name: Upload smoke image
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

@@ -475,7 +475,7 @@ function plan(versionId: number): InstallPlan {
     versionId,
     modelName: e.name,
     versionName: e.versionName,
-    mainFile: { name: `${slug}_${e.versionName.replace(/[^A-Za-z0-9.]+/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
+    mainFile: { name: `${slug}_${e.versionName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9._-]/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
     family: e.familyId ? { familyId: e.familyId, label: FAMILIES[e.familyId]?.label ?? e.familyId } : null,
     familyCandidates: e.ambiguous
       ? [

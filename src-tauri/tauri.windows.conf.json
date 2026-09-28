@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "resources": {
+      "../config/": "config/",
+      "../THIRD_PARTY_LICENSES": "THIRD_PARTY_LICENSES.txt",
+      "vcrt/": "vcrt/"
+    }
+  }
+}

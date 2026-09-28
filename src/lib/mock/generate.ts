@@ -218,8 +218,9 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
 
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).
     if (loadedModel !== model.id) {
-      progress({ phase: "loadingModel", modelLabel: model.friendlyName }, started);
-      for (let i = 0; i < 8; i++) {
+      const tensors = 1130;
+      for (let i = 0; i <= 8; i++) {
+        progress({ phase: "loadingModel", modelLabel: model.friendlyName, step: Math.round((tensors * i) / 8), totalSteps: tensors }, started);
         await sleep(200);
         await checkCancel(started);
       }

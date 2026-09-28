@@ -575,7 +575,10 @@ export function lintTauriConf(file, src, F) {
   const lineOfText = (t) => Math.max(1, lines.findIndex((l) => l.includes(t)) + 1);
   const cspRaw = conf?.app?.security?.csp;
   const cspList = typeof cspRaw === "string" ? [cspRaw] : cspRaw && typeof cspRaw === "object" ? Object.entries(cspRaw).map(([k, v]) => `${k} ${Array.isArray(v) ? v.join(" ") : v}`) : [];
-  if (!cspList.length) F.addPlain(file, lineOfText('"security"'), "csp", "No CSP configured: the WebView must be locked to 'self', ipc: and blob:/data: (CLAUDE.md privacy rule 5).");
+  // Platform override files (tauri.windows.conf.json …) merge over the main
+  // config, so only the main file must define the CSP; overrides may still not weaken it.
+  const isMainConf = /(^|\/)tauri\.conf\.json$/.test(file);
+  if (!cspList.length && isMainConf) F.addPlain(file, lineOfText('"security"'), "csp", "No CSP configured: the WebView must be locked to 'self', ipc: and blob:/data: (CLAUDE.md privacy rule 5).");
   for (const csp of cspList) {
     for (const tok of csp.split(/[\s;]+/)) {
       if (!tok) continue;

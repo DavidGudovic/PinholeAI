@@ -46,7 +46,9 @@
     },
     "linux": {
       "deb": {
-        "depends": []
+        "depends": [
+          "libvulkan1"
+        ]
       }
     }
   }
