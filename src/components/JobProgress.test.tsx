@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it } from "vitest";
 import type { GenerationProgress } from "../lib/types";
 import type { Job } from "../lib/state/model";
-import { jobStatusText } from "./JobProgress";
+import { cleanup, render, screen } from "@testing-library/react";
+import { JobProgress, jobStatusText } from "./JobProgress";
+
+afterEach(cleanup);
 
 const job = (p: Partial<GenerationProgress> | null, kind: Job["kind"] = "create"): Job => ({
   kind,
@@ -19,5 +23,18 @@ describe("jobStatusText", () => {
     expect(jobStatusText(job({ phase: "generating" }, "edit"), 12)).toBe("Editing… 12 s");
     expect(jobStatusText(job({ phase: "queued", queuePosition: 2 }), 0)).toBe("Waiting in line (#2)…");
     expect(jobStatusText(job(null, "upscale"), 0)).toBe("Upscaling…");
+  });
+});
+
+describe("JobProgress", () => {
+  it("shows the engine note under the status (e.g. an automatic memory retry)", () => {
+    const note = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
+    render(<JobProgress job={job({ phase: "loadingModel", modelLabel: "Z-Image Turbo", note })} onCancel={() => undefined} />);
+    expect(screen.getByRole("note").textContent).toBe(note);
+    expect(screen.getByText("Loading Z-Image Turbo… (~10–30 s)")).toBeTruthy();
+  });
+  it("shows no note when there is none", () => {
+    render(<JobProgress job={job({ phase: "generating", step: 1, totalSteps: 8 })} onCancel={() => undefined} />);
+    expect(screen.queryByRole("note")).toBeNull();
   });
 });

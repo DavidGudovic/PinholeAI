@@ -1,6 +1,7 @@
 //! Plain-language Browse filters (SPEC §5.4) from `config/catalog-filters.yaml`:
 //! the query parameters sent to `GET /api/v1/models` and the client-side rules
-//! (18+ only, free / early access, Look tags, brand commercial use).
+//! (Safe only / 18+ only via [`crate::safe`], free / early access, Look tags,
+//! brand commercial use).
 
 use std::path::Path;
 
@@ -8,6 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::api::{Model, ModelVersion};
+use crate::safe::SafeFilter;
 use crate::view::{CatalogFilterOptions, KeyLabel, KeyedLabel};
 
 // ------------------------------------------------------------------ query from the UI
@@ -86,7 +88,7 @@ impl Default for BrowseQuery {
             look: None,
             content: ContentMode::Safe,
             price: PriceMode::Free,
-            sort: "Highest Rated".into(),
+            sort: "Most Downloaded".into(),
             period: "AllTime".into(),
             commercial_only: false,
             compatible_only: true,
@@ -180,26 +182,22 @@ pub struct PriceSection {
     pub default: PriceMode,
 }
 
+/// One Content mode. What it keeps is fixed in code ([`CatalogFilters::keep_model`]):
+/// the YAML only picks the label and the `nsfw` query parameter.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentOption {
     pub label: String,
     #[serde(default)]
     pub api_nsfw: Option<bool>,
-    #[serde(default)]
-    pub client_filter: Option<String>,
 }
 
-impl ContentOption {
-    /// `Some(required model.nsfw)` from `client_filter`.
-    fn required_nsfw(&self) -> Result<Option<bool>, String> {
-        let Some(expr) = self.client_filter.as_deref() else { return Ok(None) };
-        let compact: String = expr.chars().filter(|c| !c.is_whitespace()).collect();
-        match compact.as_str() {
-            "model.nsfw==true" => Ok(Some(true)),
-            "model.nsfw==false" => Ok(Some(false)),
-            _ => Err(format!("unsupported client_filter `{expr}`")),
-        }
-    }
+/// Why a `/models` item has no card (Browse shows the counts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hidden {
+    /// "Safe only" hid a model made for adults (or "18+ only" hid a safe one).
+    Content,
+    /// Kind, Look, commercial use, price, compatibility or archived.
+    Other,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -247,10 +245,22 @@ struct FiltersYaml {
     period: Vec<ApiOption>,
     #[serde(default = "default_formats")]
     allowed_file_formats: Vec<String>,
+    #[serde(default)]
+    safe_filter: SafeFilter,
+    #[serde(default)]
+    default_sort: Option<String>,
+    #[serde(default)]
+    default_period: Option<String>,
     #[serde(default = "default_page_size")]
     page_size: u32,
+    #[serde(default)]
+    api_limit: Option<u32>,
     #[serde(default = "default_extra")]
     max_extra_requests: u32,
+    #[serde(default = "default_cache_minutes")]
+    cache_minutes: u32,
+    #[serde(default = "default_cache_pages")]
+    cache_pages: u32,
     #[serde(default = "default_preview_width")]
     preview_width: u32,
 }
@@ -270,6 +280,12 @@ fn default_extra() -> u32 {
 fn default_preview_width() -> u32 {
     450
 }
+fn default_cache_minutes() -> u32 {
+    5
+}
+fn default_cache_pages() -> u32 {
+    12
+}
 
 /// Loaded `catalog-filters.yaml`.
 #[derive(Debug, Clone)]
@@ -281,13 +297,24 @@ pub struct CatalogFilters {
     pub style_badges: Vec<StyleBadge>,
     pub price: PriceSection,
     pub content: ContentSection,
+    /// "Safe only" rules (normalized, see [`SafeFilter::normalized`]).
+    pub safe: SafeFilter,
     pub sort: Vec<ApiOption>,
     pub period: Vec<ApiOption>,
+    /// Opening sort / time (`api` values; always one of `sort` / `period`).
+    pub default_sort: String,
+    pub default_period: String,
     pub allowed_file_formats: Vec<String>,
     /// Always true in practice; the YAML can't turn scan checks off (CLAUDE.md).
     pub require_scans_success: bool,
+    /// Cards per Browse page.
     pub page_size: u32,
+    /// `limit` per CivitAI request (≥ page_size, ≤ 100).
+    pub api_limit: u32,
     pub max_extra_requests: u32,
+    /// RAM cache of CivitAI answers: lifetime and size (0 pages = off).
+    pub cache_ttl: std::time::Duration,
+    pub cache_pages: usize,
     pub preview_width: u32,
 }
 
@@ -309,12 +336,20 @@ impl CatalogFilters {
                 also_require: l.also_require.unwrap_or_default(),
             });
         }
-        for mode in [ContentMode::Safe, ContentMode::Include18Plus, ContentMode::Only18Plus] {
-            raw.content.option(mode).required_nsfw().map_err(FiltersError::Yaml)?;
-        }
         if raw.sort.is_empty() || raw.period.is_empty() {
             return Err(FiltersError::Yaml("sort and period need at least one entry".into()));
         }
+        let pick = |list: &[ApiOption], wanted: Option<&str>, fallback: &str| -> String {
+            wanted
+                .and_then(|w| list.iter().find(|o| o.api == w))
+                .or_else(|| list.iter().find(|o| o.api == fallback))
+                .unwrap_or(&list[0])
+                .api
+                .clone()
+        };
+        let default_sort = pick(&raw.sort, raw.default_sort.as_deref(), &raw.sort[0].api);
+        let default_period = pick(&raw.period, raw.default_period.as_deref(), "AllTime");
+        let page_size = raw.page_size.clamp(1, 100);
         // Security: the YAML may narrow the allowed formats, never widen them.
         let allowed_file_formats: Vec<String> = raw
             .allowed_file_formats
@@ -328,12 +363,18 @@ impl CatalogFilters {
             style_badges: raw.style_badges,
             price: raw.price,
             content: raw.content,
+            safe: raw.safe_filter.normalized(),
             sort: raw.sort,
             period: raw.period,
+            default_sort,
+            default_period,
             allowed_file_formats,
             require_scans_success: true,
-            page_size: raw.page_size.clamp(1, 100),
+            page_size,
+            api_limit: raw.api_limit.unwrap_or(page_size).clamp(page_size, 100),
             max_extra_requests: raw.max_extra_requests.min(20),
+            cache_ttl: std::time::Duration::from_secs(u64::from(raw.cache_minutes.min(60)) * 60),
+            cache_pages: raw.cache_pages.min(64) as usize,
             preview_width: raw.preview_width.clamp(64, 2048),
         })
     }
@@ -381,6 +422,8 @@ impl CatalogFilters {
             .collect(),
             default_content: self.content.default,
             default_price: self.price.default,
+            default_sort: self.default_sort.clone(),
+            default_period: self.default_period.clone(),
         }
     }
 
@@ -390,19 +433,14 @@ impl CatalogFilters {
     pub fn query_params(&self, q: &BrowseQuery, base_models: &[String], cursor: Option<&str>) -> Vec<(String, String)> {
         let mut p: Vec<(String, String)> = Vec::new();
         let mut push = |k: &str, v: &str| p.push((k.to_string(), v.to_string()));
-        push("limit", &self.page_size.to_string());
+        push("limit", &self.api_limit.to_string());
         for t in &self.kind_spec(q.kind).api_types {
             push("types", t);
         }
-        let sort = self.sort.iter().find(|s| s.api == q.sort).unwrap_or(&self.sort[0]);
-        push("sort", &sort.api);
-        let period = self
-            .period
-            .iter()
-            .find(|s| s.api == q.period)
-            .or_else(|| self.period.iter().find(|s| s.api == "AllTime"))
-            .unwrap_or(&self.period[0]);
-        push("period", &period.api);
+        let sort = self.sort.iter().find(|s| s.api == q.sort).map_or(self.default_sort.as_str(), |s| s.api.as_str());
+        push("sort", sort);
+        let period = self.period.iter().find(|s| s.api == q.period).map_or(self.default_period.as_str(), |s| s.api.as_str());
+        push("period", period);
         if let Some(nsfw) = self.content.option(q.content).api_nsfw {
             push("nsfw", if nsfw { "true" } else { "false" });
         }
@@ -435,34 +473,43 @@ impl CatalogFilters {
         look.also_require.allow_commercial_use_includes.clone()
     }
 
-    /// Model-level client-side rules: kind, content (18+ only / safe), Look tags
-    /// (+ brand `also_require`), commercial use, archived models.
+    /// Model-level client-side rules: kind, content (Safe only / 18+ only, see
+    /// [`crate::safe`]), Look tags (+ brand `also_require`), commercial use,
+    /// archived models.
     pub fn keep_model(&self, q: &BrowseQuery, m: &Model) -> bool {
+        self.hidden_by(q, m).is_none()
+    }
+
+    /// Why [`CatalogFilters::keep_model`] drops a model (`None` = kept).
+    pub fn hidden_by(&self, q: &BrowseQuery, m: &Model) -> Option<Hidden> {
         if m.is_unavailable() {
-            return false;
+            return Some(Hidden::Other);
         }
         let kind = self.kind_spec(q.kind);
         if !m.kind.is_empty() && !kind.api_types.iter().any(|t| t.eq_ignore_ascii_case(&m.kind)) {
-            return false;
+            return Some(Hidden::Other);
         }
-        if let Ok(Some(required)) = self.content.option(q.content).required_nsfw() {
-            if m.nsfw != required {
-                return false;
-            }
+        let adult = match q.content {
+            ContentMode::Include18Plus => None,
+            ContentMode::Safe | ContentMode::Only18Plus => Some(self.safe.adult_reason(m).is_some()),
+        };
+        match (q.content, adult) {
+            (ContentMode::Safe, Some(true)) | (ContentMode::Only18Plus, Some(false)) => return Some(Hidden::Content),
+            _ => {}
         }
         if let Some(key) = q.look.as_deref() {
             match self.look(key) {
                 Some(look) if look.matches_tags(&m.tags) => {}
-                Some(_) => return false,
+                Some(_) => return Some(Hidden::Other),
                 None => {} // unknown look key: ignore the filter
             }
         }
         if let Some(what) = self.commercial_required(q) {
             if !m.allow_commercial_use.allows(&what) {
-                return false;
+                return Some(Hidden::Other);
             }
         }
-        true
+        None
     }
 
     /// The version a card shows, after compatibility and price rules:
@@ -512,8 +559,12 @@ pub(crate) mod tests {
         let f = filters();
         assert_eq!(f.looks.iter().map(|l| l.key.as_str()).collect::<Vec<_>>(), ["realistic", "anime", "illustration", "three_d", "brand"]);
         assert_eq!(f.page_size, 24);
+        assert_eq!(f.api_limit, 50);
         assert_eq!(f.max_extra_requests, 5);
+        assert_eq!(f.cache_ttl, std::time::Duration::from_secs(300));
+        assert_eq!(f.cache_pages, 12);
         assert_eq!(f.allowed_file_formats, ["SafeTensor", "GGUF"]);
+        assert_eq!((f.default_sort.as_str(), f.default_period.as_str()), ("Most Downloaded", "AllTime"));
         let o = f.options();
         assert_eq!(o.default_content, ContentMode::Safe);
         assert_eq!(o.default_price, PriceMode::Free);
@@ -523,17 +574,27 @@ pub(crate) mod tests {
         let json = serde_json::to_value(&o).unwrap();
         assert_eq!(json["defaultContent"], "safe");
         assert_eq!(json["defaultPrice"], "free");
+        assert_eq!(json["defaultSort"], "Most Downloaded");
+        assert_eq!(json["defaultPeriod"], "AllTime");
         assert_eq!(json["looks"][3]["key"], "three_d");
     }
 
     #[test]
-    fn yaml_cannot_widen_formats_or_add_unknown_filters() {
-        let y = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"))
-            .replace("allowed_file_formats: [SafeTensor, GGUF]", "allowed_file_formats: [SafeTensor, PickleTensor]");
+    fn yaml_cannot_widen_formats_or_safe_previews() {
+        let shipped = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"));
+        let y = shipped.replace("allowed_file_formats: [SafeTensor, GGUF]", "allowed_file_formats: [SafeTensor, PickleTensor]");
         assert_eq!(CatalogFilters::from_yaml(&y).unwrap().allowed_file_formats, ["SafeTensor"]);
-        let y = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/catalog-filters.yaml"))
-            .replace("client_filter: \"model.nsfw == true\"", "client_filter: \"model.rating > 3\"");
-        assert!(CatalogFilters::from_yaml(&y).is_err());
+        let y = shipped.replace("max_preview_level: 1", "max_preview_level: 16");
+        assert_eq!(CatalogFilters::from_yaml(&y).unwrap().safe.max_preview_level, crate::safe::LEVEL_PG13);
+        // Unknown defaults fall back to configured options; limits are clamped.
+        let y = shipped
+            .replace("default_sort: \"Most Downloaded\"", "default_sort: \"Most Buzz\"")
+            .replace("default_period: AllTime", "default_period: Decade")
+            .replace("api_limit: 50", "api_limit: 500");
+        let f = CatalogFilters::from_yaml(&y).unwrap();
+        assert_eq!((f.default_sort.as_str(), f.default_period.as_str(), f.api_limit), ("Highest Rated", "AllTime", 100));
+        let y = shipped.replace("api_limit: 50", "api_limit: 3");
+        assert_eq!(CatalogFilters::from_yaml(&y).unwrap().api_limit, 24, "never below page_size");
     }
 
     #[test]
@@ -556,11 +617,11 @@ pub(crate) mod tests {
         let f = filters();
         let bases = vec!["SDXL 1.0".to_string(), "Pony".to_string()];
         let p = f.query_params(&BrowseQuery::default(), &bases, None);
-        assert_eq!(get(&p, "limit"), ["24"]);
+        assert_eq!(get(&p, "limit"), ["50"]);
         assert_eq!(get(&p, "types"), ["Checkpoint"]);
-        assert_eq!(get(&p, "sort"), ["Highest Rated"]);
+        assert_eq!(get(&p, "sort"), ["Most Downloaded"]);
         assert_eq!(get(&p, "period"), ["AllTime"]);
-        assert_eq!(get(&p, "nsfw"), ["false"]);
+        assert_eq!(get(&p, "nsfw"), ["true"], "Safe only needs every image rating (filtered client-side)");
         assert_eq!(get(&p, "baseModels"), ["SDXL 1.0", "Pony"]);
         assert!(get(&p, "query").is_empty());
         assert!(get(&p, "cursor").is_empty());
@@ -590,8 +651,10 @@ pub(crate) mod tests {
         q.sort = "Most Buzz".into();
         q.period = "Decade".into();
         let p = f.query_params(&q, &bases, None);
-        assert_eq!(get(&p, "sort"), ["Highest Rated"], "unknown sort → first configured");
+        assert_eq!(get(&p, "sort"), ["Most Downloaded"], "unknown sort → the default");
         assert_eq!(get(&p, "period"), ["AllTime"]);
+        q.content = ContentMode::Safe;
+        assert_eq!(get(&f.query_params(&q, &bases, None), "nsfw"), ["true"], "same pages in every content mode");
 
         q.commercial_only = true;
         assert_eq!(get(&f.query_params(&q, &bases, None), "allowCommercialUse"), ["Image"]);
@@ -618,13 +681,27 @@ pub(crate) mod tests {
         let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Only18Plus, ..Default::default() };
         assert!(f.keep_model(&q, nsfw_lora));
         let q = BrowseQuery { content: ContentMode::Only18Plus, ..Default::default() };
-        assert!(!f.keep_model(&q, sfw_ckpt), "18+ only keeps only model.nsfw == true");
+        assert!(!f.keep_model(&q, sfw_ckpt), "18+ only keeps only what Safe only hides");
         let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Safe, ..Default::default() };
-        assert!(!f.keep_model(&q, nsfw_lora), "safe mode drops nsfw models defensively");
+        assert!(!f.keep_model(&q, nsfw_lora), "safe mode drops nsfw models");
+        assert_eq!(f.hidden_by(&q, nsfw_lora), Some(Hidden::Content));
+        let q = BrowseQuery { content: ContentMode::Safe, ..Default::default() };
+        assert!(f.keep_model(&q, sfw_ckpt), "RealVisXL: one suggestive tag, mostly PG images");
         let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Include18Plus, ..Default::default() };
         assert!(f.keep_model(&q, nsfw_lora));
         let q = BrowseQuery { content: ContentMode::Include18Plus, ..Default::default() };
         assert!(f.keep_model(&q, sfw_ckpt));
+    }
+
+    #[test]
+    fn safe_and_adult_only_split_the_live_sample() {
+        let f = filters();
+        let page = crate::safe::tests::live("month");
+        let count = |content| page.items.iter().filter(|m| f.keep_model(&BrowseQuery { content, ..Default::default() }, m)).count();
+        let (safe, adult, all) = (count(ContentMode::Safe), count(ContentMode::Only18Plus), count(ContentMode::Include18Plus));
+        assert_eq!(safe + adult, all);
+        assert_eq!(all, page.items.len());
+        assert!(safe < all / 2, "most of this month's top-rated checkpoints are made for adults ({safe}/{all})");
     }
 
     #[test]

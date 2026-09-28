@@ -168,6 +168,14 @@ pub struct DetectRules {
     /// Copy another family's rules (kept as a separate family).
     #[serde(default)]
     pub same_as: Option<String>,
+    /// Files of this family are complete checkpoints whose own tensor names
+    /// already include the text encoder (and which may decode in pixel
+    /// space, with no VAE), e.g. HiDream-O1 (`model.language_model.*`). A
+    /// matching file is always all-in-one (`--model`): `--diffusion-model`
+    /// would prefix every name with `model.diffusion_model.` and the engine
+    /// would no longer recognise it.
+    #[serde(default)]
+    pub whole_checkpoint: bool,
 }
 
 impl DetectRules {

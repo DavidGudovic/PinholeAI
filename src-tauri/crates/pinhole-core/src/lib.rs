@@ -109,8 +109,10 @@ impl AppCore {
     }
 
     /// Kick off background work: hardware detection, download-event forwarding,
-    /// captioner idle shutdown. Must be called inside a Tokio runtime.
+    /// captioner idle shutdown, killing leftover engines from an earlier run.
+    /// Must be called inside a Tokio runtime.
     pub fn start_background(self: &Arc<Self>) {
+        engine_setup::start_orphan_sweep(self);
         app::start_hardware_detection(self);
         downloads::start_event_forwarding(self);
         describe::start_idle_watchdog(self);

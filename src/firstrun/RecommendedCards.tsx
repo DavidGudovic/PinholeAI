@@ -13,6 +13,8 @@ import { isActive, machinePlain, quantPlain } from "../tabs/models/lib/words";
 
 const ROLE_ICON: Record<string, ReactNode> = {
   realistic: <Camera className="h-4 w-4" />,
+  // Optional second Realistic card (Krea 2 Turbo on 12 GB+); absent when it doesn't fit.
+  realistic_detail: <Camera className="h-4 w-4" />,
   anime: <Sparkles className="h-4 w-4" />,
   edit: <WandSparkles className="h-4 w-4" />,
   describe: <ScanText className="h-4 w-4" />,
@@ -21,7 +23,7 @@ const ROLE_ICON: Record<string, ReactNode> = {
 const GET_ALL_ROLES = ["realistic", "edit"];
 
 export function RecommendedCards(props: {
-  /** Subset of roles to show (realistic | anime | edit | describe); default all. */
+  /** Subset of roles to show (realistic | realistic_detail | anime | edit | describe); default all. */
   roles?: string[];
   /** Smaller layout for empty states inside a tab. */
   compact?: boolean;

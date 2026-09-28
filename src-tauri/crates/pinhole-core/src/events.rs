@@ -28,6 +28,10 @@ pub struct GenerationProgress {
     pub step: Option<u32>,
     pub total_steps: Option<u32>,
     pub elapsed_ms: u64,
+    /// Plain-language note for this job (e.g. other programs are using the
+    /// graphics memory, or an automatic retry with memory-saving settings).
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -50,6 +54,11 @@ pub struct EngineStatus {
     /// Engine output for the "Details" toggle (`CoreError.details`).
     #[serde(default)]
     pub error_details: Option<String>,
+    /// Plain-language note about the running engine: an automatic memory
+    /// choice (text encoder on the processor) or other programs using a lot of
+    /// graphics memory. Never prompt text.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

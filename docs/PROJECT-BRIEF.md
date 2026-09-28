@@ -19,9 +19,11 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
   Ubuntu 24.04 (CPU), the app's own install → add model → wire → generate → save path, a
   WebDriver test that drives the real app, the privacy sentinel scan, Offline mode, installers.
 - First real-GPU test (RTX 5070 Ti 16 GB, Windows 11): Z-Image Turbo bf16 failed when ~9 GB of VRAM
-  was already used by another program → prompt encoding ran out of memory. Being fixed: lighter
-  Z-Image files on ≤ 16 GB, text encoder on CPU as automatic fallback, clear "close other GPU
-  apps" message, orphaned-engine cleanup.
+  was already used by another program → prompt encoding ran out of memory. Fixed, awaiting a real-GPU
+  re-test: ≤ 16 GB now gets the Q8_0 model + Q8_0 GGUF text encoder (an already installed encoder
+  option is still used), leftover engines are killed at start, other programs' VRAM is named, and an
+  out-of-memory job retries with the text encoder on the processor, then with VAE tiling
+  (Settings → Engine → "Run the text encoder on the processor").
 
 ## Features
 Create (dials: Shape, Quality, Stick to prompt, How many, Keep this look; Fine-tune drawer with every
@@ -69,14 +71,17 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   reach those hosts).
 
 ## Open work / roadmap
-1. **VRAM robustness on real GPUs** (in progress): see Status.
-2. **More model families** (in progress): Krea 2, Anima, MiniMax H3, Flux.1 Krea, Flux.2 (D, Klein),
-   Chroma, Qwen 2 / 2.1, SD 3.x — the pinned engine supports them; the registry needs family entries
-   with verified components. These dominate CivitAI's current top models, which is why browsing
-   looked thin.
-3. **CivitAI browser** (in progress): Safe mode that looks like Stability Matrix's defaults (the
-   public API has no stricter rating filter than `nsfw=false`; filter suggestive tags/names/ratings
-   ourselves), fuller pages, faster previews (thumbnails, RAM cache, prefetch).
+1. **VRAM robustness on real GPUs** (built, awaiting a real-GPU re-test): see Status. Untested in
+   CI: CUDA/Vulkan behaviour, the Windows leftover-engine sweep and `nvidia-smi` on Windows.
+2. **More model families** (registry entries done, not yet run on a real GPU): Krea 2 (Turbo is
+   the second "Realistic" one-click pick on 12 GB+), Anima, Flux.1 Krea, Flux.2 (dev, klein 4B/9B
+   + base), Chroma, Qwen-Image 2.1, SD 3 / 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; CivitAI int8
+   (ComfyUI int8_tensorwise) files now install. Not runnable: MiniMax H3 (video + audio only in the
+   engine), "Qwen 2" (API-only on CivitAI). Needs real-GPU checks of defaults and VRAM figures.
+3. **CivitAI browser** (built, awaiting a real-app check): Safe only = Stability Matrix's default
+   (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
+   live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then
+   "Load more"); gzip JSON, CivitAI's own 450 px card renditions, RAM caches, prefetch.
 4. **Engine auth patch** (decision pending): build a patched sd-server in CI that rejects browser
    requests and requires a per-launch token — recommended before any public release.
 5. Measure real VRAM on 8 / 12 / 16 GB cards (SPEC §14) and record observed peak VRAM.

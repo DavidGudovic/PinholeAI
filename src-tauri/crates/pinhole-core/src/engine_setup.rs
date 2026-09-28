@@ -9,9 +9,12 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use pinhole_engine::install::{self, EngineKind, InstalledEngine};
+use pinhole_engine::orphans::{self, Orphan};
 use pinhole_engine::pins::{self, EngineConfig, SelectedBuild};
+use pinhole_hardware::{OtherGpuUse, Vendor};
 
 use crate::events::EngineStatus;
 use crate::{AppCore, CoreError, CoreEvent, CoreResult};
@@ -53,6 +56,45 @@ pub fn selected_build(core: &AppCore, kind: EngineKind) -> CoreResult<(Arc<Engin
 /// `Data/engine/`
 pub fn engine_root(core: &AppCore) -> PathBuf {
     core.data.engine()
+}
+
+/// How long the leftover-engine sweep waits for killed processes to be gone.
+const ORPHAN_WAIT: Duration = Duration::from_secs(10);
+
+/// Kill leftover `sd-server` / `llama-server` processes under `Data/engine/`
+/// that this app isn't running (they hold graphics memory) and wait until
+/// they're gone. Never touches other programs. Returns what was killed.
+pub async fn sweep_orphans(core: &AppCore) -> Vec<Orphan> {
+    let root = engine_root(core);
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    tokio::task::spawn_blocking(move || orphans::kill_orphans(&root, ORPHAN_WAIT)).await.unwrap_or_default()
+}
+
+/// App start: sweep leftovers from an earlier run in the background.
+pub fn start_orphan_sweep(core: &Arc<AppCore>) {
+    let root = engine_root(core);
+    if !root.is_dir() {
+        return;
+    }
+    let sweep = move || {
+        orphans::kill_orphans(&root, ORPHAN_WAIT);
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(rt) => drop(rt.spawn_blocking(sweep)),
+        Err(_) => drop(std::thread::spawn(sweep)),
+    }
+}
+
+/// NVIDIA: graphics memory used by programs other than Pinhole's engines on
+/// the GPU in use (`nvidia-smi`, bounded). `None` when it can't be known.
+pub async fn gpu_others(core: &AppCore) -> Option<OtherGpuUse> {
+    let gpu = crate::app::effective(core).gpu.filter(|g| g.vendor == Vendor::Nvidia)?;
+    let usage = tokio::task::spawn_blocking(pinhole_hardware::query_vram_usage).await.ok()??;
+    let mut ours = pinhole_engine::process::managed_pids();
+    ours.push(std::process::id());
+    usage.others(Some(gpu.index), &ours)
 }
 
 /// The installed engine for the current backend choice; if that backend isn't
@@ -121,6 +163,7 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
         error: flags.error.as_ref().map(|e| e.message.clone()),
         error_code: flags.error.as_ref().map(|e| e.code.clone()),
         error_details: flags.error.as_ref().and_then(|e| e.details.clone()),
+        note: crate::generate::engine_note(core, &flags),
     };
     match selected_build(core, EngineKind::Sd) {
         Ok((cfg, sel)) => {

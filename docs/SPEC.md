@@ -49,8 +49,10 @@ every decision can be overridden.
 
 ### Why these choices
 - **stable-diffusion.cpp (`sd-server`)**: MIT license, single native binary, no Python.
-  Supports SD1.5, SDXL (incl. Pony/Illustrious finetunes), Flux.1, Z-Image, Qwen-Image,
-  and instruction-edit models (Flux.1 Kontext, Qwen Image Edit 2509/2511). Backends: CUDA,
+  Supports SD1.5, SDXL (incl. Pony/Illustrious finetunes), SD 3 / 3.5, Flux.1 (incl. Krea
+  [dev]), Flux.2 (dev, klein 4B/9B), Chroma, Z-Image, Qwen-Image (incl. 2.1), Krea 2, Anima,
+  HiDream-O1, ERNIE-Image, Mage-Flow, and instruction-edit models (Flux.1 Kontext, Qwen Image
+  Edit 2509/2511). Video-only models (e.g. MiniMax H3) are out of scope: `img_gen` refuses them. Backends: CUDA,
   Vulkan, CPU. Its native async API (`POST /sdcpp/v1/img_gen`, poll `/sdcpp/v1/jobs/{id}`)
   returns images as base64 in the response, so nothing touches disk.
 - **llama.cpp (`llama-server`)**: MIT, runs vision-language models (GGUF + mmproj) for img2text.
@@ -238,19 +240,37 @@ Two sub-views: **Browse** and **Installed**.
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
-| Content | Safe only · Include 18+ · 18+ only | `nsfw=false` (default) · `nsfw=true` · `nsfw=true` + keep only items with `model.nsfw == true` |
+| Content | Safe only · Include 18+ · 18+ only | always `nsfw=true` (the only way to get every sample image with its rating); Safe only (default) keeps models that pass `safe_filter` (see below) · everything · only the models Safe only hides |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
-| Sort | Top rated · Most downloaded · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
-| Time | This week · This month · This year · All time | `period` |
+| Sort | Top rated · Most downloaded (default) · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
+| Time | This week · This month · This year · All time (default) | `period` |
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |
 | Search | free text | `query` |
 
-- Paging with `cursor` (page×limit > 1000 returns 429).
+- Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
+  (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`).
 - 18+ modes require a one-time confirmation per session (stored in RAM only).
 - Default content mode is **Safe only**. When 18+ is off, also blur any preview image flagged NSFW.
-- "18+ only" and "Free" are partly client-side filters: keep fetching pages until the grid is
-  full (cap at 5 extra requests per scroll, then show "Load more").
+- Content, Look and Price are partly client-side filters: keep fetching pages until the grid page
+  (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
+  stops the older one's extra requests.
+- **Safe only** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
+  nothing stricter than `nsfw=false`, which only hides models CivitAI flags, and rejects
+  `browsingLevel`): a model is hidden when CivitAI flags it NSFW, its `nsfwLevel` bitmask has
+  no PG bit, it has an adult tag (or two suggestive ones), its name has an adult word (whole
+  words), or more than half of its creator's rated sample images are R or above. The
+  model-level `nsfwLevel` alone is not used otherwise: mainstream models such as Juggernaut XL
+  are 31 (all levels) because people post every kind of image with them. Card previews in Safe
+  only are PG images only (like Stability Matrix); no PG image → no preview.
+- Opening filters are **Most downloaded · All time** (mainstream models; "This month" is
+  dominated by fresh suggestive anime merges). A line above the grid says "Showing models that
+  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe only hid.
+- Speed: CivitAI answers are requested gzip-compressed and cached in RAM (never on disk: the
+  Rust side keeps 12 answers for 5 min, the UI 80 pages for 10 min) and the next page is
+  fetched ahead. Card previews are CivitAI's own card rendition (`width=450,optimized=true`;
+  a video preview becomes a still frame), fetched by Rust 8 at a time, on-screen cards first;
+  a queued fetch is dropped when its card scrolls away; the bytes stay in a RAM-only LRU (48 MB).
 - Verify the exact early-access fields on real API responses before relying on them
   (`earlyAccess` query param, version `availability` / early-access end date).
 
@@ -300,8 +320,10 @@ request parameters.
 
 **Hardware-aware flags** (`config/models.yaml → hardware_profiles`): VRAM tiers choose
 offload/tiling flags and, where the registry lists several quants, the recommended quant to
-download. The 5070 Ti (16 GB) tier should run Z-Image Turbo bf16 and Qwen Image Edit 2511
-Q4_K_M with CPU offload.
+download. The 5070 Ti (16 GB) tier runs Z-Image Turbo **Q8_0** with the Q8_0 GGUF Qwen3-4B text
+encoder (bf16 model + bf16 encoder ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511
+Q4_K_M; bf16 Z-Image and its bf16 encoder are picked from 20–21 GB. Text encoders with a VRAM
+choice in `models.yaml` (e.g. `{ vram_gte_20: bf16, vram_gte_10: q8, else: q4 }`) follow the same rule.
 
 **Updating model knowledge**: edit `config/models.yaml` (shipped with the app) or add entries in
 `Data/config/overrides.yaml` (deep-merged, user wins). No code changes needed for a new
@@ -313,6 +335,9 @@ finetune of a known family.
 
 - `config/models.yaml → recommended` holds a ranked list per **role**: Realistic, Anime,
   Edit, Describe. Each candidate has a download spec and its VRAM needs.
+- **Optional second cards** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_detail` offers
+  Krea 2 Turbo ("more detail, slower") next to Z-Image Turbo on 12 GB+ cards (Q5_K_S below
+  20 GB, Q8_0 from 20 GB). When nothing in an optional role fits, the card is left out.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
   choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
   small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
@@ -398,6 +423,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Offline mode
 - Data folder location (portable / installed) + Open folder
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
+- Engine backend (auto / CUDA / Vulkan / CPU) and **Run the text encoder on the processor**
+  (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the
+  graphics card and moves it to the processor for a model after the card runs out of memory while
+  reading the prompt (kept for the app session)
 - Default content mode (Safe only / Include 18+ / 18+ only)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
@@ -516,6 +545,15 @@ build is shared.
 - **WebView is private**: the main window runs incognito (no cookies/cache/storage on disk); in
   portable mode its profile folder lives in `Data/webview`.
 - **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
+- **Running out of graphics memory**: before `sd-server` starts, leftover Pinhole engines (processes
+  under `Data/engine/` that this app isn't running) are killed, an idle Describe engine is stopped,
+  and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
+  loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
+  memory is retried with each memory-saving choice at most once: while reading the prompt → text
+  encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
+  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  "couldn't make this image") names the other programs when known and says to close them or pick
+  the smaller version of the model; the engine output stays behind Details.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,

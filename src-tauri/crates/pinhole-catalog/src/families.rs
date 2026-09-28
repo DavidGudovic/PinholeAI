@@ -208,6 +208,18 @@ pub fn missing_components<'a>(
         .collect()
 }
 
+/// Components an installed model still lacks before it can run: like
+/// [`missing_components`] (required only), but another installed option of a
+/// VRAM-dependent choice counts (`wiring::required_components_with`).
+pub fn missing_to_run<'a>(registry: &'a Registry, family: &Family, hw: &HwContext, index: &InstalledIndex) -> Vec<(String, &'a Component)> {
+    let installed = |id: &str| registry.component(id).is_some_and(|c| installed_component(index, id, c).is_some());
+    wiring::required_components_with(registry, family, hw, &installed)
+        .into_iter()
+        .filter_map(|rc| registry.component(&rc.component_id).map(|c| (rc.component_id, c)))
+        .filter(|(id, c)| installed_component(index, id, c).is_none())
+        .collect()
+}
+
 /// Bytes of the components that stay on the GPU (registry
 /// `wiring::gpu_resident_components`), for `vram::estimate`.
 pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext) -> u64 {

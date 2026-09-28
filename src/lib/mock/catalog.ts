@@ -24,6 +24,8 @@ interface Entry {
   previewIsVideo: boolean;
   previewNsfw: boolean;
   modelNsfw: boolean;
+  /** Not flagged by CivitAI but made for adults (suggestive tags / mostly R+ samples): Safe only hides it. */
+  suggestive: boolean;
   thumbsUpRatio: number;
   downloadCount: number;
   mainMb: number;
@@ -146,6 +148,7 @@ function allEntries(): Entry[] {
       previewIsVideo: s.previewIsVideo ?? false,
       previewNsfw: s.previewNsfw ?? false,
       modelNsfw: s.modelNsfw ?? false,
+      suggestive: s.suggestive ?? false,
       thumbsUpRatio: s.thumbsUpRatio ?? 0.9,
       downloadCount: s.downloadCount ?? 1000,
       mainMb: s.mainMb ?? 6617,
@@ -167,33 +170,46 @@ function allEntries(): Entry[] {
     if (e.createdDaysAgo > 30 && i % 3 !== 0) e.createdDaysAgo = Math.floor(rnd() * 28);
   });
   let n = 0;
+  const filler = (a: string, b: string, suffix: string) => {
+    n += 1;
+    const base = b === "Anime" ? (rnd() > 0.5 ? "Illustrious" : "Pony") : BASES[Math.floor(rnd() * BASES.length)];
+    const isLora = rnd() > 0.72;
+    out.push(
+      complete(
+        {
+          name: `${a} ${b}${base.startsWith("SDXL") || base === "Pony" || base === "Illustrious" ? " XL" : ""}${suffix}`,
+          versionName: `v${1 + Math.floor(rnd() * 6)}.${Math.floor(rnd() * 10)}`,
+          type: isLora ? "LORA" : "Checkpoint",
+          baseModel: base,
+          looks: LOOK_FOR_B[b],
+          creator: ["mira", "tobi", "kaz", "lena", "orbit", "fern"][Math.floor(rnd() * 6)],
+          thumbsUpRatio: 0.78 + rnd() * 0.21,
+          downloadCount: Math.floor(500 + rnd() * rnd() * 300_000),
+          mainMb: isLora ? 120 + Math.floor(rnd() * 200) : base === "SD 1.5" ? 2034 : base.startsWith("Flux") ? 11_900 : base === "ZImageTurbo" ? 12_300 : 6617,
+          previewNsfw: rnd() > 0.88,
+          modelNsfw: rnd() > 0.9,
+          suggestive: rnd() > 0.8,
+          earlyAccess: rnd() > 0.9,
+          trainedWords: isLora ? [b.toLowerCase()] : [],
+          createdDaysAgo: rnd() > 0.35 ? Math.floor(rnd() * 28) : Math.floor(30 + rnd() * 500),
+        },
+        100 + n,
+      ),
+    );
+  };
   for (const a of FILLER_A) {
     for (const b of FILLER_B) {
       if (rnd() > 0.34) continue;
-      n += 1;
-      const base = b === "Anime" ? (rnd() > 0.5 ? "Illustrious" : "Pony") : BASES[Math.floor(rnd() * BASES.length)];
-      const isLora = rnd() > 0.72;
-      out.push(
-        complete(
-          {
-            name: `${a} ${b}${base.startsWith("SDXL") || base === "Pony" || base === "Illustrious" ? " XL" : ""}`,
-            versionName: `v${1 + Math.floor(rnd() * 6)}.${Math.floor(rnd() * 10)}`,
-            type: isLora ? "LORA" : "Checkpoint",
-            baseModel: base,
-            looks: LOOK_FOR_B[b],
-            creator: ["mira", "tobi", "kaz", "lena", "orbit", "fern"][Math.floor(rnd() * 6)],
-            thumbsUpRatio: 0.78 + rnd() * 0.21,
-            downloadCount: Math.floor(500 + rnd() * rnd() * 300_000),
-            mainMb: isLora ? 120 + Math.floor(rnd() * 200) : base === "SD 1.5" ? 2034 : base.startsWith("Flux") ? 11_900 : base === "ZImageTurbo" ? 12_300 : 6617,
-            previewNsfw: rnd() > 0.88,
-            modelNsfw: rnd() > 0.9,
-            earlyAccess: rnd() > 0.9,
-            trainedWords: isLora ? [b.toLowerCase()] : [],
-            createdDaysAgo: rnd() > 0.35 ? Math.floor(rnd() * 28) : Math.floor(30 + rnd() * 500),
-          },
-          100 + n,
-        ),
-      );
+      filler(a, b, "");
+    }
+  }
+  // Older generations: several CivitAI pages, so infinite scroll and prefetch have work to do.
+  for (const suffix of [" II", " Turbo", " Pro"]) {
+    for (const a of FILLER_A) {
+      for (const b of FILLER_B) {
+        if (rnd() > 0.4) continue;
+        filler(a, b, suffix);
+      }
     }
   }
   entries = out;
@@ -208,7 +224,7 @@ function vramFor(e: Entry): VramNeed | null {
   return { gb, minGb: fam.vram.min, estimate: true };
 }
 
-function toCard(e: Entry): CatalogCard {
+function toCard(e: Entry, content?: BrowseQuery["content"]): CatalogCard {
   const { vram, fit } = sizeFor(vramFor(e), e.familyId, e.mainMb * MB);
   const badgeLook = e.looks.find((l) => BADGE[l]);
   return {
@@ -221,9 +237,11 @@ function toCard(e: Entry): CatalogCard {
     familyId: e.familyId,
     styleBadge: badgeLook ? BADGE[badgeLook] : null,
     creator: e.creator,
-    previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.looks[0]}.${e.previewIsVideo ? "mp4" : "jpeg"}`,
+    // Rust asks the CDN for CivitAI's own card rendition; videos come back as a still frame.
+    previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.previewIsVideo ? "anim=false,transcode=true," : ""}width=450,optimized=true/${e.looks[0]}.jpeg`,
     previewIsVideo: e.previewIsVideo,
-    previewNsfw: e.previewNsfw,
+    // "Safe only" previews are PG images (Rust: safe_filter.max_preview_level).
+    previewNsfw: content === "safe" ? false : e.previewNsfw,
     modelNsfw: e.modelNsfw,
     thumbsUpRatio: e.thumbsUpRatio,
     downloadCount: e.downloadCount,
@@ -244,40 +262,64 @@ export function catalogEntryByVersion(versionId: number): CatalogCard | null {
 }
 
 // ---------------------------------------------------------------- browse
+// Mirrors Rust (catalog-filters.yaml): CivitAI pages of API_LIMIT models by cursor; "server"
+// filters (kind, search, baseModels, allowCommercialUse) narrow the list, then the client-side
+// rules (Content, Look, Price) drop some and more pages are fetched until PAGE cards are
+// found, at most 1 + MAX_EXTRA requests (then `partial` → "Load more").
 const PAGE = 24;
+const API_LIMIT = 50;
+const MAX_EXTRA = 5;
+const PERIOD_DAYS: Record<string, number> = { Week: 7, Month: 30, Year: 365 };
+
+/** "Safe only" hides these; "18+ only" shows only these (Rust: model.nsfw or safe_filter rules). */
+const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
 
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
   // Rust: no request; the cursor is handed back unchanged.
-  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false };
+  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
   if (q.query.toLowerCase() === "fail")
     throw err(
       "network",
       "Couldn't reach CivitAI. Check your internet connection, then try again.",
-      "GET https://civitai.com/api/v1/models?limit=24&types=Checkpoint&query=fail\n→ error sending request: operation timed out after 30 s",
+      "GET https://civitai.com/api/v1/models?limit=50&types=Checkpoint&query=fail\n→ error sending request: operation timed out after 30 s",
     );
   const text = q.query.trim().toLowerCase();
-  let list = allEntries().filter((e) => {
+  const maxDays = PERIOD_DAYS[q.period];
+  const commercial = q.commercialOnly || q.look === "brand";
+  let server = allEntries().filter((e) => {
     if (q.kind === "models" ? e.type !== "Checkpoint" : e.type !== "LORA") return false;
-    if (q.look && !e.looks.includes(q.look)) return false;
-    if (q.look === "brand" && !e.commercialOk) return false;
-    if (q.content === "safe" && e.modelNsfw) return false;
-    if (q.content === "only_18plus" && !e.modelNsfw) return false;
-    if (q.price === "free" && e.earlyAccess) return false;
-    if (q.price === "paid_only" && !e.earlyAccess) return false;
-    if (q.commercialOnly && !e.commercialOk) return false;
     if (q.compatibleOnly && !e.compatible) return false;
+    if (commercial && !e.commercialOk) return false;
+    if (maxDays != null && e.createdDaysAgo > maxDays) return false;
     if (text && !`${e.name} ${e.creator} ${e.baseModel}`.toLowerCase().includes(text)) return false;
     return true;
   });
-  if (q.sort === "Most Downloaded") list = list.slice().sort((a, b) => b.downloadCount - a.downloadCount);
-  else if (q.sort === "Newest") list = list.slice().sort((a, b) => a.createdDaysAgo - b.createdDaysAgo);
-  else list = list.slice().sort((a, b) => b.thumbsUpRatio * Math.log10(b.downloadCount + 10) - a.thumbsUpRatio * Math.log10(a.downloadCount + 10));
-  const offset = q.cursor ? Number(q.cursor) || 0 : 0;
-  const items = list.slice(offset, offset + PAGE).map(toCard);
-  const nextCursor = offset + PAGE < list.length ? String(offset + PAGE) : null;
-  const clientFiltered = q.content === "only_18plus" || q.price === "paid_only";
-  return { items, nextCursor, offline: false, partial: clientFiltered && nextCursor != null };
+  if (q.sort === "Highest Rated") server = server.slice().sort((a, b) => b.thumbsUpRatio * Math.log10(b.downloadCount + 10) - a.thumbsUpRatio * Math.log10(a.downloadCount + 10));
+  else if (q.sort === "Newest") server = server.slice().sort((a, b) => a.createdDaysAgo - b.createdDaysAgo);
+  else server = server.slice().sort((a, b) => b.downloadCount - a.downloadCount);
+
+  const out: BrowsePage = { items: [], nextCursor: null, offline: false, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+  let offset = q.cursor ? Number(q.cursor) || 0 : 0;
+  for (let requests = 1; ; requests++) {
+    const batch = server.slice(offset, offset + API_LIMIT);
+    offset += batch.length;
+    for (const e of batch) {
+      out.checked += 1;
+      if (q.content === "safe" ? isAdultEntry(e) : q.content === "only_18plus" ? !isAdultEntry(e) : false) out.hiddenByContent += 1;
+      else if (
+        (q.look && !e.looks.includes(q.look)) ||
+        (q.price === "free" && e.earlyAccess) ||
+        (q.price === "paid_only" && !e.earlyAccess)
+      )
+        out.hiddenByFilters += 1;
+      else out.items.push(toCard(e, q.content));
+    }
+    out.nextCursor = offset < server.length ? String(offset) : null;
+    if (out.items.length >= PAGE || !out.nextCursor) return out;
+    if (requests >= 1 + MAX_EXTRA) return { ...out, partial: true };
+    await sleep(250); // one more CivitAI request
+  }
 }
 
 // ---------------------------------------------------------------- previews (drawn locally)
@@ -438,7 +480,7 @@ function drawPreview(ctx: Ctx, w: number, h: number, look: string, seed: number)
 async function fetchPreview(url: string): Promise<ArrayBuffer> {
   await sleep(150 + Math.random() * 450);
   if (mockSettings().offline) throw err("offline", "Offline mode is on.");
-  const m = /mock\/(\d+)\/([a-z_]+)\./.exec(url);
+  const m = /mock\/(\d+)\/(?:[^/]+\/)?([a-z_]+)\./.exec(url);
   const seed = hashString(url);
   const look = m?.[2] ?? "realistic";
   const w = 320;
@@ -576,6 +618,8 @@ const FILTERS: CatalogFilterOptions = {
   ],
   defaultContent: "safe",
   defaultPrice: "free",
+  defaultSort: "Most Downloaded",
+  defaultPeriod: "AllTime",
 };
 
 const table: MockTable = {

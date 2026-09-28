@@ -25,6 +25,25 @@ fn shipped_registry_loads_and_validates() {
         "qwen_image",
         "qwen_image_edit_2511",
         "flux1_kontext",
+        "qwen_image_21",
+        "flux2_klein_4b",
+        "flux2_klein_4b_base",
+        "flux2_klein_9b",
+        "flux2_klein_9b_base",
+        "flux2_dev",
+        "krea2_turbo",
+        "krea2_raw",
+        "anima",
+        "anima_turbo",
+        "chroma",
+        "sd3",
+        "sd35_turbo",
+        "hidream_o1",
+        "hidream_o1_dev",
+        "ernie_image",
+        "ernie_image_turbo",
+        "mage_flow",
+        "mage_flow_turbo",
     ] {
         let f = reg.family(id).unwrap_or_else(|| panic!("family {id}"));
         assert_eq!(f.id, id);
@@ -335,6 +354,35 @@ fn base_model_lookups() {
     assert_eq!(ids("SDXL Lightning"), vec!["sdxl_fast"]);
     assert!(ids("Pony V7").is_empty());
     assert!(ids("").is_empty());
+    // Families added 2026-09-28: exact strings from CivitAI's /api/v1/enums.
+    for (base, want) in [
+        ("Krea 2", vec!["krea2_turbo"]),
+        ("Anima", vec!["anima"]),
+        ("Flux.1 Krea", vec!["flux1_dev"]),
+        ("Flux.2 D", vec!["flux2_dev"]),
+        ("Flux.2 Klein 4B", vec!["flux2_klein_4b"]),
+        ("Flux.2 Klein 4B-base", vec!["flux2_klein_4b_base"]),
+        ("Flux.2 Klein 9B", vec!["flux2_klein_9b"]),
+        ("Flux.2 Klein 9B-base", vec!["flux2_klein_9b_base"]),
+        ("Chroma", vec!["chroma"]),
+        ("Qwen 2.1", vec!["qwen_image_21"]),
+        ("SD 3", vec!["sd3"]),
+        ("SD 3.5", vec!["sd3"]),
+        ("SD 3.5 Large", vec!["sd3"]),
+        ("SD 3.5 Medium", vec!["sd3"]),
+        ("SD 3.5 Large Turbo", vec!["sd35_turbo"]),
+        ("HiDream-O1", vec!["hidream_o1"]),
+        ("Ernie", vec!["ernie_image"]),
+        ("MageFlow", vec!["mage_flow"]),
+        ("SD 1.4", vec!["sd15"]),
+        ("SDXL 0.9", vec!["sdxl"]),
+    ] {
+        assert_eq!(ids(base), want, "{base}");
+    }
+    // Not runnable by the pinned engine (video-only, API-only or no architecture).
+    for base in ["MiniMax H3", "Qwen 2", "Qwen 3", "HiDream", "Lumina", "AuraFlow", "PixArt E"] {
+        assert!(ids(base).is_empty(), "{base}");
+    }
 
     let all = reg.all_civitai_base_models();
     let mut sorted = all.clone();
@@ -378,6 +426,9 @@ fn known_files_and_hardware_profiles() {
     assert_eq!(reg.hardware_profile(12.0).name, "mid");
     assert_eq!(reg.hardware_profile(16.0).name, "high");
     assert_eq!(reg.hardware_profile(24.0).name, "ultra");
+    // 13–20 GB prefers Q8 (bf16 Z-Image + encoder did not fit a 16 GB card).
+    assert_eq!(reg.hardware_profile(16.0).prefer_quant.as_deref(), Some("q8_0"));
+    assert_eq!(reg.hardware_profile(24.0).prefer_quant.as_deref(), Some("bf16"));
     assert_eq!(reg.hardware_profile(5000.0).name, "ultra");
     for p in reg.hardware_profiles() {
         assert!(
@@ -411,6 +462,13 @@ families:
 "#;
     let reg = Registry::from_yaml(yaml, None).unwrap();
     let p = reg.validate().join("\n");
+    let whole = "style_templates: { tags: \"{prompt}, {style}\" }\nfamilies:\n  w: { label: W, style_template: tags, layout: diffusion_only, detect: { any_tensor: [x], whole_checkpoint: true }, dials: { shape: { square: [64, 64] }, quality: { fast: 1, balanced: 1, best: 1 }, cfg_fixed: 1.0 } }\n";
+    let reg_w = Registry::from_yaml(whole, None).unwrap();
+    assert!(reg_w.validate().join("\n").contains("whole_checkpoint"), "{:?}", reg_w.validate());
+    // A registry recommendation needs the family's own download.
+    let rec = format!("{whole}recommended:\n  realistic:\n    - {{ family: w, source: registry }}\n");
+    let reg_r = Registry::from_yaml(&rec, None).unwrap();
+    assert!(reg_r.validate().join("\n").contains("no `download`"), "{:?}", reg_r.validate());
     for needle in [
         "missing",
         "nope",
@@ -423,4 +481,30 @@ families:
     ] {
         assert!(p.contains(needle), "expected `{needle}` in:\n{p}");
     }
+}
+
+#[test]
+fn krea2_turbo_is_the_second_realistic_download() {
+    let reg = shipped();
+    assert_eq!(
+        reg.recommended()["realistic"][0].family.as_deref(),
+        Some("z_image_turbo"),
+        "Z-Image Turbo stays the first Realistic pick"
+    );
+    let k = &reg.recommended()["realistic_detail"][0];
+    assert_eq!(k.family.as_deref(), Some("krea2_turbo"));
+    assert_eq!(k.source.as_deref(), Some("registry"));
+    // Ungated GGUF mirror named by docs/krea2.md (krea/Krea-2-* are gated).
+    let d = reg.family("krea2_turbo").unwrap().download.as_ref().unwrap();
+    assert_eq!(d.file, "Krea-2-Turbo-Q8_0.gguf");
+    assert!(d.url.starts_with("https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"));
+    assert_eq!(d.vram_gb.unwrap().min, 20.0, "Q8_0 only from 20 GB");
+    let q5 = &d.alt_quants["q5_k"];
+    assert_eq!(q5.file.as_deref(), Some("Krea-2-Turbo-Q5_K_S.gguf"));
+    assert_eq!(q5.vram_gb.unwrap().min, 12.0, "offered from 12 GB");
+    // Both files are also known hashes of Krea 2 Turbo.
+    for sha in [&d.sha256, &q5.sha256] {
+        assert_eq!(reg.known_file(sha).unwrap().family, "krea2_turbo");
+    }
+    assert!(reg.family("krea2_raw").unwrap().download.is_none(), "`download` is not inherited");
 }

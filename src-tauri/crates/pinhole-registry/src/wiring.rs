@@ -278,6 +278,20 @@ pub fn required_components(
     family: &Family,
     hw: &HwContext,
 ) -> Vec<RequiredComponent> {
+    required_components_with(registry, family, hw, &|_| false)
+}
+
+/// [`required_components`] for running an installed model: when the pick for
+/// this VRAM is not installed but another option of the same VRAM-dependent
+/// choice is (e.g. the bf16 text encoder from before the 16 GB tier moved to
+/// Q8), use that one instead of asking for a download. Closest smaller option
+/// first, then the closest larger one.
+pub fn required_components_with(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    is_installed: &dyn Fn(&str) -> bool,
+) -> Vec<RequiredComponent> {
     let _ = registry;
     let mut out: Vec<RequiredComponent> = Vec::new();
     for (key, choice) in &family.components {
@@ -288,7 +302,14 @@ pub fn required_components(
             "taesd" => continue,
             k => k,
         };
-        if let Some(id) = resolve_choice(choice, hw.vram_gb) {
+        let pick = resolve_choice(choice, hw.vram_gb);
+        let pick = match (&pick, choice) {
+            (Some(id), ComponentChoice::ByVram(map)) if !is_installed(id) => {
+                installed_alternative(map, hw.vram_gb, is_installed).or(pick)
+            }
+            _ => pick,
+        };
+        if let Some(id) = pick {
             if !id.is_empty() {
                 out.push(RequiredComponent {
                     kind: kind.to_owned(),
@@ -303,6 +324,32 @@ pub fn required_components(
             .then_with(|| a.kind.cmp(&b.kind))
     });
     out
+}
+
+/// The installed option of a `ByVram` choice closest to what this VRAM would
+/// pick: the highest threshold ≤ `vram_gb` first (walking down), then the
+/// lowest one above it. `else`/`default` count as threshold 0.
+fn installed_alternative(
+    map: &std::collections::BTreeMap<String, String>,
+    vram_gb: f32,
+    is_installed: &dyn Fn(&str) -> bool,
+) -> Option<String> {
+    let mut options: Vec<(f32, &String)> = map
+        .iter()
+        .filter_map(|(key, id)| match key.as_str() {
+            "else" | "default" => Some((0.0, id)),
+            k => k.strip_prefix("vram_gte_")?.parse::<f32>().ok().map(|t| (t, id)),
+        })
+        .collect();
+    options.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let (below, above): (Vec<_>, Vec<_>) = options.into_iter().partition(|(t, _)| *t <= vram_gb);
+    below
+        .into_iter()
+        .rev()
+        .chain(above)
+        .map(|(_, id)| id)
+        .find(|id| !id.is_empty() && is_installed(id))
+        .cloned()
 }
 
 /// Components whose weights stay on the GPU in the comfortable ("Fits") case,
