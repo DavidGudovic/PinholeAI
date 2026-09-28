@@ -49,8 +49,10 @@ every decision can be overridden.
 
 ### Why these choices
 - **stable-diffusion.cpp (`sd-server`)**: MIT license, single native binary, no Python.
-  Supports SD1.5, SDXL (incl. Pony/Illustrious finetunes), Flux.1, Z-Image, Qwen-Image,
-  and instruction-edit models (Flux.1 Kontext, Qwen Image Edit 2509/2511). Backends: CUDA,
+  Supports SD1.5, SDXL (incl. Pony/Illustrious finetunes), SD 3 / 3.5, Flux.1 (incl. Krea
+  [dev]), Flux.2 (dev, klein 4B/9B), Chroma, Z-Image, Qwen-Image (incl. 2.1), Krea 2, Anima,
+  HiDream-O1, ERNIE-Image, Mage-Flow, and instruction-edit models (Flux.1 Kontext, Qwen Image
+  Edit 2509/2511). Video-only models (e.g. MiniMax H3) are out of scope: `img_gen` refuses them. Backends: CUDA,
   Vulkan, CPU. Its native async API (`POST /sdcpp/v1/img_gen`, poll `/sdcpp/v1/jobs/{id}`)
   returns images as base64 in the response, so nothing touches disk.
 - **llama.cpp (`llama-server`)**: MIT, runs vision-language models (GGUF + mmproj) for img2text.
@@ -296,8 +298,10 @@ request parameters.
 
 **Hardware-aware flags** (`config/models.yaml → hardware_profiles`): VRAM tiers choose
 offload/tiling flags and, where the registry lists several quants, the recommended quant to
-download. The 5070 Ti (16 GB) tier should run Z-Image Turbo bf16 and Qwen Image Edit 2511
-Q4_K_M with CPU offload.
+download. The 5070 Ti (16 GB) tier runs Z-Image Turbo **Q8_0** with the Q8_0 GGUF Qwen3-4B text
+encoder (bf16 model + bf16 encoder ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511
+Q4_K_M; bf16 Z-Image and its bf16 encoder are picked from 20–21 GB. Text encoders with a VRAM
+choice in `models.yaml` (e.g. `{ vram_gte_20: bf16, vram_gte_10: q8, else: q4 }`) follow the same rule.
 
 **Updating model knowledge**: edit `config/models.yaml` (shipped with the app) or add entries in
 `Data/config/overrides.yaml` (deep-merged, user wins). No code changes needed for a new
@@ -309,6 +313,9 @@ finetune of a known family.
 
 - `config/models.yaml → recommended` holds a ranked list per **role**: Realistic, Anime,
   Edit, Describe. Each candidate has a download spec and its VRAM needs.
+- **Optional second cards** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_detail` offers
+  Krea 2 Turbo ("more detail, slower") next to Z-Image Turbo on 12 GB+ cards (Q5_K_S below
+  20 GB, Q8_0 from 20 GB). When nothing in an optional role fits, the card is left out.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
   choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
   small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
@@ -394,9 +401,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Offline mode
 - Data folder location (portable / installed) + Open folder
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
-- Engine backend (auto / CUDA / Vulkan / CPU) and **Read the prompt on** (Automatic / Processor /
-  Graphics card) — where the text encoder runs; Automatic moves it to the processor for a model
-  after the graphics card runs out of memory while reading the prompt (kept for the app session)
+- Engine backend (auto / CUDA / Vulkan / CPU) and **Run the text encoder on the processor**
+  (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the
+  graphics card and moves it to the processor for a model after the card runs out of memory while
+  reading the prompt (kept for the app session)
 - Default content mode (Safe only / Include 18+ / 18+ only)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
@@ -503,10 +511,12 @@ build is shared.
 - **Running out of graphics memory**: before `sd-server` starts, leftover Pinhole engines (processes
   under `Data/engine/` that this app isn't running) are killed, an idle Describe engine is stopped,
   and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
-  loading when it's > 2 GB or > 25 %). A job that runs out of memory is retried once: while
-  reading the prompt → text encoder on the processor (`--backend te=cpu`, Settings "Read the
-  prompt on"); otherwise → `--vae-tiling`. The final error (code `vram`) names the other
-  programs when known and says to close them or pick the smaller version of the model.
+  loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
+  memory is retried with each memory-saving choice at most once: while reading the prompt → text
+  encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
+  processor"); otherwise → `--vae-tiling`. The final error (code `vram`, never the generic
+  "couldn't make this image") names the other programs when known and says to close them or pick
+  the smaller version of the model; the engine output stays behind Details.
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,

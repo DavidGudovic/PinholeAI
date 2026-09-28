@@ -178,9 +178,11 @@ export function resultsSummary(
   shown: number,
   totals: BrowseTotals,
 ): { count: string; hints: string[] } {
-  const noun = f.kind === "models" ? (shown === 1 ? "model" : "models") : shown === 1 ? "style add-on" : "style add-ons";
+  const models = f.kind === "models";
+  const noun = models ? (shown === 1 ? "model" : "models") : shown === 1 ? "style add-on" : "style add-ons";
   const hints: string[] = [];
-  if (f.compatibleOnly) hints.push("Showing only ones that run in Pinhole — turn off “Works with Pinhole” to see all.");
+  if (f.compatibleOnly)
+    hints.push(models ? "Showing models that run in Pinhole — turn off “Works with Pinhole” to see all." : "Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all.");
   if (f.content === "safe" && totals.hiddenByContent > 0)
     hints.push(`“Safe only” hid ${totals.hiddenByContent} made for adults.`);
   return { count: `${shown.toLocaleString("en-US")} ${noun}`, hints };

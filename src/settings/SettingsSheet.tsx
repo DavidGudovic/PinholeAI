@@ -24,6 +24,8 @@ import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
+/** Settings `textEncoderOnCpu` (Rust error messages and notes use the same words). */
+const TE_ON_CPU_LABEL = "Run the text encoder on the processor";
 
 export function SettingsSheet(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
@@ -141,7 +143,8 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
     const next = { ...latest.current, ...patch };
     latest.current = next;
     setLocal(next);
-    if ("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch) hwDirty.current = true;
+    // (The text-encoder choice changes the engine's note too.)
+    if ("gpu" in patch || "vramOverrideGb" in patch || "engineBackend" in patch || "textEncoderOnCpu" in patch) hwDirty.current = true;
     void flush();
   };
 
@@ -292,17 +295,19 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             ]}
           />
         </Labeled>
-        {!isCpuOnly(hw) && (
+        {/* Only with a graphics card (known once hardware detection has finished). */}
+        {hw && !isCpuOnly(hw) && (
           <Labeled
-            label="Read the prompt on"
-            hint="This step (the text encoder) turns your prompt into something the model understands. Automatic uses the graphics card and moves it to the processor for a model if the card runs out of memory. The processor is slower here but leaves more graphics memory for the picture."
+            label={TE_ON_CPU_LABEL}
+            hint="The text encoder reads your prompt before the picture is made. Automatic keeps it on the graphics card and moves it to the processor for a model when the card runs out of memory (until Pinhole closes). On leaves more graphics memory for the picture; reading the prompt takes a little longer."
           >
             <Segmented<Settings["textEncoderOnCpu"]>
               size="sm"
+              ariaLabel={TE_ON_CPU_LABEL}
               options={[
                 { value: "auto", label: "Automatic" },
-                { value: "on", label: "Processor" },
-                { value: "off", label: "Graphics card" },
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
               ]}
               value={settings.textEncoderOnCpu}
               onChange={(textEncoderOnCpu) => update({ textEncoderOnCpu })}

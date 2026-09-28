@@ -14,10 +14,19 @@
 #   probe (LFS oid + size). `size_mb` = round(bytes / 1_000_000), decimal MB.
 #   Every repo used below was checked `gated: false` the same day.
 # * Families added 2026-09-28 (FLUX.2, Krea 2, Anima, Chroma, Qwen-Image 2.1,
-#   SD 3.5, HiDream-O1, ERNIE-Image, Mage-Flow): detect rules, flags and
-#   defaults follow the pinned engine source + docs/*.md and the official
-#   ComfyUI workflow templates (Comfy-Org/workflow_templates). NONE of them
-#   has been run on real hardware yet — treat their defaults as untested.
+#   SD 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; "Flux.1 Krea" → FLUX.1 dev):
+#   detect rules, flags and defaults follow the pinned engine source +
+#   docs/*.md and the official ComfyUI workflow templates
+#   (Comfy-Org/workflow_templates). NONE of them has been run on real hardware
+#   yet — treat their defaults as untested. Every URL / size / SHA-256 above
+#   and below was re-checked against the HF tree API on 2026-09-28 (API probe
+#   run 13): all match, all repos ungated.
+# * Not registered: MiniMax H3 (CivitAI "MiniMax H3") — video + audio only in
+#   the pinned engine (model.h sd_version_supports_video_generation; img_gen
+#   refuses it) and it needs a 32B Qwen3-VL text encoder. HiDream-I1
+#   ("HiDream"), Lumina 2 and AuraFlow are not in the pinned engine. The
+#   engine also runs PixArt, Lens, Boogu, Ming-Image, LongCat and Ovis-Image:
+#   no family yet (few CivitAI files).
 # * `sha256: TODO` = not verified yet (none left; the release workflow fails on any).
 # * CivitAI baseModel strings: checked against the live /api/v1/enums.
 # * `vram_gb` values are ESTIMATES until measured on 8/12/16 GB cards (SPEC §14).
@@ -738,6 +747,22 @@ families:
       size_multiple: 16                 # README: sizes are padded up to a multiple of 16
       quality: { fast: 6, balanced: 8, best: 12 }
       cfg_fixed: 1.0
+    # One-click download (recommended.realistic_detail): GGUF quants from
+    # realrebelai/KREA-2_GGUFs (docs/krea2.md; ungated). krea/Krea-2-* are gated,
+    # so never used. Licence (LICENSE.pdf in krea-ai/krea-2, identical copy in
+    # Comfy-Org/Krea-2): Krea 2 Community License v1 — use, copy, distribute and
+    # make derivatives allowed (§2.1, §3); commercial use only under $1M yearly
+    # revenue (§2.3); anyone deploying it must run content filters (§4.2) →
+    # RELEASE-SPEC §6 lists it for licence acceptance before any shared build.
+    # Q8_0 only at 20 GB+ (min 20 makes it "Too big" below, so the Q5_K_S is picked).
+    download:
+      file: Krea-2-Turbo-Q8_0.gguf
+      url: https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/Krea-2-Turbo-Q8_0.gguf
+      sha256: b98b339068e1e26a9bd01f987d9dcae3f4a4913b8c0d571f5ddb068194e8e500
+      size_mb: 13626
+      vram_gb: { min: 20, recommended: 22 }    # ESTIMATE: 13.6 GB + 4.3 GB encoder + activations
+      alt_quants:
+        q5_k: { file: Krea-2-Turbo-Q5_K_S.gguf, url: "https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/Krea-2-Turbo-Q5_K_S.gguf", sha256: 2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd, size_mb: 8819, vram_gb: { min: 12, recommended: 16 } }   # ESTIMATE
 
   krea2_raw:
     inherits: krea2_turbo
@@ -1048,6 +1073,10 @@ recommended:
     - { family: sdxl, source: civitai, civitai_model_id: 133005, civitai_version_id: 1759168, title: "Juggernaut XL (Ragnarok)", size_mb: 7105, vram_gb: { min: 6, recommended: 10 }, note: "top-rated realistic SDXL finetune, for GPUs < 8 GB" }
     # Last resort: no usable GPU (fits against RAM, vram.rs fit_cpu) or under 5 GB of VRAM.
     - { family: sd15, source: registry, title: "Stable Diffusion 1.5 (small, runs on any computer)", note: "older and less detailed, but runs without a graphics card" }
+  # A second Realistic card (recommend.rs OPTIONAL_ROLES): shown only when it
+  # fits (12 GB+: Q5_K_S below 20 GB, Q8_0 from 20 GB); Z-Image Turbo stays first.
+  realistic_detail:
+    - { family: krea2_turbo, source: registry, title: "Krea 2 Turbo — more detail, slower" }
   anime:
     - { family: sdxl_illustrious, source: civitai, civitai_model_id: 376130, civitai_version_id: 2940478, title: "Nova Anime XL (IL v19.0)", size_mb: 6939, vram_gb: { min: 6, recommended: 10 }, note: "top-rated Illustrious checkpoint" }
     - { family: sdxl_pony, source: civitai, civitai_model_id: 257749, civitai_version_id: 290640, title: "Pony Diffusion V6 XL", size_mb: 6938, vram_gb: { min: 6, recommended: 10 } }

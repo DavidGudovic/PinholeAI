@@ -25,6 +25,12 @@ pub fn use_external_engine(core: &AppCore, base_url: &str) {
     *core.gen.external.lock() = Some(base_url.trim_end_matches('/').to_string());
 }
 
+/// sd-server's output buffer (memory only, redacted), so a mock engine can
+/// "print" to it like the real one (`MockOptions::engine_log`).
+pub fn engine_log(core: &AppCore) -> std::sync::Arc<pinhole_engine::LogBuffer> {
+    core.gen.logs.clone()
+}
+
 /// Make `describe_image` talk to an already-running (mock) llama-server.
 pub fn use_external_captioner(core: &AppCore, base_url: &str) {
     *core.describe.external.lock() = Some(base_url.trim_end_matches('/').to_string());
@@ -536,6 +542,164 @@ mod tests {
         let err = generate::generate(&core2, GenerateRequest::txt2img(m2, "x")).await.unwrap_err();
         assert_eq!((err.code.as_str(), err.message.as_str()), ("engine_failed", generate::UNKNOWN_JOB_MESSAGE));
         assert_eq!(core2.gen.external_launches.lock().len(), 1);
+    }
+
+    /// Like the real sd-server: the job only says "generate_image returned no
+    /// results" and the reason is in the engine output (stdout/stderr → ring
+    /// buffer). The field report (prompt encoding out of memory), then the
+    /// diffusion model out of memory on the retry: each memory-saving choice is
+    /// tried once, and the third run makes the picture.
+    #[tokio::test]
+    async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
+        let (_tmp, core, rec) = gpu_core();
+        let te_oom = format!(
+            "ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB):\n\
+             [WARN   ] model_manager.cpp:1753 - model manager memory on CUDA0: reported free 0.00 MB / total 16275.44 MB, tracked weights 7480.09 MB / other runtime 0.00 MB / current runtime 0.00 MB\n\
+             [WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 518.58 MB device / 6.58 MB budget, available 0.00 MB device / 7044.91 MB budget\n\
+             [ERROR  ] ggml_runner.cpp:899  - qwen3 segment 1/1 (graph) failed during workspace capacity check\n\
+             [ERROR  ] conditioner.hpp:2224 - LLM prompt encoding failed\n\
+             [ERROR  ] image.cpp:448  - failed to encode prompt\n\
+             [DEBUG  ] echo {SENTINEL} a lighthouse"
+        );
+        let diffusion_oom = "[WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 1200.00 MB device / 300.00 MB budget, available 0.00 MB device / 7044.91 MB budget\n\
+             [ERROR  ] ggml_runner.cpp:899  - z_image segment 4/9 (blocks) failed during workspace capacity check\n\
+             [ERROR  ] image.cpp:904  - sampling for image 1/1 failed after 2.10s";
+        let mock = MockSdServer::start_with(MockOptions {
+            polls_before_done: 0,
+            fail_outputs: vec![te_oom, diffusion_oom.into()],
+            engine_log: Some(engine_log(&core)),
+            ..Default::default()
+        })
+        .await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+
+        let res = generate::generate(&core, GenerateRequest::txt2img(model.clone(), format!("{SENTINEL} a lighthouse"))).await.expect("recovered");
+        assert_eq!(res.images.len(), 1);
+        assert_eq!(mock.requests().len(), 3);
+        let launches = core.gen.external_launches.lock().clone();
+        assert_eq!(launches.len(), 3, "{launches:?}");
+        let tiled = |a: &[String]| a.iter().any(|x| x == "--vae-tiling");
+        assert!(!te_on_cpu(&launches[0]) && !tiled(&launches[0]));
+        assert!(te_on_cpu(&launches[1]) && !tiled(&launches[1]));
+        assert!(te_on_cpu(&launches[2]) && tiled(&launches[2]));
+
+        // Each retry shows its own note while the engine reloads (the later one replaces the earlier).
+        let loading_notes: Vec<String> = rec
+            .0
+            .lock()
+            .iter()
+            .filter_map(|e| match e {
+                CoreEvent::Generation(p) if p.phase == GenPhase::LoadingModel => p.note.clone(),
+                _ => None,
+            })
+            .collect();
+        let te_note = loading_notes.iter().position(|n| n == generate::TE_RETRY_NOTE).expect("text encoder retry note");
+        let tiling_note = loading_notes.iter().position(|n| n == generate::TILING_RETRY_NOTE).expect("tiling retry note");
+        assert!(te_note < tiling_note, "{loading_notes:?}");
+        // Both choices are kept for this model for the rest of the session.
+        let next = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap();
+        assert_eq!(next.images.len(), 1);
+        let last = core.gen.external_launches.lock().last().cloned().unwrap();
+        assert!(te_on_cpu(&last) && tiled(&last), "{last:?}");
+        // The prompt never reached the engine output buffer (redacted like real output).
+        let kept = engine_log(&core).tail_text(200);
+        assert!(kept.contains("failed to encode prompt") && !kept.contains(SENTINEL), "{kept}");
+    }
+
+    /// Progress notes: the other-programs note is measured again at every
+    /// engine start and replaces the older one (shown first); a later retry
+    /// note replaces an earlier one.
+    #[tokio::test]
+    async fn job_notes_replace_older_ones() {
+        let (_tmp, core, _) = gpu_core();
+        let others = |mib| pinhole_hardware::OtherGpuUse { gpu_index: 0, total_mib: 16275, others_mib: mib, processes: vec![] };
+        let notes = || core.gen.job_note.lock().clone();
+        generate::set_others_note(&core, Some(generate::others_note(&others(9216))));
+        generate::set_retry_note(&core, generate::TE_RETRY_NOTE);
+        generate::set_others_note(&core, Some(generate::others_note(&others(9300))));
+        assert_eq!(notes().len(), 2, "{:?}", notes());
+        assert!(notes()[0].starts_with("Other programs are using 9.1 GB of your graphics memory."), "{:?}", notes());
+        assert_eq!(notes()[1], generate::TE_RETRY_NOTE);
+        generate::set_retry_note(&core, generate::TILING_RETRY_NOTE);
+        generate::set_others_note(&core, None);
+        assert_eq!(notes(), vec![generate::TILING_RETRY_NOTE.to_string()], "closed the other program: no note");
+    }
+
+    /// Out of memory for good (every run fails): a `vram` error that says what
+    /// to do, with the engine output (never the prompt) behind Details.
+    #[tokio::test]
+    async fn field_report_without_recovery_is_a_plain_vram_error() {
+        let (_tmp, core, _) = gpu_core();
+        let te_oom = TE_OOM.lines().skip(1).map(str::trim).collect::<Vec<_>>().join("\n");
+        let diffusion_oom = "[ERROR  ] ggml_runner.cpp:899  - z_image segment 1/9 (blocks) failed during workspace allocation\n\
+                             [ERROR  ] image.cpp:904  - sampling for image 1/1 failed after 0.40s";
+        let mock = MockSdServer::start_with(MockOptions {
+            polls_before_done: 0,
+            fail_outputs: vec![te_oom, diffusion_oom.into(), diffusion_oom.into()],
+            engine_log: Some(engine_log(&core)),
+            ..Default::default()
+        })
+        .await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+        let err = generate::generate(&core, GenerateRequest::txt2img(model, SENTINEL)).await.unwrap_err();
+        assert_eq!(err.code, "vram");
+        assert_eq!(err.message, generate::VRAM_MESSAGE);
+        assert!(err.message.starts_with("Your graphics card ran out of memory. Close other programs"), "{}", err.message);
+        assert_eq!(mock.requests().len(), 3, "text encoder retry + tiling retry, then stop");
+        let details = err.details.unwrap_or_default();
+        assert!(details.contains("generate_image returned no results") && details.contains("sampling for image 1/1 failed"), "{details}");
+        assert!(!details.contains(SENTINEL));
+        let st = crate::engine_setup::engine_status(&core);
+        assert!(st.error.is_none(), "a job error is not an engine problem");
+    }
+
+    /// A launch first kills leftover engines under `Data/engine/` (they hold
+    /// graphics memory); an engine that runs out of memory while loading gets
+    /// a plain `vram` error (the computer's memory on the CPU build).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn launch_kills_leftover_engines_and_load_oom_is_plain() {
+        use std::os::unix::fs::PermissionsExt;
+        use pinhole_engine::install::{self, EngineKind, InstallMarker};
+        let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"].iter().map(std::path::Path::new).find(|p| p.is_file()) else { return };
+        let (_tmp, core, _) = new_core();
+        core.settings.write().engine_backend = "cpu".into();
+        let (cfg, sel) = crate::engine_setup::selected_build(&core, EngineKind::Sd).unwrap();
+        let root = core.data.engine();
+        let version = cfg.stable_diffusion_cpp.version.clone();
+        let exec = |p: &std::path::Path| std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // The installed "engine" runs out of memory while loading.
+        let dir = install::install_dir(&root, EngineKind::Sd, &version, &sel.backend);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("sd-server");
+        std::fs::write(&exe, "#!/bin/sh\necho 'ggml_backend_cpu_buffer_type_alloc_buffer: failed to allocate buffer of size 9663676416' >&2\necho '[ERROR  ] main.cpp:91   - new_sd_ctx_t failed' >&2\nexit 1\n").unwrap();
+        exec(&exe);
+        let marker = InstallMarker { engine: EngineKind::Sd, version: version.clone(), backend: sel.backend.clone(), build: sel.key.clone(), binary: "sd-server".into(), archives: vec![], installed_at: 0 };
+        std::fs::write(dir.join(install::MARKER_FILE), serde_json::to_string(&marker).unwrap()).unwrap();
+
+        // A leftover engine from an earlier run (same binary name, inside Data/engine).
+        let old = root.join("sd").join("master-1-0000000").join("cpu");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::copy(sleep, old.join("sd-server")).unwrap();
+        exec(&old.join("sd-server"));
+        let mut leftover = std::process::Command::new(old.join("sd-server")).arg("30").spawn().unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        if leftover.try_wait().unwrap().is_some() {
+            return; // `sleep` is a multi-call binary here (busybox): can't run under another name.
+        }
+
+        let model = register_fake_model(&core, "sd15");
+        let err = generate::generate(&core, GenerateRequest::txt2img(model, "x")).await.unwrap_err();
+        assert!(leftover.try_wait().unwrap().is_some(), "the leftover engine was killed before the launch");
+        assert_eq!(err.code, "vram", "{err:?}");
+        assert_eq!(err.message, generate::RAM_MESSAGE);
+        let details = err.details.unwrap_or_default();
+        assert!(details.contains("failed to allocate") && details.contains("exit code 1"), "{details}");
+        let _ = leftover.kill();
+        let _ = leftover.wait();
     }
 
     #[tokio::test]

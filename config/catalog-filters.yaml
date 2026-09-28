@@ -62,13 +62,15 @@ content:
   confirm_once_per_session: true
   blur_nsfw_previews_when_safe: true
 
-# "Safe only" rules. Tuned on live /api/v1/models data (2026-09-28; samples in
-# src-tauri/crates/pinhole-catalog/tests/fixtures/live_*.json). CivitAI's own `nsfw=false`
-# only hides models flagged NSFW, which still left many suggestive anime merges on the
-# first page. The model-level `nsfwLevel` is a bitmask of every rating its images have
-# (1 PG, 2 PG-13, 4 R, 8 X, 16 XXX): Juggernaut XL is 31 like the merges, so it can't be
-# used alone. A model is hidden when ANY of these match (besides `model.nsfw == true`
-# and a `nsfwLevel` without the PG bit, which are always applied):
+# "Safe only" rules, like Stability Matrix's default (hide what CivitAI flags NSFW, show
+# only PG previews) plus our own checks. Tuned on live /api/v1/models data (2026-09-28;
+# samples in src-tauri/crates/pinhole-catalog/tests/fixtures/live_*.json). CivitAI's own
+# `nsfw=false` only hides models flagged NSFW, which still left many suggestive anime
+# merges on the first page. The model-level `nsfwLevel` is a bitmask of every rating its
+# images have (1 PG, 2 PG-13, 4 R, 8 X, 16 XXX, 32 blocked): Juggernaut XL is 31 like the
+# merges, so it is only used to hide models with no PG image at all. A model is hidden
+# when ANY of these match (besides `model.nsfw == true` and a `nsfwLevel` without the PG
+# bit, which are always applied):
 safe_filter:
   # 1. It has one of these tags (whole tag, any case).
   hide_tags: [
@@ -76,7 +78,8 @@ safe_filter:
     xxx, yiff, hardcore, lewd, ecchi, fetish, bdsm, bondage, futanari, futa, uncensored, r18,
     breasts, "large breasts", "big breasts", boobs, tits, nipples, "large ass", vagina, penis,
     pussy, genitals, topless, lingerie, underwear, panties, "see-through", bimbo, milf, ntr,
-    netorare, ahegao, shemale, "nude girl", "erotic pose", "sex toy",
+    netorare, ahegao, shemale, "nude girl", "erotic pose", "sex toy", "sexual activity",
+    blowjob, cumshot, cum, creampie, bukkake, doggystyle, anal, vulva, labia, lactation,
   ]
   # 2. It has at least `suggestive_tags_to_hide` of these. One alone is fine: Juggernaut XL
   #    and RealVisXL are tagged "nsfw" because they *can* do it.
@@ -94,8 +97,8 @@ safe_filter:
   ]
   # 4. More than this share of its creator's sample images (all versions) are rated R or
   #    above, counted once it has at least `min_rated_images` rated images. Measured:
-  #    Juggernaut XL 0.15, majicMIX realistic 0.32, CyberRealistic Pony 0.49 (kept);
-  #    "Babes" 0.63, "One obsession" 0.64, "Kodoranime" 0.95 (hidden).
+  #    Juggernaut XL 0.15, majicMIX realistic 0.31, Nova Anime XL 0.43, CyberRealistic Pony
+  #    0.49 (kept); RedCraft 0.51, "One obsession" 0.64, "Kodoranime" 0.95 (hidden).
   max_mature_image_share: 0.5
   min_rated_images: 5
   # Card previews in "Safe only" use images rated at most this (1 = PG, like Stability
@@ -122,9 +125,11 @@ allowed_file_formats: [SafeTensor, GGUF]   # never PickleTensor (also enforced i
 require_scans_success: true                # pickleScanResult and virusScanResult
 # Cards per Browse page (the grid asks for the next page while you scroll).
 page_size: 24
-# Models asked from CivitAI per request (`limit`, max 100). Bigger than page_size because
-# the filters above drop some; 50 models ≈ 5 MB / ~5 s for "All time" (old models have
-# many versions), and usually fill a page in one request.
+# Models asked from CivitAI per request (`limit`, max 100; Stability Matrix also asks for
+# 50). Bigger than page_size because "Safe only" and the other filters drop about half:
+# the default query keeps 52 of the first 100. 50 "All time" models are ≈ 6.5 MB of JSON
+# (old models have many versions and sample images; sent gzip-compressed) and 3–5 s of
+# CivitAI server time (2026-09-28).
 api_limit: 50
 # When client-side filters drop items, fetch up to this many extra pages per
 # scroll before returning a partial page ("Load more").
@@ -133,5 +138,8 @@ max_extra_requests: 5
 # Content back and forth doesn't ask CivitAI again.
 cache_minutes: 5
 cache_pages: 12
-# Card preview images are requested at this width from CivitAI's image CDN.
+# Card preview images are requested at this width from CivitAI's image CDN, as
+# `width=450,optimized=true` — the same small compressed rendition CivitAI's own cards use,
+# so it is usually already cached there. Snapped up to the CDN's sizes (96, 320, 450, 512,
+# 800, 1200, 1600; max 1800).
 preview_width: 450

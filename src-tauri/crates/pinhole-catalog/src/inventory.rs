@@ -21,7 +21,7 @@ pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option
         return None;
     }
     let family = file.family.as_deref()?;
-    for (role, label) in [("realistic", "Realistic"), ("anime", "Anime")] {
+    for (role, label) in [("realistic", "Realistic"), ("realistic_detail", "Realistic"), ("anime", "Anime")] {
         let heads = registry
             .recommended()
             .get(role)
@@ -216,7 +216,8 @@ mod tests {
         assert_eq!(v.vram.unwrap().gb, 12.0, "registry figure for the Q8 file");
         assert_eq!(v.fit, Some(Fit::Tight));
         assert_eq!(v.missing_components.len(), 1);
-        assert!(v.missing_components[0].contains("qwen_3_4b.safetensors"));
+        // 8 GB: the Q4_K_M GGUF text encoder (bf16 only from 20 GB).
+        assert!(v.missing_components[0].contains("Qwen3-4B-Q4_K_M.gguf"), "{:?}", v.missing_components);
         assert_eq!(v.license_note.as_deref(), Some("Apache 2.0"));
         assert_eq!(v.last_used, Some(42));
 

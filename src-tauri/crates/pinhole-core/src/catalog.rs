@@ -154,13 +154,17 @@ pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage
     })
 }
 
+/// Formats card previews may come back in (`optimized=true` renditions are
+/// negotiated; AVIF is left out because not every Linux WebView decodes it).
+const PREVIEW_ACCEPT: &str = "image/webp,image/jpeg,image/png;q=0.9,*/*;q=0.5";
+
 /// Preview image bytes (the WebView makes no network calls). Only https
 /// CivitAI image hosts; at most 15 MB.
 pub async fn fetch_preview(core: &AppCore, url: &str) -> CoreResult<Vec<u8>> {
     if !is_preview_url(url) {
         return Err(CoreError::invalid("Only CivitAI preview images can be loaded."));
     }
-    core.http.get_bytes(url, &[], MAX_PREVIEW_BYTES).await.map_err(|e| match e {
+    core.http.get_bytes(url, &[("accept", PREVIEW_ACCEPT)], MAX_PREVIEW_BYTES).await.map_err(|e| match e {
         NetError::TooLarge => CoreError::invalid("This preview is too large to show."),
         other => net_error(other),
     })

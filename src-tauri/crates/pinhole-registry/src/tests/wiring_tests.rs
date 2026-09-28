@@ -166,12 +166,26 @@ fn taesd_is_only_wired_when_the_engine_supports_previews() {
 
 #[test]
 fn launch_args_z_image_turbo_16gb_cuda() {
+    // Real-GPU report: bf16 Z-Image (12.3 GB) + the bf16 Qwen3-4B (8 GB) ran out
+    // of VRAM on a 16 GB card. Below 20 GB: Q8_0 GGUF model + Q8_0 GGUF encoder.
+    let reg = shipped();
+    let hw16 = hw(16.0);
+    let te: Vec<(String, String)> = required_components(reg, fam("z_image_turbo"), &hw16)
+        .into_iter()
+        .map(|c| (c.kind, c.component_id))
+        .collect();
+    assert_eq!(
+        te,
+        vec![("vae".to_string(), "flux_ae".to_string()), ("llm".to_string(), "qwen3_4b_q8".to_string())]
+    );
+    assert_eq!(reg.component("qwen3_4b_q8").unwrap().file, "Qwen3-4B-Q8_0.gguf");
+    assert_eq!(reg.hardware_profile(16.0).prefer_quant.as_deref(), Some("q8_0"));
     let f = files(
         "z_image_turbo",
         Layout::DiffusionOnly,
-        "/models/diffusion/z_image_turbo_bf16.safetensors",
+        "/models/diffusion/z_image_turbo-Q8_0.gguf",
         &[
-            ("llm", "/models/text_encoders/qwen_3_4b.safetensors"),
+            ("llm", "/models/text_encoders/Qwen3-4B-Q8_0.gguf"),
             ("vae", "/models/vae/ae.safetensors"),
         ],
     );
@@ -180,17 +194,30 @@ fn launch_args_z_image_turbo_16gb_cuda() {
         ..Default::default()
     };
     assert_eq!(
-        launch_args(shipped(), &f, &hw(16.0), &extras),
+        launch_args(reg, &f, &hw16, &extras),
         vec![
             "--diffusion-model",
-            "/models/diffusion/z_image_turbo_bf16.safetensors",
+            "/models/diffusion/z_image_turbo-Q8_0.gguf",
             "--vae",
             "/models/vae/ae.safetensors",
             "--llm",
-            "/models/text_encoders/qwen_3_4b.safetensors",
+            "/models/text_encoders/Qwen3-4B-Q8_0.gguf",
             "--diffusion-fa",
             "--lora-model-dir",
             "/data/models/loras",
+        ]
+    );
+    // 24 GB: bf16 model + bf16 encoder, as before.
+    assert_eq!(
+        wired("z_image_turbo", "/m/z_image_turbo_bf16.safetensors", 24.0),
+        vec![
+            "--diffusion-model",
+            "/m/z_image_turbo_bf16.safetensors",
+            "--vae",
+            "/c/flux_ae",
+            "--llm",
+            "/c/qwen3_4b",
+            "--diffusion-fa",
         ]
     );
 }

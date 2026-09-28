@@ -9,11 +9,13 @@
 //! Out of memory (docs/ARCHITECTURE.md §4): before sd-server starts, leftover
 //! engines under `Data/engine/` are killed, an idle describe engine is stopped
 //! and (NVIDIA) graphics memory used by other programs is measured. A job that
-//! runs out of memory is retried once: reading the prompt → the text encoder
-//! moves to the processor (`--backend te=cpu`, remembered per model for the
-//! app session; Settings `textEncoderOnCpu` can force it on or off); any
-//! other stage → `--vae-tiling` if it isn't on yet. Otherwise the error is
-//! `vram` with a message that says what to do next.
+//! runs out of memory is retried with each memory-saving choice at most once:
+//! reading the prompt → the text encoder moves to the processor
+//! (`--backend te=cpu`, remembered per model for the app session; Settings
+//! `textEncoderOnCpu` can force it on or off); any other stage →
+//! `--vae-tiling` if it isn't on yet. Otherwise the error is `vram` with a
+//! message that says what to do next (never the generic "couldn't make this
+//! image").
 //!
 //! PRIVACY: `GenerateRequest`, `FinalPromptPreview` and the engine request body
 //! carry prompt text. They are never logged, never written to disk and never
@@ -64,12 +66,13 @@ pub const VRAM_MESSAGE: &str = "Your graphics card ran out of memory. Close othe
 /// System memory ran out (CPU engine, or the text encoder already on the processor).
 pub const RAM_MESSAGE: &str = "Your computer ran out of memory. Close other programs and try again, or pick the smaller version of this model in Models.";
 /// Reading the prompt ran out of graphics memory while Settings keeps the text encoder on the card.
-pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Read the prompt on” to Automatic or Processor, or close other programs that use the graphics card and try again.";
+pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Run the text encoder on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
 /// A job that doesn't say why it failed.
 pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).";
-const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
-const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
-const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine.";
+pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
+pub(crate) const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
+const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE];
+const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Run the text encoder on the processor”).";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
 
@@ -674,11 +677,22 @@ fn emit_progress(core: &AppCore, phase: GenPhase, label: &str, queue: Option<u32
     }));
 }
 
-fn add_job_note(core: &AppCore, note: String) {
+/// Note about other programs' graphics memory, measured at each engine start
+/// (replaces the one from an earlier start of this job; shown first).
+pub(crate) fn set_others_note(core: &AppCore, note: Option<String>) {
     let mut n = core.gen.job_note.lock();
-    if !n.contains(&note) {
-        n.push(note);
+    n.retain(|x| !x.starts_with(OTHERS_PREFIX));
+    if let Some(note) = note {
+        n.insert(0, note);
     }
+}
+
+/// Show `note` for the automatic retry that is starting (replaces the note of
+/// an earlier retry of the same job; other notes stay).
+pub(crate) fn set_retry_note(core: &AppCore, note: &str) {
+    let mut n = core.gen.job_note.lock();
+    n.retain(|x| !RETRY_NOTES.contains(&x.as_str()));
+    n.push(note.to_string());
 }
 
 // ================================================================ memory
@@ -760,10 +774,11 @@ fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
     args
 }
 
-/// The one retry after running out of memory at `stage`, if any: text
+/// The next retry after running out of memory at `stage`, if any: text
 /// encoder → processor (Settings on Automatic, GPU backend, not there yet);
-/// anything else → VAE tiling (not on yet and allowed). Returns the new
-/// choices and the note to show.
+/// anything else → VAE tiling (not on yet and allowed). Each choice is made at
+/// most once, so a job is retried at most twice. Returns the new choices and
+/// the note to show.
 fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool) -> Option<(MemFallback, &'static str)> {
     match stage {
         Stage::TextEncoder => (gpu_backend && te == TeChoice::Auto && !text_encoder_on_cpu(args)).then_some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
@@ -809,8 +824,11 @@ pub(crate) fn others_sentence(o: &OtherGpuUse) -> String {
     }
 }
 
+/// How [`others_sentence`] starts (to replace an older note).
+const OTHERS_PREFIX: &str = "Other programs are using ";
+
 /// Shown while loading when other programs hold a lot of graphics memory.
-fn others_note(o: &OtherGpuUse) -> String {
+pub(crate) fn others_note(o: &OtherGpuUse) -> String {
     format!("{} If pictures fail, close them and try again.", others_sentence(o))
 }
 
@@ -924,15 +942,21 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     }
     let cfg = engine_setup::engine_config(core)?;
     let args = full_sd_args(core, wiring_args, &cfg);
+    let installed = engine_setup::installed_engine(core, EngineKind::Sd);
     let mut slot = core.gen.slot.lock().await;
     {
         let s = &mut *slot;
         if let Some(p) = s.proc.as_mut() {
-            if p.is_running() && s.args == args {
+            // Same args AND the same engine build (the backend may have changed in Settings).
+            let same_build = installed.as_ref().is_some_and(|i| i.exe == p.exe());
+            if p.is_running() && s.args == args && same_build {
                 return Ok(p.base_url());
             }
         }
     }
+    // The old engine must be gone (its graphics memory freed) before the next
+    // one starts: `stop` waits for the exit; one that outlives the wait is
+    // killed by the leftover sweep below.
     if let Some(old) = slot.proc.take() {
         old.stop().await;
     }
@@ -943,7 +967,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         f.loaded_model_id = None;
     }
 
-    let installed = engine_setup::installed_engine(core, EngineKind::Sd).ok_or_else(|| {
+    let installed = installed.ok_or_else(|| {
         CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
     })?;
 
@@ -956,9 +980,7 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     }
     engine_setup::sweep_orphans(core).await;
     let others = if gpu_backend { engine_setup::gpu_others(core).await } else { None };
-    if let Some(o) = others.as_ref().filter(|o| o.is_significant()) {
-        add_job_note(core, others_note(o));
-    }
+    set_others_note(core, others.as_ref().filter(|o| o.is_significant()).map(others_note));
     *core.gen.gpu_others.lock() = others;
 
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
@@ -1027,10 +1049,10 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
                             .with_details(core.gen.logs.tail_text(40)),
                         ReadyError::Exited { .. } => {
                             let err = engine_failure(&core.gen.logs, code);
-                            if err.code == "vram" && gpu_backend {
-                                CoreError { message: vram_message(core), ..err }
-                            } else {
-                                err
+                            match err.code.as_str() {
+                                "vram" if gpu_backend => CoreError { message: vram_message(core), ..err },
+                                "vram" => CoreError { message: RAM_MESSAGE.into(), ..err },
+                                _ => err,
                             }
                         }
                     }
@@ -1253,12 +1275,13 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         body.strength = Some(1.0);
     }
 
-    // Engine (restart only when the launch args differ) + job, retried once
-    // with memory-saving choices when the graphics card runs out of memory.
-    let gpu_backend = hw.backend != "cpu";
+    // Engine (restart only when the launch args differ) + job. When the graphics
+    // card runs out of memory, each memory-saving choice is tried once (text
+    // encoder on the processor, VAE tiling), so there are at most two retries.
+    // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
+    let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
-    let mut retried = false;
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
     let job = loop {
@@ -1269,11 +1292,9 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             Ok(job) => break job,
             Err(RunError::Failed(e)) => return Err(e),
             Err(RunError::OutOfMemory { stage, details }) => {
-                let next = if retried { None } else { next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed) };
-                let Some((next_fb, note)) = next else {
+                let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed) else {
                     return Err(memory_error(core, stage, &args, gpu_backend).with_details(details));
                 };
-                retried = true;
                 // Remember the automatic choice for this model (RAM only, app session).
                 {
                     let mut remembered = core.gen.mem_fallback.lock();
@@ -1282,7 +1303,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
                     entry.vae_tiling |= next_fb.vae_tiling;
                 }
                 fb = next_fb;
-                add_job_note(core, note.to_string());
+                set_retry_note(core, note);
                 emit_progress(core, GenPhase::LoadingModel, &label, None, None, t0);
             }
         }

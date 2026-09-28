@@ -303,3 +303,44 @@ async fn local_client_is_loopback_only() {
     assert_eq!(resp.status().as_u16(), 302);
     assert_eq!(other.connections(), 0);
 }
+
+fn gzip(data: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    enc.write_all(data).unwrap();
+    enc.finish().unwrap()
+}
+
+#[tokio::test]
+async fn json_asks_for_gzip_and_inflates_it() {
+    let body = serde_json::to_vec(&serde_json::json!({ "items": vec!["model"; 2000] })).unwrap();
+    let packed = gzip(&body);
+    assert!(packed.len() * 8 < body.len());
+    let srv = MockServer::start(move |req| match req.path.as_str() {
+        "/gz" => MockResponse::ok(packed.clone()).header("content-type", "application/json").header("content-encoding", "gzip"),
+        "/plain" => MockResponse::json(&serde_json::json!({ "items": [1] })),
+        "/br" => MockResponse::ok("x").header("content-encoding", "br"),
+        _ => MockResponse::ok(b"\x1f\x8b\x08garbage".to_vec()).header("content-encoding", "gzip"),
+    })
+    .await;
+    let (client, _) = test_client();
+    let v: serde_json::Value = client.get_json(&srv.url("/gz"), &[]).await.unwrap();
+    assert_eq!(v["items"].as_array().unwrap().len(), 2000);
+    let v: serde_json::Value = client.get_json(&srv.url("/plain"), &[]).await.unwrap();
+    assert_eq!(v["items"][0], 1, "servers that don't compress still work");
+    assert!(matches!(client.get_json::<serde_json::Value>(&srv.url("/br"), &[]).await, Err(NetError::Decode(_))));
+    assert!(matches!(client.get_json::<serde_json::Value>(&srv.url("/bad"), &[]).await, Err(NetError::Decode(_))));
+    let reqs = srv.requests();
+    assert_eq!(reqs[0].header("accept-encoding"), Some("gzip"));
+    // Raw byte downloads (previews, model files) never ask for compression.
+    client.get_bytes(&srv.url("/plain"), &[], 1024).await.unwrap();
+    assert_eq!(srv.requests().last().unwrap().header("accept-encoding"), None);
+}
+
+#[test]
+fn gunzip_is_bounded() {
+    let bomb = gzip(&vec![0u8; 1 << 20]);
+    assert!(bomb.len() * 100 < 1 << 20, "{}", bomb.len());
+    assert_eq!(crate::gunzip(&bomb, 64 * 1024).unwrap_err(), NetError::TooLarge);
+    assert_eq!(crate::gunzip(&bomb, 1 << 20).unwrap().len(), 1 << 20);
+}

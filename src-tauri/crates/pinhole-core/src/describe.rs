@@ -352,7 +352,8 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
         .ok_or_else(|| CoreError::not_found("The describe engine isn't installed yet. Click Get on the Describe tab."))?;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
-        if s.proc.is_running() && s.model == model && s.mmproj == mmproj {
+        // Same files AND the same engine build (the backend may have changed in Settings).
+        if s.proc.is_running() && s.model == model && s.mmproj == mmproj && s.proc.exe() == engine.exe {
             return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
         }
     }

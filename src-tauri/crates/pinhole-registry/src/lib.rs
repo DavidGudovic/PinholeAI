@@ -360,8 +360,13 @@ impl Registry {
         for (role, list) in &self.file.recommended {
             for c in list {
                 if let Some(fam) = &c.family {
-                    if !self.families.contains_key(fam) {
-                        problems.push(format!("recommended `{role}`: unknown family `{fam}`"));
+                    match self.families.get(fam) {
+                        None => problems.push(format!("recommended `{role}`: unknown family `{fam}`")),
+                        // A registry pick is a one-click download of the family's own file.
+                        Some(f) if c.source.as_deref() == Some("registry") && f.download.is_none() => problems.push(
+                            format!("recommended `{role}`: family `{fam}` has no `download` for a registry pick"),
+                        ),
+                        Some(_) => {}
                     }
                 }
             }

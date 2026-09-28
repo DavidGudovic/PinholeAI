@@ -122,11 +122,15 @@ Linux NVIDIA uses Vulkan).
    ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
-   Out of memory (the engine output of the job shows it): retry once — prompt encoding →
-   restart with `--backend te=cpu` (remembered per model for the app session in RAM; Settings
-   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; else `CoreError{code:"vram"}`.
-   Before every launch: previous engine fully exited, leftover engines under `Data/engine/` killed
-   (`pinhole_engine::orphans`), NVIDIA memory used by other programs measured (`nvidia-smi`).
+   Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
+   each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
+   `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
+   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; then `CoreError{code:"vram"}`
+   (message names other programs using the card, engine output in `details`).
+   Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines
+   under `Data/engine/` killed (`pinhole_engine::orphans`; also at app start; never other programs
+   or engines this app runs), an idle Describe engine stopped and NVIDIA memory used by other
+   programs measured (`nvidia-smi`, a progress note when it's a lot).
 5. Decode base64 → strip every PNG text chunk (tEXt/zTXt/iTXt) defensively → store in
    `Session` (RAM) → return `ResultImage`s. Nothing touches disk until `save_image`.
 

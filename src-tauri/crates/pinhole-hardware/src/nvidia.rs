@@ -102,9 +102,11 @@ pub struct OtherGpuUse {
 }
 
 impl OtherGpuUse {
-    /// Worth telling the user: more than 2 GiB or more than a quarter of the card.
+    /// Worth telling the user: more than a quarter of the card and more than
+    /// 1 GiB. (The Windows desktop and a browser alone often hold 1–3 GB, which
+    /// is normal on a big card.)
     pub fn is_significant(&self) -> bool {
-        self.others_mib > 2048.min(self.total_mib / 4)
+        self.others_mib > 1024.max(self.total_mib / 4)
     }
 }
 
@@ -329,10 +331,15 @@ mod tests {
         // WDDM: nothing to subtract, everything in use counts.
         let wddm = VramUsage { gpus: usage.gpus.clone(), processes: vec![GpuProcess { pid: 2, name: "python.exe".into(), used_mib: None }] };
         assert_eq!(wddm.others(None, &[1]).unwrap().others_mib, 16000);
-        // Desktop only (~1 GB on a 16 GB card) is not worth a note; 1.5 GB of a 4 GB card is.
+        // Desktop + browser (~1–3 GB on a 16 GB card) is not worth a note; 1.5 GB of a 4 GB card,
+        // 2.5 GB of an 8 GB card and 4.5 GB of a 16 GB card are. Never 1 GB or less.
         let quiet = OtherGpuUse { gpu_index: 0, total_mib: 16303, others_mib: 1100, processes: vec![] };
         assert!(!quiet.is_significant());
+        assert!(!OtherGpuUse { others_mib: 3000, ..quiet.clone() }.is_significant());
+        assert!(OtherGpuUse { others_mib: 4600, ..quiet.clone() }.is_significant());
+        assert!(OtherGpuUse { total_mib: 8192, others_mib: 2560, ..quiet.clone() }.is_significant());
         assert!(OtherGpuUse { total_mib: 4096, others_mib: 1500, ..quiet.clone() }.is_significant());
+        assert!(!OtherGpuUse { total_mib: 2048, others_mib: 1000, ..quiet.clone() }.is_significant());
         // Two GPUs: processes can't be attributed, so none are named.
         let two = VramUsage { gpus: vec![usage.gpus[0], GpuMemory { index: 1, ..usage.gpus[0] }], processes: usage.processes.clone() };
         let o = two.others(Some(1), &[1]).unwrap();

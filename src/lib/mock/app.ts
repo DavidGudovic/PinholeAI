@@ -5,7 +5,8 @@
 //   ?skipFirstRun   settings.firstRunDone = true and the engine is already installed
 //   ?nogpu          no GPU detected (CPU only)
 //   ?offline        Offline mode on
-//   ?busygpu        other programs use 9 GB of graphics memory (note while loading)
+//   ?busygpu        other programs use 9 GB of graphics memory: a note while loading, and reading
+//                   the prompt runs out of memory once per model (automatic retry, see generate.ts)
 //   ?theme=dark     theme setting (light | dark | system)
 //   ?failEngine     the first engine download fails half-way (to show retry)
 //   ?slowhw         hardware detection takes ~4 s

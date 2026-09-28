@@ -28,15 +28,28 @@ pub struct MockOptions {
     pub fail_with: Option<String>,
     /// With `fail_with`: only the first this-many jobs fail (0 = every job).
     pub fail_first: u32,
+    /// Like the real sd-server: jobs fail in submission order (job 1 → `[0]`,
+    /// job 2 → `[1]` …) with only `generate_image returned no results` as the
+    /// job error, while the reason is "printed" (one line per `\n`) to
+    /// [`MockOptions::engine_log`] (else appended to the job error). Later
+    /// jobs succeed (or follow `fail_with`).
+    pub fail_outputs: Vec<String>,
+    /// The engine output buffer the mock prints to (e.g. the core's ring
+    /// buffer via `pinhole_core::testing::engine_log`): lines go through its
+    /// redaction like real engine output.
+    pub engine_log: Option<Arc<crate::LogBuffer>>,
     /// Cap for the side length of returned images (keeps tests fast).
     pub max_side: u32,
 }
 
 impl Default for MockOptions {
     fn default() -> Self {
-        Self { polls_before_done: 2, fail_with: None, fail_first: 0, max_side: 1024 }
+        Self { polls_before_done: 2, fail_with: None, fail_first: 0, fail_outputs: Vec::new(), engine_log: None, max_side: 1024 }
     }
 }
+
+/// sd-server's job error when `generate_image` fails (examples/server/async_jobs.cpp).
+pub const NO_RESULTS: &str = "generate_image returned no results";
 
 #[derive(Default)]
 struct SdState {
@@ -156,6 +169,16 @@ fn sd_route(st: &Mutex<SdState>, opts: &MockOptions, method: &str, path: &str, b
             if polls < opts.polls_before_done {
                 let status = if polls == 0 { "queued" } else { "generating" };
                 return (200, json!({"id": id, "status": status, "queue_position": if polls == 0 { 1 } else { 0 }, "result": null, "error": null}));
+            }
+            if let Some(output) = usize::try_from(job.seq).ok().and_then(|n| opts.fail_outputs.get(n.wrapping_sub(1))) {
+                let msg = match &opts.engine_log {
+                    Some(log) => {
+                        output.lines().for_each(|l| log.push_line(l));
+                        NO_RESULTS.to_string()
+                    }
+                    None => format!("{NO_RESULTS}\n{output}"),
+                };
+                return (200, json!({"id": id, "status": "failed", "queue_position": 0, "result": null, "error": {"code": "generation_failed", "message": msg}}));
             }
             let fails = opts.fail_first == 0 || job.seq <= u64::from(opts.fail_first);
             if let Some(msg) = opts.fail_with.as_ref().filter(|_| fails) {

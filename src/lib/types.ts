@@ -183,7 +183,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | anime | edit | describe */
+  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */

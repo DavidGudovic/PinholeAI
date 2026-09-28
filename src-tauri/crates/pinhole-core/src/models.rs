@@ -901,7 +901,8 @@ mod tests {
             .unwrap()
             .replace("size_mb: 6577", "size_mb: 1")
             .replace("size_mb: 335", "size_mb: 1")
-            .replace("size_mb: 8045", "size_mb: 1");
+            // 8 GB → the Qwen3-4B Q4_K_M GGUF text encoder (bf16 only from 20 GB).
+            .replace("size_mb: 2497", "size_mb: 1");
         *core.registry.write() = Arc::new(pinhole_registry::Registry::from_yaml(&yaml, None).unwrap());
         {
             let mut s = core.settings.write();

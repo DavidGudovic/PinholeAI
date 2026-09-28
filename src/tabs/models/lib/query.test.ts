@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { CatalogCard } from "../../../lib/types";
 import {
+  addTotals,
   changedFilterCount,
   defaultFilters,
   FALLBACK_OPTIONS,
   filtersKey,
   isAdult,
   mergePage,
+  NO_TOTALS,
   normalizeSearch,
+  resultsSummary,
   shouldBlurPreview,
   showPriceBadge,
   toBrowseQuery,
@@ -44,8 +47,9 @@ describe("defaultFilters", () => {
   it("uses safe + free + compatible by default", () => {
     const f = defaultFilters(null, null, false);
     expect(f).toMatchObject({ kind: "models", look: null, content: "safe", price: "free", compatibleOnly: true, commercialOnly: false });
-    expect(f.sort).toBe("Highest Rated");
-    expect(f.period).toBe("Month");
+    // Mainstream models first: "This month · Top rated" was mostly fresh anime merges.
+    expect(f.sort).toBe("Most Downloaded");
+    expect(f.period).toBe("AllTime");
   });
 
   it("includes paid models when Settings → Show paid is on", () => {
@@ -67,8 +71,8 @@ describe("toBrowseQuery", () => {
       look: "anime",
       content: "safe",
       price: "free",
-      sort: "Highest Rated",
-      period: "Month",
+      sort: "Most Downloaded",
+      period: "AllTime",
       commercialOnly: false,
       compatibleOnly: true,
       query: "pixel art",
@@ -121,5 +125,24 @@ describe("mergePage", () => {
   it("appends new cards and drops repeats", () => {
     const merged = mergePage([card(1), card(2)], [card(2), card(3)]);
     expect(merged.map((c) => c.versionId)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("totals and the line above the grid", () => {
+  const page = (checked: number, hiddenByContent: number, hiddenByFilters: number) => ({ checked, hiddenByContent, hiddenByFilters });
+  it("adds page counts", () => {
+    expect(addTotals(addTotals(NO_TOTALS, page(50, 20, 6)), page(50, 10, 4))).toEqual({ checked: 100, hiddenByContent: 30, hiddenByFilters: 10 });
+  });
+  it("says why models are missing and what to change", () => {
+    const s = resultsSummary({ kind: "models", content: "safe", compatibleOnly: true }, 24, page(50, 20, 6));
+    expect(s.count).toBe("24 models");
+    expect(s.hints).toEqual(["Showing models that run in Pinhole — turn off “Works with Pinhole” to see all.", "“Safe only” hid 20 made for adults."]);
+  });
+  it("names style add-ons and drops hints that don't apply", () => {
+    expect(resultsSummary({ kind: "styleAddons", content: "safe", compatibleOnly: true }, 1, NO_TOTALS)).toEqual({
+      count: "1 style add-on",
+      hints: ["Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all."],
+    });
+    expect(resultsSummary({ kind: "models", content: "include_18plus", compatibleOnly: false }, 1200, page(50, 3, 0))).toEqual({ count: "1,200 models", hints: [] });
   });
 });
