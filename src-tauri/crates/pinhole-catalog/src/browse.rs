@@ -59,7 +59,7 @@ pub async fn browse<S: PageSource>(
     let want = filters.page_size as usize;
     let max_requests = 1 + filters.max_extra_requests as usize;
     let mut cursor = query.cursor.clone();
-    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0 };
+    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0, hidden_by_size: 0 };
     let mut seen = HashSet::new();
     let mut requests = 0usize;
     loop {
@@ -78,6 +78,7 @@ pub async fn browse<S: PageSource>(
                 Ok(card) => out.items.push(card),
                 Err(Hidden::Content) => out.hidden_by_content += 1,
                 Err(Hidden::Other) => out.hidden_by_filters += 1,
+                Err(Hidden::TooBig) => out.hidden_by_size += 1,
             }
         }
         let next = page.next_cursor();
