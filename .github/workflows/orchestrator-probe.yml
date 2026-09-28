@@ -1,0 +1,47 @@
+# Temporary probe used during the initial build-out to collect real release
+# assets, Hugging Face SHA-256s and CivitAI enums from a runner with internet.
+# Superseded by verify-pins.yml; safe to delete.
+name: orchestrator-probe
+on:
+  workflow_dispatch:
+  push:
+    paths: [".github/workflows/orchestrator-probe.yml"]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: stable-diffusion.cpp releases
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh api "repos/leejet/stable-diffusion.cpp/releases?per_page=12" --jq '.[] | "== \(.tag_name) \(.published_at)\n" + ([.assets[] | "  \(.name) \(.size) \(.digest)"] | join("\n"))'
+      - name: llama.cpp releases
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          gh api "repos/ggml-org/llama.cpp/releases?per_page=3" --jq '.[] | "== \(.tag_name) \(.published_at)\n" + ([.assets[] | select(.name|test("win|ubuntu|linux")) | "  \(.name) \(.size) \(.digest)"] | join("\n"))'
+      - name: Hugging Face files
+        run: |
+          for u in $(grep -oE 'https://huggingface.co/[^" ]+' config/models.yaml | sort -u) \
+                   https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/resolve/main/v1-5-pruned-emaonly-fp16.safetensors; do
+            p=${u#https://huggingface.co/}; repo=$(echo "$p" | cut -d/ -f1-2); rev=$(echo "$p" | cut -d/ -f4); path=$(echo "$p" | cut -d/ -f5-)
+            r=$(curl -sS -X POST -H 'Content-Type: application/json' -d "{\"paths\":[\"$path\"]}" "https://huggingface.co/api/models/$repo/paths-info/$rev")
+            echo "$u => $(echo "$r" | jq -c '.[0] | {size: .size, sha256: .lfs.oid, lfs_size: .lfs.size}' 2>/dev/null || echo "$r" | head -c 300)"
+          done
+      - name: HF repo listings (alternatives)
+        run: |
+          for repo in leejet/Z-Image-Turbo-GGUF unsloth/Qwen-Image-Edit-2511-GGUF QuantStack/FLUX.1-Kontext-dev-GGUF ggml-org/Qwen2.5-VL-3B-Instruct-GGUF mradermacher/Qwen2.5-VL-7B-Instruct-GGUF Comfy-Org/z_image_turbo Comfy-Org/Qwen-Image_ComfyUI Comfy-Org/stable-diffusion-v1-5-archive; do
+            echo "== $repo"; curl -sS "https://huggingface.co/api/models/$repo/tree/main?recursive=true" | jq -r '.[] | select(.type=="file") | "  \(.path) \(.size) \(.lfs.oid // "-")"' | grep -Ei 'gguf|safetensors|pth' | head -60
+          done
+      - name: CivitAI enums + candidates
+        run: |
+          curl -sS https://civitai.com/api/v1/enums | jq -c '.BaseModel // .baseModels // keys'
+          for bm in "Illustrious" "Pony" "SDXL 1.0" "NoobAI" "ZImageTurbo" "Qwen" "Flux.1 Kontext"; do
+            echo "== top $bm"
+            curl -sS -G "https://civitai.com/api/v1/models" --data-urlencode "types=Checkpoint" --data-urlencode "sort=Highest Rated" --data-urlencode "period=AllTime" --data-urlencode "baseModels=$bm" --data-urlencode "limit=6" --data-urlencode "nsfw=false" \
+              | jq -r '.items[]? | "  model \(.id) \(.name) tags=\(.tags|join("|")) | v \(.modelVersions[0].id) \(.modelVersions[0].name) base=\(.modelVersions[0].baseModel) avail=\(.modelVersions[0].availability) files=" + ([.modelVersions[0].files[] | "\(.name):\(.sizeKB|floor)KB:\(.metadata.format)/\(.metadata.fp)/\(.metadata.size):primary=\(.primary):pickle=\(.pickleScanResult):virus=\(.virusScanResult):sha=\(.hashes.SHA256)"] | join(" ; "))'
+          done
+      - name: CivitAI raw sample (field names)
+        run: |
+          curl -sS -G "https://civitai.com/api/v1/models" --data-urlencode "types=Checkpoint" --data-urlencode "limit=1" --data-urlencode "sort=Most Downloaded" | jq '.items[0] | del(.description) | .modelVersions |= [.[0] | del(.description)]' | head -150
+          curl -sS "https://civitai.com/api/v1/models?limit=3&types=Checkpoint&earlyAccess=true" | jq -c '.items[]? | {id, name, v: .modelVersions[0] | {id, availability, earlyAccessEndsAt, earlyAccessConfig}}' | head -5
+          curl -sS "https://civitai.com/api/v1/models?limit=3&types=Checkpoint" | jq -c '.metadata'
