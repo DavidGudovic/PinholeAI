@@ -228,6 +228,7 @@ export type Action =
   | { type: "editLoad"; ref: ImgRef }
   | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null }
   | { type: "editGoto"; index: number }
+  | { type: "editDelete"; index: number }
   | { type: "editClear" }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
@@ -484,6 +485,15 @@ function inner(s: AppState, a: Action): AppState {
     case "editGoto": {
       const index = Math.max(0, Math.min(s.edit.chain.length - 1, a.index));
       return index === s.edit.index ? s : { ...s, edit: { ...s.edit, index } };
+    }
+    case "editDelete": {
+      // The original (index 0) stays; use "New image" to start over.
+      if (a.index <= 0 || a.index >= s.edit.chain.length) return s;
+      const chain = s.edit.chain
+        .filter((_, i) => i !== a.index)
+        .map((n, i) => (i === 0 ? n : { ...n, label: `Edit ${i}` }));
+      const index = a.index < s.edit.index ? s.edit.index - 1 : a.index === s.edit.index ? a.index - 1 : s.edit.index;
+      return { ...s, edit: { ...s.edit, chain, index } };
     }
     case "editClear":
       return { ...s, edit: { ...s.edit, chain: [], index: 0 } };
