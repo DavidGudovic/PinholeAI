@@ -118,10 +118,20 @@ fn check_target(core: &AppCore, to: &DataDir) -> CoreResult<()> {
 /// version can't save it). Returns the target's index, read without changing
 /// anything (a damaged one reads as empty; the move sets it aside).
 fn check_versions(core: &AppCore, to: &DataDir) -> CoreResult<InstalledIndex> {
-    if core.installed.lock().is_newer() {
-        return Err(CoreError::invalid(
-            "Your models list was saved by a newer version of Pinhole. Update Pinhole, then change the Models folder.",
-        ));
+    {
+        let idx = core.installed.lock();
+        if idx.is_newer() {
+            return Err(CoreError::invalid(
+                "Your models list was saved by a newer version of Pinhole. Update Pinhole, then change the Models folder.",
+            ));
+        }
+        // Entries this version can't read stay behind in the old folder, so a
+        // file one of them shares with a readable entry can't move.
+        if idx.files.iter().any(|f| idx.unknown_uses(&f.rel_path)) {
+            return Err(CoreError::invalid(
+                "Some of your models are also listed by a newer version of Pinhole. Update Pinhole, then change the Models folder.",
+            ));
+        }
     }
     let to_index = InstalledIndex::read_from(&to.installed_file())?.unwrap_or_else(InstalledIndex::new);
     if to_index.is_newer() {
@@ -688,6 +698,19 @@ mod tests {
         assert_eq!(old["files"], serde_json::json!([newer]));
         let moved = InstalledIndex::load(&to).unwrap();
         assert!(moved.unknown.is_empty() && moved.get(&a.id).is_some());
+    }
+
+    #[test]
+    fn a_file_shared_with_an_unreadable_entry_is_not_moved() {
+        let (_tmp, core) = test_core();
+        let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        core.installed.lock().unknown.push(serde_json::json!({"id": "n", "relPath": "models/checkpoints/a.safetensors", "kind": "video"}));
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let e = preview(&core, Some(shared.path().to_str().unwrap())).unwrap_err();
+        assert!(e.message.contains("also listed by a newer version"), "{}", e.message);
+        assert!(move_all_with(&core, to, true).is_err());
+        assert_eq!(std::fs::read(core.data.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
     }
 
     #[tokio::test]
