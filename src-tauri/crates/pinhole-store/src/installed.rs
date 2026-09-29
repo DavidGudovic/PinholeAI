@@ -88,23 +88,30 @@ impl InstalledIndex {
         Self::load_from(&dir.installed_file())
     }
 
-    /// [`InstalledIndex::load`] from an explicit index file.
+    /// [`InstalledIndex::load`] from an explicit index file. A damaged file is
+    /// kept aside as `<file name>.corrupt-<timestamp>`.
     pub fn load_from(path: &Path) -> Result<Self, StoreError> {
-        let path = path.to_path_buf();
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::new()),
-            Err(e) => return Err(e.into()),
-        };
-        match parse_lenient(&bytes) {
+        match Self::read_from(path)? {
             Some(index) => Ok(index),
             None => {
                 let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-                let backup = path.with_file_name(format!("installed.json.corrupt-{stamp}"));
-                let _ = std::fs::rename(&path, &backup);
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "installed.json".into());
+                let backup = path.with_file_name(format!("{name}.corrupt-{stamp}"));
+                let _ = std::fs::rename(path, &backup);
                 Ok(Self::new())
             }
         }
+    }
+
+    /// Read an index file without changing anything on disk (previews).
+    /// Missing → empty index; damaged → `None`.
+    pub fn read_from(path: &Path) -> Result<Option<Self>, StoreError> {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Self::new())),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(parse_lenient(&bytes))
     }
 
     /// Atomic, pretty-printed JSON at schema version 1.
@@ -318,5 +325,22 @@ mod tests {
             .filter(|n| n.starts_with("installed.json.corrupt-"))
             .collect();
         assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn read_from_changes_nothing_and_backups_keep_the_file_name() {
+        let (_t, d) = data();
+        let dir = d.installed_file().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let shared = dir.join("pinhole-models.json");
+        std::fs::write(&shared, b"{ damaged").unwrap();
+        assert!(InstalledIndex::read_from(&shared).unwrap().is_none());
+        assert!(shared.exists(), "a preview read leaves the file alone");
+        assert!(InstalledIndex::read_from(&dir.join("absent.json")).unwrap().unwrap().files.is_empty());
+
+        assert!(InstalledIndex::load_from(&shared).unwrap().files.is_empty());
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().any(|n| n.starts_with("pinhole-models.json.corrupt-")), "{names:?}");
+        assert!(!names.iter().any(|n| n.starts_with("installed.json")), "{names:?}");
     }
 }

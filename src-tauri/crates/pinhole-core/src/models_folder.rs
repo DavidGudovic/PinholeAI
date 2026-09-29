@@ -118,7 +118,8 @@ pub fn preview(core: &AppCore, folder: Option<&str>) -> CoreResult<ModelsFolderP
     let to = target_dir(core, folder)?;
     check_target(core, &to)?;
     let from_index = core.installed.lock().clone();
-    let to_index = load_target_index(&to)?;
+    // Read only: a damaged index is set aside by the move itself, not by a preview.
+    let to_index = InstalledIndex::read_from(&to.installed_file())?.unwrap_or_default();
     let plan = plan(&core.data, &from_index, &to, &to_index);
     Ok(ModelsFolderPreview {
         path: to.models_root().display().to_string(),
@@ -602,6 +603,19 @@ mod tests {
         assert!(preview(&core, Some(default.to_str().unwrap())).is_err());
         assert!(preview(&core, Some("relative/path")).is_err());
         assert!(preview(&core, Some("/definitely/not/here/pinhole")).is_err());
+    }
+
+    #[test]
+    fn preview_leaves_a_damaged_shared_index_alone() {
+        let (_tmp, core) = test_core();
+        add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
+        std::fs::write(to.installed_file(), b"{ damaged").unwrap();
+        let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
+        assert_eq!(p.existing_models, 0);
+        assert_eq!(std::fs::read(to.installed_file()).unwrap(), b"{ damaged");
+        assert_eq!(std::fs::read_dir(shared.path()).unwrap().count(), 1, "no backup file made");
     }
 
     #[test]
