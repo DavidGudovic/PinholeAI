@@ -21,7 +21,7 @@ use pinhole_catalog::recommend::{self, FileToGet, PickAction};
 use pinhole_catalog::{inventory, local, paste, CatalogFilters};
 use pinhole_net::download::{check_free_space, ContentCheck, DownloadSpec, DownloadedFile};
 use pinhole_registry::detect;
-use pinhole_store::datadir::ModelKind;
+use pinhole_store::datadir::{normalize_rel, ModelKind};
 use pinhole_store::installed::{CivitaiRef, InstalledFile};
 
 pub use pinhole_catalog::view::{
@@ -436,14 +436,11 @@ pub(crate) async fn start_install(
         for (f, civitai) in items {
             let dir = models_dir_for_write(core, f.kind)?;
             // Never overwrite a registered file, one planned in this group or one
-            // another running install is downloading to. A file with no pinned
-            // hash also skips names with a leftover `.part`: nothing could tell
-            // that it resumed someone else's bytes.
+            // another running install is downloading to.
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
                     || dests.contains(p)
                     || (p.exists() && core.data.relative(p).is_some_and(|rel| index.has_rel_path(&rel)))
-                    || (f.sha256.is_none() && local::part_path(p).exists())
             });
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url).into_iter().collect();
@@ -760,8 +757,8 @@ fn remove_entries(core: &AppCore, index: &mut pinhole_store::InstalledIndex, ids
     let mut failed = Vec::new();
     for id in ids {
         let Some(f) = index.get(id).cloned() else { continue };
-        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && o.rel_path == f.rel_path)
-            || index.unknown.iter().any(|v| pinhole_store::installed::unknown_rel_path(v) == Some(f.rel_path.as_str()));
+        let same = |rel: &str| normalize_rel(rel) == normalize_rel(&f.rel_path);
+        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && same(&o.rel_path)) || index.unknown_uses(&f.rel_path);
         if inventory::is_safe_rel_path(&f.rel_path) && !shared {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
@@ -1038,7 +1035,9 @@ mod tests {
         core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION;
 
         // An entry this version can't read uses the same file: the file stays.
-        core.installed.lock().unknown.push(serde_json::json!({ "relPath": a.rel_path, "kind": "future" }));
+        // Written on Windows, by hand: the same file as a's.
+        let same_file = format!(".\\{}", a.rel_path.replace('/', "\\"));
+        core.installed.lock().unknown.push(serde_json::json!({ "relPath": same_file, "kind": "future" }));
         delete_model(&core, &a.id).await.unwrap();
         assert!(core.installed.lock().get(&a.id).is_none());
         assert!(p.exists());
@@ -1212,22 +1211,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unpinned_installs_skip_names_with_a_leftover_part() {
+    async fn a_cancelled_install_keeps_its_name_to_resume() {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
         core.offline.set(true);
         let dir = core.data.models(ModelKind::Lora);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(local::part_path(&dir.join("style.safetensors")), b"someone else's bytes").unwrap();
-        // No pinned hash: nothing could tell a resumed foreign `.part` apart.
-        let a = lora_file("https://civitai.com/api/download/models/1", "style.safetensors");
+        // Left by a cancelled download: the next install resumes it (a pinned
+        // hash restarts from byte 0 if the bytes turn out to be wrong).
+        std::fs::write(local::part_path(&dir.join("style.safetensors")), b"first bytes").unwrap();
+        let a = FileToGet { sha256: Some("ab".repeat(32)), ..lora_file("https://civitai.com/api/download/models/1", "style.safetensors") };
         let ga = start_install(&core, "A".into(), vec![(a, None)], None).await.unwrap();
-        assert!(core.models.inflight_dests.lock().contains(&dir.join("style-2.safetensors")));
-        // Pinned hash: the downloader restarts from byte 0 if the leftover doesn't match.
-        let b = FileToGet { sha256: Some("ab".repeat(32)), ..lora_file("https://civitai.com/api/download/models/2", "style.safetensors") };
-        let gb = start_install(&core, "B".into(), vec![(b, None)], None).await.unwrap();
         assert!(core.models.inflight_dests.lock().contains(&dir.join("style.safetensors")));
         let _ = core.downloads.wait(&ga.group_id).await;
-        let _ = core.downloads.wait(&gb.group_id).await;
     }
 
     #[tokio::test]

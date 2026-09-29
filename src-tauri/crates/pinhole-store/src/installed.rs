@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::datadir::ModelKind;
+use crate::datadir::{normalize_rel, ModelKind};
 use crate::{write_atomic, DataDir, StoreError};
 
 /// Current `installed.json` schema version.
@@ -92,8 +92,18 @@ impl InstalledIndex {
     }
 
     /// Is `rel_path` used by an entry (readable or not)?
+    /// Paths are compared as [`DataDir::resolve_rel`] reads them (backslashes,
+    /// `.` and empty parts don't matter).
     pub fn has_rel_path(&self, rel_path: &str) -> bool {
-        self.rel_paths().any(|p| p == rel_path)
+        let want = normalize_rel(rel_path);
+        self.rel_paths().any(|p| normalize_rel(p) == want)
+    }
+
+    /// Does an entry this version can't read use `rel_path` (compared as
+    /// [`DataDir::resolve_rel`] reads it)?
+    pub fn unknown_uses(&self, rel_path: &str) -> bool {
+        let want = normalize_rel(rel_path);
+        self.unknown.iter().filter_map(unknown_rel_path).any(|p| normalize_rel(p) == want)
     }
 
     /// Paths of every entry, including the ones this version can't read.
@@ -185,7 +195,9 @@ impl InstalledIndex {
     /// Drop the unreadable entries at `rel_path` (the file there was replaced)
     /// and return them (to put back if saving fails).
     pub fn remove_unknown_at(&mut self, rel_path: &str) -> Vec<serde_json::Value> {
-        let (gone, keep) = std::mem::take(&mut self.unknown).into_iter().partition(|v| unknown_rel_path(v) == Some(rel_path));
+        let want = normalize_rel(rel_path);
+        let (gone, keep) =
+            std::mem::take(&mut self.unknown).into_iter().partition(|v| unknown_rel_path(v).is_some_and(|p| normalize_rel(p) == want));
         self.unknown = keep;
         gone
     }
