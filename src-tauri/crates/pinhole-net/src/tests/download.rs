@@ -134,6 +134,37 @@ async fn resumes_partial_part_with_range() {
 }
 
 #[tokio::test]
+async fn stale_part_that_fails_the_hash_is_downloaded_again_once() {
+    let body = data(60_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |req| MockResponse::ranged(req, &b)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.safetensors");
+    // Leftover bytes of another file with the same name: the resume succeeds
+    // at the HTTP level but the finished file fails the hash.
+    std::fs::write(part_path(&dest), vec![0xEEu8; 25_000]).unwrap();
+
+    let s = spec(srv.url("/f"), &dest, Some(sha(&body)), Some(body.len() as u64));
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+    assert_eq!(got.sha256, sha(&body));
+    assert_eq!(std::fs::read(&dest).unwrap(), body);
+    let reqs = srv.requests();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[0].header("range"), Some("bytes=25000-"));
+    assert_eq!(reqs[1].header("range"), None, "the second try starts from byte 0");
+
+    // A server that really sends other bytes still fails (after one restart).
+    let srv = MockServer::start(|req| MockResponse::ranged(req, &data(30_000))).await;
+    let dest = dir.path().join("g.safetensors");
+    std::fs::write(part_path(&dest), &data(30_000)[..10_000]).unwrap();
+    let s = spec(srv.url("/g"), &dest, Some(sha(b"something else")), Some(30_000));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::HashMismatch { .. }), "{e:?}");
+    assert_eq!(srv.requests().len(), 2);
+    assert!(!part_path(&dest).exists() && !dest.exists());
+}
+
+#[tokio::test]
 async fn restarts_when_server_ignores_range() {
     let body = data(50_000);
     let b = body.clone();
