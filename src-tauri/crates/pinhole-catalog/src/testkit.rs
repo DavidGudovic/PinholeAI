@@ -76,5 +76,5 @@ pub fn component(reg: &Registry, id: &str) -> InstalledFile {
 }
 
 pub fn index(files: Vec<InstalledFile>) -> InstalledIndex {
-    InstalledIndex { schema_version: 1, files }
+    InstalledIndex { schema_version: 1, files, ..Default::default() }
 }

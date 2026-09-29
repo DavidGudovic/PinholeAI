@@ -191,7 +191,7 @@ struct Step {
 
 /// Pure planning: what happens to each entry of `from_index`.
 fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &InstalledIndex) -> Vec<Step> {
-    let mut taken: HashSet<PathBuf> = to_index.files.iter().map(|f| to.resolve_rel(&f.rel_path)).collect();
+    let mut taken: HashSet<PathBuf> = to_index.rel_paths().map(|p| to.resolve_rel(p)).collect();
     let mut steps = Vec::new();
     for f in &from_index.files {
         let src = from.resolve_rel(&f.rel_path);
@@ -319,8 +319,14 @@ fn move_all(core: &AppCore, to: DataDir) -> CoreResult<()> {
 
 fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<()> {
     let from = &core.data;
-    std::fs::create_dir_all(to.models_root())?;
     let from_index = core.installed.lock().clone();
+    if !from_index.unknown.is_empty() || from_index.schema_version > pinhole_store::installed::SCHEMA_VERSION {
+        // Entries this version can't read would be left behind with the old index.
+        return Err(CoreError::invalid(
+            "Some of your models were added by a newer version of Pinhole. Update Pinhole, then change the Models folder.",
+        ));
+    }
+    std::fs::create_dir_all(to.models_root())?;
     let to_index = load_target_index(&to)?;
     let steps = plan(from, &from_index, &to, &to_index);
 
@@ -608,6 +614,36 @@ mod tests {
         assert!(!core.data.resolve_rel(&a.rel_path).exists());
         assert_eq!(std::fs::read(to.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
         assert!(!local::part_path(&to.resolve_rel(&a.rel_path)).exists());
+    }
+
+    #[tokio::test]
+    async fn entries_from_a_newer_pinhole_in_the_target_are_kept() {
+        let (_tmp, core) = test_core();
+        let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let newer = serde_json::json!({"id": "n", "relPath": "models/checkpoints/a.safetensors", "kind": "video"});
+        let json = serde_json::json!({"schema_version": 1, "files": [newer.clone()]});
+        std::fs::write(to.installed_file(), serde_json::to_vec(&json).unwrap()).unwrap();
+
+        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(to.installed_file()).unwrap()).unwrap();
+        assert!(saved["files"].as_array().unwrap().contains(&newer));
+        // Its path counts as taken: ours got another name.
+        let merged = InstalledIndex::load(&to).unwrap();
+        assert_eq!(merged.get(&a.id).unwrap().rel_path, "models/checkpoints/a-2.safetensors");
+    }
+
+    #[test]
+    fn a_move_with_unreadable_entries_of_our_own_is_refused() {
+        let (_tmp, core) = test_core();
+        add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        core.installed.lock().unknown.push(serde_json::json!({"id": "n", "kind": "video"}));
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
+        let e = move_all_with(&core, to, true).unwrap_err();
+        assert!(e.message.contains("newer version"), "{}", e.message);
+        assert!(core.data.resolve_rel("models/checkpoints/a.safetensors").is_file());
     }
 
     #[test]

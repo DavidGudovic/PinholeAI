@@ -429,7 +429,7 @@ pub(crate) async fn start_install(
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
                     || dests.contains(p)
-                    || (p.exists() && core.data.relative(p).is_some_and(|rel| index.files.iter().any(|x| x.rel_path == rel)))
+                    || (p.exists() && core.data.relative(p).is_some_and(|rel| index.has_rel_path(&rel)))
             });
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url).into_iter().collect();

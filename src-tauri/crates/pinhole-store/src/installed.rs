@@ -62,25 +62,51 @@ pub struct InstalledFile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InstalledIndex {
+    /// Version of the file as loaded (a newer Pinhole may have written it).
     pub schema_version: u32,
     pub files: Vec<InstalledFile>,
+    /// Entries this version can't read (e.g. written by a newer Pinhole on the
+    /// other OS sharing the Models folder). Kept as they are and saved back.
+    #[serde(skip)]
+    pub unknown: Vec<serde_json::Value>,
 }
 
 /// Borrowed view used for saving (always writes the current schema version).
 #[derive(Serialize)]
 struct IndexOut<'a> {
     schema_version: u32,
-    files: &'a [InstalledFile],
+    files: Vec<FileOut<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FileOut<'a> {
+    Known(&'a InstalledFile),
+    Unknown(&'a serde_json::Value),
 }
 
 impl InstalledIndex {
     /// Empty index at the current schema version.
     pub fn new() -> Self {
-        Self { schema_version: SCHEMA_VERSION, files: Vec::new() }
+        Self { schema_version: SCHEMA_VERSION, files: Vec::new(), unknown: Vec::new() }
+    }
+
+    /// Is `rel_path` used by an entry (readable or not)?
+    pub fn has_rel_path(&self, rel_path: &str) -> bool {
+        self.rel_paths().any(|p| p == rel_path)
+    }
+
+    /// Paths of every entry, including the ones this version can't read.
+    pub fn rel_paths(&self) -> impl Iterator<Item = &str> {
+        self.files
+            .iter()
+            .map(|f| f.rel_path.as_str())
+            .chain(self.unknown.iter().filter_map(|v| v.get("relPath").and_then(|p| p.as_str())))
     }
 
     /// Load `installed.json`. Missing → empty index. Entries that can't be read
-    /// are skipped. If the whole file is damaged it is kept aside as
+    /// are kept as they are (in `unknown`) and saved back; a file from a newer
+    /// schema can't be saved. If the whole file is damaged it is kept aside as
     /// `installed.json.corrupt-<timestamp>` and an empty index is returned, so
     /// the app still starts (the model files themselves stay on disk and can be
     /// re-added with "Add a file I already have").
@@ -127,7 +153,13 @@ impl InstalledIndex {
                 "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
             ));
         }
-        let out = IndexOut { schema_version: SCHEMA_VERSION, files: &self.files };
+        if self.schema_version > SCHEMA_VERSION {
+            return Err(StoreError::Invalid(
+                "Your models list was saved by a newer version of Pinhole. Update Pinhole to add, move or delete models.".into(),
+            ));
+        }
+        let files = self.files.iter().map(FileOut::Known).chain(self.unknown.iter().map(FileOut::Unknown)).collect();
+        let out = IndexOut { schema_version: SCHEMA_VERSION, files };
         let mut json = serde_json::to_vec_pretty(&out)
             .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
         json.push(b'\n');
@@ -176,15 +208,21 @@ impl InstalledIndex {
 fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let obj = value.as_object()?;
-    let files = match obj.get("files") {
-        None | Some(serde_json::Value::Null) => Vec::new(),
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .filter_map(|item| serde_json::from_value::<InstalledFile>(item.clone()).ok())
-            .collect(),
+    let (mut files, mut unknown) = (Vec::new(), Vec::new());
+    match obj.get("files") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Array(items)) => {
+            for item in items {
+                match serde_json::from_value::<InstalledFile>(item.clone()) {
+                    Ok(f) => files.push(f),
+                    Err(_) => unknown.push(item.clone()),
+                }
+            }
+        }
         Some(_) => return None,
-    };
-    Some(InstalledIndex { schema_version: SCHEMA_VERSION, files })
+    }
+    let version = obj.get("schema_version").and_then(|v| v.as_u64()).map_or(SCHEMA_VERSION, |v| u32::try_from(v).unwrap_or(u32::MAX));
+    Some(InstalledIndex { schema_version: version.max(SCHEMA_VERSION), files, unknown })
 }
 
 #[cfg(test)]
@@ -308,6 +346,42 @@ mod tests {
         let idx = InstalledIndex::load(&d).unwrap();
         assert_eq!(idx.files.len(), 1);
         assert_eq!(idx.files[0].id, "a");
+    }
+
+    #[test]
+    fn unreadable_entries_survive_a_save() {
+        let (_t, d) = data();
+        std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
+        let good = serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
+        // E.g. a kind a newer Pinhole on the other OS knows about.
+        let newer = serde_json::json!({"id": "k", "relPath": "models/video/k.safetensors", "kind": "video"});
+        let json = serde_json::json!({ "schema_version": 1, "files": [good, newer.clone()] });
+        std::fs::write(d.installed_file(), serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let mut idx = InstalledIndex::load(&d).unwrap();
+        assert_eq!(idx.files.len(), 1);
+        assert!(idx.has_rel_path("models/video/k.safetensors"), "its path counts as taken");
+        idx.upsert(file("b", "models/loras/b", ModelKind::Lora));
+        idx.save(&d).unwrap();
+        let text: serde_json::Value = serde_json::from_slice(&std::fs::read(d.installed_file()).unwrap()).unwrap();
+        let files = text["files"].as_array().unwrap();
+        assert_eq!(files.len(), 3);
+        assert!(files.contains(&newer), "{files:?}");
+        assert_eq!(InstalledIndex::load(&d).unwrap().files.len(), 2);
+    }
+
+    #[test]
+    fn a_newer_schema_is_not_overwritten() {
+        let (_t, d) = data();
+        std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
+        let json = serde_json::json!({ "schema_version": SCHEMA_VERSION + 1, "files": [] });
+        let bytes = serde_json::to_vec(&json).unwrap();
+        std::fs::write(d.installed_file(), &bytes).unwrap();
+        let mut idx = InstalledIndex::load(&d).unwrap();
+        idx.upsert(file("a", "models/checkpoints/a", ModelKind::Checkpoint));
+        let e = idx.save(&d).unwrap_err();
+        assert!(e.to_string().contains("newer version of Pinhole"), "{e}");
+        assert_eq!(std::fs::read(d.installed_file()).unwrap(), bytes);
     }
 
     #[test]

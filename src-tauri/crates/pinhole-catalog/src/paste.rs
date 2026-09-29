@@ -302,6 +302,7 @@ mod tests {
         let index = InstalledIndex {
             schema_version: 1,
             files: vec![file("ckpt", ModelKind::Checkpoint, SHA_A, Some(789646)), file("lora", ModelKind::Lora, SHA_B, None)],
+            ..Default::default()
         };
         let r = |kind: &str, vid: Option<u64>, hash: Option<&str>| PastedResource {
             kind: kind.into(),
