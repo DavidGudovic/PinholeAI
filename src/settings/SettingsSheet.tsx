@@ -27,7 +27,7 @@ import { UpdateSection } from "./UpdateSection";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
 /** Settings `textEncoderOnCpu` (Rust error messages and notes use the same words). */
-const TE_ON_CPU_LABEL = "Run the text encoder on the processor";
+const TE_ON_CPU_LABEL = "Read the prompt on the processor";
 
 export function SettingsSheet(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
@@ -211,7 +211,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           <p className="flex items-start gap-2">
             <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>
-              Pinhole never saves your prompts and sends no usage data. It only goes online for CivitAI browsing and downloads you start. Pictures stay in memory
+              Pinhole never saves your prompts and sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates. Pictures stay in memory
               until you click Save.
             </span>
           </p>
@@ -305,7 +305,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         {hw && !isCpuOnly(hw) && (
           <Labeled
             label={TE_ON_CPU_LABEL}
-            hint="The text encoder reads your prompt before the picture is made. Automatic keeps it on the graphics card and moves it to the processor for a model when the card runs out of memory (until Pinhole closes). On leaves more graphics memory for the picture; reading the prompt takes a little longer."
+            hint="Before the picture is made, your prompt is read on the graphics card. Automatic moves this step to the processor for a model when the card runs out of memory (until Pinhole closes). On always uses the processor: more graphics memory for the picture, a little slower. Off never moves it automatically (a few models always read the prompt on the processor)."
           >
             <Segmented<Settings["textEncoderOnCpu"]>
               size="sm"

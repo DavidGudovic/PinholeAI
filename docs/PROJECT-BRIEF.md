@@ -23,7 +23,7 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
   re-test: ≤ 16 GB now gets the Q8_0 model + Q8_0 GGUF text encoder (an already installed encoder
   option is still used), leftover engines are killed at start, other programs' VRAM is named, and an
   out-of-memory job retries with the text encoder on the processor, then with VAE tiling
-  (Settings → Engine → "Run the text encoder on the processor").
+  (Settings → Engine → "Read the prompt on the processor").
 
 ## Features
 Create (dials: Shape, Quality, Stick to prompt, How many, Keep this look; Fine-tune drawer with every

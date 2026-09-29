@@ -77,11 +77,17 @@ export function DescribeTab() {
     const s = store.getState().describe;
     if (!s.imageId || busy) return;
     const id = ++runId.current;
+    const { imageId } = s;
+    const nonce = store.getState().sessionNonce;
     setError(null);
     setBusy({ at: Date.now() });
     try {
-      const text = await api.describeImage(s.imageId, s.style);
-      if (id === runId.current) dispatch({ type: "patchDescribe", patch: { text: text.trim() } });
+      const text = await api.describeImage(imageId, s.style);
+      // Only if the same image is still loaded and Reset wasn't pressed meanwhile.
+      const now = store.getState();
+      if (id === runId.current && now.describe.imageId === imageId && now.sessionNonce === nonce) {
+        dispatch({ type: "patchDescribe", patch: { text: text.trim() } });
+      }
     } catch (e) {
       if (id === runId.current) setError(api.asCoreError(e));
     } finally {

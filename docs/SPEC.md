@@ -485,10 +485,11 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Models folder: where models live (default `Data/models`), **Change…** / **Use the Data folder
   again** (moves the models, then restarts; see §3) + Open
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
-- Engine backend (auto / CUDA / Vulkan / CPU) and **Run the text encoder on the processor**
+- Engine backend (auto / CUDA / Vulkan / CPU) and **Read the prompt on the processor**
   (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the
   graphics card and moves it to the processor for a model after the card runs out of memory while
-  reading the prompt (kept for the app session)
+  reading the prompt (kept for the app session); Off never moves it automatically (family flags
+  such as `--clip-on-cpu` still apply)
 - Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
@@ -617,14 +618,16 @@ build is shared.
   and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
-  encoder on the processor (`--backend te=cpu`, Settings "Run the text encoder on the
-  processor"); while decoding → `--vae-tiling`; then, and right away when denoising runs out, the
+  encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
+  processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
+  note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising runs out, the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
   every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
   model runs with the same settings, also after the idle stop — another model, other settings or
   deleting it tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
   at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
-  or a reference image has no room; offloaded weights are only cached there. The final error (code `vram`, never the generic
+  or a reference image has no room; offloaded weights are only cached there. "failed to encode prompt" without a memory line is not
+  treated as running out of memory. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
   the smaller version of the model; the engine output stays behind Details, led by the engine's
   memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's

@@ -14,7 +14,7 @@ describe("SettingsSheet", () => {
   it("shows the text-encoder choice (auto / on / off) and saves it", async () => {
     render(<SettingsSheet open onClose={() => undefined} />);
     // Shown once a graphics card is known (the mock detects an RTX 5070 Ti after ~1.3 s).
-    const label = "Run the text encoder on the processor";
+    const label = "Read the prompt on the processor";
     await screen.findByRole("radiogroup", { name: label }, { timeout: 5000 });
     const radio = (name: string) => within(screen.getByRole("radiogroup", { name: label })).getByRole("radio", { name });
     expect(radio("Automatic").getAttribute("aria-checked")).toBe("true");

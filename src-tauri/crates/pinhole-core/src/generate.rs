@@ -68,7 +68,7 @@ pub const VRAM_MESSAGE: &str = "Your graphics card ran out of memory. Close othe
 /// System memory ran out (CPU engine, or the text encoder already on the processor).
 pub const RAM_MESSAGE: &str = "Your computer ran out of memory. Close other programs and try again, or pick the smaller version of this model in Models.";
 /// Reading the prompt ran out of graphics memory while Settings keeps the text encoder on the card.
-pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Run the text encoder on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
+pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Read the prompt on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
 /// A job that doesn't say why it failed.
 pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).";
 pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
@@ -78,7 +78,11 @@ const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE, OFFLOAD_RETRY_N
 const OFFLOAD_NOTE: &str = "This model is kept in system memory and sent to the graphics card as needed, because the card ran out of memory. Pictures take longer until the model is next loaded.";
 /// System memory kept free when deciding whether a model fits there (OS, other apps).
 const OFFLOAD_SPARE_RAM_GB: f64 = 2.0;
-const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Run the text encoder on the processor”).";
+const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Read the prompt on the processor”).";
+const TILING_ON_NOTE: &str = "This model finishes pictures in smaller pieces to save memory, because it ran out of memory earlier (a bit slower). You can turn this off in Fine-tune.";
+/// Reading the prompt failed without any sign of running out of memory.
+/// (Memory lines can be missing from the output, so closing other programs comes first.)
+pub const ENCODER_FAILED_MESSAGE: &str = "The engine couldn't read your prompt. Close other programs that use the graphics card and try again. If it keeps happening, one of this model's files may be damaged or the wrong version: reinstall it in Models.";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
 
@@ -966,9 +970,12 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
         return None;
     }
     let mut notes = Vec::new();
-    let te_auto = flags.loaded_model_id.as_ref().is_some_and(|id| core.gen.mem_fallback.lock().get(id).is_some_and(|f| f.te_on_cpu));
-    if te_auto && TeChoice::current(core) == TeChoice::Auto {
+    let fb = flags.loaded_model_id.as_ref().and_then(|id| core.gen.mem_fallback.lock().get(id).copied()).unwrap_or_default();
+    if fb.te_on_cpu && TeChoice::current(core) == TeChoice::Auto {
         notes.push(TE_ON_CPU_NOTE.to_string());
+    }
+    if fb.vae_tiling {
+        notes.push(TILING_ON_NOTE.to_string());
     }
     if core.gen.offloaded.lock().is_some() {
         notes.push(OFFLOAD_NOTE.to_string());
@@ -1414,6 +1421,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
+    // (Fine-tune "VAE tiling: Off" still wins over a remembered tiling choice:
+    // the request body turns tiling off per job, without an engine restart.)
     let fb = memory_choices(core, &prep.model.id, gpu_backend);
     let mut fb = with_remembered_offload(core, &prep.model.id, &wiring_args, fb, gpu_backend);
     let steps = params.steps.max(1);
@@ -1573,6 +1582,8 @@ async fn run_job(
                             return Err(RunError::OutOfMemory { stage, details });
                         }
                         let err = match classify(&own, None) {
+                            // "failed to encode prompt" with no memory line: likely a broken or mismatched text encoder.
+                            Failure::Unknown if pinhole_engine::failure::failed_stage(&own) == Stage::TextEncoder => CoreError::new("model_load", ENCODER_FAILED_MESSAGE),
                             Failure::Unknown => CoreError::new("engine_failed", UNKNOWN_JOB_MESSAGE),
                             other => failure_error(other),
                         };
@@ -2011,6 +2022,17 @@ mod tests {
         let o = OtherGpuUse { processes: vec![], ..o };
         assert_eq!(others_sentence(&o), "Other programs are using 10.6 GB of your graphics memory.");
         assert!(others_note(&o).ends_with("If pictures fail, close them and try again."));
+    }
+
+    /// The UI shows "Open Models" on a `vram` error only when its message points there
+    /// (src/components/ErrorWithFix.tsx matches "in Models").
+    #[test]
+    fn vram_messages_point_to_models_except_the_settings_one() {
+        for m in [VRAM_MESSAGE, RAM_MESSAGE] {
+            assert!(m.contains("in Models"), "{m}");
+        }
+        assert!(!TE_ON_GPU_MESSAGE.contains("in Models"));
+        // `vram_message` with other programs named: see testing.rs `out_of_memory_is_never_the_generic_message`.
     }
 
     #[test]
