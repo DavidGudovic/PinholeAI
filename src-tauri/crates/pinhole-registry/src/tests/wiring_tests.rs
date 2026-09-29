@@ -1164,3 +1164,34 @@ fn weight_file_flags_cover_every_component_flag() {
         assert!(WEIGHT_FILE_FLAGS.contains(f), "{f}");
     }
 }
+
+/// Hires ×2 of an SDXL copied example (896×1152 → 1792×2304) ran out of memory
+/// encoding the upscaled picture: a big output tiles the VAE from the start;
+/// Fine-tune "VAE tiling: Off" still wins, and a normal size stays untiled.
+#[test]
+fn big_hires_output_tiles_the_vae() {
+    let reg = shipped();
+    let at = |hires: Option<bool>, scale: Option<f32>, tiling: Option<bool>| {
+        let fine = FineTune {
+            width: Some(896),
+            height: Some(1152),
+            hires,
+            hires_scale: scale,
+            vae_tiling: tiling,
+            ..Default::default()
+        };
+        resolve_params(
+            reg,
+            fam("sdxl"),
+            &dials(Shape::Portrait, Quality::Balanced, 0.5, 0),
+            &fine,
+            GenMode::Txt2img,
+            &hw(16.0),
+        )
+    };
+    let big = at(Some(true), Some(2.0), None);
+    assert!(big.hires.is_some() && big.vae_tiling);
+    assert!(!at(Some(true), Some(2.0), Some(false)).vae_tiling);
+    assert!(!at(Some(false), None, None).vae_tiling);
+    assert!(!at(Some(true), Some(1.25), None).vae_tiling, "1.6 MP");
+}

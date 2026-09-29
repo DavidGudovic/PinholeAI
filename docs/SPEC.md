@@ -603,7 +603,9 @@ build is shared.
   instead. `models.yaml → engine_features.taesd_preview` turns it on when the engine supports it.
 - **VRAM fitting uses sd.cpp auto-fit** (default in the pinned engine) instead of
   `--offload-to-cpu`, which disables auto-fit and forces every weight into RAM. Low/mid tiers keep
-  `--vae-tiling`.
+  `--vae-tiling`. Any card tiles the VAE for an output of 2.5 MP or more (hires included): sd.cpp
+  retries an out-of-memory decode with tiles by itself but not the encode hires fix does at full
+  size (Fine-tune "VAE tiling: Off" wins).
 - **Cancel while generating restarts `sd-server`** (the server answers 409 to cancelling a running
   job); the next Generate reloads the model.
 - **Linux engine = Ubuntu 24.04+**: upstream only publishes Ubuntu 24.04 builds (glibc 2.38). Building
