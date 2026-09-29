@@ -850,6 +850,25 @@ pub(crate) fn model_files(
 
 // ================================================================ engine lifecycle
 
+/// The engine is decoding the finished picture: its last stage line (since the
+/// job started) is "decoding N latents", not a later "generating image",
+/// "hires … upscale" or "decode_first_stage completed" (stable-diffusion.cpp
+/// `src/pipeline/image.cpp`).
+fn decoding_now(own: &str) -> bool {
+    let mut decoding = false;
+    for line in own.lines() {
+        if line.contains("decode_first_stage completed")
+            || line.contains("generating image")
+            || line.contains(" - hires ")
+        {
+            decoding = false;
+        } else if line.contains(" decoding ") && line.contains(" latents") {
+            decoding = true;
+        }
+    }
+    decoding
+}
+
 fn emit_progress(
     core: &AppCore,
     phase: GenPhase,
@@ -2023,11 +2042,14 @@ async fn run_job(
                         t0,
                     ),
                     JobStatus::Generating => {
+                        // Decoding in tiles draws the same bar as sampling (one mark per
+                        // tile): don't show the tiles as extra steps.
+                        let decoding = decoding_now(&core.gen.logs.since_text(mark));
                         let step = core
                             .gen
                             .logs
                             .progress()
-                            .filter(|p| p.kind == ProgressKind::Sampling)
+                            .filter(|p| p.kind == ProgressKind::Sampling && !decoding)
                             .map(|p| {
                                 if batches > 1 && p.total == steps {
                                     if p.step < last_step {
@@ -2491,6 +2513,23 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiles_while_decoding_are_not_steps() {
+        let sampling = "[INFO ] image.cpp:866  - generating image: 1/1 - seed 42\n";
+        assert!(!decoding_now(sampling));
+        let decoding = format!("{sampling}[INFO ] image.cpp:899  - sampling completed, taking 3.10s\n[INFO ] image.cpp:554  - decoding 1 latents\n");
+        assert!(decoding_now(&decoding));
+        assert!(decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:552  - decoding 1/2 latents\n"
+        )));
+        assert!(!decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:624  - decode_first_stage completed, taking 1.20s\n"
+        )));
+        assert!(!decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:866  - generating image: 2/2 - seed 43\n"
+        )));
+    }
 
     #[test]
     fn size_like_keeps_aspect_in_family_multiples() {
