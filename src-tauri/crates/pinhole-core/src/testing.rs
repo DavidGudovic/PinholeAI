@@ -632,6 +632,22 @@ mod tests {
         assert!(core.gen.offloaded.lock().is_some(), "same model, same settings: still system memory");
         generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
         assert!(offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        // A LoRA isn't in the launch args (the engine reads it per job), but it may be mapped: stop.
+        let lora = core.data.models(ModelKind::Lora).join("style.safetensors");
+        generate::unload_model(&core, "a-lora", &[lora]).await;
+        assert!(core.gen.slot.lock().await.model_id.is_none(), "deleting a LoRA stops the engine");
+        assert!(core.gen.offloaded.lock().is_some(), "another model's delete keeps the system-memory choice");
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
+        assert!(offloaded(&core.gen.external_launches.lock().last().cloned().unwrap()));
+        // Upscale starts the engine with the same choices (it must not forget system memory).
+        let saved = core.gen.offloaded.lock().clone();
+        let wiring: Vec<String> = ["--diffusion-model", "/m.gguf"].map(String::from).to_vec();
+        let off = generate::MemFallback { offload: true, ..Default::default() };
+        *core.gen.offloaded.lock() = Some((model.clone(), generate::with_memory_choices(&wiring, off)));
+        assert!(generate::with_remembered_offload(&core, &model, &wiring, Default::default(), true).offload);
+        assert!(!generate::with_remembered_offload(&core, "other", &wiring, Default::default(), true).offload);
+        assert!(!generate::with_remembered_offload(&core, &model, &wiring, Default::default(), false).offload, "CPU engine");
+        *core.gen.offloaded.lock() = saved;
         // Other settings (other launch args): the card again.
         core.gen.offloaded.lock().as_mut().unwrap().1.push("--other-setting".into());
         generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.unwrap();
