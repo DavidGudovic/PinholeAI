@@ -173,7 +173,7 @@ enum Action {
     Move,
     /// The target already has this file (same SHA-256): keep its entry, drop ours.
     Duplicate,
-    /// Our file is missing on disk: carry the entry over as it is.
+    /// Our file is missing on disk: carry the entry over (at a free path).
     Missing,
 }
 
@@ -202,12 +202,10 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
             steps.push(Step { action: Action::Duplicate, entry: t.clone(), old_id: f.id.clone(), src, dest: to.resolve_rel(&t.rel_path) });
             continue;
         }
-        if !src.is_file() {
-            steps.push(Step { action: Action::Missing, entry: f.clone(), old_id: f.id.clone(), src: src.clone(), dest: src });
-            continue;
-        }
         // `models/<sub>/<name>` → same sub-folder in the target, name made
         // unique. Entries registered elsewhere in Data go to their kind's folder.
+        // Missing files get a unique path too, so their entry never shares a
+        // path with another file (deleting it would delete that file).
         let in_models = f.rel_path.split(['/', '\\']).next() == Some("models");
         let wanted = if in_models {
             to.resolve_rel(&f.rel_path)
@@ -220,7 +218,8 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
         taken.insert(dest.clone());
         let mut entry = f.clone();
         entry.rel_path = to.relative(&dest).unwrap_or_else(|| f.rel_path.clone());
-        steps.push(Step { action: Action::Move, entry, old_id: f.id.clone(), src, dest });
+        let action = if src.is_file() { Action::Move } else { Action::Missing };
+        steps.push(Step { action, entry, old_id: f.id.clone(), src, dest });
     }
     steps
 }
@@ -636,5 +635,30 @@ mod tests {
         let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
         let steps = plan(&core.data, &core.installed.lock().clone(), &to, &InstalledIndex::new());
         assert_eq!(steps[0].action, Action::Missing);
+    }
+
+    #[tokio::test]
+    async fn missing_entries_never_share_a_path_with_a_file_in_the_target() {
+        let (_tmp, core) = test_core();
+        let lost = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        std::fs::remove_file(core.data.resolve_rel(&lost.rel_path)).unwrap();
+        // The shared folder already has another install's `a.safetensors`.
+        let shared = tempfile::tempdir().unwrap();
+        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        std::fs::create_dir_all(to.models(pinhole_store::datadir::ModelKind::Checkpoint)).unwrap();
+        std::fs::write(to.resolve_rel("models/checkpoints/a.safetensors"), b"theirs").unwrap();
+        let mut theirs = InstalledIndex::new();
+        let mut t = lost.clone();
+        t.id = "theirs".into();
+        t.sha256 = pinhole_net::download::sha256_file(&to.resolve_rel(&t.rel_path)).unwrap();
+        t.size_bytes = 6;
+        theirs.upsert(t);
+        theirs.save(&to).unwrap();
+
+        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
+        let merged = InstalledIndex::load(&to).unwrap();
+        assert_eq!(merged.files.len(), 2);
+        assert_eq!(merged.get(&lost.id).unwrap().rel_path, "models/checkpoints/a-2.safetensors");
+        assert_eq!(merged.get("theirs").unwrap().rel_path, "models/checkpoints/a.safetensors");
     }
 }

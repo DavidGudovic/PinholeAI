@@ -695,29 +695,17 @@ pub fn preview_delete(core: &AppCore, model_id: &str) -> CoreResult<DeletePrevie
 /// engine unloads it first.
 pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
-    let preview = preview_delete(core, model_id)?;
+    let registry = core.registry();
     let paths: Vec<PathBuf> = {
         let index = core.installed.lock();
-        preview
-            .files
-            .iter()
-            .filter_map(|df| index.files.iter().find(|f| f.rel_path == df.rel_path))
-            .map(|f| index.abs_path(&core.data, f))
-            .collect()
+        let ids = delete_ids(&registry, &index, model_id)?;
+        ids.iter().filter_map(|id| index.get(id)).map(|f| index.abs_path(&core.data, f)).collect()
     };
     crate::generate::unload_model(core, model_id, &paths).await;
-    let registry = core.registry();
     let failed;
     {
         let mut index = core.installed.lock();
-        let Some(preview) = inventory::delete_preview(&registry, &index, model_id) else {
-            return Err(CoreError::not_found("That model isn't installed any more."));
-        };
-        let ids: Vec<String> = preview
-            .files
-            .iter()
-            .filter_map(|df| index.files.iter().find(|f| f.rel_path == df.rel_path).map(|f| f.id.clone()))
-            .collect();
+        let ids = delete_ids(&registry, &index, model_id)?;
         failed = remove_entries(core, &mut index, &ids);
         index.save(&core.data)?;
     }
@@ -731,14 +719,26 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
+/// Ids of the entries deleting `model_id` removes: the model and the
+/// components no other model needs (by id: two entries can share a path).
+fn delete_ids(registry: &pinhole_registry::Registry, index: &pinhole_store::InstalledIndex, model_id: &str) -> CoreResult<Vec<String>> {
+    if index.get(model_id).is_none() {
+        return Err(CoreError::not_found("That model isn't installed any more."));
+    }
+    let orphans = inventory::orphaned_components(registry, index, model_id);
+    Ok(std::iter::once(model_id.to_string()).chain(orphans.into_iter().map(|f| f.id.clone())).collect())
+}
+
 /// Delete the files of these index entries (and their `.part` leftovers) and
 /// drop the entries; returns the names of files that couldn't be deleted
-/// (their entries stay). The caller saves the index.
+/// (their entries stay). A file another remaining entry also points at is
+/// kept. The caller saves the index.
 fn remove_entries(core: &AppCore, index: &mut pinhole_store::InstalledIndex, ids: &[String]) -> Vec<String> {
     let mut failed = Vec::new();
     for id in ids {
         let Some(f) = index.get(id).cloned() else { continue };
-        if inventory::is_safe_rel_path(&f.rel_path) {
+        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && o.rel_path == f.rel_path);
+        if inventory::is_safe_rel_path(&f.rel_path) && !shared {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
                 Ok(()) => {}
@@ -972,6 +972,28 @@ mod tests {
         }
         delete_model(&core, "evil").await.unwrap();
         assert!(outside.exists());
+    }
+
+    #[tokio::test]
+    async fn delete_uses_the_id_not_a_shared_path() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let dir = core.data.models(ModelKind::Checkpoint);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.safetensors");
+        std::fs::write(&p, b"theirs").unwrap();
+        let reg = Registration { kind: ModelKind::Checkpoint, friendly_name: "a".into(), family: Some("sd15".into()), component_id: None, civitai: None, dtype: None };
+        let theirs = register_download(&core, &DownloadedFile { path: p.clone(), sha256: "ab".repeat(32), size_bytes: 6 }, reg).unwrap();
+        // An older index could hold a second (missing) entry with the same path.
+        let mut lost = theirs.clone();
+        lost.id = "lost".into();
+        lost.sha256 = "cd".repeat(32);
+        core.installed.lock().files.insert(0, lost);
+
+        delete_model(&core, "lost").await.unwrap();
+        let idx = core.installed.lock().clone();
+        assert!(idx.get("lost").is_none(), "the entry asked for is removed");
+        assert!(idx.get(&theirs.id).is_some(), "the other entry stays");
+        assert_eq!(std::fs::read(&p).unwrap(), b"theirs", "and so does its file");
     }
 
     #[test]
