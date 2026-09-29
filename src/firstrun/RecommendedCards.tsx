@@ -177,7 +177,7 @@ function GetAllBar({
       </div>
       <Button variant="primary" disabled={!todo.length} onClick={() => todo.forEach((p) => onGet(p.role))}>
         {allDone ? <CircleCheck className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-        {allDone ? "All set" : `Get all (${names})`}
+        {allDone ? "All set" : `Get all (${todo.length ? todoNames : names})`}
       </Button>
     </div>
   );
