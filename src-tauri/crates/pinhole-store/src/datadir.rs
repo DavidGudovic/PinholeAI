@@ -236,22 +236,33 @@ impl DataDir {
     /// Models folder). Empty, `.`, `..` and drive/root parts are dropped, so a
     /// damaged or hostile index can never point outside Data / the Models folder.
     pub fn resolve_rel(&self, rel_path: &str) -> PathBuf {
-        let parts: Vec<&str> = rel_path
-            .split(['/', '\\'])
-            .filter(|part| {
-                if part.is_empty() || *part == "." || *part == ".." || part.contains(':') {
-                    return false;
-                }
-                // Only plain names (no embedded prefixes/roots on any platform).
-                let mut comps = Path::new(part).components();
-                matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None))
-            })
-            .collect();
+        let parts = rel_parts(rel_path);
         match parts.split_first() {
             Some((&"models", rest)) => rest.iter().fold(self.models_root(), |p, c| p.join(c)),
             _ => parts.iter().fold(self.root.clone(), |p, c| p.join(c)),
         }
     }
+}
+
+/// The parts of an index `rel_path` that [`DataDir::resolve_rel`] keeps.
+fn rel_parts(rel_path: &str) -> Vec<&str> {
+    rel_path
+        .split(['/', '\\'])
+        .filter(|part| {
+            if part.is_empty() || *part == "." || *part == ".." || part.contains(':') {
+                return false;
+            }
+            // Only plain names (no embedded prefixes/roots on any platform).
+            let mut comps = Path::new(part).components();
+            matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None))
+        })
+        .collect()
+}
+
+/// `rel_path` as [`DataDir::resolve_rel`] reads it, `/`-joined: two index
+/// paths name the same file exactly when these are equal.
+pub fn normalize_rel(rel_path: &str) -> String {
+    rel_parts(rel_path).join("/")
 }
 
 fn join_normal(rest: &Path) -> Option<String> {
@@ -321,6 +332,20 @@ pub fn is_writable_dir(dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_rel_matches_resolve_rel() {
+        for (raw, want) in [
+            ("models/loras/x.safetensors", "models/loras/x.safetensors"),
+            (".\\models\\loras\\\\x.safetensors", "models/loras/x.safetensors"),
+            ("/models/../loras/x", "models/loras/x"),
+            ("C:\\models\\x", "models/x"),
+        ] {
+            assert_eq!(normalize_rel(raw), want, "{raw}");
+            let d = DataDir::at(PathBuf::from("/data"), false);
+            assert_eq!(d.resolve_rel(raw), d.resolve_rel(want), "{raw}");
+        }
+    }
 
     #[test]
     fn env_override_wins() {

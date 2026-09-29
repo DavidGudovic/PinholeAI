@@ -21,7 +21,7 @@ use pinhole_catalog::recommend::{self, FileToGet, PickAction};
 use pinhole_catalog::{inventory, local, paste, CatalogFilters};
 use pinhole_net::download::{check_free_space, ContentCheck, DownloadSpec, DownloadedFile};
 use pinhole_registry::detect;
-use pinhole_store::datadir::ModelKind;
+use pinhole_store::datadir::{normalize_rel, ModelKind};
 use pinhole_store::installed::{CivitaiRef, InstalledFile};
 
 pub use pinhole_catalog::view::{
@@ -757,8 +757,8 @@ fn remove_entries(core: &AppCore, index: &mut pinhole_store::InstalledIndex, ids
     let mut failed = Vec::new();
     for id in ids {
         let Some(f) = index.get(id).cloned() else { continue };
-        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && o.rel_path == f.rel_path)
-            || index.unknown.iter().any(|v| pinhole_store::installed::unknown_rel_path(v) == Some(f.rel_path.as_str()));
+        let same = |rel: &str| normalize_rel(rel) == normalize_rel(&f.rel_path);
+        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && same(&o.rel_path)) || index.unknown_uses(&f.rel_path);
         if inventory::is_safe_rel_path(&f.rel_path) && !shared {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
@@ -1035,7 +1035,9 @@ mod tests {
         core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION;
 
         // An entry this version can't read uses the same file: the file stays.
-        core.installed.lock().unknown.push(serde_json::json!({ "relPath": a.rel_path, "kind": "future" }));
+        // Written on Windows, by hand: the same file as a's.
+        let same_file = format!(".\\{}", a.rel_path.replace('/', "\\"));
+        core.installed.lock().unknown.push(serde_json::json!({ "relPath": same_file, "kind": "future" }));
         delete_model(&core, &a.id).await.unwrap();
         assert!(core.installed.lock().get(&a.id).is_none());
         assert!(p.exists());
