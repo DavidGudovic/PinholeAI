@@ -214,9 +214,21 @@ pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
         .iter()
         .filter(|l| l.contains("backend_fit.cpp"))
         .collect();
-    if fit
-        .iter()
-        .any(|l| l.contains("no GPU memory budget available"))
+    // Device lines: "<name> <description> free N MiB, budget N MiB" (the RAM line says "params budget").
+    let devices: Vec<&&String> = fit.iter().filter(|l| l.contains("MiB, budget")).collect();
+    let budget_mib = |l: &str| -> Option<i64> {
+        l.rsplit("budget")
+            .next()?
+            .split_whitespace()
+            .next()?
+            .parse()
+            .ok()
+    };
+    let all_full = !devices.is_empty() && devices.iter().all(|l| budget_mib(l) == Some(0));
+    if all_full
+        || fit
+            .iter()
+            .any(|l| l.contains("no GPU memory budget available"))
     {
         return Some(MissedGpu::NoFreeMemory);
     }
@@ -235,7 +247,6 @@ pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
     if diffusion_on_cpu || fit.iter().any(|l| l.contains("auto-fit: no GPU devices")) {
         return Some(MissedGpu::NotFound);
     }
-    // Device lines: "<name> <description> free N MiB, budget N MiB" (the RAM line says "params budget").
     // CUDA device names start with "CUDA"; not every NVIDIA card has "NVIDIA" in its name.
     let is_nvidia = |l: &str| {
         let l = l.to_ascii_lowercase();
@@ -245,7 +256,6 @@ pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
         .iter()
         .any(|k| l.contains(k))
     };
-    let devices: Vec<&&String> = fit.iter().filter(|l| l.contains("MiB, budget")).collect();
     (!devices.is_empty() && !devices.iter().any(|l| is_nvidia(l))).then_some(MissedGpu::NotFound)
 }
 
@@ -405,6 +415,12 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
             "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"te=cpu,diffusion=cpu,vae=cpu\"",
         ]);
         assert_eq!(missed_gpu(&te_cpu, true), Some(MissedGpu::NotFound));
+        // The card is there but full: auto-fit puts diffusion on the processor.
+        let full_card = log(&[
+            "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 5070 Ti       free    300 MiB, budget      0 MiB",
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"te=cpu,diffusion=CPU,vae=CPU\"",
+        ]);
+        assert_eq!(missed_gpu(&full_card, true), Some(MissedGpu::NoFreeMemory));
         let full = log(&[
             "[WARN ] backend_fit.cpp:446  - auto-fit: no GPU memory budget available; using CPU",
         ]);

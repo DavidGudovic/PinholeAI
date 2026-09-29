@@ -1384,7 +1384,7 @@ fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
 }
 
 /// Shown while the engine runs when a GPU build ended up without the graphics card.
-pub(crate) const NOT_ON_GPU_NOTE: &str = "The engine isn't using your graphics card, so pictures are made much more slowly. Update or reinstall your graphics driver, then restart Pinhole.";
+pub(crate) const NOT_ON_GPU_NOTE: &str = "The engine isn't using your graphics card, so pictures are made much more slowly. Update or reinstall your graphics driver, then restart Pinhole. Settings → Engine → Show engine output shows which devices it found.";
 /// Same, for Linux with an NVIDIA card: the engine reaches it through the NVIDIA Vulkan driver.
 pub(crate) const NOT_ON_GPU_NOTE_LINUX_NVIDIA: &str = "The engine can't reach your NVIDIA card, so pictures are made much more slowly. On Linux it needs NVIDIA's Vulkan driver: reinstall the NVIDIA driver (on Ubuntu: sudo ubuntu-drivers install), check that vulkaninfo --summary lists your card, then restart Pinhole.";
 /// The card was found but was full when the engine started.

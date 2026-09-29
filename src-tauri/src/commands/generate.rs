@@ -28,6 +28,11 @@ pub async fn engine_status(core: Core<'_>) -> Result<EngineStatus, CoreError> {
 }
 
 #[tauri::command]
+pub async fn engine_output(core: Core<'_>) -> Result<String, CoreError> {
+    Ok(engine_setup::engine_output(&core))
+}
+
+#[tauri::command]
 pub async fn install_engine(core: Core<'_>) -> Result<EngineStatus, CoreError> {
     engine_setup::install_engine(core.inner()).await
 }
@@ -151,6 +156,7 @@ pub async fn upscale_image(
 
 super::area_commands![
     engine_status,
+    engine_output,
     install_engine,
     family_ui,
     generate,

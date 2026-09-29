@@ -300,6 +300,12 @@ const table: MockTable = {
   },
   open_outputs_folder: async () => undefined,
   engine_status: async () => ({ ...engineState() }),
+  engine_output: async () =>
+    [
+      "[INFO ] backend_fit.cpp:323  - auto-fit plan:",
+      "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 4070          free  11500 MiB, budget  10988 MiB",
+      "[INFO ] main.cpp:149  - listening on: http://127.0.0.1:5000",
+    ].join("\n"),
   install_engine: () => installEngine(),
   "plugin:dialog|open": async (a) => {
     await sleep(300);

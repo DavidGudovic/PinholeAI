@@ -29,6 +29,8 @@ export const clearGithubToken = () => invoke<void>("clear_github_token");
 
 // ---------------------------------------------------------------- engine (engine agent)
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
+/** The image engine's recent output (memory only, prompt text redacted). */
+export const engineOutput = () => invoke<string>("engine_output");
 /** Downloads + verifies + unpacks the engine for the current backend. Progress via onDownload. */
 export const installEngine = () => invoke<T.EngineStatus>("install_engine");
 

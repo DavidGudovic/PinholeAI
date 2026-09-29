@@ -22,6 +22,7 @@ import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
+import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
 import { UpdateSection } from "./UpdateSection";
 
@@ -366,6 +367,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
               <ErrorNotice error={engine.error} onDismiss={() => engine.setError(null)} />
             </div>
           )}
+          {st?.installed && <EngineOutput />}
         </div>
       </Section>
 
