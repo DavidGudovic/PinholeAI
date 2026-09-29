@@ -584,6 +584,8 @@ export interface PlanFileOption {
   sizeBytes: number;
   /** "Full quality" | "Compact (FP8)" | "Compact (Q4)" … */
   label: string;
+  /** "Pictures can look grainy" and/or "Slower: part of it runs from system memory". */
+  note?: string | null;
   vram: VramNeed | null;
   fit: Fit | null;
   selected: boolean;

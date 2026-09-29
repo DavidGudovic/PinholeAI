@@ -81,14 +81,44 @@ fn any_format(env: &PlanEnv, family_id: Option<&str>) -> bool {
 fn need_fit(env: &PlanEnv, family_id: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
     let fam = env.registry.family(family_id)?;
     let need = families::family_need(env.registry, fam, env.hw, env.index, bytes);
-    Some(families::need_and_fit(
-        env.registry,
-        fam,
-        env.hw,
-        env.index,
-        need,
-        bytes,
-    ))
+    let (need, fit) = families::need_and_fit(env.registry, fam, env.hw, env.index, need, bytes);
+    Some((need, ram_check(env.hw, need.gb, bytes, fit)))
+}
+
+/// Share of system RAM a file may take when part of it runs from system memory.
+const STREAM_RAM_SHARE: f64 = 0.75;
+
+/// A Tight file that needs more than the card has runs with its weights kept in
+/// system memory (the engine's auto-fit streams them to the card). A file
+/// bigger than [`STREAM_RAM_SHARE`] of the RAM can't: the text encoder and the
+/// system need the rest, so it is Too big (a 26 GB Krea 2 bf16 file showed
+/// Tight on a 16 GB card with 32 GB RAM).
+fn ram_check(hw: &HwContext, need_gb: f32, bytes: u64, fit: Fit) -> Fit {
+    let file_gb = bytes as f64 / 1e9;
+    if fit == Fit::Tight
+        && need_gb > hw.vram_gb
+        && hw.ram_gb > 0.0
+        && file_gb > f64::from(hw.ram_gb) * STREAM_RAM_SHARE
+    {
+        Fit::TooBig
+    } else {
+        fit
+    }
+}
+
+/// Short note under a size choice: grain for 4-bit files, speed when part of
+/// the model runs from system memory.
+fn size_note(low_bit: bool, nf: Option<&(VramNeed, Fit)>, hw: &HwContext) -> Option<String> {
+    let mut parts = Vec::new();
+    if low_bit {
+        parts.push("Pictures can look grainy");
+    }
+    if let Some((need, fit)) = nf {
+        if *fit == Fit::Tight && need.gb > hw.vram_gb {
+            parts.push("Slower: part of it runs from system memory");
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(". "))
 }
 
 /// The file an install of `version` downloads on this machine: the user's
@@ -169,35 +199,45 @@ pub fn build_plan(
     let main_installed = sha
         .as_deref()
         .is_some_and(|h| env.index.find_by_sha(h).is_some());
-    let file_options: Vec<PlanFileOption> = select::size_choices(
+    let choices = select::size_choices(
         &version.files,
         &env.filters.allowed_file_formats,
         any_format(env, sized_family.as_deref()),
-    )
-    .into_iter()
-    .map(|f| {
-        let nf = sized_family
-            .as_deref()
-            .filter(|_| !is_lora)
-            .and_then(|id| need_fit(env, id, f.size_bytes()));
-        PlanFileOption {
-            file_id: f.id,
-            name: f.name.clone(),
-            size_bytes: f.size_bytes(),
-            label: select::precision_label(f),
-            vram: nf.map(|(n, _)| n),
-            fit: nf.map(|(_, fit)| fit),
-            selected: picked
-                .as_ref()
-                .is_ok_and(|(p, _)| p.id == f.id && p.name == f.name),
-        }
-    })
-    .collect();
+    );
+    let labels = select::size_labels(&choices);
+    let file_options: Vec<PlanFileOption> = choices
+        .iter()
+        .zip(&labels)
+        .map(|(f, (label, low_bit))| {
+            let nf = sized_family
+                .as_deref()
+                .filter(|_| !is_lora)
+                .and_then(|id| need_fit(env, id, f.size_bytes()));
+            PlanFileOption {
+                file_id: f.id,
+                name: f.name.clone(),
+                size_bytes: f.size_bytes(),
+                label: label.clone(),
+                note: size_note(*low_bit, nf.as_ref(), env.hw),
+                vram: nf.map(|(n, _)| n),
+                fit: nf.map(|(_, fit)| fit),
+                selected: picked
+                    .as_ref()
+                    .is_ok_and(|(p, _)| p.id == f.id && p.name == f.name),
+            }
+        })
+        .collect();
     let smaller_file = picked
         .as_ref()
         .ok()
         .filter(|(_, smaller)| *smaller)
-        .map(|(f, _)| select::precision_label(f));
+        .map(|(f, _)| {
+            file_options
+                .iter()
+                .find(|o| o.file_id == f.id && o.name == f.name)
+                .map(|o| o.label.clone())
+                .unwrap_or_else(|| select::precision_label(f))
+        });
 
     let (family, candidates): (Option<FamilyChoice>, Vec<FamilyChoice>) = match resolution {
         FamilyResolution::Resolved(id) => (families::family_choice(env.registry, &id), Vec::new()),
@@ -394,6 +434,41 @@ mod tests {
     use crate::filters::tests::filters;
     use crate::testkit::{component, hw, index, registry};
     use pinhole_registry::vram::Fit;
+
+    #[test]
+    fn tight_files_bigger_than_ram_are_too_big() {
+        // 16 GB card, 32 GB RAM: the Krea 2 install dialog's choices.
+        let pc = HwContext {
+            ram_gb: 32.0,
+            ..hw(16.0)
+        };
+        let need = |gb: f32| VramNeed {
+            gb,
+            min_gb: 10.0,
+            estimate: true,
+            on_cpu: false,
+        };
+        assert_eq!(
+            ram_check(&pc, 28.0, 26_000_000_000, Fit::Tight),
+            Fit::TooBig
+        );
+        assert_eq!(ram_check(&pc, 16.5, 13_000_000_000, Fit::Tight), Fit::Tight);
+        // Unknown RAM, or a Tight fit that needs no system memory: unchanged.
+        let no_ram = HwContext {
+            ram_gb: 0.0,
+            ..hw(16.0)
+        };
+        assert_eq!(
+            ram_check(&no_ram, 28.0, 26_000_000_000, Fit::Tight),
+            Fit::Tight
+        );
+        assert_eq!(ram_check(&pc, 15.5, 26_000_000_000, Fit::Tight), Fit::Tight);
+        assert_eq!(
+            size_note(true, Some(&(need(16.5), Fit::Tight)), &pc).as_deref(),
+            Some("Pictures can look grainy. Slower: part of it runs from system memory")
+        );
+        assert_eq!(size_note(false, Some(&(need(11.0), Fit::Fits)), &pc), None);
+    }
 
     fn jugg() -> (ModelVersion, Model) {
         (

@@ -145,8 +145,12 @@ pub struct PlanFileOption {
     pub file_id: u64,
     pub name: String,
     pub size_bytes: u64,
-    /// "Full quality" | "Compact (FP8)" | "Compact (Q4)" …
+    /// "Full quality" | "Compact (FP8)" | "Compact (Q4)" | "Compact (8-bit)" …
     pub label: String,
+    /// "Pictures can look grainy" (4-bit or smaller) and/or "Slower: part of it
+    /// runs from system memory".
+    #[serde(default)]
+    pub note: Option<String>,
     pub vram: Option<VramNeed>,
     pub fit: Option<Fit>,
     pub selected: bool,
