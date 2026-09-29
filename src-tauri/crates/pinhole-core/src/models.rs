@@ -906,6 +906,12 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
             .map(|f| index.abs_path(&core.data, f))
             .collect()
     };
+    // Stopping the engine under a job would fail it as if the engine crashed.
+    if crate::generate::unload_interrupts_job(core, model_id, &paths).await {
+        return Err(CoreError::invalid(
+            "Wait for the current pictures to finish, then delete it.",
+        ));
+    }
     crate::generate::unload_model(core, model_id, &paths).await;
     let failed;
     {

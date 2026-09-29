@@ -442,17 +442,7 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
     }
     cancel_load_of(core, model_id, files);
     let mut slot = core.gen.slot.lock().await;
-    // Also when the running engine has one of the files open (a shared
-    // component): Windows can't delete a mapped file (`--mmap`).
-    let per_job_dirs = [
-        core.data.models(ModelKind::Lora),
-        core.data.models(ModelKind::Upscaler),
-    ];
-    let uses_file = files.iter().any(|f| {
-        slot.args.iter().any(|a| Path::new(a) == f.as_path())
-            || per_job_dirs.iter().any(|d| f.starts_with(d))
-    });
-    if slot.model_id.as_deref() == Some(model_id) || uses_file {
+    if unload_stops(core, &slot, model_id, files) {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
         }
@@ -465,17 +455,51 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
     }
 }
 
-/// A load of `model_id` (or of an engine that opens one of `files`) keeps the
-/// engine slot for up to [`LOAD_TIMEOUT`]: cancel that job so a delete doesn't
-/// wait for it.
-fn cancel_load_of(core: &AppCore, model_id: &str, files: &[PathBuf]) {
-    let loading_it = core.gen.loading.lock().as_ref().is_some_and(|(id, args)| {
+/// Whether [`unload_model`] stops the engine in `slot`: it has `model_id`
+/// loaded, has one of the files open (a shared component: Windows can't delete
+/// a mapped file, `--mmap`), or a file is in the LoRA / upscaler folders.
+fn unload_stops(core: &AppCore, slot: &EngineSlot, model_id: &str, files: &[PathBuf]) -> bool {
+    let per_job_dirs = [
+        core.data.models(ModelKind::Lora),
+        core.data.models(ModelKind::Upscaler),
+    ];
+    let uses_file = files.iter().any(|f| {
+        slot.args.iter().any(|a| Path::new(a) == f.as_path())
+            || per_job_dirs.iter().any(|d| f.starts_with(d))
+    });
+    slot.model_id.as_deref() == Some(model_id) || uses_file
+}
+
+/// Whether a job is loading `model_id` (or an engine that opens one of `files`).
+fn loading_one_of(core: &AppCore, model_id: &str, files: &[PathBuf]) -> bool {
+    core.gen.loading.lock().as_ref().is_some_and(|(id, args)| {
         id == model_id
             || files
                 .iter()
                 .any(|f| args.iter().any(|a| Path::new(a) == f.as_path()))
-    });
-    if loading_it {
+    })
+}
+
+/// Whether [`unload_model`] would stop the engine under a running job (which
+/// would then fail as if the engine had crashed). A load of the model being
+/// deleted doesn't count: unload cancels that job instead.
+pub(crate) async fn unload_interrupts_job(
+    core: &AppCore,
+    model_id: &str,
+    files: &[PathBuf],
+) -> bool {
+    if core.gen.active.lock().is_none() || loading_one_of(core, model_id, files) {
+        return false;
+    }
+    let slot = core.gen.slot.lock().await;
+    core.gen.active.lock().is_some() && unload_stops(core, &slot, model_id, files)
+}
+
+/// A load of `model_id` (or of an engine that opens one of `files`) keeps the
+/// engine slot for up to [`LOAD_TIMEOUT`]: cancel that job so a delete doesn't
+/// wait for it.
+fn cancel_load_of(core: &AppCore, model_id: &str, files: &[PathBuf]) {
+    if loading_one_of(core, model_id, files) {
         if let Some(tok) = core.gen.active.lock().as_ref() {
             tok.cancel();
         }
@@ -2304,6 +2328,9 @@ fn touch_last_used(core: &AppCore, model_id: &str) {
 
 // ================================================================ upscale
 
+/// Refusal for sources the upscaler can't take: 2× also runs at 4× first.
+pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: the upscaler works at 4× first, up to 8192 pixels per side. Try a smaller image.";
+
 /// Upscale a session image with Real-ESRGAN (4×; 2× = 4× then halve). The
 /// upscaler is downloaded on first use. Needs the engine running (any model).
 pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
@@ -2318,15 +2345,31 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
         .get(id)
         .ok_or_else(|| CoreError::not_found("That image isn't in this session anymore."))?;
     if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
-        return Err(CoreError::invalid("This image is already too large to upscale (max 8192 pixels per side after upscaling)."));
+        return Err(CoreError::invalid(UPSCALE_TOO_LARGE));
     }
-    let upscaler = ensure_upscaler(core).await?;
 
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
+    // Set before the first-use upscaler download, so Cancel works during it too.
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
+    // Cancelled just as the download finished: it stays installed, no upscale.
+    let ready = ensure_upscaler(core, &cancel).await.and_then(|u| {
+        if cancel.is_cancelled() {
+            Err(CoreError::new("cancelled", "Cancelled."))
+        } else {
+            Ok(u)
+        }
+    });
+    let upscaler = match ready {
+        Ok(u) => u,
+        Err(e) => {
+            *core.gen.active.lock() = None;
+            after_job(core, epoch).await;
+            return Err(e);
+        }
+    };
     let t0 = Instant::now();
     let mut label = String::new();
     let res = upscale_inner(
@@ -2556,9 +2599,25 @@ fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> 
         .map(|f| f.id.clone())
 }
 
+/// Wait for a download group; `cancel` cancels the group (its `.part` stays for
+/// a later resume) and returns `cancelled`.
+async fn wait_download_or_cancel(
+    downloads: &pinhole_net::download::DownloadManager,
+    group: &str,
+    cancel: &CancellationToken,
+) -> CoreResult<Vec<pinhole_net::download::DownloadedFile>> {
+    tokio::select! {
+        r = downloads.wait_detailed(group) => r.map_err(|e| CoreError::new(&e.code, e.message)),
+        _ = cancel.cancelled() => {
+            downloads.cancel(group);
+            Err(CoreError::new("cancelled", "Cancelled."))
+        }
+    }
+}
+
 /// Make sure the Real-ESRGAN component is installed; returns its file stem (the
 /// sd-server upscaler name).
-async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
+async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> CoreResult<String> {
     let stem_of = |f: &InstalledFile| {
         std::path::Path::new(&f.rel_path)
             .file_stem()
@@ -2594,11 +2653,7 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         pinhole_net::download::DownloadKind::Upscaler,
         vec![spec],
     );
-    let files = core
-        .downloads
-        .wait_detailed(&group)
-        .await
-        .map_err(|e| CoreError::new(&e.code, e.message))?;
+    let files = wait_download_or_cancel(&core.downloads, &group, cancel).await?;
     let file = files
         .into_iter()
         .next()
@@ -2623,6 +2678,58 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Cancel while the first-use upscaler download runs ends the wait at once
+    /// and cancels the download group.
+    #[tokio::test]
+    async fn cancel_ends_the_upscaler_download_wait() {
+        use pinhole_net::download::{DownloadManager, DownloadSpec, DownloadState};
+        use pinhole_net::testutil::{MockResponse, MockServer};
+        let srv =
+            MockServer::start(|_| MockResponse::ok(vec![0u8; 16]).delay(Duration::from_secs(30)))
+                .await;
+        let dir = tempfile::tempdir().unwrap();
+        let m = DownloadManager::new(
+            pinhole_net::HttpClient::new_for_tests(pinhole_net::OfflineFlag::new(false), true)
+                .unwrap(),
+        );
+        let group = m.enqueue(
+            "Upscaler".into(),
+            vec![DownloadSpec {
+                url: srv.url("/up.pth"),
+                dest: dir.path().join("up.pth"),
+                label: "Upscaler".into(),
+                ..Default::default()
+            }],
+        );
+        let cancel = CancellationToken::new();
+        let c2 = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            c2.cancel();
+        });
+        let err = tokio::time::timeout(
+            Duration::from_secs(10),
+            wait_download_or_cancel(&m, &group, &cancel),
+        )
+        .await
+        .expect("cancel ends the wait")
+        .unwrap_err();
+        assert_eq!(err.code, "cancelled");
+        let mut state = None;
+        for _ in 0..200 {
+            state = m
+                .status()
+                .into_iter()
+                .find(|s| s.group_id == group)
+                .map(|s| s.state);
+            if state == Some(DownloadState::Cancelled) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(state, Some(DownloadState::Cancelled));
+    }
 
     #[test]
     fn tiles_while_decoding_are_not_steps() {
