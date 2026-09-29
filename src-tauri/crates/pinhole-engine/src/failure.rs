@@ -45,9 +45,9 @@ const OOM: &[&str] = &[
     "failed during allocated capacity check",
     "failed during workspace allocation",
 ];
-/// The prompt encoder failed. With the pinned engine this happens when its
-/// runner can't get memory (the memory lines usually come first), so on its
-/// own it still counts as running out of memory.
+/// The prompt encoder failed. On its own this is NOT a memory failure (a broken
+/// or mismatched text encoder fails the same way); with a memory line in the
+/// same output it says the text encoder is the stage that ran out.
 const ENCODE_FAILED: &[&str] = &[
     "prompt encoding failed",
     "failed to encode prompt",
@@ -117,9 +117,6 @@ pub fn classify(log_tail: &str, exit_code: Option<i32>) -> Failure {
     }
     if has(MODEL) {
         return Failure::ModelLoad;
-    }
-    if has(ENCODE_FAILED) {
-        return Failure::OutOfMemory;
     }
     Failure::Unknown
 }
@@ -200,9 +197,14 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
     fn text_encoder_memory_failure_from_the_field() {
         assert_eq!(classify(TE_OOM_LOG, None), Failure::OutOfMemory);
         assert_eq!(memory_failure(TE_OOM_LOG), Some(Stage::TextEncoder));
-        // Each memory line on its own counts.
-        for line in TE_OOM_LOG.lines().skip(3) {
+        // Each memory line on its own counts…
+        for line in TE_OOM_LOG.lines().skip(3).take(2) {
             assert_eq!(classify(line, None), Failure::OutOfMemory, "{line}");
+        }
+        // …but "failed to encode prompt" alone is not memory (broken text encoder file).
+        for line in TE_OOM_LOG.lines().skip(5) {
+            assert_eq!(classify(line, None), Failure::Unknown, "{line}");
+            assert_eq!(memory_failure(line), None, "{line}");
         }
         // The CUDA banner alone is not a failure.
         assert_eq!(classify(TE_OOM_LOG.lines().nth(1).unwrap(), None), Failure::Unknown);

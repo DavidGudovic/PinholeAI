@@ -648,6 +648,55 @@ mod tests {
         assert!(kept.contains("failed to encode prompt") && !kept.contains(SENTINEL), "{kept}");
     }
 
+    /// Decoding ran out of memory: one retry with tiling, remembered for the model and
+    /// shown in the engine note (plain words); Fine-tune "VAE tiling: Off" still wins per
+    /// request without restarting the engine.
+    #[tokio::test]
+    async fn remembered_tiling_is_shown_and_fine_tune_off_wins() {
+        let (_tmp, core, _) = gpu_core();
+        let vae_oom = "[WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 1200.00 MB device\n\
+                       [ERROR  ] ggml_runner.cpp:899  - vae segment 1/1 (graph) failed during workspace capacity check\n\
+                       [ERROR  ] image.cpp:614  - decode_first_stage failed for latent 1";
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_outputs: vec![vae_oom.into()], engine_log: Some(engine_log(&core)), ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+        generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x")).await.expect("retried with tiling");
+        let tiled = |a: &[String]| a.iter().any(|x| x == "--vae-tiling");
+        let last = core.gen.external_launches.lock().last().cloned().unwrap();
+        assert!(tiled(&last), "{last:?}");
+        {
+            let mut f = core.gen.flags.lock();
+            (f.running, f.loaded_model_id) = (true, Some(model.clone()));
+        }
+        let note = crate::engine_setup::engine_status(&core).note.unwrap_or_default();
+        assert!(note.contains("smaller pieces") && note.contains("Fine-tune"), "{note}");
+        assert!(!note.contains("VAE"), "plain words outside Fine-tune: {note}");
+        let launches = core.gen.external_launches.lock().len();
+        let mut req = GenerateRequest::txt2img(model, "x");
+        req.fine_tune.vae_tiling = Some(false);
+        generate::generate(&core, req).await.unwrap();
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["vae_tiling_params"]["enabled"], serde_json::json!(false), "{body}");
+        assert!(tiled(core.gen.external_launches.lock().last().unwrap()), "same launch args, no restart");
+        assert_eq!(core.gen.external_launches.lock().len(), launches + 1);
+    }
+
+    /// "failed to encode prompt" with no memory line (a broken or mismatched text
+    /// encoder): no memory retry, a plain message that points to Models.
+    #[tokio::test]
+    async fn encoder_failure_without_memory_lines_is_not_out_of_memory() {
+        let (_tmp, core, _) = gpu_core();
+        let out = "generate_image returned no results\n[ERROR  ] conditioner.hpp:2224 - LLM prompt encoding failed\n[ERROR  ] image.cpp:448  - failed to encode prompt";
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 0, fail_with: Some(out.into()), ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "z_image_turbo");
+        let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL)).await.unwrap_err();
+        assert_eq!((err.code.as_str(), err.message.as_str()), ("model_load", generate::ENCODER_FAILED_MESSAGE));
+        assert_eq!(core.gen.external_launches.lock().len(), 1, "no retry");
+        assert!(core.gen.mem_fallback.lock().get(&model).is_none(), "nothing remembered");
+        assert!(!err.details.unwrap_or_default().contains(SENTINEL));
+    }
+
     /// Progress notes: the other-programs note is measured again at every
     /// engine start and replaces the older one (shown first); a later retry
     /// note replaces an earlier one.

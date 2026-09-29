@@ -46,7 +46,8 @@ export interface Settings {
   engineBackend: string;
   /** Where the text encoder (reads the prompt) runs on a graphics-card engine:
    *  auto = graphics card, moved to the processor for a model (this app session)
-   *  after it runs out of graphics memory; on = always the processor; off = always the card. */
+   *  after it runs out of graphics memory; on = always the processor; off = never moved automatically
+   *  (family flags such as --clip-on-cpu still apply). */
   textEncoderOnCpu: "auto" | "on" | "off";
   /** Models folder the user picked (absolute), null = Data/models. Read-only here:
    *  it only changes through changeModelsFolder, which moves the models. */

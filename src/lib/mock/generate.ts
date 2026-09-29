@@ -31,7 +31,7 @@ const err = (code: string, message: string, details: string | null = null): Core
 const BUSY_NOTE = "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). If pictures fail, close them and try again.";
 const TE_RETRY_NOTE = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
 const TE_ON_GPU_MESSAGE =
-  "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Run the text encoder on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
+  "Your graphics card ran out of memory while reading your prompt. In Settings → Engine, set “Read the prompt on the processor” to Automatic or On, or close other programs that use the graphics card and try again.";
 const TE_OOM_DETAILS = [
   "generate_image returned no results",
   "[WARN   ] model_manager.cpp:1914 - model manager cannot make enough memory available on CUDA0: need 518.58 MB device / 6.58 MB budget, available 0.00 MB device / 7044.91 MB budget",
