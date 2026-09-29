@@ -71,7 +71,7 @@ function normalizeSettings(s: Settings): Settings {
     ...s,
     gpu: gpu === "auto" || gpu === "cpu" || /^gpu:\d+$/.test(gpu) ? gpu : "auto",
     vramOverrideGb: vram != null && Number.isFinite(vram) && vram > 0 ? Math.min(vram, 1024) : null,
-    contentMode: pick(s.contentMode, ["safe", "include_18plus", "only_18plus"], "safe"),
+    contentMode: s.contentMode === ("include_18plus" as string) || s.contentMode === ("only_18plus" as string) ? "all" : pick(s.contentMode, ["safe", "all"], "safe"),
     savedMetadata: pick(s.savedMetadata, ["none", "settings"], "none"),
     theme: pick(s.theme, ["system", "light", "dark"], "system"),
     engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),

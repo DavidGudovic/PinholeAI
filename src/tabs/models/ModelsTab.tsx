@@ -19,7 +19,7 @@ export function ModelsTab() {
   const [settings, setLocalSettings] = useState<Settings | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
   const [installedCount, setInstalledCount] = useState<number | null>(null);
-  // The shell keeps every tab mounted. Don't contact CivitAI (or pop the 18+ question)
+  // The shell keeps every tab mounted. Don't contact CivitAI (or pop the Safe mode question)
   // until the Models tab has actually been opened.
   const rootRef = useRef<HTMLDivElement>(null);
   const visible = useIsVisible(rootRef);

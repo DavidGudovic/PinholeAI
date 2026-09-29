@@ -1,4 +1,4 @@
-//! "Safe only" (SPEC §5.4): which CivitAI models count as made for adults, and
+//! Safe mode (SPEC §5.4): which CivitAI models count as made for adults, and
 //! which sample image may be a card preview. Rules come from
 //! `catalog-filters.yaml → safe_filter`; they were tuned on live
 //! `/api/v1/models` answers (2026-09-28, see `tests/fixtures/live_*.json`).
@@ -16,7 +16,7 @@ use crate::api::{Model, ModelImage};
 
 /// PG bit of `nsfwLevel`.
 pub const LEVEL_PG: u32 = 1;
-/// PG-13: the highest preview level "Safe only" may ever use.
+/// PG-13: the highest preview level Safe mode may ever use.
 pub const LEVEL_PG13: u32 = 2;
 /// R: images at this level or above count as mature.
 pub const LEVEL_R: u32 = 4;
@@ -56,7 +56,7 @@ impl Default for SafeFilter {
     }
 }
 
-/// Why "Safe only" hides a model (for tests and hidden counts).
+/// Why Safe mode hides a model (for tests and hidden counts).
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdultReason {
     /// CivitAI flags the model NSFW.
@@ -97,7 +97,7 @@ fn normalize(list: &mut [String]) {
 
 impl SafeFilter {
     /// Lowercase the lists and clamp the numbers to safe ranges: the YAML may
-    /// tune "Safe only", never switch it off or allow previews above PG-13.
+    /// tune Safe mode, never switch it off or allow previews above PG-13.
     pub fn normalized(mut self) -> Self {
         normalize(&mut self.hide_tags);
         normalize(&mut self.suggestive_tags);
@@ -115,7 +115,7 @@ impl SafeFilter {
         self
     }
 
-    /// `Some(reason)` when "Safe only" hides this model (and "18+ only" shows it).
+    /// `Some(reason)` when Safe mode hides this model (and the NSFW tag finds it).
     pub fn adult_reason(&self, m: &Model) -> Option<AdultReason> {
         if m.nsfw {
             return Some(AdultReason::MarkedNsfw);
@@ -149,7 +149,7 @@ impl SafeFilter {
         None
     }
 
-    /// May this image be a card preview in "Safe only"? Rated at most
+    /// May this image be a card preview with Safe mode on? Rated at most
     /// `max_preview_level`; unrated images only when the (older) `nsfw` flag
     /// explicitly says "not NSFW".
     pub fn is_safe_preview(&self, img: &ModelImage) -> bool {

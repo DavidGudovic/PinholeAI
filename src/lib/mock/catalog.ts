@@ -24,7 +24,7 @@ interface Entry {
   previewIsVideo: boolean;
   previewNsfw: boolean;
   modelNsfw: boolean;
-  /** Not flagged by CivitAI but made for adults (suggestive tags / mostly R+ samples): Safe only hides it. */
+  /** Not flagged by CivitAI but made for adults (suggestive tags / mostly R+ samples): Safe mode hides it. */
   suggestive: boolean;
   thumbsUpRatio: number;
   downloadCount: number;
@@ -240,7 +240,7 @@ function toCard(e: Entry, content?: BrowseQuery["content"]): CatalogCard {
     // Rust asks the CDN for CivitAI's own card rendition; videos come back as a still frame.
     previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.previewIsVideo ? "anim=false,transcode=true," : ""}width=450,optimized=true/${e.looks[0]}.jpeg`,
     previewIsVideo: e.previewIsVideo,
-    // "Safe only" previews are PG images (Rust: safe_filter.max_preview_level).
+    // Safe mode previews are PG images (Rust: safe_filter.max_preview_level).
     previewNsfw: content === "safe" ? false : e.previewNsfw,
     modelNsfw: e.modelNsfw,
     thumbsUpRatio: e.thumbsUpRatio,
@@ -271,8 +271,11 @@ const API_LIMIT = 50;
 const MAX_EXTRA = 5;
 const PERIOD_DAYS: Record<string, number> = { Week: 7, Month: 30, Year: 365 };
 
-/** "Safe only" hides these; "18+ only" shows only these (Rust: model.nsfw or safe_filter rules). */
+/** Safe mode hides these; the NSFW tag finds only these (Rust: model.nsfw or safe_filter rules). */
 const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
+/** Tags multi-select (Rust: catalog-filters.yaml → tags). Subject tags are faked per entry. */
+const mockTagMatches = (e: Entry, tag: string) =>
+  tag === "nsfw" ? isAdultEntry(e) : tag === "edit" ? /\bedit\b|kontext/i.test(e.name) || e.baseModel === "Flux.1 Kontext" : (e.versionId + tag.length) % 3 === 0;
 
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
@@ -306,9 +309,10 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
     offset += batch.length;
     for (const e of batch) {
       out.checked += 1;
-      if (q.content === "safe" ? isAdultEntry(e) : q.content === "only_18plus" ? !isAdultEntry(e) : false) out.hiddenByContent += 1;
+      if (q.content === "safe" && isAdultEntry(e)) out.hiddenByContent += 1;
       else if (
         (q.look && !e.looks.includes(q.look)) ||
+        !(q.tags ?? []).every((t) => mockTagMatches(e, t)) ||
         (q.price === "free" && e.earlyAccess) ||
         (q.price === "paid_only" && !e.earlyAccess)
       )
@@ -615,6 +619,17 @@ const FILTERS: CatalogFilterOptions = {
     { key: "three_d", label: "3D" },
     { key: "brand", label: "Brand & product" },
   ],
+  tags: [
+    { key: "edit", label: "Edit model", needsSafeModeOff: false },
+    { key: "portraits", label: "Portraits", needsSafeModeOff: false },
+    { key: "characters", label: "Characters", needsSafeModeOff: false },
+    { key: "landscapes", label: "Landscapes", needsSafeModeOff: false },
+    { key: "architecture", label: "Architecture", needsSafeModeOff: false },
+    { key: "animals", label: "Animals", needsSafeModeOff: false },
+    { key: "fantasy", label: "Fantasy", needsSafeModeOff: false },
+    { key: "scifi", label: "Sci-fi", needsSafeModeOff: false },
+    { key: "nsfw", label: "NSFW", needsSafeModeOff: true },
+  ],
   sorts: [
     { label: "Top rated", api: "Highest Rated" },
     { label: "Most downloaded", api: "Most Downloaded" },
@@ -627,9 +642,8 @@ const FILTERS: CatalogFilterOptions = {
     { label: "All time", api: "AllTime" },
   ],
   content: [
-    { key: "safe", label: "Safe only" },
-    { key: "include_18plus", label: "Include 18+" },
-    { key: "only_18plus", label: "18+ only" },
+    { key: "safe", label: "On" },
+    { key: "all", label: "Off" },
   ],
   price: [
     { key: "free", label: "Free" },

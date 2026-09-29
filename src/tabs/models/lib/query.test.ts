@@ -6,7 +6,7 @@ import {
   defaultFilters,
   FALLBACK_OPTIONS,
   filtersKey,
-  isAdult,
+  isSafeModeOff,
   isVideoFile,
   mergePage,
   NO_TOTALS,
@@ -14,7 +14,9 @@ import {
   resultsSummary,
   shouldBlurPreview,
   showPriceBadge,
+  tagsWithSafeMode,
   toBrowseQuery,
+  toggleTag,
 } from "./query";
 
 const card = (versionId: number, extra: Partial<CatalogCard> = {}): CatalogCard => ({
@@ -47,7 +49,7 @@ const card = (versionId: number, extra: Partial<CatalogCard> = {}): CatalogCard 
 describe("defaultFilters", () => {
   it("uses safe + free + compatible by default", () => {
     const f = defaultFilters(null, null, false);
-    expect(f).toMatchObject({ kind: "models", look: null, content: "safe", price: "free", compatibleOnly: true, commercialOnly: false });
+    expect(f).toMatchObject({ kind: "models", look: null, tags: [], content: "safe", price: "free", compatibleOnly: true, commercialOnly: false });
     // Mainstream models first: "This month · Top rated" was mostly fresh anime merges.
     expect(f.sort).toBe("Most Downloaded");
     expect(f.period).toBe("AllTime");
@@ -57,19 +59,20 @@ describe("defaultFilters", () => {
     expect(defaultFilters(FALLBACK_OPTIONS, { contentMode: "safe", showPaid: true }, false).price).toBe("include");
   });
 
-  it("only applies an 18+ default after this session's confirmation", () => {
-    const s = { contentMode: "only_18plus" as const, showPaid: false };
+  it("only applies a Safe mode Off default after this session's confirmation", () => {
+    const s = { contentMode: "all" as const, showPaid: false };
     expect(defaultFilters(FALLBACK_OPTIONS, s, false).content).toBe("safe");
-    expect(defaultFilters(FALLBACK_OPTIONS, s, true).content).toBe("only_18plus");
+    expect(defaultFilters(FALLBACK_OPTIONS, s, true).content).toBe("all");
   });
 });
 
 describe("toBrowseQuery", () => {
   it("maps every filter and normalises the search text", () => {
-    const f = { ...defaultFilters(null, null, false), look: "anime", kind: "styleAddons" as const, query: "  pixel   art \n" };
+    const f = { ...defaultFilters(null, null, false), look: "anime", tags: ["fantasy", "edit", "fantasy"], kind: "styleAddons" as const, query: "  pixel   art \n" };
     expect(toBrowseQuery(f, "abc")).toEqual({
       kind: "styleAddons",
       look: "anime",
+      tags: ["edit", "fantasy"],
       content: "safe",
       price: "free",
       sort: "Most Downloaded",
@@ -98,7 +101,11 @@ describe("filtersKey / changedFilterCount", () => {
   });
   it("changes when a filter changes", () => {
     expect(filtersKey({ ...base, commercialOnly: true })).not.toBe(filtersKey(base));
+    expect(filtersKey({ ...base, tags: ["edit"] })).not.toBe(filtersKey(base));
     expect(filtersKey({ ...base, runsOnMyCard: true })).not.toBe(filtersKey(base));
+  });
+  it("ignores the order tags were picked in", () => {
+    expect(filtersKey({ ...base, tags: ["edit", "animals"] })).toBe(filtersKey({ ...base, tags: ["animals", "edit"] }));
   });
   it("sends “Runs on my card” for models only", () => {
     expect(toBrowseQuery({ ...base, runsOnMyCard: true }).runsOnMyCard).toBe(true);
@@ -107,26 +114,40 @@ describe("filtersKey / changedFilterCount", () => {
   it("counts changed filters", () => {
     expect(changedFilterCount(base, base)).toBe(0);
     expect(changedFilterCount({ ...base, look: "anime", query: "x", compatibleOnly: false }, base)).toBe(3);
+    expect(changedFilterCount({ ...base, tags: ["edit", "animals"] }, base)).toBe(1);
     expect(changedFilterCount({ ...base, runsOnMyCard: true }, base)).toBe(1);
     expect(changedFilterCount({ ...base, kind: "styleAddons", runsOnMyCard: true }, { ...base, kind: "styleAddons" })).toBe(0);
   });
 });
 
 describe("content helpers", () => {
-  it("knows which modes are 18+", () => {
-    expect(isAdult("safe")).toBe(false);
-    expect(isAdult("include_18plus")).toBe(true);
-    expect(isAdult("only_18plus")).toBe(true);
+  it("knows when Safe mode is off", () => {
+    expect(isSafeModeOff("safe")).toBe(false);
+    expect(isSafeModeOff("all")).toBe(true);
   });
-  it("blurs NSFW previews only when 18+ is off", () => {
+  it("blurs NSFW previews only while Safe mode is on", () => {
     expect(shouldBlurPreview(card(1, { previewNsfw: true }), "safe")).toBe(true);
-    expect(shouldBlurPreview(card(1, { previewNsfw: true }), "include_18plus")).toBe(false);
+    expect(shouldBlurPreview(card(1, { previewNsfw: true }), "all")).toBe(false);
     expect(shouldBlurPreview(card(1), "safe")).toBe(false);
   });
   it("shows price badges only when paid models can appear", () => {
     expect(showPriceBadge("free")).toBe(false);
     expect(showPriceBadge("include")).toBe(true);
     expect(showPriceBadge("paid_only")).toBe(true);
+  });
+});
+
+describe("tags", () => {
+  it("picks and unpicks", () => {
+    expect(toggleTag([], "edit")).toEqual(["edit"]);
+    expect(toggleTag(["edit", "nsfw"], "edit")).toEqual(["nsfw"]);
+  });
+  it("drops the NSFW tag when Safe mode turns on", () => {
+    expect(tagsWithSafeMode(["edit", "nsfw", "fantasy"], FALLBACK_OPTIONS)).toEqual(["edit", "fantasy"]);
+  });
+  it("has no one-click NSFW preset: NSFW is only a tag", () => {
+    expect(FALLBACK_OPTIONS.content.map((c) => c.key)).toEqual(["safe", "all"]);
+    expect(FALLBACK_OPTIONS.tags.filter((t) => t.needsSafeModeOff).map((t) => t.key)).toEqual(["nsfw"]);
   });
 });
 
@@ -143,22 +164,22 @@ describe("totals and the line above the grid", () => {
     expect(addTotals(addTotals(NO_TOTALS, page(50, 20, 6, 2)), page(50, 10, 4))).toEqual({ checked: 100, hiddenByContent: 30, hiddenByFilters: 10, hiddenBySize: 2 });
   });
   it("says how many “Runs on my card” hid, for models only", () => {
-    expect(resultsSummary({ kind: "models", content: "include_18plus", compatibleOnly: false, runsOnMyCard: true }, 5, page(50, 0, 0, 7)).hints).toEqual([
+    expect(resultsSummary({ kind: "models", content: "all", compatibleOnly: false, runsOnMyCard: true }, 5, page(50, 0, 0, 7)).hints).toEqual([
       "“Runs on my card” hid 7 too big for your graphics card.",
     ]);
-    expect(resultsSummary({ kind: "models", content: "include_18plus", compatibleOnly: false, runsOnMyCard: false }, 5, page(50, 0, 0, 7)).hints).toEqual([]);
+    expect(resultsSummary({ kind: "models", content: "all", compatibleOnly: false, runsOnMyCard: false }, 5, page(50, 0, 0, 7)).hints).toEqual([]);
   });
   it("says why models are missing and what to change", () => {
     const s = resultsSummary({ kind: "models", content: "safe", compatibleOnly: true }, 24, page(50, 20, 6));
     expect(s.count).toBe("24 models");
-    expect(s.hints).toEqual(["Showing models that run in Pinhole — turn off “Works with Pinhole” to see all.", "“Safe only” hid 20 made for adults."]);
+    expect(s.hints).toEqual(["Showing models that run in Pinhole — turn off “Works with Pinhole” to see all.", "Safe mode hid 20 made for adults."]);
   });
   it("names style add-ons and drops hints that don't apply", () => {
     expect(resultsSummary({ kind: "styleAddons", content: "safe", compatibleOnly: true }, 1, NO_TOTALS)).toEqual({
       count: "1 style add-on",
       hints: ["Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all."],
     });
-    expect(resultsSummary({ kind: "models", content: "include_18plus", compatibleOnly: false }, 1200, page(50, 3, 0))).toEqual({ count: "1,200 models", hints: [] });
+    expect(resultsSummary({ kind: "models", content: "all", compatibleOnly: false }, 1200, page(50, 3, 0))).toEqual({ count: "1,200 models", hints: [] });
   });
 });
 

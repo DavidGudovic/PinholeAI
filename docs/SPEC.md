@@ -255,7 +255,8 @@ Two sub-views: **Browse** and **Installed**.
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
-| Content | Safe only · Include 18+ · 18+ only | always `nsfw=true` (the only way to get every sample image with its rating); Safe only (default) keeps models that pass `safe_filter` (see below) · everything · only the models Safe only hides |
+| Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Top rated · Most downloaded (default) · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
 | Time | This week · This month · This year · All time (default) | `period` |
@@ -266,22 +267,24 @@ Two sub-views: **Browse** and **Installed**.
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
   (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`).
-- 18+ modes require a one-time confirmation per session (stored in RAM only).
-- Default content mode is **Safe only**. When 18+ is off, also blur any preview image flagged NSFW.
-- Content, Look and Price are partly client-side filters: keep fetching pages until the grid page
+- Turning Safe mode off requires a one-time "I'm 18 or older" confirmation per session (stored
+  in RAM only). There is no "adult only" mode: the NSFW tag is the only way to narrow to those
+  models, and it needs Safe mode off.
+- Safe mode is **On** by default. While it is on, also blur any preview image flagged NSFW.
+- Safe mode, Look, Tags and Price are partly client-side filters: keep fetching pages until the grid page
   (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
   stops the older one's extra requests.
-- **Safe only** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
+- **Safe mode** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
   nothing stricter than `nsfw=false`, which only hides models CivitAI flags, and rejects
   `browsingLevel`): a model is hidden when CivitAI flags it NSFW, its `nsfwLevel` bitmask has
   no PG bit, it has an adult tag (or two suggestive ones), its name has an adult word (whole
   words), or more than half of its creator's rated sample images are R or above. The
   model-level `nsfwLevel` alone is not used otherwise: mainstream models such as Juggernaut XL
-  are 31 (all levels) because people post every kind of image with them. Card previews in Safe
-  only are PG images only (like Stability Matrix); no PG image → no preview.
+  are 31 (all levels) because people post every kind of image with them. Card previews with Safe
+  mode on are PG images only (like Stability Matrix); no PG image → no preview.
 - Opening filters are **Most downloaded · All time** (mainstream models; "This month" is
   dominated by fresh suggestive anime merges). A line above the grid says "Showing models that
-  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe only hid.
+  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe mode hid.
 - Speed: CivitAI answers are requested gzip-compressed and cached in RAM (never on disk: the
   Rust side keeps 12 answers for 5 min, the UI 80 pages for 10 min) and the next page is
   fetched ahead. Card previews are CivitAI's own card rendition (`width=450,optimized=true`;
@@ -321,7 +324,7 @@ grid where it was):
 - The card's facts (rating, downloads, size, VRAM needed with the fit badge, licence, client-work
   badge, LoRA trigger words) and the same Install button.
 - **Example images**: the version's preview images from CivitAI, fetched through the Rust client
-  like every preview. In Safe only mode 18+ images are left out (with a count); videos are skipped.
+  like every preview. With Safe mode on, images made for adults are left out (with a count); videos are skipped.
   Images come from `GET /api/v1/model-versions/{id}`, the only endpoint that still returns each
   image's generation data (`/models` and `/images` send `meta: null`, checked 2026-09-28).
 - Clicking an image shows it larger with its prompt and main settings, plus two buttons:
@@ -486,7 +489,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
   (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the
   graphics card and moves it to the processor for a model after the card runs out of memory while
   reading the prompt (kept for the app session)
-- Default content mode (Safe only / Include 18+ / 18+ only)
+- Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
 - CivitAI API key (set / remove; keychain)
@@ -531,7 +534,7 @@ engine download + launch of `sd-server`, health check.
 simple dials and Style field, in-memory results, Save, Cancel, Reset. First-run
 "Recommended for your GPU" screen with one-click download (§6.1).
 
-**M2 – Models tab**: CivitAI browse with all filters (incl. 18+ only, paid hidden by default),
+**M2 – Models tab**: CivitAI browse with all filters (Safe mode, Tags, paid hidden by default),
 model cards with VRAM needed, install flow with component resolution, Installed view, delete.
 
 **M3 – Edit**: instruction edit (Qwen Image Edit 2511 / Kontext), restyle img2img, mask brush,
@@ -569,8 +572,8 @@ build is shared.
   that fits the user's GPU (§6.1).
 - **VRAM**: every model shows how much VRAM it needs (§6.2).
 - **Paid (early access) models**: hidden by default.
-- **Content filter**: Safe only (default) · Include 18+ · 18+ only. Release drops "18+ only"
-  (`docs/RELEASE-SPEC.md` §5).
+- **Content filter**: Safe mode On (default) · Off. No "adult only" mode; the NSFW tag in the
+  Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
 - **Distribution**: personal testing only for now. Any shared build is gated by
   `docs/RELEASE-SPEC.md`.
 - **Updates** (manual only): Settings → Check for updates asks

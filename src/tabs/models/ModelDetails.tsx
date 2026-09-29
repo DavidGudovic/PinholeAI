@@ -202,7 +202,7 @@ export function ModelDetails({
             <p className="text-sm text-neutral-500">Offline mode is on, so Pinhole doesn't contact CivitAI. Turn it off in Settings to see example images.</p>
           ) : gallery.items.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              {gallery.hiddenNsfw > 0 ? "Every example image for this model is 18+, and 18+ content is off." : "This model has no example images."}
+              {gallery.hiddenNsfw > 0 ? "Every example image for this model is made for adults, and Safe mode is on." : "This model has no example images."}
             </p>
           ) : (
             <>
@@ -213,7 +213,7 @@ export function ModelDetails({
               </div>
               {gallery.hiddenNsfw > 0 && (
                 <p className="text-xs text-neutral-500">
-                  {gallery.hiddenNsfw === 1 ? "1 image is" : `${gallery.hiddenNsfw} images are`} hidden because 18+ content is off.
+                  {gallery.hiddenNsfw === 1 ? "1 image is" : `${gallery.hiddenNsfw} images are`} hidden because Safe mode is on.
                 </p>
               )}
             </>
@@ -302,7 +302,7 @@ function Header({
   );
 }
 
-// 18+ images never reach the page in Safe only mode (Rust leaves them out), so there is nothing to blur.
+// Images made for adults never reach the page with Safe mode on (Rust leaves them out), so there is nothing to blur.
 const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) {
   const preview = useImage(item.thumbUrl);
   const ratio = item.width && item.height ? `${item.width} / ${item.height}` : "3 / 4";

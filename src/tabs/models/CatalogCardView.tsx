@@ -108,7 +108,7 @@ export const CatalogCardView = memo(function CatalogCardView({
         {blur && preview.src && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-              <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
+              <EyeOff className="h-3.5 w-3.5" /> Preview hidden by Safe mode
             </span>
           </div>
         )}

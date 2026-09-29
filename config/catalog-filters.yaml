@@ -46,23 +46,61 @@ price:
   paid_only: { label: "Early access only" }
   default: free            # paid models hidden by default
 
-# api_nsfw: value of the `nsfw` query parameter (omit the key to not send it).
-# What each mode keeps is fixed in code (the YAML can't turn "Safe only" off):
-#   Safe only   → models that pass `safe_filter` below;
-#   Include 18+ → everything;
-#   18+ only    → the models "Safe only" hides.
-# All three ask CivitAI for everything (`nsfw=true`): that is the only way to get every
-# sample image with its rating, which `safe_filter` needs (with `nsfw=false` CivitAI drops
-# the non-PG images from the response). Switching modes then reuses the same pages.
+# Safe mode (On/Off). api_nsfw: value of the `nsfw` query parameter (omit the key to not
+# send it). What each setting keeps is fixed in code (the YAML can't turn Safe mode off):
+#   On (safe) → models that pass `safe_filter` below;
+#   Off (all) → everything.
+# Both ask CivitAI for everything (`nsfw=true`): that is the only way to get every sample
+# image with its rating, which `safe_filter` needs (with `nsfw=false` CivitAI drops the
+# non-PG images from the response). Switching then reuses the same pages.
 content:
-  safe:           { label: "Safe only",   api_nsfw: true }
-  include_18plus: { label: "Include 18+", api_nsfw: true }
-  only_18plus:    { label: "18+ only",    api_nsfw: true }
+  safe: { label: "On",  api_nsfw: true }
+  all:  { label: "Off", api_nsfw: true }
   default: safe
   confirm_once_per_session: true
   blur_nsfw_previews_when_safe: true
 
-# "Safe only" rules, like Stability Matrix's default (hide what CivitAI flags NSFW, show
+# "Tags": a multi-select; a model must match EVERY picked tag. Filtered client-side.
+# A tag matches when the model has one of `tags` (whole tag, any case), one of `name_words`
+# as whole words in its name ("Qwen-Image-Edit" matches `edit`, "Anime Edition" doesn't),
+# or a version on one of `base_models` (CivitAI baseModel strings).
+# `rule: made_for_adults` = exactly the models Safe mode hides; the tag is greyed out while
+# Safe mode is on. There is deliberately no one-click preset for it: it's just a tag.
+# Edit tags/words checked on live /api/v1/models answers (2026-09-28): many Qwen-Image-Edit
+# uploads are only tagged "base model", so the name matters most.
+tags:
+  edit:
+    label: "Edit model"
+    tags: [edit, "image edit", "image editing", image-edit, image-editing, kontext, "flux kontext",
+           qwen-image-edit, qwen-edit, "qwen edit", qwen-image-edit-2509, "qwen edit v2511"]
+    name_words: [edit, kontext]
+    base_models: ["Flux.1 Kontext"]
+  portraits:
+    label: "Portraits"
+    tags: [portrait, portraits, "portrait photography", headshot]
+  characters:
+    label: "Characters"
+    tags: [character, characters, "game character", "character design"]
+  landscapes:
+    label: "Landscapes"
+    tags: [landscape, landscapes, nature, scenery]
+  architecture:
+    label: "Architecture"
+    tags: [architecture, building, buildings, interior, "interior design"]
+  animals:
+    label: "Animals"
+    tags: [animal, animals, creature, creatures, pets]
+  fantasy:
+    label: "Fantasy"
+    tags: [fantasy, "fantasy art", "dark fantasy"]
+  scifi:
+    label: "Sci-fi"
+    tags: [sci-fi, "science fiction", scifi, cyberpunk, futuristic, space]
+  nsfw:
+    label: "NSFW"
+    rule: made_for_adults
+
+# Safe mode rules, like Stability Matrix's default (hide what CivitAI flags NSFW, show
 # only PG previews) plus our own checks. Tuned on live /api/v1/models data (2026-09-28;
 # samples in src-tauri/crates/pinhole-catalog/tests/fixtures/live_*.json). CivitAI's own
 # `nsfw=false` only hides models flagged NSFW, which still left many suggestive anime
@@ -101,7 +139,7 @@ safe_filter:
   #    0.49 (kept); RedCraft 0.51, "One obsession" 0.64, "Kodoranime" 0.95 (hidden).
   max_mature_image_share: 0.5
   min_rated_images: 5
-  # Card previews in "Safe only" use images rated at most this (1 = PG, like Stability
+  # Card previews with Safe mode on use images rated at most this (1 = PG, like Stability
   # Matrix; capped at 2 = PG-13). A model without one shows no preview.
   max_preview_level: 1
 
@@ -126,7 +164,7 @@ require_scans_success: true                # pickleScanResult and virusScanResul
 # Cards per Browse page (the grid asks for the next page while you scroll).
 page_size: 24
 # Models asked from CivitAI per request (`limit`, max 100; Stability Matrix also asks for
-# 50). Bigger than page_size because "Safe only" and the other filters drop about half:
+# 50). Bigger than page_size because Safe mode and the other filters drop about half:
 # the default query keeps 52 of the first 100. 50 "All time" models are ≈ 6.5 MB of JSON
 # (old models have many versions and sample images; sent gzip-compressed) and 3–5 s of
 # CivitAI server time (2026-09-28).
@@ -134,8 +172,8 @@ api_limit: 50
 # When client-side filters drop items, fetch up to this many extra pages per
 # scroll before returning a partial page ("Load more").
 max_extra_requests: 5
-# Recent CivitAI answers are kept in RAM (never on disk) so switching Look, Price or
-# Content back and forth doesn't ask CivitAI again.
+# Recent CivitAI answers are kept in RAM (never on disk) so switching Look, Tags, Price or
+# Safe mode back and forth doesn't ask CivitAI again.
 cache_minutes: 5
 cache_pages: 12
 # Card preview images are requested at this width from CivitAI's image CDN, as
