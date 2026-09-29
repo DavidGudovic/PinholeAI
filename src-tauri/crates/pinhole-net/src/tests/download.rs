@@ -134,6 +134,93 @@ async fn resumes_partial_part_with_range() {
 }
 
 #[tokio::test]
+async fn stale_part_that_fails_the_hash_is_downloaded_again_once() {
+    let body = data(60_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |req| MockResponse::ranged(req, &b)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.safetensors");
+    // Leftover bytes of another file with the same name: the resume succeeds
+    // at the HTTP level but the finished file fails the hash.
+    std::fs::write(part_path(&dest), vec![0xEEu8; 25_000]).unwrap();
+
+    let s = spec(srv.url("/f"), &dest, Some(sha(&body)), Some(body.len() as u64));
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+    assert_eq!(got.sha256, sha(&body));
+    assert_eq!(std::fs::read(&dest).unwrap(), body);
+    let reqs = srv.requests();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[0].header("range"), Some("bytes=25000-"));
+    assert_eq!(reqs[1].header("range"), None, "the second try starts from byte 0");
+
+    // A server that really sends other bytes still fails (after one restart).
+    let srv = MockServer::start(|req| MockResponse::ranged(req, &data(30_000))).await;
+    let dest = dir.path().join("g.safetensors");
+    std::fs::write(part_path(&dest), &data(30_000)[..10_000]).unwrap();
+    let s = spec(srv.url("/g"), &dest, Some(sha(b"something else")), Some(30_000));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::HashMismatch { .. }), "{e:?}");
+    assert_eq!(srv.requests().len(), 2);
+    assert!(!part_path(&dest).exists() && !dest.exists());
+}
+
+#[tokio::test]
+async fn bytes_from_a_dropped_connection_are_not_a_leftover() {
+    // No `.part` before the call: the connection drops halfway, the rest is
+    // resumed, and the file fails its hash. That's a real mismatch, not a
+    // stale leftover: no second download from byte 0.
+    let body = data(40_000);
+    let b = body.clone();
+    let n = Arc::new(Mutex::new(0usize));
+    let srv = MockServer::start(move |req| {
+        let mut n = n.lock();
+        *n += 1;
+        if *n == 1 {
+            MockResponse::ok(b[..10_000].to_vec()).without_content_length().header("content-length", "40000")
+        } else {
+            MockResponse::ranged(req, &b)
+        }
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.safetensors");
+    let s = spec(srv.url("/f"), &dest, Some(sha(b"not this file")), Some(body.len() as u64));
+    let e = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap_err();
+    assert!(matches!(e, DownloadError::HashMismatch { .. }), "{e:?}");
+    let reqs = srv.requests();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[1].header("range"), Some("bytes=10000-"));
+}
+
+#[tokio::test]
+async fn restart_after_a_stale_part_gets_its_own_retries() {
+    // Two server errors, then the stale `.part` fails the hash; the fresh
+    // download still gets the full retry budget for its own server error.
+    let body = data(30_000);
+    let b = body.clone();
+    let n = Arc::new(Mutex::new(0usize));
+    let srv = MockServer::start(move |req| {
+        let mut n = n.lock();
+        *n += 1;
+        match *n {
+            1 | 2 | 4 => MockResponse::status(500),
+            _ => MockResponse::ranged(req, &b),
+        }
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.safetensors");
+    std::fs::write(part_path(&dest), vec![0xEEu8; 5_000]).unwrap();
+    let s = spec(srv.url("/f"), &dest, Some(sha(&body)), Some(body.len() as u64));
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {}).await.unwrap();
+    assert_eq!(got.sha256, sha(&body));
+    let reqs = srv.requests();
+    assert_eq!(reqs.len(), 5);
+    assert_eq!(reqs[2].header("range"), Some("bytes=5000-"));
+    assert_eq!(reqs[4].header("range"), None);
+}
+
+#[tokio::test]
 async fn restarts_when_server_ignores_range() {
     let body = data(50_000);
     let b = body.clone();

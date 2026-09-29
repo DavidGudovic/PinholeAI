@@ -302,14 +302,30 @@ async fn fetch_verified(
     let part = part_path(&spec.dest);
     // Hash state covering the first N bytes of `.part`, carried across retries.
     let mut carried: Option<(Sha256, u64)> = None;
+    // `.part` holds bytes from before this call (e.g. a leftover of an older
+    // upload of the file). Cleared once an attempt starts the file over.
+    let mut leftover = tokio::fs::metadata(&part).await.is_ok_and(|m| m.is_file() && m.len() > 0);
     let mut attempt = 0;
+    let mut restarted_after_mismatch = false;
     loop {
         attempt += 1;
-        let r = try_once(client, spec, &dir, &part, expected.as_deref(), cancel, progress, phase, &mut carried).await;
+        let mut started_over = false;
+        let r = try_once(client, spec, &dir, &part, expected.as_deref(), cancel, progress, phase, &mut carried, &mut started_over).await;
+        leftover &= !started_over;
         match r {
             // The user cancelled while this attempt was failing (e.g. still connecting):
             // report the cancel, not the transport error it raced with.
             Err(_) if cancel.is_cancelled() => return Err(DownloadError::Cancelled),
+            // The file was finished from bytes that were on disk before this
+            // call: download it again from byte 0, once, with a fresh retry
+            // budget, before calling it corrupt.
+            Err(DownloadError::HashMismatch { .. }) if leftover && !restarted_after_mismatch => {
+                restarted_after_mismatch = true;
+                leftover = false;
+                carried = None;
+                attempt = 0;
+                remove_quietly(&part).await;
+            }
             Err(e) if attempt < MAX_ATTEMPTS && is_retryable(&e) && !cancel.is_cancelled() => {
                 let wait = Duration::from_secs(1 << (attempt - 1));
                 tokio::select! {
@@ -359,6 +375,8 @@ async fn try_once(
     progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     phase: &(dyn Fn(Phase) + Send + Sync),
     carried: &mut Option<(Sha256, u64)>,
+    // Set when this attempt drops what `.part` held and starts from byte 0.
+    started_over: &mut bool,
 ) -> Result<DownloadedFile, DownloadError> {
     let mut offset = match tokio::fs::metadata(part).await {
         Ok(m) if m.is_file() => m.len(),
@@ -367,6 +385,7 @@ async fn try_once(
     if spec.size_bytes.is_some_and(|s| offset > s) {
         // Longer than the file can be: stale or foreign. Start over.
         remove_quietly(part).await;
+        *started_over = true;
         offset = 0;
     }
     if let Some(size) = spec.size_hint() {
@@ -423,6 +442,7 @@ async fn try_once(
             }
             restarted = true;
             remove_quietly(part).await;
+            *started_over = true;
             offset = 0;
             hasher = Sha256::new();
             continue;
@@ -433,6 +453,7 @@ async fn try_once(
     let status = resp.status().as_u16();
     let append = offset > 0 && status == 206;
     let mut downloaded = if append { offset } else { 0 };
+    *started_over |= !append;
     if !append {
         // Fresh download, or the server ignored `Range` (200): restart from byte 0.
         hasher = Sha256::new();
@@ -479,7 +500,13 @@ async fn try_once(
             Some(Err(e)) => {
                 out.flush().await?;
                 *carried = Some((hasher, downloaded));
-                return Err(NetError::from(e).into());
+                // A body that stops early ("end of file before message length
+                // reached") is a dropped connection: retry and resume it.
+                return Err(match NetError::from(e) {
+                    NetError::Decode(msg) => NetError::Transport(msg),
+                    other => other,
+                }
+                .into());
             }
             Some(Ok(chunk)) => {
                 if client.offline_flag().get() {

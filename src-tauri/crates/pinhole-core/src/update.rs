@@ -402,6 +402,7 @@ pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreRes
 /// Refuse while a picture is being made or other downloads are running: the
 /// update ends by restarting Pinhole, which would lose them.
 pub fn ensure_idle(core: &AppCore, own_group: Option<&str>) -> CoreResult<()> {
+    drop(crate::models::folder_read(core)?);
     if core.gen.run_lock.try_lock().is_err() {
         return Err(CoreError::invalid("Pinhole is making a picture. Wait for it to finish (or cancel it), then update."));
     }
