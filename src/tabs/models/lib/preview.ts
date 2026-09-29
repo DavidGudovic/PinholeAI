@@ -1,12 +1,13 @@
 // CivitAI preview images: bytes come from Rust (`fetch_preview`), shown as Blob URLs.
 // The WebView never loads a remote URL.
-//  * Cards report whether they are on screen, near it, or away (two shared observers).
+//  * Cards report whether they are on screen, near it, or away (two shared observers per
+//    scroller, rooted at the Models tab's own scrolling element).
 //  * Fetches run 8 at a time, on-screen cards first; a queued fetch is dropped when its
 //    card scrolls away or unmounts (see previewQueue.ts).
 //  * Previews stay in a RAM-only LRU (≈48 MB) for the whole session, so scrolling back,
 //    switching filters or tabs doesn't fetch them again. Nothing is written to disk.
 //  * A card far off screen gives its Blob URL back, so memory stays bounded by the LRU.
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type RefObject } from "react";
 import { fetchPreview } from "../../../lib/api";
 import { BlobLru, PreviewScheduler, type PreviewHandle, type Priority } from "./previewQueue";
 import { measureSince } from "./perf";
@@ -44,26 +45,40 @@ export type Visibility = "visible" | "near" | "away";
 
 type Watcher = { visible: boolean; near: boolean; cb: (v: Visibility) => void };
 const watchers = new Map<Element, Watcher>();
-let visibleObserver: IntersectionObserver | null = null;
-let nearObserver: IntersectionObserver | null = null;
+
+/**
+ * The element that scrolls the cards (the Models tab's own scroller); null = the viewport.
+ * IntersectionObserver clips a target by every scrolling ancestor before it applies
+ * rootMargin, so with the viewport as root the "near" margin does nothing inside a nested
+ * scroller. Observers must use the real scroller as their root.
+ */
+export const ScrollRootContext = createContext<Element | null>(null);
+export const useScrollRoot = () => useContext(ScrollRootContext);
 
 function report(w: Watcher) {
   w.cb(w.visible ? "visible" : w.near ? "near" : "away");
 }
 
-function observers(): [IntersectionObserver, IntersectionObserver] | null {
+/** One visible/near observer pair per scroll root, shared by every card under it. */
+const observerPairs = new Map<Element | null, [IntersectionObserver, IntersectionObserver]>();
+
+function observers(root: Element | null): [IntersectionObserver, IntersectionObserver] | null {
   if (typeof IntersectionObserver === "undefined") return null;
-  if (!visibleObserver || !nearObserver) {
-    visibleObserver = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        const w = watchers.get(e.target);
-        if (w && w.visible !== e.isIntersecting) {
-          w.visible = e.isIntersecting;
-          report(w);
+  let pair = observerPairs.get(root);
+  if (!pair) {
+    const visibleObserver = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const w = watchers.get(e.target);
+          if (w && w.visible !== e.isIntersecting) {
+            w.visible = e.isIntersecting;
+            report(w);
+          }
         }
-      }
-    });
-    nearObserver = new IntersectionObserver(
+      },
+      root ? { root } : undefined,
+    );
+    const nearObserver = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
           const w = watchers.get(e.target);
@@ -73,18 +88,21 @@ function observers(): [IntersectionObserver, IntersectionObserver] | null {
           }
         }
       },
-      { rootMargin: NEAR_MARGIN },
+      root ? { root, rootMargin: NEAR_MARGIN } : { rootMargin: NEAR_MARGIN },
     );
+    pair = [visibleObserver, nearObserver];
+    observerPairs.set(root, pair);
   }
-  return [visibleObserver, nearObserver];
+  return pair;
 }
 
-/** Where a card is relative to the screen (two observers shared by every card). */
+/** Where a card is relative to the screen (two observers per scroll root, shared by every card). */
 export function useVisibility<T extends Element>(ref: RefObject<T | null>): Visibility {
   const [vis, setVis] = useState<Visibility>("away");
+  const root = useScrollRoot();
   useEffect(() => {
     const el = ref.current;
-    const obs = observers();
+    const obs = observers(root);
     if (!el || !obs) {
       setVis("visible");
       return;
@@ -97,7 +115,7 @@ export function useVisibility<T extends Element>(ref: RefObject<T | null>): Visi
       obs[1].unobserve(el);
       watchers.delete(el);
     };
-  }, [ref]);
+  }, [ref, root]);
   return vis;
 }
 
