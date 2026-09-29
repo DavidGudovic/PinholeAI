@@ -85,6 +85,11 @@ pub fn hash_file(path: &Path) -> io::Result<(String, u64)> {
 /// Copy `src` to `dest` through `dest.part` while hashing (one read pass),
 /// then rename. The source is never modified. Blocking.
 pub fn copy_and_hash(src: &Path, dest: &Path) -> io::Result<(String, u64)> {
+    copy_and_hash_with(src, dest, |_| {})
+}
+
+/// [`copy_and_hash`], calling `on_chunk(bytes)` after each chunk is written.
+pub fn copy_and_hash_with(src: &Path, dest: &Path, mut on_chunk: impl FnMut(u64)) -> io::Result<(String, u64)> {
     let part = part_path(dest);
     let result = (|| {
         let mut input = File::open(src)?;
@@ -100,6 +105,7 @@ pub fn copy_and_hash(src: &Path, dest: &Path) -> io::Result<(String, u64)> {
             hasher.update(&buf[..n]);
             out.write_all(&buf[..n])?;
             total += n as u64;
+            on_chunk(n as u64);
         }
         out.sync_all()?;
         drop(out);
