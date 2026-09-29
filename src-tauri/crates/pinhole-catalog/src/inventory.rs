@@ -51,7 +51,8 @@ pub fn installed_model_view(
                 registry,
                 f,
                 hw,
-                families::installed_need(registry, f, file, hw),
+                index,
+                families::installed_need(registry, f, file, hw, index),
                 file.size_bytes,
             );
             let missing: Vec<String> = families::missing_to_run(registry, f, hw, index)

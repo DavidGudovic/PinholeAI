@@ -162,7 +162,7 @@ pub fn recommend_role(
     // No "go to the Models tab" here: these cards are shown on the Models tab too,
     // and every place that shows them has its own browse button.
     let reason = if skips.iter().any(|s| matches!(s, Skip::Vram)) {
-        too_big_reason(registry, candidates, role, hw)
+        too_big_reason(registry, index, candidates, role, hw)
     } else {
         format!(
             "No {} model has been picked for Pinhole yet. You can browse CivitAI for one instead.",
@@ -178,6 +178,7 @@ pub fn recommend_role(
 /// Why no candidate of `role` fits this machine.
 fn too_big_reason(
     registry: &Registry,
+    index: &InstalledIndex,
     candidates: &[RecommendedCandidate],
     role: &str,
     hw: &HwContext,
@@ -199,7 +200,7 @@ fn too_big_reason(
             .as_ref()
             .map(|d| mb_to_bytes(d.size_mb))
             .unwrap_or(0);
-        let need = vram::cpu_need(f, families::cpu_weight_bytes(registry, f, hw, size)).gb
+        let need = vram::cpu_need(f, families::cpu_weight_bytes(registry, f, hw, index, size)).gb
             + vram::CPU_SPARE_RAM_GB;
         return format!(
             "Pinhole didn't find a graphics card it can use, and this computer doesn't have enough memory to run even the small model on the processor. It needs at least {} GB of RAM.",
@@ -317,10 +318,10 @@ fn registry_pick(
             .as_ref()
             .or(fam.vram_gb.as_ref())
             .map(families::need_from)
-            .unwrap_or_else(|| families::estimate_need(registry, fam, hw, o.size_bytes))
+            .unwrap_or_else(|| families::estimate_need(registry, fam, hw, index, o.size_bytes))
     };
     let chosen = families::choose_quant(&options, prefer.as_deref(), |o| {
-        families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes)
+        families::need_and_fit(registry, fam, hw, index, need_of(o), o.size_bytes)
     });
 
     // Installed versions of this family, best fit first.
@@ -332,7 +333,8 @@ fn registry_pick(
                 registry,
                 fam,
                 hw,
-                families::installed_need(registry, fam, m, hw),
+                index,
+                families::installed_need(registry, fam, m, hw, index),
                 m.size_bytes,
             );
             (m, n, f)
@@ -482,7 +484,8 @@ fn civitai_pick(
             registry,
             fam,
             hw,
-            families::installed_need(registry, fam, m, hw),
+            index,
+            families::installed_need(registry, fam, m, hw, index),
             m.size_bytes,
         )),
         // Without a GPU the RAM need comes from the file size: unknown size → can't tell.
@@ -492,8 +495,8 @@ fn civitai_pick(
             .as_ref()
             .or(fam.vram_gb.as_ref())
             .map(families::need_from)
-            .or_else(|| size.map(|s| families::estimate_need(registry, fam, hw, s)))
-            .map(|n| families::need_and_fit(registry, fam, hw, n, size.unwrap_or(0))),
+            .or_else(|| size.map(|s| families::estimate_need(registry, fam, hw, index, s)))
+            .map(|n| families::need_and_fit(registry, fam, hw, index, n, size.unwrap_or(0))),
     };
     if installed_file.is_none() && !need_fit.is_some_and(|(_, f)| f != Fit::TooBig) {
         return Err(Skip::Vram);

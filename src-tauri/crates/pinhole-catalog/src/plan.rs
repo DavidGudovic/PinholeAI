@@ -80,11 +80,12 @@ fn any_format(env: &PlanEnv, family_id: Option<&str>) -> bool {
 /// "Needs ~X GB" + badge for a main file of `family_id` of this size.
 fn need_fit(env: &PlanEnv, family_id: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
     let fam = env.registry.family(family_id)?;
-    let need = families::family_need(env.registry, fam, env.hw, bytes);
+    let need = families::family_need(env.registry, fam, env.hw, env.index, bytes);
     Some(families::need_and_fit(
         env.registry,
         fam,
         env.hw,
+        env.index,
         need,
         bytes,
     ))
@@ -609,6 +610,20 @@ mod tests {
         assert!(ids.contains(&"qwen3_4b".to_string()), "{ids:?}");
         assert!(!ids.contains(&"qwen3_4b_q8".to_string()), "{ids:?}");
         assert!(families::missing_components(&reg, fam, &h, &idx, false).is_empty());
+    }
+
+    #[test]
+    fn fit_estimate_counts_the_reused_text_encoder() {
+        // The estimate follows the encoder that will run, not the one this VRAM would pick.
+        let reg = registry();
+        let h = hw(8.0);
+        let fam = reg.family("z_image_turbo").unwrap();
+        let main = 6_000_000_000;
+        let none = index(vec![]);
+        let big = index(vec![component(&reg, "qwen3_4b")]);
+        let a = families::estimate_need(&reg, fam, &h, &none, main);
+        let b = families::estimate_need(&reg, fam, &h, &big, main);
+        assert!(b.gb > a.gb, "{a:?} vs {b:?}");
     }
 
     #[test]
