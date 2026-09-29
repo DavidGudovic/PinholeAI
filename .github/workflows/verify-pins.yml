@@ -7,11 +7,6 @@ name: Verify pins
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "config/**"
-      - "scripts/verify-pins.mjs"
-      - ".github/workflows/verify-pins.yml"
 
 permissions:
   contents: read

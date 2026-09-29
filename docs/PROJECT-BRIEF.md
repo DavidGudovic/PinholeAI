@@ -77,9 +77,10 @@ base model will draw is the model's own behaviour. CivitAI images made with a fi
 fine-tune installed to reproduce.
 
 ## CI, releases, repo habits
-- CI is tiered for the private repo's Actions minutes: every push/PR ≈ 4 min (Linux tests + frontend
-  + privacy lint); push to `main` adds Windows tests, engine smoke, app e2e, WebDriver e2e (≈ 40 billed
-  min); docs-only changes run nothing; installers only on demand (Actions → Bundle) or via Release.
+- GitHub Actions are manual only (Actions ran out of minutes; David, 2026-09-29): pushes and PRs run
+  nothing. The required pre-merge check is `scripts/check.sh` (~2 min: privacy lint, vitest, tsc +
+  build, cargo test, clippy). Actions → CI → Run workflow ("full") still covers Windows tests, engine
+  smoke, app e2e, WebDriver e2e; installers on demand (Actions → Bundle) or via Release.
 - Release: Actions → Release → Run workflow (tag `v<version>`, untick draft) — publishes a
   **pre-release** marked "personal test build". Must be started by a person: Claude sessions can't
   create releases, push tags or delete branches.

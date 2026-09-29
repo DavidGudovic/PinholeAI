@@ -19,15 +19,15 @@ docs/RELEASE-SPEC.md  what must be done before any build is shared (marking, saf
 docs/ARCHITECTURE.md  crates, IPC contract, flows, where each area lives
 docs/PROJECT-BRIEF.md status, decisions, roadmap (start here)
 tests/            Rust integration tests + privacy tests; tests/e2e/ drives the real app (WebDriver)
-scripts/          privacy lint, pin verification, packaging (Node, no Python)
+scripts/          check.sh (pre-merge check), privacy lint, pin verification, packaging (Node, no Python)
 .claude/          session start hook for Claude Code on the web
-.github/          CI (tiered), Bundle, Release, Verify pins, API probe; issue + PR templates
+.github/          CI (manual), Bundle, Release, Verify pins, API probe; issue + PR templates
 ```
 
 ## How to work
 - Build milestone by milestone (SPEC §11). One PR per milestone, or smaller.
-- Each PR: working build on Windows + Ubuntu in CI, tests pass, short PR description with
-  screenshots for UI changes.
+- Each PR: `scripts/check.sh` passes (Actions CI is manual, see below), a manual full CI run
+  when the change is Windows-specific, short PR description with screenshots for UI changes.
 - Keep the default UI minimal. New options go in the **Fine-tune** drawer unless the spec says otherwise.
 - Prefer boring, well-maintained crates. No Python anywhere in the product.
 - Keep the four choke points from RELEASE-SPEC §1 as one function each (request builder, Edit
@@ -42,15 +42,20 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
   `npm install`, builds `dist/`, pre-compiles the Rust tests and clones the pinned
   stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference). It runs in the background, so
   a build or test right after the session starts can fail on missing deps: wait and try again.
-- **Local checks before every push:** `cargo test --workspace --locked`,
-  `cargo clippy --workspace --all-targets`, `npm test`, `npm run build` (includes `tsc`),
-  `node scripts/privacy-lint.mjs`. A bug fix comes with a regression test.
-- **Flow:** work on your session branch → PR to `main` (use `.github/pull_request_template.md`) →
-  merge when CI is green → the branch is deleted. One PR per issue or milestone.
-- **CI tiers:** every push/PR runs the fast tier (Linux tests + frontend + privacy lint, ~4 min).
-  Pushes to `main` run the full tier (Windows tests, engine smoke, app e2e, WebDriver e2e). For
-  engine / generation / packaging changes, run the full tier on your branch before merging:
-  Actions → CI → Run workflow (`full`; tick `installers` to get a test build). Docs-only changes run nothing.
+- **Required pre-merge check: `scripts/check.sh`** (~2 min warm). It runs the privacy lint
+  (+ self-test), `npm test`, `npm run build` (includes `tsc`), `cargo test --workspace --locked`
+  and `cargo clippy --workspace --all-targets -- -D warnings`, and stops at the first failure.
+  Run it on the branch (rebased/merged on current `main`) and merge only when it passes; say so in
+  the PR. `scripts/check.sh --smoke` adds the CPU engine smoke + app e2e (needs internet for the
+  engine and a tiny model, so not from the cloud container). A bug fix comes with a regression test.
+  `cargo fmt` isn't enforced yet (the repo isn't fmt-clean).
+- **Flow:** work on your session branch → `scripts/check.sh` → PR to `main` (use
+  `.github/pull_request_template.md`) → merge → the branch is deleted. One PR per issue or milestone.
+- **GitHub Actions are manual only.** Pushes and PRs run nothing (no minutes spent). Actions → CI →
+  Run workflow (`full`, optional `installers`) covers what can't run locally: Windows tests, the
+  WebDriver e2e, Linux + Windows engine smoke and test installers. Run it before a release or after
+  Windows-specific changes (engine/process handling, hardware, data dir, updater, packaging).
+  Release still builds on a `v*` tag or Actions → Release → Run workflow.
 - **Blocked hosts:** the session container can't reach huggingface.co or civitai.com. Check live
   data with the **API probe** workflow (GitHub MCP `actions_run_trigger`, workflow `api-probe.yml`,
   ref `main`, inputs `urls` = space-separated GET URLs on civitai.com / huggingface.co /
