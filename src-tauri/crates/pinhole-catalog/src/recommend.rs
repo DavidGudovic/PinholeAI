@@ -13,7 +13,14 @@ use crate::families::{self, mb_to_bytes, normalize_sha, QuantOption};
 use crate::view::RecommendedPick;
 
 /// Display order of roles; other roles in the YAML follow alphabetically.
-pub const ROLE_ORDER: [&str; 6] = ["realistic", "realistic_detail", "anime", "edit", "edit_alt", "describe"];
+pub const ROLE_ORDER: [&str; 6] = [
+    "realistic",
+    "realistic_detail",
+    "anime",
+    "edit",
+    "edit_alt",
+    "describe",
+];
 
 /// Extra cards next to a main role (e.g. a second, slower Realistic model for
 /// 12 GB+ cards). [`recommend`] leaves them out when none of their candidates
@@ -40,7 +47,10 @@ pub enum PickAction {
     /// Installed and complete (or nothing to offer).
     Nothing,
     /// Registry download: main file (if missing) + missing components.
-    Download { label: String, files: Vec<FileToGet> },
+    Download {
+        label: String,
+        files: Vec<FileToGet>,
+    },
     /// A verified CivitAI version (installed through the CivitAI flow).
     Civitai { version_id: u64, family_id: String },
     /// The default captioner (engine area installs it).
@@ -61,7 +71,9 @@ pub fn role_label(role: &str) -> String {
         "describe" => "Describe".into(),
         other => {
             let mut c = other.chars();
-            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
         }
     }
 }
@@ -84,8 +96,18 @@ fn good_at(role: &str) -> Option<String> {
 /// Picks for every role, in [`ROLE_ORDER`]. [`OPTIONAL_ROLES`] with nothing
 /// that fits are left out.
 pub fn recommend(registry: &Registry, index: &InstalledIndex, hw: &HwContext) -> Vec<PickPlan> {
-    let mut roles: Vec<String> = ROLE_ORDER.iter().map(|r| r.to_string()).filter(|r| registry.recommended().contains_key(r)).collect();
-    roles.extend(registry.recommended().keys().filter(|k| !ROLE_ORDER.contains(&k.as_str())).cloned());
+    let mut roles: Vec<String> = ROLE_ORDER
+        .iter()
+        .map(|r| r.to_string())
+        .filter(|r| registry.recommended().contains_key(r))
+        .collect();
+    roles.extend(
+        registry
+            .recommended()
+            .keys()
+            .filter(|k| !ROLE_ORDER.contains(&k.as_str()))
+            .cloned(),
+    );
     let picks: Vec<PickPlan> = roles
         .iter()
         .filter_map(|r| recommend_role(registry, index, hw, r))
@@ -93,7 +115,12 @@ pub fn recommend(registry: &Registry, index: &InstalledIndex, hw: &HwContext) ->
         .collect();
     // A second card that repeats the first one's model (e.g. the lighter edit
     // model is already the Edit pick on a small card) is left out.
-    let family_of = |role: &str| picks.iter().find(|p| p.pick.role == role).and_then(|p| p.pick.family_id.clone());
+    let family_of = |role: &str| {
+        picks
+            .iter()
+            .find(|p| p.pick.role == role)
+            .and_then(|p| p.pick.family_id.clone())
+    };
     let (edit, realistic) = (family_of("edit"), family_of("realistic"));
     picks
         .into_iter()
@@ -111,7 +138,12 @@ enum Skip {
     Broken,
 }
 
-pub fn recommend_role(registry: &Registry, index: &InstalledIndex, hw: &HwContext, role: &str) -> Option<PickPlan> {
+pub fn recommend_role(
+    registry: &Registry,
+    index: &InstalledIndex,
+    hw: &HwContext,
+    role: &str,
+) -> Option<PickPlan> {
     let candidates = registry.recommended().get(role)?;
     let mut skips: Vec<Skip> = Vec::new();
     for cand in candidates {
@@ -132,13 +164,24 @@ pub fn recommend_role(registry: &Registry, index: &InstalledIndex, hw: &HwContex
     let reason = if skips.iter().any(|s| matches!(s, Skip::Vram)) {
         too_big_reason(registry, candidates, role, hw)
     } else {
-        format!("No {} model has been picked for Pinhole yet. You can browse CivitAI for one instead.", role_label(role).to_lowercase())
+        format!(
+            "No {} model has been picked for Pinhole yet. You can browse CivitAI for one instead.",
+            role_label(role).to_lowercase()
+        )
     };
-    Some(PickPlan { pick: empty_pick(role, Some(reason)), action: PickAction::Nothing })
+    Some(PickPlan {
+        pick: empty_pick(role, Some(reason)),
+        action: PickAction::Nothing,
+    })
 }
 
 /// Why no candidate of `role` fits this machine.
-fn too_big_reason(registry: &Registry, candidates: &[RecommendedCandidate], role: &str, hw: &HwContext) -> String {
+fn too_big_reason(
+    registry: &Registry,
+    candidates: &[RecommendedCandidate],
+    role: &str,
+    hw: &HwContext,
+) -> String {
     if !hw.cpu_only() {
         return format!(
             "None of the recommended models fit in {} GB of graphics memory. Smaller ones are available when you browse CivitAI.",
@@ -146,10 +189,18 @@ fn too_big_reason(registry: &Registry, candidates: &[RecommendedCandidate], role
         );
     }
     // A processor-friendly candidate was skipped too: not enough RAM for it.
-    let small = candidates.iter().filter_map(|c| registry.family(c.family.as_deref()?)).find(|f| f.cpu_friendly);
+    let small = candidates
+        .iter()
+        .filter_map(|c| registry.family(c.family.as_deref()?))
+        .find(|f| f.cpu_friendly);
     if let Some(f) = small {
-        let size = f.download.as_ref().map(|d| mb_to_bytes(d.size_mb)).unwrap_or(0);
-        let need = vram::cpu_need(f, families::cpu_weight_bytes(registry, f, hw, size)).gb + vram::CPU_SPARE_RAM_GB;
+        let size = f
+            .download
+            .as_ref()
+            .map(|d| mb_to_bytes(d.size_mb))
+            .unwrap_or(0);
+        let need = vram::cpu_need(f, families::cpu_weight_bytes(registry, f, hw, size)).gb
+            + vram::CPU_SPARE_RAM_GB;
         return format!(
             "Pinhole didn't find a graphics card it can use, and this computer doesn't have enough memory to run even the small model on the processor. It needs at least {} GB of RAM.",
             fmt_gb(need.ceil())
@@ -191,7 +242,12 @@ fn empty_pick(role: &str, unavailable_reason: Option<String>) -> RecommendedPick
     }
 }
 
-fn component_files(registry: &Registry, family: &Family, hw: &HwContext, index: &InstalledIndex) -> Vec<FileToGet> {
+fn component_files(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    index: &InstalledIndex,
+) -> Vec<FileToGet> {
     families::missing_components(registry, family, hw, index, true)
         .into_iter()
         .map(|(id, c)| FileToGet {
@@ -209,7 +265,12 @@ fn component_files(registry: &Registry, family: &Family, hw: &HwContext, index: 
 }
 
 /// Required components (not the optional preview decoder) are all installed.
-fn required_complete(registry: &Registry, family: &Family, hw: &HwContext, index: &InstalledIndex) -> bool {
+fn required_complete(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    index: &InstalledIndex,
+) -> bool {
     families::missing_components(registry, family, hw, index, false).is_empty()
 }
 
@@ -225,7 +286,12 @@ pub const TOO_BIG_INSTALLED_NOTE: &str = "The version you have is probably too b
 /// Registry option a file was downloaded from (by SHA-256, else file name).
 fn option_of<'a>(options: &'a [QuantOption], file: &InstalledFile) -> Option<&'a QuantOption> {
     let name = file.rel_path.rsplit('/').next().unwrap_or(&file.rel_path);
-    options.iter().find(|o| o.sha256.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(&file.sha256)) || o.file.eq_ignore_ascii_case(name))
+    options.iter().find(|o| {
+        o.sha256
+            .as_deref()
+            .is_some_and(|h| h.eq_ignore_ascii_case(&file.sha256))
+            || o.file.eq_ignore_ascii_case(name)
+    })
 }
 
 fn registry_pick(
@@ -240,19 +306,35 @@ fn registry_pick(
     let title = cand.title.clone().unwrap_or_else(|| fam.label.clone());
     let comps = component_files(registry, fam, hw, index);
     let comp_bytes: u64 = comps.iter().map(|f| f.size_bytes).sum();
-    let options = fam.download.as_ref().map(families::quant_options).unwrap_or_default();
+    let options = fam
+        .download
+        .as_ref()
+        .map(families::quant_options)
+        .unwrap_or_default();
     let prefer = registry.hardware_profile(hw.vram_gb).prefer_quant.clone();
     let need_of = |o: &QuantOption| -> VramNeed {
-        o.vram.as_ref().or(fam.vram_gb.as_ref()).map(families::need_from).unwrap_or_else(|| families::estimate_need(registry, fam, hw, o.size_bytes))
+        o.vram
+            .as_ref()
+            .or(fam.vram_gb.as_ref())
+            .map(families::need_from)
+            .unwrap_or_else(|| families::estimate_need(registry, fam, hw, o.size_bytes))
     };
-    let chosen = families::choose_quant(&options, prefer.as_deref(), |o| families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes));
+    let chosen = families::choose_quant(&options, prefer.as_deref(), |o| {
+        families::need_and_fit(registry, fam, hw, need_of(o), o.size_bytes)
+    });
 
     // Installed versions of this family, best fit first.
     let mut installed: Vec<(&InstalledFile, VramNeed, Fit)> = index
         .models()
         .filter(|m| m.family.as_deref() == Some(family_id))
         .map(|m| {
-            let (n, f) = families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes);
+            let (n, f) = families::need_and_fit(
+                registry,
+                fam,
+                hw,
+                families::installed_need(registry, fam, m, hw),
+                m.size_bytes,
+            );
             (m, n, f)
         })
         .collect();
@@ -262,11 +344,18 @@ fn registry_pick(
         // A tight installed version, and a smaller registry version that Fits isn't installed yet:
         // offer that one instead (the installed file stays; both show in the model picker).
         let smaller = chosen.as_ref().filter(|(o, _, f)| {
-            fit != Fit::Fits && *f == Fit::Fits && !installed.iter().any(|(i, _, _)| option_of(&options, i).is_some_and(|io| io.file == o.file))
+            fit != Fit::Fits
+                && *f == Fit::Fits
+                && !installed
+                    .iter()
+                    .any(|(i, _, _)| option_of(&options, i).is_some_and(|io| io.file == o.file))
         });
         if smaller.is_none() {
             let complete = required_complete(registry, fam, hw, index);
-            let quant = m.dtype.clone().unwrap_or_else(|| families::quant_of_file(&m.rel_path));
+            let quant = m
+                .dtype
+                .clone()
+                .unwrap_or_else(|| families::quant_of_file(&m.rel_path));
             return Ok(PickPlan {
                 pick: RecommendedPick {
                     role: role.into(),
@@ -284,10 +373,24 @@ fn registry_pick(
                     note: None,
                     replaces_installed: false,
                 },
-                action: if comps.is_empty() { PickAction::Nothing } else { PickAction::Download { label: title, files: comps } },
+                action: if comps.is_empty() {
+                    PickAction::Nothing
+                } else {
+                    PickAction::Download {
+                        label: title,
+                        files: comps,
+                    }
+                },
             });
         }
-        note = Some(if fit == Fit::TooBig { TOO_BIG_INSTALLED_NOTE } else { TIGHT_INSTALLED_NOTE }.to_string());
+        note = Some(
+            if fit == Fit::TooBig {
+                TOO_BIG_INSTALLED_NOTE
+            } else {
+                TIGHT_INSTALLED_NOTE
+            }
+            .to_string(),
+        );
     }
 
     if options.is_empty() {
@@ -327,10 +430,16 @@ fn registry_pick(
             quant: Some(opt.quant.clone()).filter(|q| q != "unknown"),
             license_note: fam.license_note.clone(),
             unavailable_reason: None,
-            replaces_installed: matches!(note.as_deref(), Some(TIGHT_INSTALLED_NOTE | TOO_BIG_INSTALLED_NOTE)),
+            replaces_installed: matches!(
+                note.as_deref(),
+                Some(TIGHT_INSTALLED_NOTE | TOO_BIG_INSTALLED_NOTE)
+            ),
             note,
         },
-        action: PickAction::Download { label: title, files },
+        action: PickAction::Download {
+            label: title,
+            files,
+        },
     })
 }
 
@@ -362,10 +471,20 @@ fn civitai_pick(
     let version_id = yaml_id(cand.civitai_version_id.as_ref()).ok_or(Skip::NotVerified)?;
     let family_id = cand.family.as_deref().ok_or(Skip::Broken)?;
     let fam = registry.family(family_id).ok_or(Skip::Broken)?;
-    let installed_file = index.models().find(|m| m.civitai.as_ref().is_some_and(|c| c.version_id == version_id));
+    let installed_file = index.models().find(|m| {
+        m.civitai
+            .as_ref()
+            .is_some_and(|c| c.version_id == version_id)
+    });
     let size = cand.size_mb.map(mb_to_bytes);
     let need_fit = match installed_file {
-        Some(m) => Some(families::need_and_fit(registry, fam, hw, families::installed_need(registry, fam, m, hw), m.size_bytes)),
+        Some(m) => Some(families::need_and_fit(
+            registry,
+            fam,
+            hw,
+            families::installed_need(registry, fam, m, hw),
+            m.size_bytes,
+        )),
         // Without a GPU the RAM need comes from the file size: unknown size → can't tell.
         None if hw.cpu_only() && size.is_none() => None,
         None => cand
@@ -389,7 +508,11 @@ fn civitai_pick(
             title: Some(cand.title.clone().unwrap_or_else(|| fam.label.clone())),
             family_id: Some(family_id.into()),
             good_at: good_at(role),
-            download_bytes: if installed_file.is_some() { comp_bytes } else { size.unwrap_or(0) + comp_bytes },
+            download_bytes: if installed_file.is_some() {
+                comp_bytes
+            } else {
+                size.unwrap_or(0) + comp_bytes
+            },
             vram: need_fit.map(|(n, _)| n),
             fit: need_fit.map(|(_, f)| f),
             installed,
@@ -399,19 +522,32 @@ fn civitai_pick(
             note: None,
             replaces_installed: false,
         },
-        action: if installed { PickAction::Nothing } else { PickAction::Civitai { version_id, family_id: family_id.into() } },
+        action: if installed {
+            PickAction::Nothing
+        } else {
+            PickAction::Civitai {
+                version_id,
+                family_id: family_id.into(),
+            }
+        },
     })
 }
 
 /// Default captioner files that are not installed (matched by hash or file name).
-pub fn missing_captioner_files<'a>(registry: &'a Registry, index: &InstalledIndex) -> Vec<&'a CaptionerFile> {
-    let Some(def) = registry.captioner().default.as_ref() else { return Vec::new() };
+pub fn missing_captioner_files<'a>(
+    registry: &'a Registry,
+    index: &InstalledIndex,
+) -> Vec<&'a CaptionerFile> {
+    let Some(def) = registry.captioner().default.as_ref() else {
+        return Vec::new();
+    };
     [&def.model, &def.mmproj]
         .into_iter()
         .filter(|cf| {
             !index.files.iter().any(|f| {
                 let name = f.rel_path.rsplit('/').next().unwrap_or(&f.rel_path);
-                normalize_sha(&cf.sha256).is_some_and(|h| f.sha256.eq_ignore_ascii_case(&h)) || name.eq_ignore_ascii_case(&cf.file)
+                normalize_sha(&cf.sha256).is_some_and(|h| f.sha256.eq_ignore_ascii_case(&h))
+                    || name.eq_ignore_ascii_case(&cf.file)
             })
         })
         .collect()
@@ -421,10 +557,19 @@ pub fn missing_captioner_files<'a>(registry: &'a Registry, index: &InstalledInde
 pub fn captioner_reuse_available(registry: &Registry, index: &InstalledIndex) -> bool {
     let ids = &registry.captioner().prefer_reuse;
     !ids.is_empty()
-        && ids.iter().all(|id| registry.component(id).is_some_and(|c| families::installed_component(index, id, c).is_some()))
+        && ids.iter().all(|id| {
+            registry
+                .component(id)
+                .is_some_and(|c| families::installed_component(index, id, c).is_some())
+        })
 }
 
-fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand: &RecommendedCandidate) -> Result<PickPlan, Skip> {
+fn captioner_pick(
+    registry: &Registry,
+    index: &InstalledIndex,
+    role: &str,
+    cand: &RecommendedCandidate,
+) -> Result<PickPlan, Skip> {
     let base = |title: &str, bytes: u64, installed: bool| RecommendedPick {
         role: role.into(),
         role_label: role_label(role),
@@ -442,9 +587,10 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
         replaces_installed: false,
     };
     match cand.captioner.as_deref() {
-        Some("reuse") if captioner_reuse_available(registry, index) => {
-            Ok(PickPlan { pick: base("Image describer (uses your edit model)", 0, true), action: PickAction::Nothing })
-        }
+        Some("reuse") if captioner_reuse_available(registry, index) => Ok(PickPlan {
+            pick: base("Image describer (uses your edit model)", 0, true),
+            action: PickAction::Nothing,
+        }),
         Some("reuse") => Err(Skip::NotVerified),
         Some("default") => {
             registry.captioner().default.as_ref().ok_or(Skip::Broken)?;
@@ -453,7 +599,11 @@ fn captioner_pick(registry: &Registry, index: &InstalledIndex, role: &str, cand:
             let installed = missing.is_empty();
             Ok(PickPlan {
                 pick: base("Image describer", bytes, installed),
-                action: if installed { PickAction::Nothing } else { PickAction::Captioner },
+                action: if installed {
+                    PickAction::Nothing
+                } else {
+                    PickAction::Captioner
+                },
             })
         }
         _ => Err(Skip::Broken),
@@ -476,31 +626,61 @@ mod tests {
     }
 
     fn summary(p: &PickPlan) -> (Option<&str>, Option<&str>, Option<Fit>) {
-        (p.pick.family_id.as_deref(), p.pick.quant.as_deref(), p.pick.fit)
+        (
+            p.pick.family_id.as_deref(),
+            p.pick.quant.as_deref(),
+            p.pick.fit,
+        )
     }
 
     #[test]
     fn roles_in_order() {
         let p = picks(16.0, &index(vec![]));
         let roles: Vec<&str> = p.iter().map(|p| p.pick.role.as_str()).collect();
-        assert_eq!(roles, ["realistic", "realistic_detail", "anime", "edit", "edit_alt", "describe"]);
+        assert_eq!(
+            roles,
+            [
+                "realistic",
+                "realistic_detail",
+                "anime",
+                "edit",
+                "edit_alt",
+                "describe"
+            ]
+        );
         assert_eq!(p[0].pick.role_label, "Realistic");
         assert_eq!(p[1].pick.role_label, "Realistic", "second Realistic card");
         assert!(p[0].pick.good_at.is_some() && p[1].pick.good_at.is_some());
         // The optional second Realistic card only appears when it fits.
         // …and the lighter edit card only when it isn't already the Edit pick.
-        let roles: Vec<String> = picks(8.0, &index(vec![])).into_iter().map(|p| p.pick.role).collect();
+        let roles: Vec<String> = picks(8.0, &index(vec![]))
+            .into_iter()
+            .map(|p| p.pick.role)
+            .collect();
         assert_eq!(roles, ["realistic", "anime", "edit", "describe"]);
     }
 
     #[test]
     fn six_gb() {
         let p = picks(6.0, &index(vec![]));
-        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight)));
-        assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Tight)));
-        assert_eq!(summary(role(&p, "edit")), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)), "Qwen Edit needs 12 GB");
+        assert_eq!(
+            summary(role(&p, "realistic")),
+            (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight))
+        );
+        assert_eq!(
+            summary(role(&p, "anime")),
+            (Some("sdxl_illustrious"), None, Some(Fit::Tight))
+        );
+        assert_eq!(
+            summary(role(&p, "edit")),
+            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)),
+            "Qwen Edit needs 12 GB"
+        );
         // z_image q4_k + flux_ae + Qwen3-4B Q4_K_M (the 8 GB bf16 encoder only from 20 GB)
-        assert_eq!(role(&p, "realistic").pick.download_bytes, (3864 + 335 + 2497) * MB);
+        assert_eq!(
+            role(&p, "realistic").pick.download_bytes,
+            (3864 + 335 + 2497) * MB
+        );
     }
 
     #[test]
@@ -508,7 +688,10 @@ mod tests {
         let p = picks(8.0, &index(vec![]));
         let r = role(&p, "realistic");
         // Q8 (12 GB comfortable) and Q4 (8 GB) are both Tight: the one closest to fitting.
-        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight)));
+        assert_eq!(
+            summary(r),
+            (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Tight))
+        );
         // Q4 model + FLUX VAE + Qwen3-4B Q4_K_M text encoder (below 10 GB).
         assert_eq!(r.pick.download_bytes, (3864 + 335 + 2497) * MB);
         assert_eq!(r.pick.note.as_deref(), Some(SMALLER_NOTE));
@@ -519,8 +702,14 @@ mod tests {
                 assert_eq!(files[0].file_name, "z_image_turbo-Q4_K.gguf");
                 assert_eq!(files[0].kind, ModelKind::Diffusion);
                 assert_eq!(files[0].friendly_name, "Z-Image Turbo (Q4)");
-                assert_eq!(files[0].sha256.as_deref(), Some("14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd"));
-                let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
+                assert_eq!(
+                    files[0].sha256.as_deref(),
+                    Some("14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd")
+                );
+                let comps: Vec<_> = files[1..]
+                    .iter()
+                    .map(|f| f.component_id.as_deref().unwrap())
+                    .collect();
                 assert_eq!(comps.len(), 2);
                 assert!(comps.contains(&"flux_ae") && comps.contains(&"qwen3_4b_q4km"));
                 assert!(files[1..].iter().all(|f| f.family.is_none()));
@@ -528,19 +717,41 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let a = role(&p, "anime");
-        assert_eq!(a.action, PickAction::Civitai { version_id: 2940478, family_id: "sdxl_illustrious".into() });
-        assert_eq!(a.pick.download_bytes, (6939 + 335) * MB, "checkpoint + SDXL fp16-fix VAE");
-        assert_eq!(summary(role(&p, "edit")), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)));
+        assert_eq!(
+            a.action,
+            PickAction::Civitai {
+                version_id: 2940478,
+                family_id: "sdxl_illustrious".into()
+            }
+        );
+        assert_eq!(
+            a.pick.download_bytes,
+            (6939 + 335) * MB,
+            "checkpoint + SDXL fp16-fix VAE"
+        );
+        assert_eq!(
+            summary(role(&p, "edit")),
+            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight))
+        );
     }
 
     #[test]
     fn twelve_gb() {
         let p = picks(12.0, &index(vec![]));
         // Q8 needs 12 GB to be comfortable (registry figure): the Q4 that Fits wins over a Tight Q8.
-        assert_eq!(summary(role(&p, "realistic")), (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Fits)));
-        assert_eq!(summary(role(&p, "anime")), (Some("sdxl_illustrious"), None, Some(Fit::Fits)));
+        assert_eq!(
+            summary(role(&p, "realistic")),
+            (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Fits))
+        );
+        assert_eq!(
+            summary(role(&p, "anime")),
+            (Some("sdxl_illustrious"), None, Some(Fit::Fits))
+        );
         // No Qwen Edit version Fits 12 GB; Q3_K_M is the closest (Tight).
-        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Tight)));
+        assert_eq!(
+            summary(role(&p, "edit")),
+            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Tight))
+        );
     }
 
     #[test]
@@ -550,19 +761,36 @@ mod tests {
         // (Q4_K_M ran only at the smallest size / fastest setting on a real 16 GB card).
         let p = picks(16.0, &index(vec![]));
         let r = role(&p, "realistic");
-        assert_eq!(summary(r), (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Fits)));
+        assert_eq!(
+            summary(r),
+            (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Fits))
+        );
         assert_eq!(r.pick.download_bytes, (6577 + 335 + 4280) * MB);
         match &r.action {
             PickAction::Download { files, .. } => {
                 assert_eq!(files[0].file_name, "z_image_turbo-Q8_0.gguf");
-                assert!(files.iter().any(|f| f.component_id.as_deref() == Some("qwen3_4b_q8")));
-                assert!(!files.iter().any(|f| f.component_id.as_deref() == Some("qwen3_4b")), "no bf16 encoder below 20 GB");
+                assert!(files
+                    .iter()
+                    .any(|f| f.component_id.as_deref() == Some("qwen3_4b_q8")));
+                assert!(
+                    !files
+                        .iter()
+                        .any(|f| f.component_id.as_deref() == Some("qwen3_4b")),
+                    "no bf16 encoder below 20 GB"
+                );
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(r.pick.note.as_deref(), Some(SMALLER_NOTE), "bf16 is the full version");
+        assert_eq!(
+            r.pick.note.as_deref(),
+            Some(SMALLER_NOTE),
+            "bf16 is the full version"
+        );
         let e = role(&p, "edit");
-        assert_eq!(summary(e), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits)));
+        assert_eq!(
+            summary(e),
+            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits))
+        );
         assert_eq!(e.pick.vram.unwrap().gb, 13.0);
         assert_eq!(e.pick.vram.unwrap().min_gb, 9.0);
         assert!(!e.pick.vram.unwrap().estimate);
@@ -570,7 +798,10 @@ mod tests {
         match &e.action {
             PickAction::Download { files, .. } => {
                 assert_eq!(files[0].file_name, "qwen-image-edit-2511-Q3_K_M.gguf");
-                assert_eq!(files[0].sha256.as_deref(), Some("5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9"));
+                assert_eq!(
+                    files[0].sha256.as_deref(),
+                    Some("5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9")
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -580,10 +811,24 @@ mod tests {
     fn twenty_four_gb() {
         let p = picks(24.0, &index(vec![]));
         let r = role(&p, "realistic");
-        assert_eq!(summary(r), (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits)));
-        assert_eq!(r.pick.download_bytes, (12310 + 335 + 8045) * MB, "bf16 model + bf16 encoder");
-        assert_eq!(summary(role(&p, "edit")), (Some("qwen_image_edit_2511"), Some("q6_k"), Some(Fit::Fits)));
-        assert_eq!(role(&p, "realistic").pick.note, None, "full version, no note");
+        assert_eq!(
+            summary(r),
+            (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits))
+        );
+        assert_eq!(
+            r.pick.download_bytes,
+            (12310 + 335 + 8045) * MB,
+            "bf16 model + bf16 encoder"
+        );
+        assert_eq!(
+            summary(role(&p, "edit")),
+            (Some("qwen_image_edit_2511"), Some("q6_k"), Some(Fit::Fits))
+        );
+        assert_eq!(
+            role(&p, "realistic").pick.note,
+            None,
+            "full version, no note"
+        );
     }
 
     #[test]
@@ -601,20 +846,36 @@ mod tests {
         ] {
             let p = picks(vram, &index(vec![]));
             // Z-Image Turbo stays the first Realistic pick.
-            assert_ne!(role(&p, "realistic").pick.family_id.as_deref(), Some("krea2_turbo"), "{vram} GB");
+            assert_ne!(
+                role(&p, "realistic").pick.family_id.as_deref(),
+                Some("krea2_turbo"),
+                "{vram} GB"
+            );
             let k = p.iter().find(|p| p.pick.role == "realistic_detail");
             match want {
                 Some((quant, fit)) => {
-                    assert_eq!(summary(k.unwrap()), (Some("krea2_turbo"), Some(quant), Some(fit)), "{vram} GB");
+                    assert_eq!(
+                        summary(k.unwrap()),
+                        (Some("krea2_turbo"), Some(quant), Some(fit)),
+                        "{vram} GB"
+                    );
                 }
                 None => assert!(k.is_none(), "{vram} GB: no card when it doesn't fit"),
             }
         }
         let p = picks(16.0, &index(vec![]));
         let k = role(&p, "realistic_detail");
-        assert_eq!(k.pick.title.as_deref(), Some("Krea 2 Turbo — more detail, slower"));
+        assert_eq!(
+            k.pick.title.as_deref(),
+            Some("Krea 2 Turbo — more detail, slower")
+        );
         assert_eq!(k.pick.role_label, "Realistic");
-        assert!(k.pick.license_note.as_deref().unwrap().starts_with("Krea 2 Community License"));
+        assert!(k
+            .pick
+            .license_note
+            .as_deref()
+            .unwrap()
+            .starts_with("Krea 2 Community License"));
         // Q5_K_S + Qwen3-VL 4B Q8_0 + the Qwen-Image (Wan 2.1 layout) VAE.
         assert_eq!(k.pick.download_bytes, (8819 + 4280 + 254) * MB);
         match &k.action {
@@ -624,21 +885,33 @@ mod tests {
                 assert_eq!(files[0].friendly_name, "Krea 2 Turbo (Q5)");
                 assert_eq!(files[0].kind, ModelKind::Diffusion);
                 assert_eq!(files[0].family.as_deref(), Some("krea2_turbo"));
-                assert!(files[0].url.starts_with("https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"));
-                assert_eq!(files[0].sha256.as_deref(), Some("2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd"));
-                let comps: Vec<_> = files[1..].iter().map(|f| f.component_id.as_deref().unwrap()).collect();
+                assert!(files[0].url.starts_with(
+                    "https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"
+                ));
+                assert_eq!(
+                    files[0].sha256.as_deref(),
+                    Some("2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd")
+                );
+                let comps: Vec<_> = files[1..]
+                    .iter()
+                    .map(|f| f.component_id.as_deref().unwrap())
+                    .collect();
                 assert_eq!(comps.len(), 2);
                 assert!(comps.contains(&"qwen3vl_4b_q8") && comps.contains(&"qwen_image_vae"));
             }
             other => panic!("{other:?}"),
         }
-        let k24 = recommend_role(&registry(), &index(vec![]), &hw(24.0), "realistic_detail").unwrap();
+        let k24 =
+            recommend_role(&registry(), &index(vec![]), &hw(24.0), "realistic_detail").unwrap();
         match &k24.action {
-            PickAction::Download { files, .. } => assert_eq!(files[0].file_name, "Krea-2-Turbo-Q8_0.gguf"),
+            PickAction::Download { files, .. } => {
+                assert_eq!(files[0].file_name, "Krea-2-Turbo-Q8_0.gguf")
+            }
             other => panic!("{other:?}"),
         }
         // Asked for directly (install_recommended), a card that doesn't fit explains why.
-        let small = recommend_role(&registry(), &index(vec![]), &hw(8.0), "realistic_detail").unwrap();
+        let small =
+            recommend_role(&registry(), &index(vec![]), &hw(8.0), "realistic_detail").unwrap();
         assert_eq!(small.action, PickAction::Nothing);
         assert!(small.pick.unavailable_reason.is_some());
     }
@@ -650,9 +923,16 @@ mod tests {
         // sized against RAM (Tight = "runs on the processor — slow").
         let r = role(&p, "realistic");
         assert_eq!(summary(r), (Some("sd15"), Some("fp16"), Some(Fit::Tight)));
-        assert_eq!(r.pick.title.as_deref(), Some("Stable Diffusion 1.5 (small, runs on any computer)"));
+        assert_eq!(
+            r.pick.title.as_deref(),
+            Some("Stable Diffusion 1.5 (small, runs on any computer)")
+        );
         assert_eq!(r.pick.unavailable_reason, None);
-        assert_eq!(r.pick.download_bytes, 2133 * MB, "all-in-one: no components");
+        assert_eq!(
+            r.pick.download_bytes,
+            2133 * MB,
+            "all-in-one: no components"
+        );
         let v = r.pick.vram.unwrap();
         assert!(v.on_cpu && v.estimate, "{v:?}");
         assert_eq!(v.gb, 3.0, "1.99 GiB of weights + 1 GiB activations");
@@ -663,7 +943,10 @@ mod tests {
                 assert_eq!(files[0].file_name, "v1-5-pruned-emaonly-fp16.safetensors");
                 assert_eq!(files[0].kind, ModelKind::Checkpoint);
                 assert_eq!(files[0].family.as_deref(), Some("sd15"));
-                assert_eq!(files[0].sha256.as_deref(), Some("e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916"));
+                assert_eq!(
+                    files[0].sha256.as_deref(),
+                    Some("e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916")
+                );
             }
             other => panic!("{other:?}"),
         }
@@ -676,7 +959,12 @@ mod tests {
             assert!(!why.contains("Models tab"), "{r}: {why}");
             assert_eq!(role(&p, r).action, PickAction::Nothing);
         }
-        assert!(role(&p, "edit").pick.unavailable_reason.as_deref().unwrap().contains("Restyle"));
+        assert!(role(&p, "edit")
+            .pick
+            .unavailable_reason
+            .as_deref()
+            .unwrap()
+            .contains("Restyle"));
         // The small captioner still works on the CPU.
         let d = role(&p, "describe");
         assert_eq!(d.pick.title.as_deref(), Some("Image describer"));
@@ -708,9 +996,19 @@ mod tests {
         let r = role(&p, "realistic");
         assert_eq!(summary(r), (Some("sd15"), Some("fp16"), Some(Fit::Tight)));
         assert!(!r.pick.vram.unwrap().on_cpu);
-        assert_eq!(r.pick.vram.unwrap().gb, 6.0, "registry figure, not an estimate");
+        assert_eq!(
+            r.pick.vram.unwrap().gb,
+            6.0,
+            "registry figure, not an estimate"
+        );
         // 6 GB: the better picks come first.
-        assert_eq!(role(&picks(6.0, &index(vec![])), "realistic").pick.family_id.as_deref(), Some("z_image_turbo"));
+        assert_eq!(
+            role(&picks(6.0, &index(vec![])), "realistic")
+                .pick
+                .family_id
+                .as_deref(),
+            Some("z_image_turbo")
+        );
     }
 
     #[test]
@@ -727,7 +1025,12 @@ mod tests {
     #[test]
     fn installed_sd15_on_cpu_is_complete_and_sized_against_ram() {
         let reg = registry();
-        let mut f = model("sd", "sd15", ModelKind::Checkpoint, "v1-5-pruned-emaonly-fp16.safetensors");
+        let mut f = model(
+            "sd",
+            "sd15",
+            ModelKind::Checkpoint,
+            "v1-5-pruned-emaonly-fp16.safetensors",
+        );
         f.size_bytes = 2_132_696_762;
         let r = recommend_role(&reg, &index(vec![f]), &hw_cpu(16.0), "realistic").unwrap();
         assert!(r.pick.installed);
@@ -738,9 +1041,12 @@ mod tests {
 
     #[test]
     fn unverified_civitai_candidates_are_unavailable() {
-        let yaml = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../config/models.yaml"))
-            .replace("civitai_version_id: 2940478", "civitai_version_id: TODO")
-            .replace("civitai_version_id: 290640", "civitai_version_id: TODO");
+        let yaml = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../config/models.yaml"
+        ))
+        .replace("civitai_version_id: 2940478", "civitai_version_id: TODO")
+        .replace("civitai_version_id: 290640", "civitai_version_id: TODO");
         let reg = Registry::from_yaml(&yaml, None).unwrap();
         let p = recommend(&reg, &index(vec![]), &hw(16.0));
         let a = &role(&p, "anime").pick;
@@ -753,7 +1059,12 @@ mod tests {
         let reg = registry();
         // Z-Image installed with its components → realistic is done.
         let idx = index(vec![
-            model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo-Q8_0.gguf"),
+            model(
+                "zit",
+                "z_image_turbo",
+                ModelKind::Diffusion,
+                "z_image_turbo-Q8_0.gguf",
+            ),
             component(&reg, "flux_ae"),
             component(&reg, "qwen3_4b_q4km"),
         ]);
@@ -767,7 +1078,9 @@ mod tests {
         let e = role(&p, "edit");
         assert_eq!(e.pick.download_bytes, (6932 + 246 + 4894) * MB);
         match &e.action {
-            PickAction::Download { files, .. } => assert!(files.iter().all(|f| f.component_id.as_deref() != Some("flux_ae"))),
+            PickAction::Download { files, .. } => assert!(files
+                .iter()
+                .all(|f| f.component_id.as_deref() != Some("flux_ae"))),
             other => panic!("{other:?}"),
         }
     }
@@ -775,16 +1088,37 @@ mod tests {
     #[test]
     fn installed_model_with_missing_component_is_not_complete() {
         let reg = registry();
-        let idx = index(vec![model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"), component(&reg, "flux_ae")]);
+        let idx = index(vec![
+            model(
+                "zit",
+                "z_image_turbo",
+                ModelKind::Diffusion,
+                "z_image_turbo_bf16.safetensors",
+            ),
+            component(&reg, "flux_ae"),
+        ]);
         let p = recommend(&reg, &idx, &hw(24.0));
         let r = role(&p, "realistic");
         assert!(!r.pick.installed);
-        assert_eq!(r.pick.download_bytes, 8045 * MB, "only the bf16 text encoder at 24 GB");
-        assert_eq!(r.pick.vram.unwrap().gb, 16.0, "registry figure for the bf16 file");
+        assert_eq!(
+            r.pick.download_bytes,
+            8045 * MB,
+            "only the bf16 text encoder at 24 GB"
+        );
+        assert_eq!(
+            r.pick.vram.unwrap().gb,
+            16.0,
+            "registry figure for the bf16 file"
+        );
         assert_eq!(r.pick.note, None);
         // An installed Q8 encoder does not count at 24 GB: the bf16 one is required.
         let idx = index(vec![
-            model("zit", "z_image_turbo", ModelKind::Diffusion, "z_image_turbo_bf16.safetensors"),
+            model(
+                "zit",
+                "z_image_turbo",
+                ModelKind::Diffusion,
+                "z_image_turbo_bf16.safetensors",
+            ),
             component(&reg, "flux_ae"),
             component(&reg, "qwen3_4b_q8"),
         ]);
@@ -798,20 +1132,37 @@ mod tests {
         let reg = registry();
         // Qwen Image Edit Q4_K_M installed on a 16 GB card: Tight. Q3_K_M Fits → offered.
         let idx = index(vec![
-            model("qe", "qwen_image_edit_2511", ModelKind::Diffusion, "qwen-image-edit-2511-Q4_K_M.gguf"),
+            model(
+                "qe",
+                "qwen_image_edit_2511",
+                ModelKind::Diffusion,
+                "qwen-image-edit-2511-Q4_K_M.gguf",
+            ),
             component(&reg, "qwen_image_vae"),
             component(&reg, "qwen25_vl_7b_q8"),
             component(&reg, "qwen25_vl_7b_mmproj"),
         ]);
         let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
-        assert_eq!(summary(&e), (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits)));
+        assert_eq!(
+            summary(&e),
+            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits))
+        );
         assert!(!e.pick.installed);
         assert_eq!(e.pick.note.as_deref(), Some(TIGHT_INSTALLED_NOTE));
         assert!(e.pick.replaces_installed);
-        assert_eq!(e.pick.download_bytes, 9921 * MB, "only the smaller model; parts are shared");
+        assert_eq!(
+            e.pick.download_bytes,
+            9921 * MB,
+            "only the smaller model; parts are shared"
+        );
         // Once the smaller version is installed, the card shows it as done.
         let mut files = idx.files.clone();
-        files.push(model("qe3", "qwen_image_edit_2511", ModelKind::Diffusion, "qwen-image-edit-2511-Q3_K_M.gguf"));
+        files.push(model(
+            "qe3",
+            "qwen_image_edit_2511",
+            ModelKind::Diffusion,
+            "qwen-image-edit-2511-Q3_K_M.gguf",
+        ));
         let e = recommend_role(&reg, &index(files), &hw(16.0), "edit").unwrap();
         assert!(e.pick.installed);
         assert_eq!(e.pick.fit, Some(Fit::Fits));
@@ -826,7 +1177,15 @@ mod tests {
     fn civitai_pick_installed() {
         let reg = registry();
         let idx = index(vec![
-            with_civitai(model("nova", "sdxl_illustrious", ModelKind::Checkpoint, "novaAnimeXL_ilV190.safetensors"), 2940478),
+            with_civitai(
+                model(
+                    "nova",
+                    "sdxl_illustrious",
+                    ModelKind::Checkpoint,
+                    "novaAnimeXL_ilV190.safetensors",
+                ),
+                2940478,
+            ),
             component(&reg, "sdxl_vae_fp16_fix"),
         ]);
         let a = recommend_role(&reg, &idx, &hw(8.0), "anime").unwrap();
@@ -838,7 +1197,10 @@ mod tests {
     #[test]
     fn captioner_reuse() {
         let reg = registry();
-        let idx = index(vec![component(&reg, "qwen25_vl_7b_q8"), component(&reg, "qwen25_vl_7b_mmproj")]);
+        let idx = index(vec![
+            component(&reg, "qwen25_vl_7b_q8"),
+            component(&reg, "qwen25_vl_7b_mmproj"),
+        ]);
         assert!(captioner_reuse_available(&reg, &idx));
         let d = recommend_role(&reg, &idx, &hw(16.0), "describe").unwrap();
         assert!(d.pick.installed);
@@ -859,7 +1221,20 @@ mod tests {
     fn pick_json_matches_types_ts() {
         let p = picks(8.0, &index(vec![]));
         let v = serde_json::to_value(&role(&p, "realistic").pick).unwrap();
-        for key in ["role", "roleLabel", "title", "familyId", "goodAt", "downloadBytes", "vram", "fit", "installed", "quant", "licenseNote", "unavailableReason"] {
+        for key in [
+            "role",
+            "roleLabel",
+            "title",
+            "familyId",
+            "goodAt",
+            "downloadBytes",
+            "vram",
+            "fit",
+            "installed",
+            "quant",
+            "licenseNote",
+            "unavailableReason",
+        ] {
             assert!(v.get(key).is_some(), "{key}");
         }
         assert_eq!(v["fit"], "tight");
@@ -877,10 +1252,18 @@ mod tests {
     fn a_lighter_edit_model_is_offered_next_to_qwen_edit() {
         let p = picks(16.0, &index(vec![]));
         let alt = role(&p, "edit_alt");
-        assert_eq!(summary(alt), (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Fits)));
+        assert_eq!(
+            summary(alt),
+            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Fits))
+        );
         assert_eq!(alt.pick.role_label, "Edit");
-        assert_eq!(alt.pick.title.as_deref(), Some("FLUX.1 Kontext — lighter, faster edits"));
+        assert_eq!(
+            alt.pick.title.as_deref(),
+            Some("FLUX.1 Kontext — lighter, faster edits")
+        );
         // Small cards: Kontext is already the Edit pick → no second card.
-        assert!(picks(8.0, &index(vec![])).iter().all(|p| p.pick.role != "edit_alt"));
+        assert!(picks(8.0, &index(vec![]))
+            .iter()
+            .all(|p| p.pick.role != "edit_alt"));
     }
 }

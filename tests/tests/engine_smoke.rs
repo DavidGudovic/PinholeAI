@@ -12,7 +12,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use pinhole_tests::{config_dir, png_dimensions, png_text_chunks, repo_root, smoke, unique_suffix, PNG_SIGNATURE};
+use pinhole_tests::{
+    config_dir, png_dimensions, png_text_chunks, repo_root, smoke, unique_suffix, PNG_SIGNATURE,
+};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn engine_smoke() {
@@ -39,28 +41,58 @@ async fn engine_smoke() {
     let cfg = smoke::engine_config(&config_dir());
     let http = smoke::http_client();
 
-    let exe = smoke::install_cpu_engine(&http, &cfg, &cache).await.unwrap_or_else(|e| panic!("{e}"));
-    eprintln!("engine_smoke: sd-server at {} ({:.0}s)", exe.display(), t0.elapsed().as_secs_f32());
+    let exe = smoke::install_cpu_engine(&http, &cfg, &cache)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    eprintln!(
+        "engine_smoke: sd-server at {} ({:.0}s)",
+        exe.display(),
+        t0.elapsed().as_secs_f32()
+    );
 
     let model = smoke::smoke_model(&config_dir());
     eprintln!("engine_smoke: model {} ({})", model.file, model.url);
-    let model_path = smoke::ensure_model(&http, &cache, &model).await.unwrap_or_else(|e| panic!("{e}"));
-    eprintln!("engine_smoke: model ready ({:.0}s)", t0.elapsed().as_secs_f32());
+    let model_path = smoke::ensure_model(&http, &cache, &model)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
+    eprintln!(
+        "engine_smoke: model ready ({:.0}s)",
+        t0.elapsed().as_secs_f32()
+    );
 
-    let engine = smoke::launch(&cfg, &exe, &model_path, Duration::from_secs(900)).await.unwrap_or_else(|e| panic!("{e}"));
+    let engine = smoke::launch(&cfg, &exe, &model_path, Duration::from_secs(900))
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
 
     let sentinel = format!("PINHOLE_SENTINEL_7f3a_{}", unique_suffix());
     let prompt = format!("a red apple on a wooden table, studio photo, {sentinel}");
     let negative = format!("blurry, NEG_SENTINEL_5b1e_{}", unique_suffix());
-    let result = smoke::txt2img(&engine, &prompt, &negative, (256, 256), 4, 42, Duration::from_secs(1800)).await;
+    let result = smoke::txt2img(
+        &engine,
+        &prompt,
+        &negative,
+        (256, 256),
+        4,
+        42,
+        Duration::from_secs(1800),
+    )
+    .await;
     let log_tail = engine.logs().tail_text(400);
     smoke::stop(engine).await;
     let images = result.unwrap_or_else(|e| panic!("{e}"));
 
     assert_eq!(images.len(), 1, "expected exactly one image");
     let png = &images[0];
-    assert!(png.len() > 1000 && png[..8] == PNG_SIGNATURE, "engine did not return a PNG ({} bytes)", png.len());
-    assert_eq!(png_dimensions(png), Some((256, 256)), "unexpected image size");
+    assert!(
+        png.len() > 1000 && png[..8] == PNG_SIGNATURE,
+        "engine did not return a PNG ({} bytes)",
+        png.len()
+    );
+    assert_eq!(
+        png_dimensions(png),
+        Some((256, 256)),
+        "unexpected image size"
+    );
 
     // embed_image_metadata:false → no chunk may carry the prompt (or any generation parameters)
     for (kind, keyword, text) in png_text_chunks(png) {
@@ -69,10 +101,16 @@ async fn engine_smoke() {
             !text.contains(&sentinel) && !keyword.contains(&sentinel),
             "PNG {kind} chunk `{keyword}` contains the prompt — embed_image_metadata must be false"
         );
-        eprintln!("engine_smoke: note: PNG has a {kind} chunk `{keyword}` ({} bytes)", text.len());
+        eprintln!(
+            "engine_smoke: note: PNG has a {kind} chunk `{keyword}` ({} bytes)",
+            text.len()
+        );
     }
     // The engine output ring buffer must have redacted the prompt.
-    assert!(!log_tail.contains(&sentinel), "engine log buffer contains the prompt (redaction failed)");
+    assert!(
+        !log_tail.contains(&sentinel),
+        "engine log buffer contains the prompt (redaction failed)"
+    );
 
     // Not a blank/NaN image: decode and require some pixel variation.
     let decoder = png::Decoder::new(std::io::Cursor::new(png.as_slice()));
@@ -80,8 +118,13 @@ async fn engine_smoke() {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).expect("PNG frame decodes");
     let pixels = &buf[..info.buffer_size()];
-    let (min, max) = pixels.iter().fold((255u8, 0u8), |(lo, hi), &p| (lo.min(p), hi.max(p)));
-    assert!(max.saturating_sub(min) > 16, "image is blank (all pixels within {min}..={max}) — VAE/NaN problem?");
+    let (min, max) = pixels
+        .iter()
+        .fold((255u8, 0u8), |(lo, hi), &p| (lo.min(p), hi.max(p)));
+    assert!(
+        max.saturating_sub(min) > 16,
+        "image is blank (all pixels within {min}..={max}) — VAE/NaN problem?"
+    );
 
     if let Some(out) = std::env::var_os("PINHOLE_SMOKE_OUT").filter(|v| !v.is_empty()) {
         let out = PathBuf::from(out);

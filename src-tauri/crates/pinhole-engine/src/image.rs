@@ -5,7 +5,9 @@
 use std::io::Cursor;
 
 use image::metadata::Orientation;
-use image::{DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits};
+use image::{
+    DynamicImage, ExtendedColorType, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Limits,
+};
 
 /// Import limits (SPEC: reject > 50 MP or > 64 MB).
 pub const MAX_IMPORT_BYTES: usize = 64 * 1024 * 1024;
@@ -94,14 +96,20 @@ pub fn sniff(bytes: &[u8]) -> Result<ImageInfo, ImageError> {
     let kind = kind_of(bytes).ok_or(ImageError::Unsupported)?;
     let mut reader = ImageReader::with_format(Cursor::new(bytes), kind.format());
     reader.limits(limits());
-    let (width, height) = reader.into_dimensions().map_err(|e| ImageError::Corrupt(short(&e.to_string())))?;
+    let (width, height) = reader
+        .into_dimensions()
+        .map_err(|e| ImageError::Corrupt(short(&e.to_string())))?;
     if width == 0 || height == 0 {
         return Err(ImageError::Corrupt("zero size".into()));
     }
     if u64::from(width) * u64::from(height) > MAX_IMPORT_PIXELS {
         return Err(ImageError::TooManyPixels);
     }
-    Ok(ImageInfo { kind, width, height })
+    Ok(ImageInfo {
+        kind,
+        width,
+        height,
+    })
 }
 
 /// Decode any accepted format to RGBA8.
@@ -109,7 +117,9 @@ pub fn decode_rgba(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), ImageError> {
     let kind = kind_of(bytes).ok_or(ImageError::Unsupported)?;
     let mut reader = ImageReader::with_format(Cursor::new(bytes), kind.format());
     reader.limits(limits());
-    let img = reader.decode().map_err(|e| ImageError::Corrupt(short(&e.to_string())))?;
+    let img = reader
+        .decode()
+        .map_err(|e| ImageError::Corrupt(short(&e.to_string())))?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
     Ok((rgba.into_raw(), w, h))
@@ -142,7 +152,10 @@ pub fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, 
     let enc = image::codecs::png::PngEncoder::new(&mut out);
     let opaque = rgba.chunks_exact(4).all(|p| p[3] == 255);
     let res = if opaque {
-        let rgb: Vec<u8> = rgba.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let rgb: Vec<u8> = rgba
+            .chunks_exact(4)
+            .flat_map(|p| [p[0], p[1], p[2]])
+            .collect();
         enc.write_image(&rgb, width, height, ExtendedColorType::Rgb8)
     } else {
         enc.write_image(rgba, width, height, ExtendedColorType::Rgba8)
@@ -158,7 +171,9 @@ pub fn encode_png_rgba(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, 
 pub fn jpeg_with_exif(w: u32, h: u32, text: &str) -> Vec<u8> {
     let mut plain = Vec::new();
     let rgb = vec![128u8; (w * h * 3) as usize];
-    image::codecs::jpeg::JpegEncoder::new(&mut plain).write_image(&rgb, w, h, ExtendedColorType::Rgb8).expect("jpeg");
+    image::codecs::jpeg::JpegEncoder::new(&mut plain)
+        .write_image(&rgb, w, h, ExtendedColorType::Rgb8)
+        .expect("jpeg");
     // TIFF (little endian): IFD0 with ImageDescription (0x010e) and Orientation (0x0112).
     let text = format!("{text}\0");
     let mut tiff = b"II*\0".to_vec();
@@ -197,7 +212,10 @@ pub fn downscale_2x_box(rgba: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, 
                     let (xx, yy) = (xx.min(w - 1), yy.min(h - 1));
                     u32::from(rgba[(yy * w + xx) * 4 + c])
                 };
-                let sum = px(2 * x, 2 * y) + px(2 * x + 1, 2 * y) + px(2 * x, 2 * y + 1) + px(2 * x + 1, 2 * y + 1);
+                let sum = px(2 * x, 2 * y)
+                    + px(2 * x + 1, 2 * y)
+                    + px(2 * x, 2 * y + 1)
+                    + px(2 * x + 1, 2 * y + 1);
                 out[(y * nw as usize + x) * 4 + c] = ((sum + 2) / 4) as u8;
             }
         }
@@ -216,16 +234,32 @@ mod tests {
     fn jpeg(w: u32, h: u32) -> Vec<u8> {
         let mut out = Vec::new();
         let rgb = vec![128u8; (w * h * 3) as usize];
-        image::codecs::jpeg::JpegEncoder::new(&mut out).write_image(&rgb, w, h, ExtendedColorType::Rgb8).unwrap();
+        image::codecs::jpeg::JpegEncoder::new(&mut out)
+            .write_image(&rgb, w, h, ExtendedColorType::Rgb8)
+            .unwrap();
         out
     }
 
     #[test]
     fn sniffs_png_jpeg_and_rejects_others() {
         let png = encode_png_rgba(&[1, 2, 3, 255].repeat(6 * 5), 6, 5).unwrap();
-        assert_eq!(sniff(&png).unwrap(), ImageInfo { kind: Kind::Png, width: 6, height: 5 });
+        assert_eq!(
+            sniff(&png).unwrap(),
+            ImageInfo {
+                kind: Kind::Png,
+                width: 6,
+                height: 5
+            }
+        );
         let j = jpeg(7, 3);
-        assert_eq!(sniff(&j).unwrap(), ImageInfo { kind: Kind::Jpeg, width: 7, height: 3 });
+        assert_eq!(
+            sniff(&j).unwrap(),
+            ImageInfo {
+                kind: Kind::Jpeg,
+                width: 7,
+                height: 3
+            }
+        );
         assert_eq!(sniff(b"GIF89a....").unwrap_err(), ImageError::Unsupported);
         assert!(matches!(sniff(&png[..20]), Err(ImageError::Corrupt(_))));
     }
@@ -250,14 +284,37 @@ mod tests {
     fn reencode_drops_exif_and_applies_orientation() {
         let j = jpeg_with_exif(8, 4, "GPS 52.52N PINHOLE_EXIF_SECRET");
         assert!(j.windows(19).any(|w| w == b"PINHOLE_EXIF_SECRET"));
-        assert_eq!(sniff(&j).unwrap(), ImageInfo { kind: Kind::Jpeg, width: 8, height: 4 });
+        assert_eq!(
+            sniff(&j).unwrap(),
+            ImageInfo {
+                kind: Kind::Jpeg,
+                width: 8,
+                height: 4
+            }
+        );
         let (png, w, h) = reencode_png(&j).unwrap();
         assert_eq!((w, h), (4, 8), "rotated by the EXIF orientation");
         assert_eq!(kind_of(&png), Some(Kind::Png));
         assert!(!png.windows(19).any(|w| w == b"PINHOLE_EXIF_SECRET"));
-        let kinds: Vec<String> = crate::png::chunks(&png).unwrap().iter().map(|c| c.kind_str()).collect();
-        assert!(kinds.iter().all(|k| ["IHDR", "IDAT", "IEND"].contains(&k.as_str())), "{kinds:?}");
-        assert_eq!(sniff(&png).unwrap(), ImageInfo { kind: Kind::Png, width: 4, height: 8 });
+        let kinds: Vec<String> = crate::png::chunks(&png)
+            .unwrap()
+            .iter()
+            .map(|c| c.kind_str())
+            .collect();
+        assert!(
+            kinds
+                .iter()
+                .all(|k| ["IHDR", "IDAT", "IEND"].contains(&k.as_str())),
+            "{kinds:?}"
+        );
+        assert_eq!(
+            sniff(&png).unwrap(),
+            ImageInfo {
+                kind: Kind::Png,
+                width: 4,
+                height: 8
+            }
+        );
         assert_eq!(reencode_png(b"nope").unwrap_err(), ImageError::Unsupported);
     }
 

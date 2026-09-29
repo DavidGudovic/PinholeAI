@@ -72,7 +72,9 @@ mod tests {
         let (_t, core) = test_core(Arc::new(NullSink));
 
         let styles = list_styles(&core).unwrap();
-        assert!(styles.iter().any(|s| s.id == "builtin:film-photo" && s.builtin));
+        assert!(styles
+            .iter()
+            .any(|s| s.id == "builtin:film-photo" && s.builtin));
         let saved = save_style(
             &core,
             Style {
@@ -89,11 +91,20 @@ mod tests {
         assert_eq!(saved.id, "mine");
         assert!(core.data.styles().join("mine.yaml").is_file());
         assert_eq!(get_style(&core, &saved.id).unwrap(), saved);
-        assert_eq!(get_style(&core, "builtin:film-photo").unwrap().name, "Film photo");
+        assert_eq!(
+            get_style(&core, "builtin:film-photo").unwrap().name,
+            "Film photo"
+        );
         let e = delete_style(&core, "builtin:film-photo").unwrap_err();
-        assert_eq!((e.code.as_str(), e.message.as_str()), ("invalid", "Built-in styles can't be deleted."));
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("invalid", "Built-in styles can't be deleted.")
+        );
         delete_style(&core, &saved.id).unwrap();
-        assert_eq!(delete_style(&core, &saved.id).unwrap_err().code, "not_found");
+        assert_eq!(
+            delete_style(&core, &saved.id).unwrap_err().code,
+            "not_found"
+        );
 
         let presets = list_presets(&core).unwrap();
         assert!(presets.iter().filter(|p| p.builtin).count() >= 3);
@@ -107,19 +118,32 @@ mod tests {
         let copy = save_preset(&core, serde_json::from_value(json).unwrap()).unwrap();
         assert!(!copy.builtin);
         assert_eq!(get_preset(&core, &copy.id).unwrap(), copy);
-        let text = std::fs::read_to_string(core.data.presets().join(format!("{}.yaml", copy.id))).unwrap();
+        let text =
+            std::fs::read_to_string(core.data.presets().join(format!("{}.yaml", copy.id))).unwrap();
         assert!(!text.contains(SENTINEL));
-        assert_eq!(delete_preset(&core, "builtin:photo-portrait").unwrap_err().code, "invalid");
+        assert_eq!(
+            delete_preset(&core, "builtin:photo-portrait")
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
         delete_preset(&core, &copy.id).unwrap();
     }
 
     #[test]
     fn error_mapping_keeps_plain_messages() {
-        let e = store_err(StoreError::Invalid("Built-in styles can't be deleted.".into()));
-        assert_eq!((e.code.as_str(), e.message.as_str()), ("invalid", "Built-in styles can't be deleted."));
+        let e = store_err(StoreError::Invalid(
+            "Built-in styles can't be deleted.".into(),
+        ));
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("invalid", "Built-in styles can't be deleted.")
+        );
         let e = store_err(StoreError::NotFound("Style".into()));
         assert_eq!(e.code, "not_found");
-        let e = store_err(StoreError::Keychain("Your system keychain isn't available".into()));
+        let e = store_err(StoreError::Keychain(
+            "Your system keychain isn't available".into(),
+        ));
         assert_eq!(e.message, "Your system keychain isn't available");
     }
 }

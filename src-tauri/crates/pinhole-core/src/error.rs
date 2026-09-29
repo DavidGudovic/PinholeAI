@@ -24,7 +24,11 @@ pub type CoreResult<T> = Result<T, CoreError>;
 
 impl CoreError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), details: None }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            details: None,
+        }
     }
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
         self.details = Some(details.into());
@@ -69,10 +73,20 @@ impl From<pinhole_net::NetError> for CoreError {
     fn from(e: pinhole_net::NetError) -> Self {
         use pinhole_net::NetError as N;
         match e {
-            N::Offline => Self::new("offline", "Offline mode is on. Turn it off in Settings to browse or download."),
-            N::Unauthorized(_) => Self::new("unauthorized", "CivitAI needs an API key for this download. Add one in Settings."),
+            N::Offline => Self::new(
+                "offline",
+                "Offline mode is on. Turn it off in Settings to browse or download.",
+            ),
+            N::Unauthorized(_) => Self::new(
+                "unauthorized",
+                "CivitAI needs an API key for this download. Add one in Settings.",
+            ),
             // The transport text ("error sending request: tunnel error…") is for the Details toggle.
-            other => Self::new("network", "Network problem — check your connection and try again.").with_details(other.to_string()),
+            other => Self::new(
+                "network",
+                "Network problem — check your connection and try again.",
+            )
+            .with_details(other.to_string()),
         }
     }
 }
@@ -89,36 +103,65 @@ mod tests {
 
     #[test]
     fn io_store_and_registry_errors_keep_raw_text_in_details() {
-        let os = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access is denied. (os error 5)");
+        let os = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "Access is denied. (os error 5)",
+        );
         let e = CoreError::from(os);
         assert_eq!(e.code, "io");
         assert_eq!(e.message, "Pinhole couldn't read or write a file. Check that the disk isn't full and that Pinhole's Data folder is writable.");
         assert!(!e.message.contains("os error"));
         assert_eq!(e.details.as_deref(), Some("Access is denied. (os error 5)"));
 
-        let e = CoreError::from(pinhole_store::StoreError::Io(std::io::Error::other("No space left on device (os error 28)")));
-        assert_eq!((e.code.as_str(), e.message.as_str()), ("io", pinhole_store::IO_MESSAGE));
+        let e = CoreError::from(pinhole_store::StoreError::Io(std::io::Error::other(
+            "No space left on device (os error 28)",
+        )));
+        assert_eq!(
+            (e.code.as_str(), e.message.as_str()),
+            ("io", pinhole_store::IO_MESSAGE)
+        );
         assert!(e.details.unwrap().contains("os error 28"));
 
-        let e = CoreError::from(pinhole_store::StoreError::Parse { path: "/d/Data/config/settings.yaml".into(), msg: "invalid type: map".into() });
+        let e = CoreError::from(pinhole_store::StoreError::Parse {
+            path: "/d/Data/config/settings.yaml".into(),
+            msg: "invalid type: map".into(),
+        });
         assert!(e.message.contains("(settings.yaml)"), "{}", e.message);
         assert!(!e.message.contains("invalid type"), "{}", e.message);
-        assert_eq!(e.details.as_deref(), Some("/d/Data/config/settings.yaml: invalid type: map"));
+        assert_eq!(
+            e.details.as_deref(),
+            Some("/d/Data/config/settings.yaml: invalid type: map")
+        );
         // User-facing store messages carry no details.
-        let e = CoreError::from(pinhole_store::StoreError::Invalid("Built-in styles can't be deleted.".into()));
+        let e = CoreError::from(pinhole_store::StoreError::Invalid(
+            "Built-in styles can't be deleted.".into(),
+        ));
         assert_eq!((e.code.as_str(), e.details), ("invalid", None));
 
-        let e = CoreError::from(pinhole_registry::Registry::from_yaml("families: [", None).unwrap_err());
+        let e = CoreError::from(
+            pinhole_registry::Registry::from_yaml("families: [", None).unwrap_err(),
+        );
         assert_eq!(e.code, "invalid");
-        assert!(e.message.starts_with("Pinhole's list of models couldn't be loaded"), "{}", e.message);
+        assert!(
+            e.message
+                .starts_with("Pinhole's list of models couldn't be loaded"),
+            "{}",
+            e.message
+        );
         assert!(e.details.unwrap().contains("models.yaml"));
     }
 
     #[test]
     fn network_error_keeps_transport_text_in_details() {
-        let e = CoreError::from(pinhole_net::NetError::Transport("error sending request: tunnel error: unsuccessful".into()));
+        let e = CoreError::from(pinhole_net::NetError::Transport(
+            "error sending request: tunnel error: unsuccessful".into(),
+        ));
         assert_eq!(e.code, "network");
         assert!(!e.message.contains("tunnel"), "{}", e.message);
-        assert!(e.details.as_deref().unwrap_or_default().contains("tunnel error"));
+        assert!(e
+            .details
+            .as_deref()
+            .unwrap_or_default()
+            .contains("tunnel error"));
     }
 }

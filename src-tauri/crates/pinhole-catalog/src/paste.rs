@@ -35,14 +35,21 @@ pub fn category(filters: &CatalogFilters, kind: &str) -> Category {
 
 /// Installed file for a pasted resource: CivitAI version id, else hash
 /// (full SHA-256 or AutoV2), among models or LoRAs.
-pub fn match_installed<'a>(index: &'a InstalledIndex, r: &PastedResource, cat: Category) -> Option<&'a InstalledFile> {
+pub fn match_installed<'a>(
+    index: &'a InstalledIndex,
+    r: &PastedResource,
+    cat: Category,
+) -> Option<&'a InstalledFile> {
     let pool: Vec<&InstalledFile> = match cat {
         Category::Checkpoint => index.models().collect(),
         Category::Lora => index.loras().collect(),
         Category::Other => return None,
     };
     if let Some(vid) = r.model_version_id {
-        if let Some(f) = pool.iter().find(|f| f.civitai.as_ref().is_some_and(|c| c.version_id == vid)) {
+        if let Some(f) = pool
+            .iter()
+            .find(|f| f.civitai.as_ref().is_some_and(|c| c.version_id == vid))
+        {
             return Some(f);
         }
     }
@@ -51,8 +58,16 @@ pub fn match_installed<'a>(index: &'a InstalledIndex, r: &PastedResource, cat: C
 }
 
 pub fn display_name(r: &PastedResource) -> String {
-    let name = r.model_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let ver = r.model_version_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let name = r
+        .model_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let ver = r
+        .model_version_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     match (name, ver) {
         (Some(n), Some(v)) => format!("{n} · {v}"),
         (Some(n), None) => n.to_string(),
@@ -67,7 +82,9 @@ pub fn display_name(r: &PastedResource) -> String {
 
 fn ignored_problem(kind: &str) -> String {
     match kind.trim().to_ascii_lowercase().as_str() {
-        "embed" | "embedding" | "textualinversion" | "textual inversion" => "Pinhole doesn't support embeddings yet, so this one is skipped.".into(),
+        "embed" | "embedding" | "textualinversion" | "textual inversion" => {
+            "Pinhole doesn't support embeddings yet, so this one is skipped.".into()
+        }
         "vae" => "Pinhole picks the image decoder (VAE) automatically.".into(),
         "" => "Pinhole doesn't know what this resource is.".into(),
         other => format!("Pinhole doesn't use {other} resources."),
@@ -81,7 +98,10 @@ pub const NO_REFERENCE: &str =
 /// CivitAI lookups (the real client, or a fake in tests).
 pub trait VersionLookup {
     fn version(&self, id: u64) -> impl Future<Output = Result<ModelVersion, NetError>> + Send;
-    fn by_hash(&self, hash: &str) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send;
+    fn by_hash(
+        &self,
+        hash: &str,
+    ) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send;
 }
 
 impl VersionLookup for CivitaiClient {
@@ -89,7 +109,10 @@ impl VersionLookup for CivitaiClient {
         let c = self.clone();
         async move { c.model_version(id).await }
     }
-    fn by_hash(&self, hash: &str) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
+    fn by_hash(
+        &self,
+        hash: &str,
+    ) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
         let c = self.clone();
         let h = hash.to_string();
         async move { CivitaiClient::by_hash(&c, &h).await }
@@ -103,9 +126,26 @@ pub struct PasteEnv<'a> {
     pub filters: &'a CatalogFilters,
 }
 
-fn installed_resolved(env: &PasteEnv, r: &PastedResource, f: &InstalledFile, cat: Category) -> ResolvedResource {
-    let fit = match (cat, f.family.as_deref().and_then(|id| env.registry.family(id))) {
-        (Category::Checkpoint, Some(fam)) => Some(families::need_and_fit(env.registry, fam, env.hw, families::installed_need(env.registry, fam, f, env.hw), f.size_bytes).1),
+fn installed_resolved(
+    env: &PasteEnv,
+    r: &PastedResource,
+    f: &InstalledFile,
+    cat: Category,
+) -> ResolvedResource {
+    let fit = match (
+        cat,
+        f.family.as_deref().and_then(|id| env.registry.family(id)),
+    ) {
+        (Category::Checkpoint, Some(fam)) => Some(
+            families::need_and_fit(
+                env.registry,
+                fam,
+                env.hw,
+                families::installed_need(env.registry, fam, f, env.hw),
+                f.size_bytes,
+            )
+            .1,
+        ),
         _ => None,
     };
     ResolvedResource {
@@ -120,28 +160,57 @@ fn installed_resolved(env: &PasteEnv, r: &PastedResource, f: &InstalledFile, cat
     }
 }
 
-fn from_version(env: &PasteEnv, r: &PastedResource, v: &ModelVersion, cat: Category) -> ResolvedResource {
+fn from_version(
+    env: &PasteEnv,
+    r: &PastedResource,
+    v: &ModelVersion,
+    cat: Category,
+) -> ResolvedResource {
     let picked = select::select_file(&v.files, &env.filters.allowed_file_formats);
     let sha = picked.as_ref().ok().and_then(|f| f.sha256());
     if let Some(installed) = sha.as_deref().and_then(|h| env.index.find_by_sha(h)) {
         return installed_resolved(env, r, installed, cat);
     }
     let mut problem = picked.as_ref().err().cloned();
-    let family_id = match families::resolve_family(env.registry, sha.as_deref(), Some(&v.base_model), None) {
-        FamilyResolution::Resolved(id) => Some(id),
-        FamilyResolution::Ambiguous(ids) if !v.base_model.eq_ignore_ascii_case(families::OTHER_BASE_MODEL) => ids.into_iter().next(),
-        FamilyResolution::Ambiguous(_) => None,
-        FamilyResolution::Unsupported(base) => {
-            problem.get_or_insert_with(|| families::unsupported_message(base.as_deref()));
-            None
-        }
-    };
+    let family_id =
+        match families::resolve_family(env.registry, sha.as_deref(), Some(&v.base_model), None) {
+            FamilyResolution::Resolved(id) => Some(id),
+            FamilyResolution::Ambiguous(ids)
+                if !v
+                    .base_model
+                    .eq_ignore_ascii_case(families::OTHER_BASE_MODEL) =>
+            {
+                ids.into_iter().next()
+            }
+            FamilyResolution::Ambiguous(_) => None,
+            FamilyResolution::Unsupported(base) => {
+                problem.get_or_insert_with(|| families::unsupported_message(base.as_deref()));
+                None
+            }
+        };
     let bytes = picked.as_ref().ok().map(|f| f.size_bytes());
-    let fit = match (cat, family_id.as_deref().and_then(|id| env.registry.family(id)), bytes) {
-        (Category::Checkpoint, Some(fam), Some(b)) => Some(families::need_and_fit(env.registry, fam, env.hw, families::family_need(env.registry, fam, env.hw, b), b).1),
+    let fit = match (
+        cat,
+        family_id.as_deref().and_then(|id| env.registry.family(id)),
+        bytes,
+    ) {
+        (Category::Checkpoint, Some(fam), Some(b)) => Some(
+            families::need_and_fit(
+                env.registry,
+                fam,
+                env.hw,
+                families::family_need(env.registry, fam, env.hw, b),
+                b,
+            )
+            .1,
+        ),
         _ => None,
     };
-    let name = v.model.as_ref().map(|m| m.name.trim().to_string()).filter(|n| !n.is_empty());
+    let name = v
+        .model
+        .as_ref()
+        .map(|m| m.name.trim().to_string())
+        .filter(|n| !n.is_empty());
     let display_name = match name {
         Some(n) if !v.name.trim().is_empty() => format!("{n} · {}", v.name.trim()),
         Some(n) => n,
@@ -159,7 +228,12 @@ fn from_version(env: &PasteEnv, r: &PastedResource, v: &ModelVersion, cat: Categ
     }
 }
 
-async fn resolve_one<L: VersionLookup>(env: &PasteEnv<'_>, lookup: Option<&L>, r: &PastedResource, cat: Category) -> ResolvedResource {
+async fn resolve_one<L: VersionLookup>(
+    env: &PasteEnv<'_>,
+    lookup: Option<&L>,
+    r: &PastedResource,
+    cat: Category,
+) -> ResolvedResource {
     if let Some(f) = match_installed(env.index, r, cat) {
         return installed_resolved(env, r, f, cat);
     }
@@ -209,11 +283,17 @@ pub async fn resolve_resources<L: VersionLookup + Sync>(
     lookup: Option<&L>,
     resources: &[PastedResource],
 ) -> ResolvedResources {
-    let mut out = ResolvedResources { checkpoint: None, loras: Vec::new(), ignored: Vec::new() };
+    let mut out = ResolvedResources {
+        checkpoint: None,
+        loras: Vec::new(),
+        ignored: Vec::new(),
+    };
     for r in resources.iter().take(64) {
         let cat = category(env.filters, &r.kind);
         match cat {
-            Category::Checkpoint if out.checkpoint.is_none() => out.checkpoint = Some(resolve_one(env, lookup, r, cat).await),
+            Category::Checkpoint if out.checkpoint.is_none() => {
+                out.checkpoint = Some(resolve_one(env, lookup, r, cat).await)
+            }
             Category::Checkpoint => out.ignored.push(ResolvedResource {
                 resource: r.clone(),
                 installed_id: None,
@@ -240,10 +320,21 @@ pub async fn resolve_resources<L: VersionLookup + Sync>(
     let ckpt_family = out.checkpoint.as_ref().and_then(|c| c.family_id.clone());
     if let Some(ckpt) = ckpt_family.as_deref() {
         for l in out.loras.iter_mut() {
-            let Some(lf) = l.family_id.as_deref() else { continue };
+            let Some(lf) = l.family_id.as_deref() else {
+                continue;
+            };
             if l.problem.is_none() && !families::same_architecture(env.registry, lf, ckpt) {
-                let label = |id: &str| env.registry.family(id).map(|f| f.label.clone()).unwrap_or_else(|| id.to_string());
-                l.problem = Some(format!("This {} add-on doesn't work with {} models.", label(lf), label(ckpt)));
+                let label = |id: &str| {
+                    env.registry
+                        .family(id)
+                        .map(|f| f.label.clone())
+                        .unwrap_or_else(|| id.to_string())
+                };
+                l.problem = Some(format!(
+                    "This {} add-on doesn't work with {} models.",
+                    label(lf),
+                    label(ckpt)
+                ));
             }
         }
     }
@@ -294,14 +385,20 @@ mod tests {
         assert_eq!(category(&f, "lycoris"), Category::Lora);
         assert_eq!(category(&f, "LoCon"), Category::Lora);
         assert_eq!(category(&f, "embed"), Category::Other);
-        assert_eq!(ignored_problem("embed"), "Pinhole doesn't support embeddings yet, so this one is skipped.");
+        assert_eq!(
+            ignored_problem("embed"),
+            "Pinhole doesn't support embeddings yet, so this one is skipped."
+        );
     }
 
     #[test]
     fn installed_matching_by_version_and_autov2() {
         let index = InstalledIndex {
             schema_version: 1,
-            files: vec![file("ckpt", ModelKind::Checkpoint, SHA_A, Some(789646)), file("lora", ModelKind::Lora, SHA_B, None)],
+            files: vec![
+                file("ckpt", ModelKind::Checkpoint, SHA_A, Some(789646)),
+                file("lora", ModelKind::Lora, SHA_B, None),
+            ],
             ..Default::default()
         };
         let r = |kind: &str, vid: Option<u64>, hash: Option<&str>| PastedResource {
@@ -310,20 +407,69 @@ mod tests {
             hash: hash.map(Into::into),
             ..Default::default()
         };
-        assert_eq!(match_installed(&index, &r("checkpoint", Some(789646), None), Category::Checkpoint).unwrap().id, "ckpt");
-        assert_eq!(match_installed(&index, &r("checkpoint", None, Some("6A35A78557")), Category::Checkpoint).unwrap().id, "ckpt");
-        assert_eq!(match_installed(&index, &r("checkpoint", Some(1), Some("6a35a78557")), Category::Checkpoint).unwrap().id, "ckpt");
-        assert_eq!(match_installed(&index, &r("lora", None, Some("0F4168490E")), Category::Lora).unwrap().id, "lora");
-        assert!(match_installed(&index, &r("lora", None, Some("6A35A78557")), Category::Lora).is_none(), "a checkpoint is not a LoRA");
-        assert!(match_installed(&index, &r("checkpoint", None, Some("0F4168490E38")), Category::Checkpoint).is_none());
-        assert!(match_installed(&index, &r("checkpoint", None, None), Category::Checkpoint).is_none());
+        assert_eq!(
+            match_installed(
+                &index,
+                &r("checkpoint", Some(789646), None),
+                Category::Checkpoint
+            )
+            .unwrap()
+            .id,
+            "ckpt"
+        );
+        assert_eq!(
+            match_installed(
+                &index,
+                &r("checkpoint", None, Some("6A35A78557")),
+                Category::Checkpoint
+            )
+            .unwrap()
+            .id,
+            "ckpt"
+        );
+        assert_eq!(
+            match_installed(
+                &index,
+                &r("checkpoint", Some(1), Some("6a35a78557")),
+                Category::Checkpoint
+            )
+            .unwrap()
+            .id,
+            "ckpt"
+        );
+        assert_eq!(
+            match_installed(&index, &r("lora", None, Some("0F4168490E")), Category::Lora)
+                .unwrap()
+                .id,
+            "lora"
+        );
+        assert!(
+            match_installed(&index, &r("lora", None, Some("6A35A78557")), Category::Lora).is_none(),
+            "a checkpoint is not a LoRA"
+        );
+        assert!(match_installed(
+            &index,
+            &r("checkpoint", None, Some("0F4168490E38")),
+            Category::Checkpoint
+        )
+        .is_none());
+        assert!(
+            match_installed(&index, &r("checkpoint", None, None), Category::Checkpoint).is_none()
+        );
     }
 
     #[test]
     fn display_names() {
-        let r = PastedResource { model_name: Some("Juggernaut XL".into()), model_version_name: Some("Ragnarok".into()), ..Default::default() };
+        let r = PastedResource {
+            model_name: Some("Juggernaut XL".into()),
+            model_version_name: Some("Ragnarok".into()),
+            ..Default::default()
+        };
         assert_eq!(display_name(&r), "Juggernaut XL · Ragnarok");
-        let r = PastedResource { hash: Some("ABCDEF0123".into()), ..Default::default() };
+        let r = PastedResource {
+            hash: Some("ABCDEF0123".into()),
+            ..Default::default()
+        };
         assert_eq!(display_name(&r), "Unknown model (ABCDEF0123)");
     }
 }
@@ -346,23 +492,46 @@ mod resolve_tests {
 
     impl VersionLookup for FakeLookup {
         fn version(&self, id: u64) -> impl Future<Output = Result<ModelVersion, NetError>> + Send {
-            let r = if self.fail { Err(NetError::Timeout) } else { self.by_id.get(&id).cloned().ok_or(NetError::Status(404)) };
+            let r = if self.fail {
+                Err(NetError::Timeout)
+            } else {
+                self.by_id.get(&id).cloned().ok_or(NetError::Status(404))
+            };
             async move { r }
         }
-        fn by_hash(&self, hash: &str) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
-            let r = if self.fail { Err(NetError::Timeout) } else { Ok(self.by_hash.get(&hash.to_ascii_uppercase()).cloned()) };
+        fn by_hash(
+            &self,
+            hash: &str,
+        ) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
+            let r = if self.fail {
+                Err(NetError::Timeout)
+            } else {
+                Ok(self.by_hash.get(&hash.to_ascii_uppercase()).cloned())
+            };
             async move { r }
         }
     }
 
     fn lookup(fail: bool) -> FakeLookup {
-        let jugg: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap();
-        let lora: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
-        FakeLookup { by_id: HashMap::from([(1759168, jugg)]), by_hash: HashMap::from([("0F4168490E".to_string(), lora)]), fail }
+        let jugg: ModelVersion =
+            serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap();
+        let lora: ModelVersion =
+            serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
+        FakeLookup {
+            by_id: HashMap::from([(1759168, jugg)]),
+            by_hash: HashMap::from([("0F4168490E".to_string(), lora)]),
+            fail,
+        }
     }
 
     fn res(kind: &str, vid: Option<u64>, hash: Option<&str>) -> PastedResource {
-        PastedResource { kind: kind.into(), model_version_id: vid, hash: hash.map(Into::into), weight: Some(0.8), ..Default::default() }
+        PastedResource {
+            kind: kind.into(),
+            model_version_id: vid,
+            hash: hash.map(Into::into),
+            weight: Some(0.8),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
@@ -373,7 +542,12 @@ mod resolve_tests {
         pony.sha256 = "1b6405d1ef5a816105210b20a8f0fc129869a25876e45c0891e4f6d972bf74c2".into();
         let idx = index(vec![pony]);
         let h = hw(12.0);
-        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
         let l = lookup(false);
         let out = resolve_resources(
             &env,
@@ -402,16 +576,32 @@ mod resolve_tests {
         let sd15 = &out.loras[0];
         assert_eq!(sd15.installable_version_id, Some(91234));
         assert_eq!(sd15.family_id.as_deref(), Some("sd15"));
-        assert_eq!(sd15.problem.as_deref(), Some("This Stable Diffusion 1.5 add-on doesn't work with SDXL models."));
+        assert_eq!(
+            sd15.problem.as_deref(),
+            Some("This Stable Diffusion 1.5 add-on doesn't work with SDXL models.")
+        );
         let pony = &out.loras[1];
-        assert_eq!(pony.installed_id.as_deref(), Some("pony-lora"), "installed LoRA matched by AutoV2");
+        assert_eq!(
+            pony.installed_id.as_deref(),
+            Some("pony-lora"),
+            "installed LoRA matched by AutoV2"
+        );
         assert_eq!(pony.problem, None, "Pony LoRAs are SDXL-architecture");
         let unknown = &out.loras[2];
-        assert_eq!(unknown.problem.as_deref(), Some("Not installed, and CivitAI doesn't know this file."));
+        assert_eq!(
+            unknown.problem.as_deref(),
+            Some("Not installed, and CivitAI doesn't know this file.")
+        );
 
         assert_eq!(out.ignored.len(), 2);
-        assert!(out.ignored.iter().any(|r| r.problem.as_deref() == Some("Only one model can be used at a time.")));
-        assert!(out.ignored.iter().any(|r| r.problem.as_deref().is_some_and(|p| p.contains("embeddings"))));
+        assert!(out
+            .ignored
+            .iter()
+            .any(|r| r.problem.as_deref() == Some("Only one model can be used at a time.")));
+        assert!(out.ignored.iter().any(|r| r
+            .problem
+            .as_deref()
+            .is_some_and(|p| p.contains("embeddings"))));
         let json = serde_json::to_value(&out.loras[0]).unwrap();
         assert_eq!(json["resource"]["type"], "lora");
         assert!(json.get("installableVersionId").is_some());
@@ -421,10 +611,20 @@ mod resolve_tests {
     async fn installed_checkpoint_by_version_id() {
         let reg = registry();
         let f = filters();
-        let idx = index(vec![crate::testkit::with_civitai(model("jugg", "sdxl", ModelKind::Checkpoint, "j.safetensors"), 1759168)]);
+        let idx = index(vec![crate::testkit::with_civitai(
+            model("jugg", "sdxl", ModelKind::Checkpoint, "j.safetensors"),
+            1759168,
+        )]);
         let h = hw(8.0);
-        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
-        let out = resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)]).await;
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let out =
+            resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)])
+                .await;
         let c = out.checkpoint.unwrap();
         assert_eq!(c.installed_id.as_deref(), Some("jugg"));
         assert_eq!(c.fit, Some(Fit::Tight));
@@ -436,12 +636,30 @@ mod resolve_tests {
         let f = filters();
         let idx = index(vec![]);
         let h = hw(8.0);
-        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
-        let out = resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)]).await;
-        assert!(out.checkpoint.unwrap().problem.unwrap().contains("Offline mode"));
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let out =
+            resolve_resources::<FakeLookup>(&env, None, &[res("checkpoint", Some(1759168), None)])
+                .await;
+        assert!(out
+            .checkpoint
+            .unwrap()
+            .problem
+            .unwrap()
+            .contains("Offline mode"));
         let l = lookup(true);
-        let out = resolve_resources(&env, Some(&l), &[res("checkpoint", Some(1759168), None)]).await;
-        assert!(out.checkpoint.unwrap().problem.unwrap().contains("Couldn't reach CivitAI"));
+        let out =
+            resolve_resources(&env, Some(&l), &[res("checkpoint", Some(1759168), None)]).await;
+        assert!(out
+            .checkpoint
+            .unwrap()
+            .problem
+            .unwrap()
+            .contains("Couldn't reach CivitAI"));
     }
 
     #[tokio::test]
@@ -450,10 +668,22 @@ mod resolve_tests {
         let f = filters();
         let idx = index(vec![]);
         let h = hw(8.0);
-        let env = PasteEnv { registry: &reg, index: &idx, hw: &h, filters: &f };
-        let named = PastedResource { kind: "checkpoint".into(), model_name: Some("juggernautXL_v9".into()), ..Default::default() };
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let named = PastedResource {
+            kind: "checkpoint".into(),
+            model_name: Some("juggernautXL_v9".into()),
+            ..Default::default()
+        };
         for l in [None, Some(&lookup(false))] {
-            let c = resolve_resources(&env, l, std::slice::from_ref(&named)).await.checkpoint.unwrap();
+            let c = resolve_resources(&env, l, std::slice::from_ref(&named))
+                .await
+                .checkpoint
+                .unwrap();
             assert_eq!(c.problem.as_deref(), Some(NO_REFERENCE));
             assert_eq!(c.display_name, "juggernautXL_v9");
         }

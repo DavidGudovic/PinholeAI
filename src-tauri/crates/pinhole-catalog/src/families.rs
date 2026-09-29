@@ -27,7 +27,10 @@ pub fn normalize_sha(s: &str) -> Option<String> {
 }
 
 pub fn family_choice(registry: &Registry, id: &str) -> Option<FamilyChoice> {
-    registry.family(id).map(|f| FamilyChoice { family_id: id.to_string(), label: f.label.clone() })
+    registry.family(id).map(|f| FamilyChoice {
+        family_id: id.to_string(),
+        label: f.label.clone(),
+    })
 }
 
 // ------------------------------------------------------------------ family resolution
@@ -52,19 +55,35 @@ pub fn resolve_family(
     base_model: Option<&str>,
     header_candidates: Option<&[String]>,
 ) -> FamilyResolution {
-    if let Some(known) = sha256.and_then(normalize_sha).and_then(|h| registry.known_file(&h).map(|k| k.family.clone())) {
+    if let Some(known) = sha256
+        .and_then(normalize_sha)
+        .and_then(|h| registry.known_file(&h).map(|k| k.family.clone()))
+    {
         if registry.family(&known).is_some() {
             return FamilyResolution::Resolved(known);
         }
     }
-    let header: Vec<String> = header_candidates.unwrap_or(&[]).iter().filter(|id| registry.family(id).is_some()).cloned().collect();
+    let header: Vec<String> = header_candidates
+        .unwrap_or(&[])
+        .iter()
+        .filter(|id| registry.family(id).is_some())
+        .cloned()
+        .collect();
     let base = base_model.map(str::trim).filter(|b| !b.is_empty());
     if let Some(base) = base.filter(|b| !b.eq_ignore_ascii_case(OTHER_BASE_MODEL)) {
-        let by_base: Vec<String> = registry.families_for_base_model(base).iter().map(|f| family_id(registry, f)).collect();
+        let by_base: Vec<String> = registry
+            .families_for_base_model(base)
+            .iter()
+            .map(|f| family_id(registry, f))
+            .collect();
         match by_base.len() {
             1 => return FamilyResolution::Resolved(by_base[0].clone()),
             n if n > 1 => {
-                let narrowed: Vec<String> = by_base.iter().filter(|id| header.contains(id)).cloned().collect();
+                let narrowed: Vec<String> = by_base
+                    .iter()
+                    .filter(|id| header.contains(id))
+                    .cloned()
+                    .collect();
                 return match narrowed.len() {
                     1 => FamilyResolution::Resolved(narrowed[0].clone()),
                     0 => FamilyResolution::Ambiguous(by_base),
@@ -81,7 +100,12 @@ pub fn resolve_family(
         _ => {}
     }
     if base.is_some_and(|b| b.eq_ignore_ascii_case(OTHER_BASE_MODEL)) {
-        return FamilyResolution::Ambiguous(registry.families().map(|f| family_id(registry, f)).collect());
+        return FamilyResolution::Ambiguous(
+            registry
+                .families()
+                .map(|f| family_id(registry, f))
+                .collect(),
+        );
     }
     FamilyResolution::Unsupported(base.map(str::to_string))
 }
@@ -173,22 +197,37 @@ pub fn family_component_ids(family: &Family) -> BTreeSet<String> {
 }
 
 /// Installed file for a component: by component id, or by its verified SHA-256.
-pub fn installed_component<'a>(index: &'a InstalledIndex, id: &str, c: &Component) -> Option<&'a InstalledFile> {
-    index.find_component(id).or_else(|| normalize_sha(&c.sha256).and_then(|h| index.find_by_sha(&h)))
+pub fn installed_component<'a>(
+    index: &'a InstalledIndex,
+    id: &str,
+    c: &Component,
+) -> Option<&'a InstalledFile> {
+    index
+        .find_component(id)
+        .or_else(|| normalize_sha(&c.sha256).and_then(|h| index.find_by_sha(&h)))
 }
 
 /// Components to install for `family` on this hardware: required ones plus,
 /// when `with_optional`, the tiny live-preview decoder. Deduplicated.
-pub fn wanted_components(registry: &Registry, family: &Family, hw: &HwContext, with_optional: bool) -> Vec<RequiredComponent> {
+pub fn wanted_components(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    with_optional: bool,
+) -> Vec<RequiredComponent> {
     let mut out: Vec<RequiredComponent> = Vec::new();
     let mut add = |rc: RequiredComponent| {
         if !out.iter().any(|o| o.component_id == rc.component_id) {
             out.push(rc);
         }
     };
-    wiring::required_components(registry, family, hw).into_iter().for_each(&mut add);
+    wiring::required_components(registry, family, hw)
+        .into_iter()
+        .for_each(&mut add);
     if with_optional {
-        wiring::optional_components(registry, family).into_iter().for_each(&mut add);
+        wiring::optional_components(registry, family)
+            .into_iter()
+            .for_each(&mut add);
     }
     out
 }
@@ -203,7 +242,11 @@ pub fn missing_components<'a>(
 ) -> Vec<(String, &'a Component)> {
     wanted_components(registry, family, hw, with_optional)
         .into_iter()
-        .filter_map(|rc| registry.component(&rc.component_id).map(|c| (rc.component_id, c)))
+        .filter_map(|rc| {
+            registry
+                .component(&rc.component_id)
+                .map(|c| (rc.component_id, c))
+        })
         .filter(|(id, c)| installed_component(index, id, c).is_none())
         .collect()
 }
@@ -211,11 +254,24 @@ pub fn missing_components<'a>(
 /// Components an installed model still lacks before it can run: like
 /// [`missing_components`] (required only), but another installed option of a
 /// VRAM-dependent choice counts (`wiring::required_components_with`).
-pub fn missing_to_run<'a>(registry: &'a Registry, family: &Family, hw: &HwContext, index: &InstalledIndex) -> Vec<(String, &'a Component)> {
-    let installed = |id: &str| registry.component(id).is_some_and(|c| installed_component(index, id, c).is_some());
+pub fn missing_to_run<'a>(
+    registry: &'a Registry,
+    family: &Family,
+    hw: &HwContext,
+    index: &InstalledIndex,
+) -> Vec<(String, &'a Component)> {
+    let installed = |id: &str| {
+        registry
+            .component(id)
+            .is_some_and(|c| installed_component(index, id, c).is_some())
+    };
     wiring::required_components_with(registry, family, hw, &installed)
         .into_iter()
-        .filter_map(|rc| registry.component(&rc.component_id).map(|c| (rc.component_id, c)))
+        .filter_map(|rc| {
+            registry
+                .component(&rc.component_id)
+                .map(|c| (rc.component_id, c))
+        })
         .filter(|(id, c)| installed_component(index, id, c).is_none())
         .collect()
 }
@@ -243,7 +299,12 @@ pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext)
 }
 
 /// [`vram::estimate`] for a main file of `family` on this hardware.
-pub fn estimate_need(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> VramNeed {
+pub fn estimate_need(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    main_bytes: u64,
+) -> VramNeed {
     let (other, te) = gpu_component_bytes(registry, family, hw);
     vram::estimate(registry, family, main_bytes, other, te)
 }
@@ -251,12 +312,22 @@ pub fn estimate_need(registry: &Registry, family: &Family, hw: &HwContext, main_
 // ------------------------------------------------------------------ VRAM
 
 pub fn need_from(v: &VramGb) -> VramNeed {
-    VramNeed { gb: v.recommended, min_gb: v.min.min(v.recommended), estimate: false, on_cpu: false }
+    VramNeed {
+        gb: v.recommended,
+        min_gb: v.min.min(v.recommended),
+        estimate: false,
+        on_cpu: false,
+    }
 }
 
 /// Registry figure for the family when it has one (measured), else an
 /// estimate from the main file size (SPEC §6.2).
-pub fn family_need(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> VramNeed {
+pub fn family_need(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    main_bytes: u64,
+) -> VramNeed {
     match &family.vram_gb {
         Some(v) => need_from(v),
         None => estimate_need(registry, family, hw, main_bytes),
@@ -265,19 +336,36 @@ pub fn family_need(registry: &Registry, family: &Family, hw: &HwContext, main_by
 
 /// Bytes a model keeps in RAM when it runs on the processor: the main file
 /// plus every required component (VAE, text encoders) for this hardware.
-pub fn cpu_weight_bytes(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> u64 {
+pub fn cpu_weight_bytes(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    main_bytes: u64,
+) -> u64 {
     wiring::required_components(registry, family, hw)
         .iter()
         .filter_map(|rc| registry.component(&rc.component_id))
-        .fold(main_bytes, |sum, c| sum.saturating_add(mb_to_bytes(c.size_mb)))
+        .fold(main_bytes, |sum, c| {
+            sum.saturating_add(mb_to_bytes(c.size_mb))
+        })
 }
 
 /// "Needs ~X GB" + Fits / Tight / Too big on this machine (SPEC §6.2): the GPU
 /// need against VRAM, or — without a usable GPU ([`HwContext::cpu_only`]) —
 /// the RAM for the main file + components against system RAM
 /// ([`vram::fit_cpu`]: Tight = "runs on the processor — slow").
-pub fn need_and_fit(registry: &Registry, family: &Family, hw: &HwContext, need: VramNeed, main_bytes: u64) -> (VramNeed, Fit) {
-    let weights = if hw.cpu_only() { cpu_weight_bytes(registry, family, hw, main_bytes) } else { main_bytes };
+pub fn need_and_fit(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    need: VramNeed,
+    main_bytes: u64,
+) -> (VramNeed, Fit) {
+    let weights = if hw.cpu_only() {
+        cpu_weight_bytes(registry, family, hw, main_bytes)
+    } else {
+        main_bytes
+    };
     vram::need_and_fit(family, need, weights, hw)
 }
 
@@ -312,7 +400,11 @@ pub fn quant_of_file(name: &str) -> String {
         (&["q2_k"], "q2_k"),
         (&["fp32", "f32"], "fp32"),
     ];
-    table.iter().find(|(pats, _)| pats.iter().any(|p| n.contains(p))).map(|(_, q)| q.to_string()).unwrap_or_else(|| "unknown".into())
+    table
+        .iter()
+        .find(|(pats, _)| pats.iter().any(|p| n.contains(p)))
+        .map(|(_, q)| q.to_string())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 /// Lower = higher quality. Unknown files are treated as full precision.
@@ -371,7 +463,11 @@ pub fn quant_options(spec: &DownloadSpec) -> Vec<QuantOption> {
             vram: q.vram_gb,
         });
     }
-    out.sort_by(|a, b| quant_rank(&a.quant).cmp(&quant_rank(&b.quant)).then(b.size_bytes.cmp(&a.size_bytes)));
+    out.sort_by(|a, b| {
+        quant_rank(&a.quant)
+            .cmp(&quant_rank(&b.quant))
+            .then(b.size_bytes.cmp(&a.size_bytes))
+    });
     out
 }
 
@@ -389,23 +485,48 @@ pub fn choose_quant<'a>(
     let start = prefer.map(quant_rank).unwrap_or(0);
     let preferred = options.iter().filter(|o| quant_rank(&o.quant) >= start);
     let rest = options.iter().filter(|o| quant_rank(&o.quant) < start);
-    let sized: Vec<(&QuantOption, VramNeed, Fit)> = preferred.chain(rest).map(|o| (o, fit_of(o))).map(|(o, (n, f))| (o, n, f)).collect();
-    sized.iter().find(|(_, _, f)| *f == Fit::Fits).cloned().or_else(|| {
-        // min_by keeps the first of equal needs (preference order).
-        sized.iter().filter(|(_, _, f)| *f == Fit::Tight).min_by(|a, b| a.1.gb.total_cmp(&b.1.gb)).cloned()
-    })
+    let sized: Vec<(&QuantOption, VramNeed, Fit)> = preferred
+        .chain(rest)
+        .map(|o| (o, fit_of(o)))
+        .map(|(o, (n, f))| (o, n, f))
+        .collect();
+    sized
+        .iter()
+        .find(|(_, _, f)| *f == Fit::Fits)
+        .cloned()
+        .or_else(|| {
+            // min_by keeps the first of equal needs (preference order).
+            sized
+                .iter()
+                .filter(|(_, _, f)| *f == Fit::Tight)
+                .min_by(|a, b| a.1.gb.total_cmp(&b.1.gb))
+                .cloned()
+        })
 }
 
 /// VRAM need of an installed main model: measured peak → registry download
 /// spec for this exact file → family figure → estimate from file size.
-pub fn installed_need(registry: &Registry, family: &Family, file: &InstalledFile, hw: &HwContext) -> VramNeed {
+pub fn installed_need(
+    registry: &Registry,
+    family: &Family,
+    file: &InstalledFile,
+    hw: &HwContext,
+) -> VramNeed {
     if let Some(o) = file.observed_vram_gb.filter(|o| o.is_finite() && *o > 0.0) {
-        return VramNeed { gb: o, min_gb: o, estimate: false, on_cpu: false };
+        return VramNeed {
+            gb: o,
+            min_gb: o,
+            estimate: false,
+            on_cpu: false,
+        };
     }
     if let Some(spec) = &family.download {
         let name = file.rel_path.rsplit('/').next().unwrap_or(&file.rel_path);
         let hit = quant_options(spec).into_iter().find(|o| {
-            o.sha256.as_deref().is_some_and(|h| h.eq_ignore_ascii_case(&file.sha256)) || o.file.eq_ignore_ascii_case(name)
+            o.sha256
+                .as_deref()
+                .is_some_and(|h| h.eq_ignore_ascii_case(&file.sha256))
+                || o.file.eq_ignore_ascii_case(name)
         });
         if let Some(v) = hit.and_then(|o| o.vram) {
             return need_from(&v);
@@ -430,7 +551,10 @@ mod tests {
         assert!(quant_rank("q8_0") < quant_rank("q4_k"));
         assert_eq!(quant_suffix("q4_k"), Some("Q4"));
         assert_eq!(quant_suffix("bf16"), None);
-        assert_eq!(file_name_from_url("https://huggingface.co/a/b/resolve/main/x-Q4_K.gguf?download=true"), "x-Q4_K.gguf");
+        assert_eq!(
+            file_name_from_url("https://huggingface.co/a/b/resolve/main/x-Q4_K.gguf?download=true"),
+            "x-Q4_K.gguf"
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ pub mod sdapi;
 pub mod testutil;
 
 pub use failure::{classify, failed_stage, memory_failure, Failure, Stage};
-pub use install::{InstalledEngine, EngineKind};
+pub use install::{EngineKind, InstalledEngine};
 pub use logbuf::{LogBuffer, ProgressKind, StepProgress};
 pub use pins::{EngineConfig, EnginePin};
 pub use process::EngineProcess;
@@ -48,7 +48,11 @@ pub enum EngineError {
     #[error("`{0}` not found in the unpacked engine")]
     BinaryMissing(String),
     #[error("SHA-256 mismatch for {file}")]
-    HashMismatch { file: String, expected: String, actual: String },
+    HashMismatch {
+        file: String,
+        expected: String,
+        actual: String,
+    },
     /// Release builds: an archive in engine.yaml has no pinned SHA-256 (`TODO`).
     #[error("no pinned SHA-256 for {0}")]
     Unpinned(String),

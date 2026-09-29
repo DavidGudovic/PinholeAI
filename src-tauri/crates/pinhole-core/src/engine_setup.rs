@@ -26,7 +26,11 @@ pub fn engine_config(core: &AppCore) -> CoreResult<Arc<EngineConfig>> {
     }
     let path = core.shipped.config_dir.join("engine.yaml");
     let cfg = EngineConfig::load(&path).map_err(|e| {
-        CoreError::new("internal", "Pinhole's engine list (engine.yaml) is missing or damaged. Reinstall Pinhole.").with_details(e.to_string())
+        CoreError::new(
+            "internal",
+            "Pinhole's engine list (engine.yaml) is missing or damaged. Reinstall Pinhole.",
+        )
+        .with_details(e.to_string())
     })?;
     let cfg = Arc::new(cfg);
     *core.gen.config.lock() = Some(cfg.clone());
@@ -43,7 +47,10 @@ pub fn desired_backend(core: &AppCore) -> String {
 }
 
 /// Build for this machine (after fallbacks).
-pub fn selected_build(core: &AppCore, kind: EngineKind) -> CoreResult<(Arc<EngineConfig>, SelectedBuild)> {
+pub fn selected_build(
+    core: &AppCore,
+    kind: EngineKind,
+) -> CoreResult<(Arc<EngineConfig>, SelectedBuild)> {
     let cfg = engine_config(core)?;
     let backend = desired_backend(core);
     let sel = cfg.select_build(kind.pin(&cfg), pins::current_os(), &backend).map_err(|_| {
@@ -69,7 +76,9 @@ pub async fn sweep_orphans(core: &AppCore) -> Vec<Orphan> {
     if !root.is_dir() {
         return Vec::new();
     }
-    tokio::task::spawn_blocking(move || orphans::kill_orphans(&root, ORPHAN_WAIT)).await.unwrap_or_default()
+    tokio::task::spawn_blocking(move || orphans::kill_orphans(&root, ORPHAN_WAIT))
+        .await
+        .unwrap_or_default()
 }
 
 /// App start: sweep leftovers from an earlier run in the background.
@@ -90,8 +99,12 @@ pub fn start_orphan_sweep(core: &Arc<AppCore>) {
 /// NVIDIA: graphics memory used by programs other than Pinhole's engines on
 /// the GPU in use (`nvidia-smi`, bounded). `None` when it can't be known.
 pub async fn gpu_others(core: &AppCore) -> Option<OtherGpuUse> {
-    let gpu = crate::app::effective(core).gpu.filter(|g| g.vendor == Vendor::Nvidia)?;
-    let usage = tokio::task::spawn_blocking(pinhole_hardware::query_vram_usage).await.ok()??;
+    let gpu = crate::app::effective(core)
+        .gpu
+        .filter(|g| g.vendor == Vendor::Nvidia)?;
+    let usage = tokio::task::spawn_blocking(pinhole_hardware::query_vram_usage)
+        .await
+        .ok()??;
     let mut ours = pinhole_engine::process::managed_pids();
     ours.push(std::process::id());
     usage.others(Some(gpu.index), &ours)
@@ -105,14 +118,23 @@ pub fn installed_engine(core: &AppCore, kind: EngineKind) -> Option<InstalledEng
     let (cfg, sel) = selected_build(core, kind).ok()?;
     let version = &kind.pin(&cfg).version;
     let root = engine_root(core);
-    install::find_installed(&root, kind, version, &sel.backend)
-        .or_else(|| install::find_any_installed(&root, kind, version, &cfg.backend_candidates(kind.pin(&cfg), &sel.backend)))
+    install::find_installed(&root, kind, version, &sel.backend).or_else(|| {
+        install::find_any_installed(
+            &root,
+            kind,
+            version,
+            &cfg.backend_candidates(kind.pin(&cfg), &sel.backend),
+        )
+    })
 }
 
 /// Wait (bounded) for hardware detection so the backend choice is real, unless
 /// the user picked a backend in Settings.
 async fn settle_backend(core: &AppCore) {
-    let explicit = matches!(core.settings.read().engine_backend.as_str(), "cuda" | "vulkan" | "cpu");
+    let explicit = matches!(
+        core.settings.read().engine_backend.as_str(),
+        "cuda" | "vulkan" | "cpu"
+    );
     if !explicit && core.hardware.read().is_none() {
         crate::app::wait_for_hardware(core, std::time::Duration::from_secs(30)).await;
     }
@@ -125,7 +147,10 @@ fn bundled_runtime_dirs(core: &AppCore) -> Vec<PathBuf> {
     if let Some(res) = core.shipped.config_dir.parent() {
         dirs.push(res.join("vcrt"));
     }
-    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())) {
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+    {
         dirs.push(exe_dir.join("vcrt"));
         dirs.push(exe_dir);
     }
@@ -172,12 +197,15 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
             st.backend = Some(sel.backend.clone());
             if !external {
                 let root = engine_root(core);
-                let exact = install::find_installed(&root, EngineKind::Sd, &pin.version, &sel.backend);
+                let exact =
+                    install::find_installed(&root, EngineKind::Sd, &pin.version, &sel.backend);
                 st.installed = exact.is_some();
                 // Before hardware detection finishes the backend guess is "cpu";
                 // report an already-installed GPU engine instead of "missing".
                 if exact.is_none() && core.hardware.read().is_none() {
-                    if let Some(any) = install::find_any_installed(&root, EngineKind::Sd, &pin.version, &[]) {
+                    if let Some(any) =
+                        install::find_any_installed(&root, EngineKind::Sd, &pin.version, &[])
+                    {
                         st.installed = true;
                         st.backend = Some(any.backend);
                     }
@@ -221,7 +249,10 @@ pub async fn install_engine(core: &Arc<AppCore>) -> CoreResult<EngineStatus> {
 }
 
 /// Install (if needed) the engine of `kind` for the current backend.
-pub(crate) async fn install_kind(core: &Arc<AppCore>, kind: EngineKind) -> CoreResult<InstalledEngine> {
+pub(crate) async fn install_kind(
+    core: &Arc<AppCore>,
+    kind: EngineKind,
+) -> CoreResult<InstalledEngine> {
     settle_backend(core).await;
     let lock = match kind {
         EngineKind::Sd => &core.gen.install_lock,
@@ -248,9 +279,16 @@ pub(crate) async fn install_kind(core: &Arc<AppCore>, kind: EngineKind) -> CoreR
 }
 
 /// Engine archives still to download, with the config + build they belong to.
-pub(crate) type EngineDownload = (Vec<pinhole_net::download::DownloadSpec>, Arc<EngineConfig>, SelectedBuild);
+pub(crate) type EngineDownload = (
+    Vec<pinhole_net::download::DownloadSpec>,
+    Arc<EngineConfig>,
+    SelectedBuild,
+);
 
-pub(crate) fn engine_download_specs(core: &AppCore, kind: EngineKind) -> CoreResult<Option<EngineDownload>> {
+pub(crate) fn engine_download_specs(
+    core: &AppCore,
+    kind: EngineKind,
+) -> CoreResult<Option<EngineDownload>> {
     let (cfg, sel) = selected_build(core, kind)?;
     let pin = kind.pin(&cfg);
     let root = engine_root(core);
@@ -268,7 +306,9 @@ const UNPINNED_MESSAGE: &str = "This version of Pinhole has an engine download t
 
 /// Release builds: refuse engine archives whose pinned SHA-256 is `TODO` / missing.
 fn check_pinned(sel: &SelectedBuild, require: bool) -> CoreResult<()> {
-    pins::check_pinned(&sel.build, require).map_err(|files| CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(files.join(", ")))
+    pins::check_pinned(&sel.build, require).map_err(|files| {
+        CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(files.join(", "))
+    })
 }
 
 /// Unpack already-downloaded engine archives (paths in build order).
@@ -282,33 +322,65 @@ pub(crate) async fn unpack_downloaded(
     let root = engine_root(core);
     let archives = sel.build.archives();
     if files.len() != archives.len() {
-        return Err(CoreError::internal("The engine download is incomplete. Try again."));
+        return Err(CoreError::internal(
+            "The engine download is incomplete. Try again.",
+        ));
     }
     // Unpacked size is roughly 1.5× the archives; check before writing.
-    let need = files.iter().map(|f| f.size_bytes).sum::<u64>().saturating_mul(3) / 2;
+    let need = files
+        .iter()
+        .map(|f| f.size_bytes)
+        .sum::<u64>()
+        .saturating_mul(3)
+        / 2;
     std::fs::create_dir_all(&root)?;
     if let Err(e) = pinhole_net::download::check_free_space(&root, need) {
         return Err(CoreError::new(e.code(), e.user_message("")));
     }
-    let downloaded: Vec<_> = archives.into_iter().zip(files.iter()).map(|(a, f)| (a, f.path.clone(), f.sha256.clone())).collect();
+    let downloaded: Vec<_> = archives
+        .into_iter()
+        .zip(files.iter())
+        .map(|(a, f)| (a, f.path.clone(), f.sha256.clone()))
+        .collect();
     let paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
     let pin = kind.pin(cfg).clone();
     let sel2 = sel.clone();
     let root2 = root.clone();
-    let res = tokio::task::spawn_blocking(move || install::unpack_build(&root2, kind, &pin, &sel2, &downloaded))
-        .await
-        .map_err(|e| CoreError::internal("Unpacking the engine failed.").with_details(e.to_string()))?;
+    let res = tokio::task::spawn_blocking(move || {
+        install::unpack_build(&root2, kind, &pin, &sel2, &downloaded)
+    })
+    .await
+    .map_err(|e| CoreError::internal("Unpacking the engine failed.").with_details(e.to_string()))?;
     let installed = res.map_err(|e| match e {
-        pinhole_engine::EngineError::HashMismatch { .. } => CoreError::new("hash_mismatch", "The engine download was corrupted (checksum mismatch). Try again.").with_details(e.to_string()),
-        pinhole_engine::EngineError::Io(io) => CoreError::new("io", "Couldn't unpack the engine into the Data folder. Check free disk space and try again.").with_details(io.to_string()),
-        pinhole_engine::EngineError::Unpinned(file) => CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(file),
-        other => CoreError::new("engine_failed", "The engine download couldn't be unpacked. Try again.").with_details(other.to_string()),
+        pinhole_engine::EngineError::HashMismatch { .. } => CoreError::new(
+            "hash_mismatch",
+            "The engine download was corrupted (checksum mismatch). Try again.",
+        )
+        .with_details(e.to_string()),
+        pinhole_engine::EngineError::Io(io) => CoreError::new(
+            "io",
+            "Couldn't unpack the engine into the Data folder. Check free disk space and try again.",
+        )
+        .with_details(io.to_string()),
+        pinhole_engine::EngineError::Unpinned(file) => {
+            CoreError::new("engine_failed", UNPINNED_MESSAGE).with_details(file)
+        }
+        other => CoreError::new(
+            "engine_failed",
+            "The engine download couldn't be unpacked. Try again.",
+        )
+        .with_details(other.to_string()),
     })?;
     install::cleanup_downloads(&paths);
     Ok(installed)
 }
 
-async fn download_and_unpack(core: &Arc<AppCore>, kind: EngineKind, cfg: &Arc<EngineConfig>, sel: &SelectedBuild) -> CoreResult<InstalledEngine> {
+async fn download_and_unpack(
+    core: &Arc<AppCore>,
+    kind: EngineKind,
+    cfg: &Arc<EngineConfig>,
+    sel: &SelectedBuild,
+) -> CoreResult<InstalledEngine> {
     let Some((specs, _, _)) = engine_download_specs(core, kind)? else {
         let pin = kind.pin(cfg);
         return install::find_installed(&engine_root(core), kind, &pin.version, &sel.backend)
@@ -323,7 +395,11 @@ async fn download_and_unpack(core: &Arc<AppCore>, kind: EngineKind, cfg: &Arc<En
         EngineKind::Llama => pinhole_net::download::DownloadKind::Captioner,
     };
     let group = core.downloads.enqueue_kind(label, kind_tag, specs);
-    let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
+    let files = core
+        .downloads
+        .wait_detailed(&group)
+        .await
+        .map_err(|e| CoreError::new(&e.code, e.message))?;
     unpack_downloaded(core, kind, cfg, sel, files).await
 }
 
@@ -364,11 +440,16 @@ stable_diffusion_cpp:
 llama_cpp: { repo: r, version: b1, binary: llama-server }
 "#;
         let cfg = EngineConfig::from_yaml(yaml).unwrap();
-        let sel = cfg.select_build(&cfg.stable_diffusion_cpp, "linux", "cpu").unwrap();
+        let sel = cfg
+            .select_build(&cfg.stable_diffusion_cpp, "linux", "cpu")
+            .unwrap();
         let e = check_pinned(&sel, true).unwrap_err();
         assert_eq!(e.code, "engine_failed");
         assert!(e.message.contains("Update Pinhole"), "{}", e.message);
         assert_eq!(e.details.as_deref(), Some("a.zip"));
-        assert!(check_pinned(&sel, false).is_ok(), "debug builds may use TODO pins");
+        assert!(
+            check_pinned(&sel, false).is_ok(),
+            "debug builds may use TODO pins"
+        );
     }
 }

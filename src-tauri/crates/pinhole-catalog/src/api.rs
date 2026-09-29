@@ -45,18 +45,31 @@ impl ModelsPage {
     /// page (`nextPage` has `page=N` and no `cursor`): that comes back as
     /// `page:N`, which [`PAGE_CURSOR_PREFIX`] tells the request builder to send as `page`.
     pub fn next_cursor(&self) -> Option<String> {
-        if let Some(c) = self.metadata.next_cursor.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
+        if let Some(c) = self
+            .metadata
+            .next_cursor
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty())
+        {
             return Some(c.to_string());
         }
         let next = self.metadata.next_page.as_deref()?;
         let url = url::Url::parse(next).ok()?;
-        let param = |name: &str| url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned()).filter(|v| !v.trim().is_empty());
+        let param = |name: &str| {
+            url.query_pairs()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.into_owned())
+                .filter(|v| !v.trim().is_empty())
+        };
         if let Some(c) = param("cursor") {
             return Some(c);
         }
         // CivitAI answers 429 once `page` × `limit` passes 1000: end the list there.
         let page: u32 = param("page")?.trim().parse().ok()?;
-        let limit: u32 = param("limit").and_then(|l| l.trim().parse().ok()).unwrap_or(100);
+        let limit: u32 = param("limit")
+            .and_then(|l| l.trim().parse().ok())
+            .unwrap_or(100);
         (page.saturating_mul(limit) <= 1000).then(|| format!("{PAGE_CURSOR_PREFIX}{page}"))
     }
 }
@@ -119,7 +132,10 @@ pub struct Model {
 impl Model {
     /// Model is archived / taken down (files are gone).
     pub fn is_unavailable(&self) -> bool {
-        matches!(self.mode.as_deref().map(str::to_ascii_lowercase).as_deref(), Some("archived") | Some("takendown"))
+        matches!(
+            self.mode.as_deref().map(str::to_ascii_lowercase).as_deref(),
+            Some("archived") | Some("takendown")
+        )
     }
 }
 
@@ -221,10 +237,18 @@ impl ModelVersion {
     /// `publishedAt`). `earlyAccessConfig` alone is not decisive: it can stay
     /// set after early access ended.
     pub fn is_early_access(&self, now: DateTime<Utc>) -> bool {
-        if self.availability.as_deref().is_some_and(|a| a.eq_ignore_ascii_case("EarlyAccess")) {
+        if self
+            .availability
+            .as_deref()
+            .is_some_and(|a| a.eq_ignore_ascii_case("EarlyAccess"))
+        {
             return true;
         }
-        if self.paid_access.as_ref().is_some_and(|p| !matches!(p, Value::Null | Value::Bool(false))) {
+        if self
+            .paid_access
+            .as_ref()
+            .is_some_and(|p| !matches!(p, Value::Null | Value::Bool(false)))
+        {
             return true;
         }
         for end in [&self.early_access_ends_at, &self.early_access_deadline] {
@@ -232,7 +256,10 @@ impl ModelVersion {
                 return true;
             }
         }
-        if let (Some(days), Some(published)) = (self.early_access_time_frame, parse_time(self.published_at.as_deref())) {
+        if let (Some(days), Some(published)) = (
+            self.early_access_time_frame,
+            parse_time(self.published_at.as_deref()),
+        ) {
             if days > 0 && published + chrono::Duration::days(days.min(3650) as i64) > now {
                 return true;
             }
@@ -242,7 +269,9 @@ impl ModelVersion {
 }
 
 fn parse_time(s: Option<&str>) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s?.trim()).ok().map(|t| t.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s?.trim())
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -301,7 +330,10 @@ impl ModelFile {
 
     /// Hash by (case-insensitive) algorithm name.
     pub fn hash(&self, algo: &str) -> Option<&str> {
-        self.hashes.iter().find(|(k, _)| k.eq_ignore_ascii_case(algo)).map(|(_, v)| v.as_str())
+        self.hashes
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(algo))
+            .map(|(_, v)| v.as_str())
     }
 
     /// Lowercase SHA-256, when CivitAI reports a well-formed one.
@@ -351,10 +383,19 @@ pub const NSFW_LEVEL_MIN: u32 = 4;
 
 impl ModelImage {
     pub fn is_video(&self) -> bool {
-        if self.kind.as_deref().is_some_and(|k| k.eq_ignore_ascii_case("video")) {
+        if self
+            .kind
+            .as_deref()
+            .is_some_and(|k| k.eq_ignore_ascii_case("video"))
+        {
             return true;
         }
-        let path = self.url.split(['?', '#']).next().unwrap_or("").to_ascii_lowercase();
+        let path = self
+            .url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         path.ends_with(".mp4") || path.ends_with(".webm") || path.ends_with(".mov")
     }
 
@@ -393,7 +434,11 @@ impl<'de> Deserialize<'de> for CommercialUse {
             Value::String(s) => {
                 let t = s.trim();
                 if t.starts_with('{') || t.contains(',') {
-                    clean(t.trim_matches(|c| c == '{' || c == '}').split(',').map(str::to_string))
+                    clean(
+                        t.trim_matches(|c| c == '{' || c == '}')
+                            .split(',')
+                            .map(str::to_string),
+                    )
                 } else {
                     // Legacy single value: each level implies the ones below it.
                     match t.to_ascii_lowercase().as_str() {
@@ -426,8 +471,14 @@ impl CivitaiClient {
 
     /// Custom API base (tests: a mock server on 127.0.0.1).
     pub fn with_base(http: HttpClient, api_key: Option<String>, base: impl Into<String>) -> Self {
-        let api_key = api_key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
-        Self { http, api_key, base: base.into().trim_end_matches('/').to_string() }
+        let api_key = api_key
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty());
+        Self {
+            http,
+            api_key,
+            base: base.into().trim_end_matches('/').to_string(),
+        }
     }
 
     pub fn has_key(&self) -> bool {
@@ -448,7 +499,10 @@ impl CivitaiClient {
     pub fn search_url(&self, params: &[(String, String)]) -> String {
         let mut url = format!("{}/models", self.base);
         if !params.is_empty() {
-            let q: Vec<String> = params.iter().map(|(k, v)| format!("{}={}", encode(k), encode(v))).collect();
+            let q: Vec<String> = params
+                .iter()
+                .map(|(k, v)| format!("{}={}", encode(k), encode(v)))
+                .collect();
             url.push('?');
             url.push_str(&q.join("&"));
         }
@@ -456,15 +510,24 @@ impl CivitaiClient {
     }
 
     async fn get<T: DeserializeOwned>(&self, url: &str, with_key: bool) -> Result<T, NetError> {
-        let auth = if with_key { self.auth_header_for(url) } else { None };
-        let headers: Vec<(&str, &str)> = auth.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let auth = if with_key {
+            self.auth_header_for(url)
+        } else {
+            None
+        };
+        let headers: Vec<(&str, &str)> =
+            auth.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         self.http.get_json(url, &headers).await
     }
 
     /// Metadata GET without the key; retried once with the key on 401/403.
     async fn get_metadata<T: DeserializeOwned>(&self, url: &str) -> Result<T, NetError> {
         match self.get(url, false).await {
-            Err(NetError::Unauthorized(_)) | Err(NetError::Status(401)) | Err(NetError::Status(403)) if self.has_key() => {
+            Err(NetError::Unauthorized(_))
+            | Err(NetError::Status(401))
+            | Err(NetError::Status(403))
+                if self.has_key() =>
+            {
                 self.get(url, true).await
             }
             Err(NetError::Status(s @ (401 | 403))) => Err(NetError::Unauthorized(s)),
@@ -479,11 +542,13 @@ impl CivitaiClient {
     }
 
     pub async fn model(&self, id: u64) -> Result<Model, NetError> {
-        self.get_metadata(&format!("{}/models/{id}", self.base)).await
+        self.get_metadata(&format!("{}/models/{id}", self.base))
+            .await
     }
 
     pub async fn model_version(&self, id: u64) -> Result<ModelVersion, NetError> {
-        self.get_metadata(&format!("{}/model-versions/{id}", self.base)).await
+        self.get_metadata(&format!("{}/model-versions/{id}", self.base))
+            .await
     }
 
     /// Look up a version by file hash (SHA-256, AutoV2, AutoV3, BLAKE3, CRC32).
@@ -493,7 +558,14 @@ impl CivitaiClient {
         if !(8..=64).contains(&h.len()) || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Ok(None);
         }
-        match self.get_metadata(&format!("{}/model-versions/by-hash/{}", self.base, h.to_ascii_uppercase())).await {
+        match self
+            .get_metadata(&format!(
+                "{}/model-versions/by-hash/{}",
+                self.base,
+                h.to_ascii_uppercase()
+            ))
+            .await
+        {
             Ok(v) => Ok(Some(v)),
             Err(NetError::Status(404)) => Ok(None),
             Err(e) => Err(e),
@@ -526,18 +598,22 @@ pub fn civitai_auth_header(api_key: Option<&str>, url: &str) -> Option<(String, 
         return None;
     }
     let host = parsed.host_str()?;
-    pinhole_net::allow::host_matches(host, "civitai.com").then(|| ("Authorization".to_string(), format!("Bearer {key}")))
+    pinhole_net::allow::host_matches(host, "civitai.com")
+        .then(|| ("Authorization".to_string(), format!("Bearer {key}")))
 }
 
 /// Preview images may only come from `https://<*.>civitai.com/...` (no
 /// credentials, no custom port). Redirects are re-checked by the HTTP client.
 pub fn is_preview_url(url: &str) -> bool {
-    let Ok(u) = url::Url::parse(url) else { return false };
+    let Ok(u) = url::Url::parse(url) else {
+        return false;
+    };
     u.scheme() == "https"
         && u.username().is_empty()
         && u.password().is_none()
         && u.port().is_none()
-        && u.host_str().is_some_and(|h| pinhole_net::allow::host_matches(h, "civitai.com"))
+        && u.host_str()
+            .is_some_and(|h| pinhole_net::allow::host_matches(h, "civitai.com"))
 }
 
 /// Percent-encode a query component (RFC 3986 unreserved kept, space → `%20`).
@@ -545,7 +621,9 @@ fn encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -563,7 +641,11 @@ mod tests {
     #[test]
     fn parses_models_page_fixture() {
         let page = page_fixture();
-        assert_eq!(page.items.len(), 7, "malformed item must be skipped, others kept");
+        assert_eq!(
+            page.items.len(),
+            7,
+            "malformed item must be skipped, others kept"
+        );
         assert_eq!(page.next_cursor().as_deref(), Some("2|1718000000000"));
 
         let rv = &page.items[0];
@@ -573,16 +655,25 @@ mod tests {
         assert!(!rv.nsfw);
         assert!(rv.allow_commercial_use.allows("Image"));
         assert!(rv.tags.iter().any(|t| t == "photorealistic"));
-        assert_eq!(rv.creator.as_ref().and_then(|c| c.username.as_deref()), Some("SG_161222"));
+        assert_eq!(
+            rv.creator.as_ref().and_then(|c| c.username.as_deref()),
+            Some("SG_161222")
+        );
         assert_eq!(rv.stats.thumbs_up_ratio(), Some(0.98));
         let v = &rv.model_versions[0];
         assert_eq!(v.base_model, "SDXL 1.0");
         assert_eq!(v.files.len(), 2);
-        assert!(!v.files[0].primary, "`primary` is absent on non-primary files");
+        assert!(
+            !v.files[0].primary,
+            "`primary` is absent on non-primary files"
+        );
         let f = &v.files[1];
         assert_eq!(f.size_bytes(), 6_938_065_160);
         assert_eq!(f.metadata.format.as_deref(), Some("SafeTensor"));
-        assert_eq!(f.sha256().unwrap(), "6a35a7855770ae9820a3c931d4964c3817b6d9e3c6f9c4dabb5b3a94e5643b80");
+        assert_eq!(
+            f.sha256().unwrap(),
+            "6a35a7855770ae9820a3c931d4964c3817b6d9e3c6f9c4dabb5b3a94e5643b80"
+        );
         assert_eq!(f.hash("autov2"), Some("6A35A78557"));
         assert!(f.primary);
         assert!(v.paid_access.is_none());
@@ -593,9 +684,15 @@ mod tests {
         let lora = &page.items[1];
         assert_eq!(lora.kind, "LORA");
         assert!(lora.nsfw);
-        assert!(lora.allow_commercial_use.allows("Image"), "legacy \"Sell\" implies Image");
+        assert!(
+            lora.allow_commercial_use.allows("Image"),
+            "legacy \"Sell\" implies Image"
+        );
         assert!(lora.tags.iter().any(|t| t == "anime"));
-        assert_eq!(lora.model_versions[0].trained_words, vec!["pnkstyle", "neon outline"]);
+        assert_eq!(
+            lora.model_versions[0].trained_words,
+            vec!["pnkstyle", "neon outline"]
+        );
 
         let flux = page.items.iter().find(|m| m.id == 618692).unwrap();
         assert!(flux.stats.thumbs_up_ratio().is_none());
@@ -606,29 +703,48 @@ mod tests {
 
     #[test]
     fn early_access_detection() {
-        let now = DateTime::parse_from_rfc3339("2026-09-28T12:00:00Z").unwrap().with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-09-28T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
         let page = page_fixture();
         let lora = &page.items[1].model_versions[0];
         assert!(lora.is_early_access(now), "availability EarlyAccess");
         assert!(!page.items[0].model_versions[0].is_early_access(now));
 
-        let mut v = ModelVersion { early_access_ends_at: Some("2026-10-01T00:00:00.000Z".into()), ..Default::default() };
+        let mut v = ModelVersion {
+            early_access_ends_at: Some("2026-10-01T00:00:00.000Z".into()),
+            ..Default::default()
+        };
         assert!(v.is_early_access(now));
         v.early_access_ends_at = Some("2026-09-01T00:00:00Z".into());
         assert!(!v.is_early_access(now));
-        let v = ModelVersion { early_access_time_frame: Some(5), published_at: Some("2026-09-26T00:00:00Z".into()), ..Default::default() };
+        let v = ModelVersion {
+            early_access_time_frame: Some(5),
+            published_at: Some("2026-09-26T00:00:00Z".into()),
+            ..Default::default()
+        };
         assert!(v.is_early_access(now));
-        let v = ModelVersion { early_access_time_frame: Some(1), published_at: Some("2026-09-20T00:00:00Z".into()), ..Default::default() };
+        let v = ModelVersion {
+            early_access_time_frame: Some(1),
+            published_at: Some("2026-09-20T00:00:00Z".into()),
+            ..Default::default()
+        };
         assert!(!v.is_early_access(now));
-        let v: ModelVersion = serde_json::from_str(r#"{"id":1,"availability":"Public","paidAccess":{"price":300}}"#).unwrap();
+        let v: ModelVersion =
+            serde_json::from_str(r#"{"id":1,"availability":"Public","paidAccess":{"price":300}}"#)
+                .unwrap();
         assert!(v.is_early_access(now), "paidAccess object");
         let v: ModelVersion = serde_json::from_str(r#"{"id":1,"availability":"Public","paidAccess":null,"earlyAccessConfig":{"timeframe":3}}"#).unwrap();
-        assert!(!v.is_early_access(now), "a leftover earlyAccessConfig alone is not early access");
+        assert!(
+            !v.is_early_access(now),
+            "a leftover earlyAccessConfig alone is not early access"
+        );
     }
 
     #[test]
     fn parses_version_and_by_hash_fixtures() {
-        let v: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap();
+        let v: ModelVersion =
+            serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap();
         assert_eq!(v.id, 1759168);
         assert_eq!(v.model_id, 133005);
         assert_eq!(v.base_model, "SDXL 1.0");
@@ -636,16 +752,24 @@ mod tests {
         assert_eq!(v.model.as_ref().unwrap().name, "Juggernaut XL");
         assert_eq!(v.files[0].size_bytes(), 7_105_349_736);
         assert_eq!(v.name, "Ragnarok");
-        assert!(v.download_url.as_deref().unwrap().starts_with("https://civitai.com/api/download/models/"));
+        assert!(v
+            .download_url
+            .as_deref()
+            .unwrap()
+            .starts_with("https://civitai.com/api/download/models/"));
 
-        let h: ModelVersion = serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
+        let h: ModelVersion =
+            serde_json::from_str(include_str!("../tests/fixtures/by_hash_lora.json")).unwrap();
         assert_eq!(h.model.as_ref().unwrap().kind, "LORA");
         assert_eq!(h.base_model, "SD 1.5");
         assert_eq!(h.trained_words, vec!["watercolor"]);
 
         let m: Model = serde_json::from_str(include_str!("../tests/fixtures/model.json")).unwrap();
         assert_eq!(m.id, 133005);
-        assert!(!m.allow_commercial_use.allows("Image"), "{{Rent}} set string without Image");
+        assert!(
+            !m.allow_commercial_use.allows("Image"),
+            "{{Rent}} set string without Image"
+        );
         assert!(m.allow_commercial_use.allows("Rent"));
         assert_eq!(m.model_versions.len(), 2);
     }
@@ -668,14 +792,23 @@ mod tests {
     fn cursor_from_next_page_url_and_numbers() {
         let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{"nextPage":"https://civitai.com/api/v1/models?limit=24&cursor=3%7C99"}}"#).unwrap();
         assert_eq!(p.next_cursor().as_deref(), Some("3|99"));
-        let p: ModelsPage = serde_json::from_str(r#"{"items":null,"metadata":{"nextCursor":12345}}"#).unwrap();
+        let p: ModelsPage =
+            serde_json::from_str(r#"{"items":null,"metadata":{"nextCursor":12345}}"#).unwrap();
         assert_eq!(p.next_cursor().as_deref(), Some("12345"));
         let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{}}"#).unwrap();
         assert_eq!(p.next_cursor(), None);
         let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{"currentPage":1,"nextPage":"https://civitai.com/api/v1/models?query=neon&limit=50&page=2"}}"#).unwrap();
-        assert_eq!(p.next_cursor().as_deref(), Some("page:2"), "text search pages by number");
+        assert_eq!(
+            p.next_cursor().as_deref(),
+            Some("page:2"),
+            "text search pages by number"
+        );
         let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{"nextPage":"https://civitai.com/api/v1/models?query=neon&limit=50&page=21"}}"#).unwrap();
-        assert_eq!(p.next_cursor(), None, "page x limit > 1000 would answer 429");
+        assert_eq!(
+            p.next_cursor(),
+            None,
+            "page x limit > 1000 would answer 429"
+        );
         let p: ModelsPage = serde_json::from_str(r#"{}"#).unwrap();
         assert!(p.items.is_empty());
     }
@@ -691,18 +824,25 @@ mod tests {
         assert!(civitai_auth_header(k, "https://huggingface.co/a/b").is_none());
         assert!(civitai_auth_header(k, "https://civitai.com.evil.example/x").is_none());
         assert!(civitai_auth_header(k, "https://evilcivitai.com/x").is_none());
-        assert!(civitai_auth_header(k, "http://civitai.com/x").is_none(), "never over plain http");
+        assert!(
+            civitai_auth_header(k, "http://civitai.com/x").is_none(),
+            "never over plain http"
+        );
         assert!(civitai_auth_header(None, "https://civitai.com/x").is_none());
         assert!(civitai_auth_header(Some("  "), "https://civitai.com/x").is_none());
     }
 
     #[test]
     fn preview_urls() {
-        assert!(is_preview_url("https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg"));
+        assert!(is_preview_url(
+            "https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/abc/width=450/1.jpeg"
+        ));
         assert!(is_preview_url("https://civitai.com/x.png"));
         assert!(!is_preview_url("http://image.civitai.com/x.jpeg"));
         assert!(!is_preview_url("https://huggingface.co/x.png"));
-        assert!(!is_preview_url("https://image.civitai.com.evil.example/x.jpeg"));
+        assert!(!is_preview_url(
+            "https://image.civitai.com.evil.example/x.jpeg"
+        ));
         assert!(!is_preview_url("https://user:pw@image.civitai.com/x.jpeg"));
         assert!(!is_preview_url("https://image.civitai.com:8443/x.jpeg"));
         assert!(!is_preview_url("file:///etc/passwd"));

@@ -30,12 +30,20 @@ pub struct MockRequest {
 impl MockRequest {
     pub fn header(&self, name: &str) -> Option<&str> {
         let name = name.to_ascii_lowercase();
-        self.headers.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| v.as_str())
     }
 
     /// Start offset of a `Range: bytes=N-` header.
     pub fn range_start(&self) -> Option<u64> {
-        self.header("range")?.strip_prefix("bytes=")?.split('-').next()?.parse().ok()
+        self.header("range")?
+            .strip_prefix("bytes=")?
+            .split('-')
+            .next()?
+            .parse()
+            .ok()
     }
 }
 
@@ -54,7 +62,14 @@ pub struct MockResponse {
 
 impl MockResponse {
     pub fn new(status: u16, body: impl Into<Vec<u8>>) -> Self {
-        Self { status, headers: Vec::new(), body: body.into(), stall_after: None, delay: None, no_content_length: false }
+        Self {
+            status,
+            headers: Vec::new(),
+            body: body.into(),
+            stall_after: None,
+            delay: None,
+            no_content_length: false,
+        }
     }
     pub fn ok(body: impl Into<Vec<u8>>) -> Self {
         Self::new(200, body)
@@ -67,7 +82,8 @@ impl MockResponse {
         Self::new(302, Vec::new()).header("location", location)
     }
     pub fn json(value: &serde_json::Value) -> Self {
-        Self::ok(serde_json::to_vec(value).unwrap_or_default()).header("content-type", "application/json")
+        Self::ok(serde_json::to_vec(value).unwrap_or_default())
+            .header("content-type", "application/json")
     }
     pub fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.to_string(), value.to_string()));
@@ -96,7 +112,10 @@ impl MockResponse {
             Some(start) => {
                 let s = start as usize;
                 Self::new(206, data[s..].to_vec())
-                    .header("content-range", &format!("bytes {}-{}/{}", s, data.len() - 1, data.len()))
+                    .header(
+                        "content-range",
+                        &format!("bytes {}-{}/{}", s, data.len() - 1, data.len()),
+                    )
                     .header("accept-ranges", "bytes")
             }
             None => Self::ok(data.to_vec()).header("accept-ranges", "bytes"),
@@ -119,15 +138,24 @@ pub struct MockServer {
 
 impl MockServer {
     /// Bind 127.0.0.1 on a free port and serve `handler`.
-    pub async fn start(handler: impl Fn(&MockRequest) -> MockResponse + Send + Sync + 'static) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind mock server");
+    pub async fn start(
+        handler: impl Fn(&MockRequest) -> MockResponse + Send + Sync + 'static,
+    ) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock server");
         let addr = listener.local_addr().expect("mock server addr");
-        let shared = Arc::new(Shared { connections: AtomicUsize::new(0), requests: Mutex::new(Vec::new()) });
+        let shared = Arc::new(Shared {
+            connections: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
+        });
         let handler: Handler = Arc::new(handler);
         let task_shared = shared.clone();
         let task = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else { break };
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
                 task_shared.connections.fetch_add(1, Ordering::SeqCst);
                 let shared = task_shared.clone();
                 let handler = handler.clone();
@@ -168,7 +196,11 @@ impl Drop for MockServer {
     }
 }
 
-async fn serve(mut stream: TcpStream, shared: Arc<Shared>, handler: Handler) -> std::io::Result<()> {
+async fn serve(
+    mut stream: TcpStream,
+    shared: Arc<Shared>,
+    handler: Handler,
+) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(4096);
     let head_end = loop {
         let mut tmp = [0u8; 4096];
@@ -207,7 +239,12 @@ async fn serve(mut stream: TcpStream, shared: Arc<Shared>, handler: Handler) -> 
         }
         body.extend_from_slice(&tmp[..n]);
     }
-    let req = MockRequest { method, path, headers, body };
+    let req = MockRequest {
+        method,
+        path,
+        headers,
+        body,
+    };
     shared.requests.lock().push(req.clone());
     let resp = handler(&req);
 
@@ -225,7 +262,9 @@ async fn serve(mut stream: TcpStream, shared: Arc<Shared>, handler: Handler) -> 
     stream.write_all(out.as_bytes()).await?;
     match resp.stall_after {
         Some(n) => {
-            stream.write_all(&resp.body[..n.min(resp.body.len())]).await?;
+            stream
+                .write_all(&resp.body[..n.min(resp.body.len())])
+                .await?;
             stream.flush().await?;
             // Hold the connection open until the client gives up.
             tokio::time::sleep(Duration::from_secs(120)).await;

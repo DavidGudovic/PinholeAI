@@ -24,7 +24,13 @@ pub const API_KEY_ENV: &str = "LLAMA_API_KEY";
 /// Launch arguments (the pin's `launch_defaults` are added by the caller).
 /// `backend == "cpu"` keeps every layer on the CPU; otherwise llama.cpp's
 /// automatic fit decides how many layers go to the GPU.
-pub fn launch_args(model: &Path, mmproj: &Path, port: u16, backend: &str, ctx_size: u32) -> Vec<String> {
+pub fn launch_args(
+    model: &Path,
+    mmproj: &Path,
+    port: u16,
+    backend: &str,
+    ctx_size: u32,
+) -> Vec<String> {
     let mut a = vec![
         "-m".to_string(),
         model.to_string_lossy().into_owned(),
@@ -38,7 +44,11 @@ pub fn launch_args(model: &Path, mmproj: &Path, port: u16, backend: &str, ctx_si
         ctx_size.to_string(),
     ];
     if backend == "cpu" {
-        a.extend(["-ngl".to_string(), "0".to_string(), "--no-mmproj-offload".to_string()]);
+        a.extend([
+            "-ngl".to_string(),
+            "0".to_string(),
+            "--no-mmproj-offload".to_string(),
+        ]);
     } else {
         a.extend(["-ngl".to_string(), "auto".to_string()]);
     }
@@ -62,14 +72,30 @@ pub struct LlamaClient {
 
 impl LlamaClient {
     pub fn new(local: pinhole_net::LocalClient, base: impl Into<String>) -> Self {
-        Self { http: Http::Local(local), base: base.into().trim_end_matches('/').to_string(), api_key: None }
+        Self {
+            http: Http::Local(local),
+            base: base.into().trim_end_matches('/').to_string(),
+            api_key: None,
+        }
     }
 
     #[cfg(any(test, feature = "test-util"))]
     pub fn new_plain_for_tests(base: impl Into<String>) -> Self {
         let base = base.into().trim_end_matches('/').to_string();
-        assert!(base.starts_with("http://127.0.0.1:"), "test client is loopback-only");
-        Self { http: Http::Plain(reqwest::Client::builder().no_proxy().build().expect("client")), base, api_key: None }
+        assert!(
+            base.starts_with("http://127.0.0.1:"),
+            "test client is loopback-only"
+        );
+        Self {
+            http: Http::Plain(
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .build()
+                    .expect("client"),
+            ),
+            base,
+            api_key: None,
+        }
     }
 
     /// Send `Authorization: Bearer <key>` with every request.
@@ -87,16 +113,24 @@ impl LlamaClient {
 
     fn get(&self, path: &str) -> Result<reqwest::RequestBuilder, ApiError> {
         let rb = match &self.http {
-            Http::Local(c) => c.get(&self.base, path).map_err(|e| ApiError::Net(e.to_string()))?,
+            Http::Local(c) => c
+                .get(&self.base, path)
+                .map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
             Http::Plain(c) => c.get(format!("{}{}", self.base, path)),
         };
         Ok(self.auth(rb))
     }
 
-    fn post(&self, path: &str, body: &serde_json::Value) -> Result<reqwest::RequestBuilder, ApiError> {
+    fn post(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<reqwest::RequestBuilder, ApiError> {
         let rb = match &self.http {
-            Http::Local(c) => c.post_json(&self.base, path, body).map_err(|e| ApiError::Net(e.to_string()))?,
+            Http::Local(c) => c
+                .post_json(&self.base, path, body)
+                .map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
             Http::Plain(c) => c.post(format!("{}{}", self.base, path)).json(body),
         };
@@ -111,28 +145,57 @@ impl LlamaClient {
             .timeout(Duration::from_secs(10))
             .send()
             .await
-            .map_err(|e| if e.is_timeout() { ApiError::Timeout } else if e.is_connect() { ApiError::Connect } else { ApiError::Net(e.without_url().to_string()) })?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ApiError::Timeout
+                } else if e.is_connect() {
+                    ApiError::Connect
+                } else {
+                    ApiError::Net(e.without_url().to_string())
+                }
+            })?;
         let status = resp.status().as_u16();
         if !(200..300).contains(&status) {
-            return Err(ApiError::Status { code: status, error: String::new() });
+            return Err(ApiError::Status {
+                code: status,
+                error: String::new(),
+            });
         }
-        let v: serde_json::Value = resp.json().await.map_err(|e| ApiError::Decode(e.without_url().to_string()))?;
+        let v: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| ApiError::Decode(e.without_url().to_string()))?;
         Ok(v.get("data")
             .and_then(|d| d.as_array())
-            .map(|a| a.iter().filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
     /// `GET /health` → 200 once the model is loaded (503 while loading).
     pub async fn is_ready(&self) -> bool {
-        let Ok(rb) = self.get("/health") else { return false };
+        let Ok(rb) = self.get("/health") else {
+            return false;
+        };
         matches!(rb.timeout(Duration::from_secs(5)).send().await, Ok(r) if r.status().is_success())
     }
 
     /// Ask the VLM to describe one image. Returns the trimmed answer.
-    pub async fn describe(&self, instruction: &str, mime: &str, image: &[u8], max_tokens: u32) -> Result<String, ApiError> {
+    pub async fn describe(
+        &self,
+        instruction: &str,
+        mime: &str,
+        image: &[u8],
+        max_tokens: u32,
+    ) -> Result<String, ApiError> {
         use base64::Engine as _;
-        let data_url = format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(image));
+        let data_url = format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(image)
+        );
         let body = serde_json::json!({
             "messages": [{
                 "role": "user",
@@ -151,9 +214,20 @@ impl LlamaClient {
             .timeout(Duration::from_secs(10 * 60))
             .send()
             .await
-            .map_err(|e| if e.is_timeout() { ApiError::Timeout } else if e.is_connect() { ApiError::Connect } else { ApiError::Net(e.without_url().to_string()) })?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ApiError::Timeout
+                } else if e.is_connect() {
+                    ApiError::Connect
+                } else {
+                    ApiError::Net(e.without_url().to_string())
+                }
+            })?;
         let status = resp.status().as_u16();
-        let bytes = resp.bytes().await.map_err(|e| ApiError::Net(e.without_url().to_string()))?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| ApiError::Net(e.without_url().to_string()))?;
         if !(200..300).contains(&status) {
             let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
             let msg = v
@@ -164,7 +238,10 @@ impl LlamaClient {
                 .chars()
                 .take(200)
                 .collect();
-            return Err(ApiError::Status { code: status, error: msg });
+            return Err(ApiError::Status {
+                code: status,
+                error: msg,
+            });
         }
         #[derive(Deserialize)]
         struct Msg {
@@ -179,8 +256,14 @@ impl LlamaClient {
         struct Resp {
             choices: Vec<Choice>,
         }
-        let r: Resp = serde_json::from_slice(&bytes).map_err(|e| ApiError::Decode(e.to_string().chars().take(200).collect()))?;
-        let text = r.choices.into_iter().next().and_then(|c| c.message.content).unwrap_or_default();
+        let r: Resp = serde_json::from_slice(&bytes)
+            .map_err(|e| ApiError::Decode(e.to_string().chars().take(200).collect()))?;
+        let text = r
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content)
+            .unwrap_or_default();
         Ok(clean_caption(&text))
     }
 }
@@ -203,7 +286,13 @@ mod tests {
 
     #[test]
     fn launch_args_bind_loopback_and_offload() {
-        let a = launch_args(Path::new("/m/model.gguf"), Path::new("/m/mmproj.gguf"), 4321, "vulkan", 8192);
+        let a = launch_args(
+            Path::new("/m/model.gguf"),
+            Path::new("/m/mmproj.gguf"),
+            4321,
+            "vulkan",
+            8192,
+        );
         assert!(a.windows(2).any(|w| w == ["--host", "127.0.0.1"]));
         assert!(a.windows(2).any(|w| w == ["--port", "4321"]));
         assert!(a.windows(2).any(|w| w == ["--mmproj", "/m/mmproj.gguf"]));
@@ -214,7 +303,10 @@ mod tests {
 
     #[test]
     fn cleans_captions() {
-        assert_eq!(clean_caption("  Prompt: \"a cat on a mat\"  "), "a cat on a mat");
+        assert_eq!(
+            clean_caption("  Prompt: \"a cat on a mat\"  "),
+            "a cat on a mat"
+        );
         assert_eq!(clean_caption("1girl, solo"), "1girl, solo");
     }
 }

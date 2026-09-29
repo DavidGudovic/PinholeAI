@@ -29,7 +29,10 @@ pub async fn list_presets(core: State<'_, Arc<AppCore>>) -> Result<Vec<Preset>, 
 }
 
 #[tauri::command]
-pub async fn save_preset(core: State<'_, Arc<AppCore>>, preset: Preset) -> Result<Preset, CoreError> {
+pub async fn save_preset(
+    core: State<'_, Arc<AppCore>>,
+    preset: Preset,
+) -> Result<Preset, CoreError> {
     library::save_preset(&core, preset)
 }
 
@@ -39,4 +42,11 @@ pub async fn delete_preset(core: State<'_, Arc<AppCore>>, id: String) -> Result<
 }
 
 // Declared last so every command (and its generated `__cmd__*` macro) is defined above.
-super::area_commands![list_styles, save_style, delete_style, list_presets, save_preset, delete_preset];
+super::area_commands![
+    list_styles,
+    save_style,
+    delete_style,
+    list_presets,
+    save_preset,
+    delete_preset
+];

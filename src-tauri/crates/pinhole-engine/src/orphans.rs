@@ -36,7 +36,13 @@ pub fn is_engine_binary_name(name: &str) -> bool {
         Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
         _ => name,
     };
-    ENGINE_BINARIES.iter().any(|b| if cfg!(windows) { stem.eq_ignore_ascii_case(b) } else { stem == *b })
+    ENGINE_BINARIES.iter().any(|b| {
+        if cfg!(windows) {
+            stem.eq_ignore_ascii_case(b)
+        } else {
+            stem == *b
+        }
+    })
 }
 
 /// Comparable form of a path: Windows verbatim prefixes removed (`\\?\C:\` →
@@ -68,12 +74,16 @@ pub fn engine_roots(engine_root: &Path) -> Vec<PathBuf> {
 /// `exe` is an engine binary inside one of `roots` (from [`engine_roots`]).
 /// Component-wise: `Data/engine-old/sd-server` is not inside `Data/engine`.
 pub fn is_engine_exe(exe: &Path, roots: &[PathBuf]) -> bool {
-    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
+    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+        return false;
+    };
     if !is_engine_binary_name(&name) {
         return false;
     }
     let exe = comparable(exe);
-    roots.iter().any(|r| !r.as_os_str().is_empty() && exe.starts_with(r) && exe != *r)
+    roots
+        .iter()
+        .any(|r| !r.as_os_str().is_empty() && exe.starts_with(r) && exe != *r)
 }
 
 /// Who started an engine process, as far as the process list tells.
@@ -103,7 +113,9 @@ pub fn parent_allows_kill(parent: &Parent, my_exe: Option<&Path>) -> bool {
 }
 
 fn parent_of(sys: &System, p: &sysinfo::Process, me: u32) -> Parent {
-    let Some(ppid) = p.parent() else { return Parent::Gone };
+    let Some(ppid) = p.parent() else {
+        return Parent::Gone;
+    };
     if ppid.as_u32() == me {
         return Parent::Me;
     }
@@ -116,7 +128,13 @@ fn parent_of(sys: &System, p: &sysinfo::Process, me: u32) -> Parent {
 }
 
 fn list(sys: &mut System) {
-    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing().without_tasks().with_exe(UpdateKind::Always));
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing()
+            .without_tasks()
+            .with_exe(UpdateKind::Always),
+    );
 }
 
 /// Leftover engines under `engine_root` (nothing is killed).
@@ -141,10 +159,16 @@ fn find_in(sys: &mut System, roots: &[PathBuf]) -> Vec<Orphan> {
                 return None;
             }
             let exe = p.exe()?;
-            if !is_engine_exe(exe, roots) || !parent_allows_kill(&parent_of(sys, p, me), my_exe.as_deref()) {
+            if !is_engine_exe(exe, roots)
+                || !parent_allows_kill(&parent_of(sys, p, me), my_exe.as_deref())
+            {
                 return None;
             }
-            Some(Orphan { pid, exe: exe.to_path_buf(), exited: false })
+            Some(Orphan {
+                pid,
+                exe: exe.to_path_buf(),
+                exited: false,
+            })
         })
         .collect();
     out.sort_by_key(|o| o.pid);
@@ -171,9 +195,15 @@ pub fn kill_orphans(engine_root: &Path, wait: Duration) -> Vec<Orphan> {
     let pids: Vec<Pid> = found.iter().map(|o| Pid::from_u32(o.pid)).collect();
     let start = Instant::now();
     loop {
-        sys.refresh_processes_specifics(ProcessesToUpdate::Some(&pids), true, ProcessRefreshKind::nothing().without_tasks());
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&pids),
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
         for o in found.iter_mut() {
-            o.exited = sys.process(Pid::from_u32(o.pid)).is_none_or(|p| is_gone(p.status()));
+            o.exited = sys
+                .process(Pid::from_u32(o.pid))
+                .is_none_or(|p| is_gone(p.status()));
         }
         if found.iter().all(|o| o.exited) || start.elapsed() >= wait {
             return found;
@@ -188,10 +218,25 @@ mod tests {
 
     #[test]
     fn engine_binary_names() {
-        for ok in ["sd-server", "llama-server", "sd-server.exe", "llama-server.EXE", "sd-server (deleted)"] {
+        for ok in [
+            "sd-server",
+            "llama-server",
+            "sd-server.exe",
+            "llama-server.EXE",
+            "sd-server (deleted)",
+        ] {
             assert!(is_engine_binary_name(ok), "{ok}");
         }
-        for no in ["sd-cli", "python", "python.exe", "sd-server2", "my-sd-server", "", ".exe", "llama-server.sh"] {
+        for no in [
+            "sd-cli",
+            "python",
+            "python.exe",
+            "sd-server2",
+            "my-sd-server",
+            "",
+            ".exe",
+            "llama-server.sh",
+        ] {
             assert!(!is_engine_binary_name(no), "{no}");
         }
     }
@@ -199,12 +244,30 @@ mod tests {
     #[test]
     fn engines_of_another_running_pinhole_are_left_alone() {
         let me = Path::new("/opt/Pinhole/pinhole");
-        assert!(parent_allows_kill(&Parent::Gone, Some(me)), "its Pinhole crashed");
-        assert!(parent_allows_kill(&Parent::Me, Some(me)), "ours, no longer managed");
-        assert!(parent_allows_kill(&Parent::Reused, Some(me)), "pid reused by a newer process");
-        assert!(parent_allows_kill(&Parent::Running(Some("/usr/lib/systemd/systemd".into())), Some(me)), "re-parented to a subreaper");
+        assert!(
+            parent_allows_kill(&Parent::Gone, Some(me)),
+            "its Pinhole crashed"
+        );
+        assert!(
+            parent_allows_kill(&Parent::Me, Some(me)),
+            "ours, no longer managed"
+        );
+        assert!(
+            parent_allows_kill(&Parent::Reused, Some(me)),
+            "pid reused by a newer process"
+        );
+        assert!(
+            parent_allows_kill(
+                &Parent::Running(Some("/usr/lib/systemd/systemd".into())),
+                Some(me)
+            ),
+            "re-parented to a subreaper"
+        );
         assert!(parent_allows_kill(&Parent::Running(None), Some(me)));
-        assert!(!parent_allows_kill(&Parent::Running(Some(me.to_path_buf())), Some(me)), "Pinhole opened twice");
+        assert!(
+            !parent_allows_kill(&Parent::Running(Some(me.to_path_buf())), Some(me)),
+            "Pinhole opened twice"
+        );
     }
 
     #[cfg(unix)]
@@ -212,25 +275,57 @@ mod tests {
     fn exe_must_be_an_engine_inside_the_engine_folder() {
         let roots = vec![PathBuf::from("/home/u/Pinhole/Data/engine")];
         let yes = |p: &str| is_engine_exe(Path::new(p), &roots);
-        assert!(yes("/home/u/Pinhole/Data/engine/sd/master-929-3f8527a/cpu/sd-server"));
-        assert!(yes("/home/u/Pinhole/Data/engine/llama/b1/vulkan/build/bin/llama-server"));
-        assert!(yes("/home/u/Pinhole/Data/engine/sd/v/cpu/sd-server (deleted)"));
-        assert!(!yes("/home/u/Pinhole/Data/engine-old/sd/v/cpu/sd-server"), "component-wise prefix");
+        assert!(yes(
+            "/home/u/Pinhole/Data/engine/sd/master-929-3f8527a/cpu/sd-server"
+        ));
+        assert!(yes(
+            "/home/u/Pinhole/Data/engine/llama/b1/vulkan/build/bin/llama-server"
+        ));
+        assert!(yes(
+            "/home/u/Pinhole/Data/engine/sd/v/cpu/sd-server (deleted)"
+        ));
+        assert!(
+            !yes("/home/u/Pinhole/Data/engine-old/sd/v/cpu/sd-server"),
+            "component-wise prefix"
+        );
         assert!(!yes("/usr/local/bin/sd-server"), "someone else's sd-server");
-        assert!(!yes("/home/u/Pinhole/Data/engine/sd/v/cpu/python3"), "not an engine binary");
+        assert!(
+            !yes("/home/u/Pinhole/Data/engine/sd/v/cpu/python3"),
+            "not an engine binary"
+        );
         assert!(!yes("/home/u/Pinhole/pinhole"));
-        assert!(!is_engine_exe(Path::new("/home/u/Pinhole/Data/engine/sd-server"), &[PathBuf::new()]), "empty root matches nothing");
+        assert!(
+            !is_engine_exe(
+                Path::new("/home/u/Pinhole/Data/engine/sd-server"),
+                &[PathBuf::new()]
+            ),
+            "empty root matches nothing"
+        );
     }
 
     #[cfg(windows)]
     #[test]
     fn windows_paths_compare_case_insensitively_without_verbatim_prefix() {
         let roots = engine_roots(Path::new(r"C:\Users\Ana\Pinhole\Data\engine"));
-        assert!(is_engine_exe(Path::new(r"c:\users\ana\pinhole\data\ENGINE\sd\v\cuda\sd-server.exe"), &roots));
-        let verbatim = vec![comparable(Path::new(r"\\?\C:\Users\Ana\Pinhole\Data\engine"))];
-        assert!(is_engine_exe(Path::new(r"C:\Users\Ana\Pinhole\Data\engine\sd\v\cuda\sd-server.exe"), &verbatim));
-        assert!(!is_engine_exe(Path::new(r"C:\Program Files\Other\sd-server.exe"), &roots));
-        assert!(!is_engine_exe(Path::new(r"C:\Users\Ana\Pinhole\Data\engine\sd\v\cuda\python.exe"), &roots));
+        assert!(is_engine_exe(
+            Path::new(r"c:\users\ana\pinhole\data\ENGINE\sd\v\cuda\sd-server.exe"),
+            &roots
+        ));
+        let verbatim = vec![comparable(Path::new(
+            r"\\?\C:\Users\Ana\Pinhole\Data\engine",
+        ))];
+        assert!(is_engine_exe(
+            Path::new(r"C:\Users\Ana\Pinhole\Data\engine\sd\v\cuda\sd-server.exe"),
+            &verbatim
+        ));
+        assert!(!is_engine_exe(
+            Path::new(r"C:\Program Files\Other\sd-server.exe"),
+            &roots
+        ));
+        assert!(!is_engine_exe(
+            Path::new(r"C:\Users\Ana\Pinhole\Data\engine\sd\v\cuda\python.exe"),
+            &roots
+        ));
     }
 
     /// A real process: a copy of `sleep` named `sd-server` under a temp
@@ -241,7 +336,13 @@ mod tests {
     async fn sweep_kills_only_unmanaged_engines_in_our_folder() {
         use std::os::unix::fs::PermissionsExt;
         use std::sync::Arc;
-        let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"].iter().map(Path::new).find(|p| p.is_file()) else { return };
+        let Some(sleep) = ["/usr/bin/sleep", "/bin/sleep"]
+            .iter()
+            .map(Path::new)
+            .find(|p| p.is_file())
+        else {
+            return;
+        };
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("Data").join("engine");
         let place = |dir: &Path| {
@@ -255,8 +356,17 @@ mod tests {
         let outside = place(&tmp.path().join("elsewhere"));
 
         let mut orphan = std::process::Command::new(&ours).arg("30").spawn().unwrap();
-        let mut stranger = std::process::Command::new(&outside).arg("30").spawn().unwrap();
-        let managed = crate::process::EngineProcess::spawn(&ours, &["30".into()], 1, Arc::new(crate::LogBuffer::default())).unwrap();
+        let mut stranger = std::process::Command::new(&outside)
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let managed = crate::process::EngineProcess::spawn(
+            &ours,
+            &["30".into()],
+            1,
+            Arc::new(crate::LogBuffer::default()),
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(200));
         if orphan.try_wait().unwrap().is_some() {
             // `sleep` is a multi-call binary here (busybox): can't run under another name.
@@ -267,18 +377,35 @@ mod tests {
         }
 
         let found = find_orphans(&root);
-        assert_eq!(found.iter().map(|o| o.pid).collect::<Vec<_>>(), vec![orphan.id()], "{found:?}");
+        assert_eq!(
+            found.iter().map(|o| o.pid).collect::<Vec<_>>(),
+            vec![orphan.id()],
+            "{found:?}"
+        );
 
         let root2 = root.clone();
-        let killed = tokio::task::spawn_blocking(move || kill_orphans(&root2, Duration::from_secs(10))).await.unwrap();
+        let killed =
+            tokio::task::spawn_blocking(move || kill_orphans(&root2, Duration::from_secs(10)))
+                .await
+                .unwrap();
         assert_eq!(killed.len(), 1);
         assert_eq!(killed[0].pid, orphan.id());
         assert!(killed[0].exited, "{killed:?}");
-        assert!(orphan.try_wait().unwrap().is_some(), "the leftover engine was killed");
-        assert!(stranger.try_wait().unwrap().is_none(), "other programs are never touched");
+        assert!(
+            orphan.try_wait().unwrap().is_some(),
+            "the leftover engine was killed"
+        );
+        assert!(
+            stranger.try_wait().unwrap().is_none(),
+            "other programs are never touched"
+        );
         let pid = managed.pid().unwrap();
         // SAFETY: signal 0 only checks whether the pid exists.
-        assert_eq!(unsafe { libc::kill(pid as libc::pid_t, 0) }, 0, "a managed engine is never touched");
+        assert_eq!(
+            unsafe { libc::kill(pid as libc::pid_t, 0) },
+            0,
+            "a managed engine is never touched"
+        );
         assert!(kill_orphans(&root, Duration::from_secs(1)).is_empty());
 
         managed.kill().await;

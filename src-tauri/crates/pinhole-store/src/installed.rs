@@ -88,7 +88,11 @@ enum FileOut<'a> {
 impl InstalledIndex {
     /// Empty index at the current schema version.
     pub fn new() -> Self {
-        Self { schema_version: SCHEMA_VERSION, files: Vec::new(), unknown: Vec::new() }
+        Self {
+            schema_version: SCHEMA_VERSION,
+            files: Vec::new(),
+            unknown: Vec::new(),
+        }
     }
 
     /// Is `rel_path` used by an entry (readable or not)?
@@ -103,7 +107,10 @@ impl InstalledIndex {
     /// [`DataDir::resolve_rel`] reads it)?
     pub fn unknown_uses(&self, rel_path: &str) -> bool {
         let want = normalize_rel(rel_path);
-        self.unknown.iter().filter_map(unknown_rel_path).any(|p| normalize_rel(p) == want)
+        self.unknown
+            .iter()
+            .filter_map(unknown_rel_path)
+            .any(|p| normalize_rel(p) == want)
     }
 
     /// Paths of every entry, including the ones this version can't read.
@@ -131,7 +138,10 @@ impl InstalledIndex {
             Some(index) => Ok(index),
             None => {
                 let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "installed.json".into());
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "installed.json".into());
                 let backup = path.with_file_name(format!("{name}.corrupt-{stamp}"));
                 let _ = std::fs::rename(path, &backup);
                 Ok(Self::new())
@@ -159,10 +169,19 @@ impl InstalledIndex {
     /// a missing user-picked Models folder (an unmounted drive).
     pub fn save_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
         self.check_savable_to(dir, path)?;
-        let files = self.files.iter().map(FileOut::Known).chain(self.unknown.iter().map(FileOut::Unknown)).collect();
-        let out = IndexOut { schema_version: SCHEMA_VERSION, files };
-        let mut json = serde_json::to_vec_pretty(&out)
-            .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
+        let files = self
+            .files
+            .iter()
+            .map(FileOut::Known)
+            .chain(self.unknown.iter().map(FileOut::Unknown))
+            .collect();
+        let out = IndexOut {
+            schema_version: SCHEMA_VERSION,
+            files,
+        };
+        let mut json = serde_json::to_vec_pretty(&out).map_err(|e| {
+            StoreError::Invalid(format!("could not encode the installed-files index: {e}"))
+        })?;
         json.push(b'\n');
         write_atomic(path, &json)
     }
@@ -174,7 +193,11 @@ impl InstalledIndex {
     }
 
     fn check_savable_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
-        if dir.models_home.as_ref().is_some_and(|home| path.starts_with(home) && !home.is_dir()) {
+        if dir
+            .models_home
+            .as_ref()
+            .is_some_and(|home| path.starts_with(home) && !home.is_dir())
+        {
             return Err(StoreError::Invalid(
                 "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
             ));
@@ -196,8 +219,9 @@ impl InstalledIndex {
     /// and return them (to put back if saving fails).
     pub fn remove_unknown_at(&mut self, rel_path: &str) -> Vec<serde_json::Value> {
         let want = normalize_rel(rel_path);
-        let (gone, keep) =
-            std::mem::take(&mut self.unknown).into_iter().partition(|v| unknown_rel_path(v).is_some_and(|p| normalize_rel(p) == want));
+        let (gone, keep) = std::mem::take(&mut self.unknown)
+            .into_iter()
+            .partition(|v| unknown_rel_path(v).is_some_and(|p| normalize_rel(p) == want));
         self.unknown = keep;
         gone
     }
@@ -209,10 +233,14 @@ impl InstalledIndex {
         self.files.iter_mut().find(|f| f.id == id)
     }
     pub fn find_by_sha(&self, sha256: &str) -> Option<&InstalledFile> {
-        self.files.iter().find(|f| f.sha256.eq_ignore_ascii_case(sha256))
+        self.files
+            .iter()
+            .find(|f| f.sha256.eq_ignore_ascii_case(sha256))
     }
     pub fn find_component(&self, component_id: &str) -> Option<&InstalledFile> {
-        self.files.iter().find(|f| f.component_id.as_deref() == Some(component_id))
+        self.files
+            .iter()
+            .find(|f| f.component_id.as_deref() == Some(component_id))
     }
     /// Insert or replace (by id).
     pub fn upsert(&mut self, file: InstalledFile) {
@@ -234,7 +262,9 @@ impl InstalledIndex {
     }
     /// Main models: checkpoints + diffusion files.
     pub fn models(&self) -> impl Iterator<Item = &InstalledFile> {
-        self.files.iter().filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion))
+        self.files
+            .iter()
+            .filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion))
     }
     pub fn loras(&self) -> impl Iterator<Item = &InstalledFile> {
         self.files.iter().filter(|f| f.kind == ModelKind::Lora)
@@ -262,8 +292,15 @@ fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
         }
         Some(_) => return None,
     }
-    let version = obj.get("schema_version").and_then(|v| v.as_u64()).map_or(SCHEMA_VERSION, |v| u32::try_from(v).unwrap_or(u32::MAX));
-    Some(InstalledIndex { schema_version: version.max(SCHEMA_VERSION), files, unknown })
+    let version = obj
+        .get("schema_version")
+        .and_then(|v| v.as_u64())
+        .map_or(SCHEMA_VERSION, |v| u32::try_from(v).unwrap_or(u32::MAX));
+    Some(InstalledIndex {
+        schema_version: version.max(SCHEMA_VERSION),
+        files,
+        unknown,
+    })
 }
 
 #[cfg(test)]
@@ -314,7 +351,11 @@ mod tests {
     fn save_load_round_trip() {
         let (_t, d) = data();
         let mut idx = InstalledIndex::default(); // schema 0 in memory
-        idx.upsert(file("a", "models/checkpoints/a.safetensors", ModelKind::Checkpoint));
+        idx.upsert(file(
+            "a",
+            "models/checkpoints/a.safetensors",
+            ModelKind::Checkpoint,
+        ));
         idx.upsert(file("b", "models/loras/b.safetensors", ModelKind::Lora));
         idx.save(&d).unwrap();
         let text = std::fs::read_to_string(d.installed_file()).unwrap();
@@ -353,7 +394,10 @@ mod tests {
         idx.upsert(vae);
         assert_eq!(idx.find_by_sha("abcdefa").unwrap().id, "a");
         assert_eq!(idx.find_component("flux_ae").unwrap().id, "v");
-        assert_eq!(idx.models().map(|f| f.id.as_str()).collect::<Vec<_>>(), vec!["a", "d"]);
+        assert_eq!(
+            idx.models().map(|f| f.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "d"]
+        );
         assert_eq!(idx.loras().count(), 1);
     }
 
@@ -362,9 +406,24 @@ mod tests {
         let d = DataDir::at(PathBuf::from("/data"), false);
         let idx = InstalledIndex::new();
         let p = idx.abs_path(&d, &file("a", "models/vae/ae.safetensors", ModelKind::Vae));
-        assert_eq!(p, Path::new("/data").join("models").join("vae").join("ae.safetensors"));
-        let p = idx.abs_path(&d, &file("a", "models\\loras\\x.safetensors", ModelKind::Lora));
-        assert_eq!(p, Path::new("/data").join("models").join("loras").join("x.safetensors"));
+        assert_eq!(
+            p,
+            Path::new("/data")
+                .join("models")
+                .join("vae")
+                .join("ae.safetensors")
+        );
+        let p = idx.abs_path(
+            &d,
+            &file("a", "models\\loras\\x.safetensors", ModelKind::Lora),
+        );
+        assert_eq!(
+            p,
+            Path::new("/data")
+                .join("models")
+                .join("loras")
+                .join("x.safetensors")
+        );
         let p = idx.abs_path(&d, &file("a", "../../etc/passwd", ModelKind::Vae));
         assert_eq!(p, Path::new("/data").join("etc").join("passwd"));
         let p = idx.abs_path(&d, &file("a", "/abs/./x", ModelKind::Vae));
@@ -377,7 +436,8 @@ mod tests {
     fn bad_entries_are_skipped() {
         let (_t, d) = data();
         std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
-        let good = serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
+        let good =
+            serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
         let json = serde_json::json!({
             "schema_version": 1,
             "files": [good, {"id": "broken"}, {"id": "k", "kind": "spaceship"}],
@@ -393,7 +453,8 @@ mod tests {
     fn unreadable_entries_survive_a_save() {
         let (_t, d) = data();
         std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
-        let good = serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
+        let good =
+            serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
         // E.g. a kind a newer Pinhole on the other OS knows about.
         let newer = serde_json::json!({"id": "k", "relPath": "models/video/k.safetensors", "kind": "video"});
         let json = serde_json::json!({ "schema_version": 1, "files": [good, newer.clone()] });
@@ -401,10 +462,14 @@ mod tests {
 
         let mut idx = InstalledIndex::load(&d).unwrap();
         assert_eq!(idx.files.len(), 1);
-        assert!(idx.has_rel_path("models/video/k.safetensors"), "its path counts as taken");
+        assert!(
+            idx.has_rel_path("models/video/k.safetensors"),
+            "its path counts as taken"
+        );
         idx.upsert(file("b", "models/loras/b", ModelKind::Lora));
         idx.save(&d).unwrap();
-        let text: serde_json::Value = serde_json::from_slice(&std::fs::read(d.installed_file()).unwrap()).unwrap();
+        let text: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(d.installed_file()).unwrap()).unwrap();
         let files = text["files"].as_array().unwrap();
         assert_eq!(files.len(), 3);
         assert!(files.contains(&newer), "{files:?}");
@@ -451,11 +516,26 @@ mod tests {
         std::fs::write(&shared, b"{ damaged").unwrap();
         assert!(InstalledIndex::read_from(&shared).unwrap().is_none());
         assert!(shared.exists(), "a preview read leaves the file alone");
-        assert!(InstalledIndex::read_from(&dir.join("absent.json")).unwrap().unwrap().files.is_empty());
+        assert!(InstalledIndex::read_from(&dir.join("absent.json"))
+            .unwrap()
+            .unwrap()
+            .files
+            .is_empty());
 
         assert!(InstalledIndex::load_from(&shared).unwrap().files.is_empty());
-        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-        assert!(names.iter().any(|n| n.starts_with("pinhole-models.json.corrupt-")), "{names:?}");
-        assert!(!names.iter().any(|n| n.starts_with("installed.json")), "{names:?}");
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("pinhole-models.json.corrupt-")),
+            "{names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("installed.json")),
+            "{names:?}"
+        );
     }
 }

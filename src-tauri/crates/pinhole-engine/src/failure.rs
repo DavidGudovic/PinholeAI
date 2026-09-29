@@ -55,7 +55,11 @@ const ENCODE_FAILED: &[&str] = &[
     "failed to encode image guidance prompt",
 ];
 /// Lines that say which stage of `generate_image` failed (src/pipeline/image.cpp).
-const STAGE_DIFFUSION: &[&str] = &["sampling for image", "sampling failed", "no latent images generated"];
+const STAGE_DIFFUSION: &[&str] = &[
+    "sampling for image",
+    "sampling failed",
+    "no latent images generated",
+];
 const STAGE_VAE: &[&str] = &[
     "decode_first_stage failed",
     "encode_first_stage failed",
@@ -65,7 +69,12 @@ const STAGE_VAE: &[&str] = &[
     "failed to encode control image",
     "no decoded images",
 ];
-const DRIVER: &[&str] = &["driver version is insufficient", "cuda driver version", "unsupported ptx version", "no kernel image is available"];
+const DRIVER: &[&str] = &[
+    "driver version is insufficient",
+    "cuda driver version",
+    "unsupported ptx version",
+    "no kernel image is available",
+];
 const NO_GPU: &[&str] = &[
     "no cuda-capable device",
     "failed to initialize cuda",
@@ -77,8 +86,18 @@ const NO_GPU: &[&str] = &[
     "error_incompatible_driver",
     "no devices found",
 ];
-const GLIBC: &[&str] = &["glibc_2.", "glibcxx_3.", "version `glibc", "version `glibcxx"];
-const MISSING_LIB: &[&str] = &["error while loading shared libraries", "cannot open shared object file", ".dll was not found", "could not load library"];
+const GLIBC: &[&str] = &[
+    "glibc_2.",
+    "glibcxx_3.",
+    "version `glibc",
+    "version `glibcxx",
+];
+const MISSING_LIB: &[&str] = &[
+    "error while loading shared libraries",
+    "cannot open shared object file",
+    ".dll was not found",
+    "could not load library",
+];
 const MODEL: &[&str] = &[
     "new_sd_ctx_t failed",
     "load tensors from model loader failed",
@@ -109,7 +128,12 @@ pub fn classify(log_tail: &str, exit_code: Option<i32>) -> Failure {
     if has(OOM) {
         return Failure::OutOfMemory;
     }
-    if has(MISSING_LIB) || matches!(exit_code, Some(STATUS_DLL_NOT_FOUND) | Some(STATUS_ENTRYPOINT_NOT_FOUND)) {
+    if has(MISSING_LIB)
+        || matches!(
+            exit_code,
+            Some(STATUS_DLL_NOT_FOUND) | Some(STATUS_ENTRYPOINT_NOT_FOUND)
+        )
+    {
         return Failure::MissingLibrary;
     }
     if has(NO_GPU) {
@@ -163,7 +187,11 @@ pub fn memory_failure(log: &str) -> Option<Stage> {
 /// RAM, and where each part's weights went), from its output lines. Needs
 /// `--log-level info`; empty when auto-fit didn't run (e.g. `--offload-to-cpu`).
 pub fn memory_plan(lines: &[String]) -> Vec<String> {
-    lines.iter().filter(|l| l.contains("backend_fit.cpp")).map(|l| l.trim_end().to_string()).collect()
+    lines
+        .iter()
+        .filter(|l| l.contains("backend_fit.cpp"))
+        .map(|l| l.trim_end().to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -174,12 +202,33 @@ mod tests {
     fn classifies_common_failures() {
         assert_eq!(classify("ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory", None), Failure::OutOfMemory);
         assert_eq!(classify("ggml_vulkan: Device memory allocation of size 123 failed.\nvk::Device::allocateMemory: ErrorOutOfDeviceMemory", None), Failure::OutOfMemory);
-        assert_eq!(classify("./sd-server: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found", Some(1)), Failure::GlibcTooOld);
+        assert_eq!(
+            classify(
+                "./sd-server: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found",
+                Some(1)
+            ),
+            Failure::GlibcTooOld
+        );
         assert_eq!(classify("sd-server: error while loading shared libraries: libvulkan.so.1: cannot open shared object file", Some(127)), Failure::MissingLibrary);
         assert_eq!(classify("", Some(-1073741515)), Failure::MissingLibrary);
-        assert_eq!(classify("CUDA error: CUDA driver version is insufficient for CUDA runtime version", None), Failure::DriverTooOld);
-        assert_eq!(classify("ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected", None), Failure::NoGpu);
-        assert_eq!(classify("[ERROR] main.cpp:91  - new_sd_ctx_t failed", Some(1)), Failure::ModelLoad);
+        assert_eq!(
+            classify(
+                "CUDA error: CUDA driver version is insufficient for CUDA runtime version",
+                None
+            ),
+            Failure::DriverTooOld
+        );
+        assert_eq!(
+            classify(
+                "ggml_cuda_init: failed to initialize CUDA: no CUDA-capable device is detected",
+                None
+            ),
+            Failure::NoGpu
+        );
+        assert_eq!(
+            classify("[ERROR] main.cpp:91  - new_sd_ctx_t failed", Some(1)),
+            Failure::ModelLoad
+        );
         assert_eq!(classify("something else", Some(1)), Failure::Unknown);
     }
 
@@ -207,7 +256,10 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
             assert_eq!(memory_failure(line), None, "{line}");
         }
         // The CUDA banner alone is not a failure.
-        assert_eq!(classify(TE_OOM_LOG.lines().nth(1).unwrap(), None), Failure::Unknown);
+        assert_eq!(
+            classify(TE_OOM_LOG.lines().nth(1).unwrap(), None),
+            Failure::Unknown
+        );
         assert_eq!(memory_failure("generate_image returned no results"), None);
     }
 
@@ -220,11 +272,20 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
         let vae = "ggml_backend_cuda_buffer_type_alloc_buffer: allocating 3000 MiB on device 0: cudaMalloc failed: out of memory\n\
                    [ERROR] image.cpp:614 - decode_first_stage failed for latent 1";
         assert_eq!(memory_failure(vae), Some(Stage::Vae));
-        assert_eq!(memory_failure("CUDA error: out of memory\n  current device: 0"), Some(Stage::Unknown));
+        assert_eq!(
+            memory_failure("CUDA error: out of memory\n  current device: 0"),
+            Some(Stage::Unknown)
+        );
         // A later stage line wins over an earlier one (a retried job's output).
-        assert_eq!(failed_stage("failed to encode prompt\nsampling for image 1/1 failed"), Stage::Diffusion);
+        assert_eq!(
+            failed_stage("failed to encode prompt\nsampling for image 1/1 failed"),
+            Stage::Diffusion
+        );
         // Not memory: the model file is broken.
-        assert_eq!(memory_failure("[ERROR] main.cpp:91  - new_sd_ctx_t failed"), None);
+        assert_eq!(
+            memory_failure("[ERROR] main.cpp:91  - new_sd_ctx_t failed"),
+            None
+        );
         // Upstream's padded level tags; a graph runner that couldn't prepare its workspace.
         let vae = "[ERROR  ] ggml_runner.cpp:898  - vae segment 1/1 (graph) failed during workspace preparation
                    [ERROR  ] image.cpp:614  - decode_first_stage failed for latent 1";

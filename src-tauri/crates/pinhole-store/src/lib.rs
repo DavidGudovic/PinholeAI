@@ -53,10 +53,15 @@ impl StoreError {
         match self {
             StoreError::Io(_) => IO_MESSAGE.to_string(),
             StoreError::Parse { path, .. } => {
-                let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+                let name = Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.clone());
                 format!("A file in Pinhole's Data folder is damaged ({name}). Restore it from a backup, or move it out of the Data folder and restart Pinhole.")
             }
-            StoreError::NotFound(what) => format!("{what} was not found. It may have been deleted."),
+            StoreError::NotFound(what) => {
+                format!("{what} was not found. It may have been deleted.")
+            }
             StoreError::Invalid(msg) | StoreError::Keychain(msg) => msg.clone(),
         }
     }
@@ -118,7 +123,12 @@ fn create_temp_sibling(dir: &Path, file_name: &str) -> std::io::Result<(PathBuf,
     Err(last_err.unwrap_or_else(|| std::io::Error::other("could not create a temporary file")))
 }
 
-fn finish_atomic_write(mut file: File, bytes: &[u8], tmp: &Path, dest: &Path) -> std::io::Result<()> {
+fn finish_atomic_write(
+    mut file: File,
+    bytes: &[u8],
+    tmp: &Path,
+    dest: &Path,
+) -> std::io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
@@ -220,7 +230,10 @@ mod tests {
     #[test]
     fn slugify_basic() {
         assert_eq!(slugify("Film photo"), "film-photo");
-        assert_eq!(slugify("  Studio product shot on white!  "), "studio-product-shot-on-white");
+        assert_eq!(
+            slugify("  Studio product shot on white!  "),
+            "studio-product-shot-on-white"
+        );
         assert_eq!(slugify("Anime -- cel // shading"), "anime-cel-shading");
         assert_eq!(slugify("Mike's style"), "mikes-style");
         assert_eq!(slugify("35mm"), "35mm");
@@ -276,7 +289,10 @@ mod tests {
 
     #[test]
     fn write_atomic_rejects_non_file_path() {
-        assert!(matches!(write_atomic(Path::new("/"), b"x"), Err(StoreError::Invalid(_))));
+        assert!(matches!(
+            write_atomic(Path::new("/"), b"x"),
+            Err(StoreError::Invalid(_))
+        ));
     }
 
     #[test]

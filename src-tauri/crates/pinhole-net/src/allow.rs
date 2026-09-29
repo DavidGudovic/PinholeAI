@@ -95,7 +95,9 @@ const TEST_CDN: &str = "localhost";
 /// query (they may carry tokens), only the host.
 pub(crate) fn classify(url: &Url, rules: Rules) -> Result<HostKind, NetError> {
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(NetError::BadUrl("URLs with credentials are not allowed".into()));
+        return Err(NetError::BadUrl(
+            "URLs with credentials are not allowed".into(),
+        ));
     }
     match url.scheme() {
         "https" => {
@@ -126,7 +128,12 @@ pub(crate) fn classify(url: &Url, rules: Rules) -> Result<HostKind, NetError> {
 
 /// Decide whether a redirect hop to `next` may be followed. `previous` is the
 /// chain so far (first element = the original request URL).
-pub(crate) fn check_redirect(next: &Url, previous: &[Url], offline: bool, rules: Rules) -> Result<(), NetError> {
+pub(crate) fn check_redirect(
+    next: &Url,
+    previous: &[Url],
+    offline: bool,
+    rules: Rules,
+) -> Result<(), NetError> {
     if offline {
         return Err(NetError::Offline);
     }
@@ -137,7 +144,10 @@ pub(crate) fn check_redirect(next: &Url, previous: &[Url], offline: bool, rules:
         HostKind::Primary => Ok(()),
         HostKind::Cdn => {
             let host = next.host_str().unwrap_or_default();
-            let origin = previous.first().and_then(|u| u.host_str()).unwrap_or_default();
+            let origin = previous
+                .first()
+                .and_then(|u| u.host_str())
+                .unwrap_or_default();
             let allowed = if rules.loopback_http && host == TEST_CDN {
                 origin == TEST_PRIMARY
             } else {
@@ -227,41 +237,100 @@ mod tests {
 
     #[test]
     fn cdn_owner_pairing() {
-        assert!(cdn_allowed_from("cas-bridge.xethub.hf.co", "huggingface.co"));
-        assert!(cdn_allowed_from("release-assets.githubusercontent.com", "github.com"));
-        assert!(cdn_allowed_from("objects.githubusercontent.com", "api.github.com"));
-        assert!(cdn_allowed_from("x.acct.r2.cloudflarestorage.com", "civitai.com"));
+        assert!(cdn_allowed_from(
+            "cas-bridge.xethub.hf.co",
+            "huggingface.co"
+        ));
+        assert!(cdn_allowed_from(
+            "release-assets.githubusercontent.com",
+            "github.com"
+        ));
+        assert!(cdn_allowed_from(
+            "objects.githubusercontent.com",
+            "api.github.com"
+        ));
+        assert!(cdn_allowed_from(
+            "x.acct.r2.cloudflarestorage.com",
+            "civitai.com"
+        ));
         // A CDN is only reachable from its own owner.
-        assert!(!cdn_allowed_from("x.acct.r2.cloudflarestorage.com", "github.com"));
+        assert!(!cdn_allowed_from(
+            "x.acct.r2.cloudflarestorage.com",
+            "github.com"
+        ));
         assert!(!cdn_allowed_from("cas-bridge.xethub.hf.co", "civitai.com"));
-        assert!(!cdn_allowed_from("release-assets.githubusercontent.com", "huggingface.co"));
+        assert!(!cdn_allowed_from(
+            "release-assets.githubusercontent.com",
+            "huggingface.co"
+        ));
         assert!(!cdn_allowed_from("example.com", "civitai.com"));
     }
 
     #[test]
     fn classify_rules() {
         let prod = Rules::default();
-        assert_eq!(classify(&u("https://civitai.com/api/v1/models"), prod).unwrap(), HostKind::Primary);
-        assert_eq!(classify(&u("https://huggingface.co:443/x"), prod).unwrap(), HostKind::Primary);
-        assert_eq!(classify(&u("https://cdn-lfs.hf.co/x"), prod).unwrap(), HostKind::Cdn);
-        assert!(matches!(classify(&u("http://civitai.com/"), prod), Err(NetError::BadUrl(_))));
-        assert!(matches!(classify(&u("ftp://github.com/"), prod), Err(NetError::BadUrl(_))));
-        assert!(matches!(classify(&u("https://user:pw@github.com/"), prod), Err(NetError::BadUrl(_))));
-        assert!(matches!(classify(&u("https://github.com:8443/"), prod), Err(NetError::HostNotAllowed(_))));
-        assert!(matches!(classify(&u("https://140.82.112.3/"), prod), Err(NetError::HostNotAllowed(_))));
-        assert!(matches!(classify(&u("https://[::1]/"), prod), Err(NetError::HostNotAllowed(_))));
-        assert!(matches!(classify(&u("http://127.0.0.1:8080/"), prod), Err(NetError::BadUrl(_))));
+        assert_eq!(
+            classify(&u("https://civitai.com/api/v1/models"), prod).unwrap(),
+            HostKind::Primary
+        );
+        assert_eq!(
+            classify(&u("https://huggingface.co:443/x"), prod).unwrap(),
+            HostKind::Primary
+        );
+        assert_eq!(
+            classify(&u("https://cdn-lfs.hf.co/x"), prod).unwrap(),
+            HostKind::Cdn
+        );
+        assert!(matches!(
+            classify(&u("http://civitai.com/"), prod),
+            Err(NetError::BadUrl(_))
+        ));
+        assert!(matches!(
+            classify(&u("ftp://github.com/"), prod),
+            Err(NetError::BadUrl(_))
+        ));
+        assert!(matches!(
+            classify(&u("https://user:pw@github.com/"), prod),
+            Err(NetError::BadUrl(_))
+        ));
+        assert!(matches!(
+            classify(&u("https://github.com:8443/"), prod),
+            Err(NetError::HostNotAllowed(_))
+        ));
+        assert!(matches!(
+            classify(&u("https://140.82.112.3/"), prod),
+            Err(NetError::HostNotAllowed(_))
+        ));
+        assert!(matches!(
+            classify(&u("https://[::1]/"), prod),
+            Err(NetError::HostNotAllowed(_))
+        ));
+        assert!(matches!(
+            classify(&u("http://127.0.0.1:8080/"), prod),
+            Err(NetError::BadUrl(_))
+        ));
         // Unicode look-alike (Cyrillic 'а') is punycoded by the URL parser and rejected.
-        assert!(matches!(classify(&u("https://huggingfаce.co/"), prod), Err(NetError::HostNotAllowed(_))));
+        assert!(matches!(
+            classify(&u("https://huggingfаce.co/"), prod),
+            Err(NetError::HostNotAllowed(_))
+        ));
         // The error names only the host, never the path/query.
         match classify(&u("https://evil.com/p?token=secret"), prod) {
             Err(NetError::HostNotAllowed(h)) => assert_eq!(h, "evil.com"),
             other => panic!("unexpected {other:?}"),
         }
 
-        let test = Rules { loopback_http: true };
-        assert_eq!(classify(&u("http://127.0.0.1:9/"), test).unwrap(), HostKind::Primary);
-        assert_eq!(classify(&u("http://localhost:9/"), test).unwrap(), HostKind::Cdn);
+        let test = Rules {
+            loopback_http: true,
+        };
+        assert_eq!(
+            classify(&u("http://127.0.0.1:9/"), test).unwrap(),
+            HostKind::Primary
+        );
+        assert_eq!(
+            classify(&u("http://localhost:9/"), test).unwrap(),
+            HostKind::Cdn
+        );
         assert!(classify(&u("http://127.0.0.2:9/"), test).is_err());
         assert!(classify(&u("http://example.com/"), test).is_err());
     }
@@ -269,29 +338,76 @@ mod tests {
     #[test]
     fn redirect_rules() {
         let prod = Rules::default();
-        let hf = [u("https://huggingface.co/org/repo/resolve/main/model.safetensors")];
+        let hf = [u(
+            "https://huggingface.co/org/repo/resolve/main/model.safetensors",
+        )];
         let civ = [u("https://civitai.com/api/download/models/1")];
         // CDN reached from its owner.
-        check_redirect(&u("https://cas-bridge.xethub.hf.co/xet-bridge-us/abc?sig=1"), &hf, false, prod).unwrap();
-        check_redirect(&u("https://b.acct.r2.cloudflarestorage.com/model/1?X-Amz=1"), &civ, false, prod).unwrap();
+        check_redirect(
+            &u("https://cas-bridge.xethub.hf.co/xet-bridge-us/abc?sig=1"),
+            &hf,
+            false,
+            prod,
+        )
+        .unwrap();
+        check_redirect(
+            &u("https://b.acct.r2.cloudflarestorage.com/model/1?X-Amz=1"),
+            &civ,
+            false,
+            prod,
+        )
+        .unwrap();
         // Primary → primary is always fine.
-        check_redirect(&u("https://huggingface.co/api/resolve-cache/x"), &hf, false, prod).unwrap();
+        check_redirect(
+            &u("https://huggingface.co/api/resolve-cache/x"),
+            &hf,
+            false,
+            prod,
+        )
+        .unwrap();
         // CDN from the wrong owner.
         assert!(matches!(
-            check_redirect(&u("https://b.acct.r2.cloudflarestorage.com/x"), &hf, false, prod),
+            check_redirect(
+                &u("https://b.acct.r2.cloudflarestorage.com/x"),
+                &hf,
+                false,
+                prod
+            ),
             Err(NetError::HostNotAllowed(_))
         ));
         // Disallowed host, downgrade to http.
-        assert!(matches!(check_redirect(&u("https://evil.com/"), &hf, false, prod), Err(NetError::HostNotAllowed(_))));
-        assert!(matches!(check_redirect(&u("http://cdn-lfs.hf.co/"), &hf, false, prod), Err(NetError::BadUrl(_))));
+        assert!(matches!(
+            check_redirect(&u("https://evil.com/"), &hf, false, prod),
+            Err(NetError::HostNotAllowed(_))
+        ));
+        assert!(matches!(
+            check_redirect(&u("http://cdn-lfs.hf.co/"), &hf, false, prod),
+            Err(NetError::BadUrl(_))
+        ));
         // Offline wins over everything.
-        assert!(matches!(check_redirect(&u("https://huggingface.co/"), &hf, true, prod), Err(NetError::Offline)));
+        assert!(matches!(
+            check_redirect(&u("https://huggingface.co/"), &hf, true, prod),
+            Err(NetError::Offline)
+        ));
         // Hop limit.
-        let chain: Vec<Url> = (0..=MAX_REDIRECTS).map(|i| u(&format!("https://github.com/{i}"))).collect();
-        assert!(check_redirect(&u("https://github.com/x"), &chain[..MAX_REDIRECTS], false, prod).is_ok());
-        assert!(matches!(check_redirect(&u("https://github.com/x"), &chain, false, prod), Err(NetError::Transport(_))));
+        let chain: Vec<Url> = (0..=MAX_REDIRECTS)
+            .map(|i| u(&format!("https://github.com/{i}")))
+            .collect();
+        assert!(check_redirect(
+            &u("https://github.com/x"),
+            &chain[..MAX_REDIRECTS],
+            false,
+            prod
+        )
+        .is_ok());
+        assert!(matches!(
+            check_redirect(&u("https://github.com/x"), &chain, false, prod),
+            Err(NetError::Transport(_))
+        ));
 
-        let test = Rules { loopback_http: true };
+        let test = Rules {
+            loopback_http: true,
+        };
         let local = [u("http://127.0.0.1:1/start")];
         check_redirect(&u("http://localhost:2/file"), &local, false, test).unwrap();
         assert!(check_redirect(&u("http://localhost:2/file"), &hf, false, test).is_err());

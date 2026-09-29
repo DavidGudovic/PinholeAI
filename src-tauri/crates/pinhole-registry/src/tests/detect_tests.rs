@@ -1000,8 +1000,16 @@ fn krea2_turbo_and_raw() {
     // --diffusion-model files both hit get_sd_version()'s txtfusion projector.
     let comfy = st_header(&[
         ("model.diffusion_model.first.weight", "BF16", &[6144, 64]),
-        ("model.diffusion_model.blocks.0.attn.wq.weight", "BF16", &[6144, 6144]),
-        ("model.diffusion_model.txtfusion.projector.weight", "BF16", &[2560, 12]),
+        (
+            "model.diffusion_model.blocks.0.attn.wq.weight",
+            "BF16",
+            &[6144, 6144],
+        ),
+        (
+            "model.diffusion_model.txtfusion.projector.weight",
+            "BF16",
+            &[2560, 12],
+        ),
     ]);
     let d = detect::detect(shipped(), &comfy);
     assert_eq!(d.candidates, vec!["krea2_turbo", "krea2_raw"]);
@@ -1060,7 +1068,11 @@ fn anima_and_turbo() {
 fn flux2_dev_and_klein_sizes() {
     let flux2 = |txt_in: &'static [u64], block47: bool| {
         let mut v: Vec<(&str, &str, &[u64])> = vec![
-            ("double_stream_modulation_img.lin.weight", "BF16", &[18432, 3072]),
+            (
+                "double_stream_modulation_img.lin.weight",
+                "BF16",
+                &[18432, 3072],
+            ),
             ("double_blocks.0.img_attn.qkv.weight", "BF16", &[9216, 3072]),
             ("single_blocks.0.linear1.weight", "BF16", &[27648, 3072]),
             ("img_in.weight", "BF16", &[3072, 128]),
@@ -1097,7 +1109,10 @@ fn flux2_dev_and_klein_sizes() {
         ],
     );
     let h = parse_header_bytes(&b, size).unwrap();
-    assert_eq!(candidates(&h), vec!["flux2_klein_4b", "flux2_klein_4b_base"]);
+    assert_eq!(
+        candidates(&h),
+        vec!["flux2_klein_4b", "flux2_klein_4b_base"]
+    );
     assert_eq!(
         shipped()
             .known_file("9c5fed22b76baea749d88fc2abe3ad53245e7b21a0d353a762665eea00043b92")
@@ -1108,7 +1123,11 @@ fn flux2_dev_and_klein_sizes() {
 
     // SeFi-Image reuses FLUX.2 blocks → not FLUX.2.
     let mut sefi: Vec<(&str, &str, &[u64])> = vec![
-        ("double_stream_modulation_img.lin.weight", "BF16", &[18432, 3072]),
+        (
+            "double_stream_modulation_img.lin.weight",
+            "BF16",
+            &[18432, 3072],
+        ),
         ("txt_in.weight", "BF16", &[3072, 7680]),
     ];
     sefi.push((
@@ -1126,7 +1145,11 @@ fn chroma_and_radiance() {
         ("single_blocks.0.linear1.weight", "BF16", &[21504, 3072]),
         ("img_in.weight", "BF16", &[3072, 64]),
         ("txt_in.weight", "BF16", &[3072, 4096]),
-        ("distilled_guidance_layer.in_proj.weight", "BF16", &[5120, 64]),
+        (
+            "distilled_guidance_layer.in_proj.weight",
+            "BF16",
+            &[5120, 64],
+        ),
     ];
     assert_eq!(candidates(&st_header(chroma)), vec!["chroma"]);
     // Chroma Radiance (pixel space) is a different engine version: not registered.
@@ -1140,7 +1163,11 @@ fn qwen_image_21_is_not_qwen_image() {
     let h = st_header(&[
         ("img_in.weight", "BF16", &[3072, 256]),
         ("txt_in.text_norm.weight", "BF16", &[4096]),
-        ("transformer_blocks.0.img_mod.1.weight", "BF16", &[18432, 3072]),
+        (
+            "transformer_blocks.0.img_mod.1.weight",
+            "BF16",
+            &[18432, 3072],
+        ),
     ]);
     assert_eq!(candidates(&h), vec!["qwen_image_21"]);
     let prefixed = st_header(&[(
@@ -1162,7 +1189,11 @@ fn sd3_checkpoint_is_all_in_one() {
             "F16",
             &[4608, 1536],
         ),
-        ("first_stage_model.decoder.conv_in.weight", "F16", &[512, 16, 3, 3]),
+        (
+            "first_stage_model.decoder.conv_in.weight",
+            "F16",
+            &[512, 16, 3, 3],
+        ),
         (
             "text_encoders.clip_g.transformer.text_model.embeddings.token_embedding.weight",
             "F16",
@@ -1185,7 +1216,11 @@ fn hidream_o1_is_a_whole_checkpoint() {
             "BF16",
             &[4096, 4096],
         ),
-        ("model.language_model.embed_tokens.weight", "BF16", &[151936, 4096]),
+        (
+            "model.language_model.embed_tokens.weight",
+            "BF16",
+            &[151936, 4096],
+        ),
     ]);
     let d = detect::detect(shipped(), &h);
     assert_eq!(d.candidates, vec!["hidream_o1", "hidream_o1_dev"]);
@@ -1197,7 +1232,10 @@ fn hidream_o1_is_a_whole_checkpoint() {
     // A file with the embedder but no language model does not match either.
     let partial = st_header(&[("model.x_embedder.proj1.weight", "BF16", &[4096, 3072])]);
     assert!(candidates(&partial).is_empty());
-    assert_eq!(detect::detect(shipped(), &partial).layout, Layout::DiffusionOnly);
+    assert_eq!(
+        detect::detect(shipped(), &partial).layout,
+        Layout::DiffusionOnly
+    );
 }
 
 #[test]
@@ -1212,11 +1250,18 @@ fn ernie_and_mage_flow() {
         "BF16",
         &[4096],
     )]);
-    assert_eq!(candidates(&prefixed), vec!["ernie_image", "ernie_image_turbo"]);
+    assert_eq!(
+        candidates(&prefixed),
+        vec!["ernie_image", "ernie_image_turbo"]
+    );
 
     let mage = st_header(&[
         ("img_in.weight", "BF16", &[3072, 128]),
-        ("transformer_blocks.0.img_mod.1.weight", "BF16", &[18432, 3072]),
+        (
+            "transformer_blocks.0.img_mod.1.weight",
+            "BF16",
+            &[18432, 3072],
+        ),
     ]);
     assert_eq!(candidates(&mage), vec!["mage_flow", "mage_flow_turbo"]);
 }
@@ -1225,8 +1270,16 @@ fn ernie_and_mage_flow() {
 fn unsupported_newer_models_get_no_family() {
     // MiniMax-H3 is video + audio only in the pinned engine (img_gen refuses it).
     let h3 = st_header(&[
-        ("model.diffusion_model.video_patch_proj.weight", "BF16", &[5120, 96]),
-        ("model.diffusion_model.audio_patch_proj.weight", "BF16", &[5120, 64]),
+        (
+            "model.diffusion_model.video_patch_proj.weight",
+            "BF16",
+            &[5120, 96],
+        ),
+        (
+            "model.diffusion_model.audio_patch_proj.weight",
+            "BF16",
+            &[5120, 64],
+        ),
     ]);
     assert!(candidates(&h3).is_empty());
     // Lumina-2 finetunes (Gemma-2 caption width 2304) are not Z-Image.
@@ -1276,15 +1329,26 @@ fn unsupported_weight_layouts() {
         ("blocks.0.attn.wq.weight", "I8", &[64, 256]),
         ("blocks.0.attn.wq.weight_scale", "F32", &[64]),
     ]);
-    assert_eq!(detect::unsupported_weights(&torchao), Some(detect::UNSUPPORTED_WEIGHTS));
+    assert_eq!(
+        detect::unsupported_weights(&torchao),
+        Some(detect::UNSUPPORTED_WEIGHTS)
+    );
     // U8-packed weights (ComfyUI NVFP4 / INT4): the engine skips U8 tensors → refused.
     let nvfp4 = st_header(&[
         ("blocks.0.attn.wq.weight", "U8", &[64, 128]),
         ("blocks.0.attn.wq.weight_scale", "F8_E4M3", &[64, 16]),
         ("blocks.0.attn.wq.comfy_quant", "U8", &[30]),
     ]);
-    assert!(detect::unsupported_weights(&nvfp4).unwrap().contains("NVFP4"));
+    assert!(detect::unsupported_weights(&nvfp4)
+        .unwrap()
+        .contains("NVFP4"));
     // GGUF always passes (every ggml quant loads).
-    let (b, size) = gguf(&[("general.architecture", GVal::Str("krea2"))], &[("blk.0.w", &[256, 64], 8)]);
-    assert_eq!(detect::unsupported_weights(&parse_header_bytes(&b, size).unwrap()), None);
+    let (b, size) = gguf(
+        &[("general.architecture", GVal::Str("krea2"))],
+        &[("blk.0.w", &[256, 64], 8)],
+    );
+    assert_eq!(
+        detect::unsupported_weights(&parse_header_bytes(&b, size).unwrap()),
+        None
+    );
 }

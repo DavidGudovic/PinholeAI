@@ -21,7 +21,10 @@ pub async fn get_settings(core: State<'_, Arc<AppCore>>) -> Result<Settings, Cor
 }
 
 #[tauri::command]
-pub async fn set_settings(core: State<'_, Arc<AppCore>>, settings: Settings) -> Result<Settings, CoreError> {
+pub async fn set_settings(
+    core: State<'_, Arc<AppCore>>,
+    settings: Settings,
+) -> Result<Settings, CoreError> {
     app::set_settings(&core, settings)
 }
 
@@ -31,26 +34,38 @@ pub async fn get_hardware(core: State<'_, Arc<AppCore>>) -> Result<HardwareView,
 }
 
 #[tauri::command]
-pub async fn open_data_folder(handle: AppHandle, core: State<'_, Arc<AppCore>>) -> Result<(), CoreError> {
+pub async fn open_data_folder(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+) -> Result<(), CoreError> {
     let dir = app::data_folder(&core)?;
     open_folder(&handle, &dir)
 }
 
 #[tauri::command]
-pub async fn open_outputs_folder(handle: AppHandle, core: State<'_, Arc<AppCore>>) -> Result<(), CoreError> {
+pub async fn open_outputs_folder(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+) -> Result<(), CoreError> {
     let dir = app::outputs_folder(&core)?;
     open_folder(&handle, &dir)
 }
 
 /// Open a folder in the system file manager (no network, no WebView navigation).
 pub(crate) fn open_folder(handle: &AppHandle, dir: &Path) -> Result<(), CoreError> {
-    handle.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| {
-        CoreError::new(
-            "io",
-            format!("Couldn't open the folder. You can find it here: {}", dir.display()),
-        )
-        .with_details(e.to_string())
-    })
+    handle
+        .opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| {
+            CoreError::new(
+                "io",
+                format!(
+                    "Couldn't open the folder. You can find it here: {}",
+                    dir.display()
+                ),
+            )
+            .with_details(e.to_string())
+        })
 }
 
 /// The app's own version (tauri.conf.json, which the release workflow checks
@@ -61,7 +76,10 @@ fn app_version(handle: &AppHandle) -> String {
 
 /// Settings → "Check for updates". Only ever runs on that button press.
 #[tauri::command]
-pub async fn check_for_updates(handle: AppHandle, core: State<'_, Arc<AppCore>>) -> Result<UpdateCheck, CoreError> {
+pub async fn check_for_updates(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+) -> Result<UpdateCheck, CoreError> {
     update::check_for_updates(&core, &app_version(&handle)).await
 }
 
@@ -70,12 +88,18 @@ pub async fn check_for_updates(handle: AppHandle, core: State<'_, Arc<AppCore>>)
 /// replaced, or (`update_restart`) when the new files are in place but the new
 /// version couldn't be started.
 #[tauri::command]
-pub async fn install_update(handle: AppHandle, core: State<'_, Arc<AppCore>>, version: String) -> Result<(), CoreError> {
+pub async fn install_update(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+    version: String,
+) -> Result<(), CoreError> {
     let core = core.inner().clone();
     let prepared = update::install_update(&core, &app_version(&handle), &version).await?;
     core.shutdown().await;
     let started = match &prepared {
-        Prepared::RunInstaller(path) => std::process::Command::new(path).args(update::INSTALLER_ARGS).spawn(),
+        Prepared::RunInstaller(path) => std::process::Command::new(path)
+            .args(update::INSTALLER_ARGS)
+            .spawn(),
         Prepared::Relaunch(exe) => std::process::Command::new(exe).spawn(),
     };
     if let Err(e) = started {
@@ -107,12 +131,21 @@ pub async fn clear_github_token() -> Result<(), CoreError> {
 
 /// Open the GitHub release page in the system browser (the WebView never navigates).
 #[tauri::command]
-pub async fn open_release_page(handle: AppHandle, version: Option<String>) -> Result<(), CoreError> {
+pub async fn open_release_page(
+    handle: AppHandle,
+    version: Option<String>,
+) -> Result<(), CoreError> {
     let url = update::release_page_url(version.as_deref())?;
     handle
         .opener()
         .open_url(url.clone(), None::<&str>)
-        .map_err(|e| CoreError::new("io", format!("Couldn't open your browser. The page is: {url}")).with_details(e.to_string()))
+        .map_err(|e| {
+            CoreError::new(
+                "io",
+                format!("Couldn't open your browser. The page is: {url}"),
+            )
+            .with_details(e.to_string())
+        })
 }
 
 // Declared last so every command (and its generated `__cmd__*` macro) is defined above.

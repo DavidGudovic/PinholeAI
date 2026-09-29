@@ -88,29 +88,51 @@ pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> 
 ///
 /// Before detection finishes (`detected == None`) the automatic parts are
 /// "no GPU": backend `cpu` (unless overridden), so vram 0.
-pub fn effective_hardware(settings: &Settings, detected: Option<&HardwareInfo>) -> EffectiveHardware {
+pub fn effective_hardware(
+    settings: &Settings,
+    detected: Option<&HardwareInfo>,
+) -> EffectiveHardware {
     let explicit_backend = match settings.engine_backend.as_str() {
         b @ ("cuda" | "vulkan" | "cpu") => Some(b),
         _ => None,
     };
     let cpu_only = settings.force_cpu() || explicit_backend == Some("cpu");
     if cpu_only {
-        return EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() };
+        return EffectiveHardware {
+            gpu: None,
+            vram_gb: 0.0,
+            backend: "cpu".into(),
+        };
     }
     let gpu = detected
-        .and_then(|hw| settings.gpu_index().and_then(|i| hw.gpu(i)).or_else(|| hw.best_gpu()))
+        .and_then(|hw| {
+            settings
+                .gpu_index()
+                .and_then(|i| hw.gpu(i))
+                .or_else(|| hw.best_gpu())
+        })
         .cloned();
-    let backend = explicit_backend.unwrap_or_else(|| default_backend(gpu.as_ref())).to_string();
+    let backend = explicit_backend
+        .unwrap_or_else(|| default_backend(gpu.as_ref()))
+        .to_string();
     if backend == "cpu" {
         // No GPU found (or one no engine build supports): a VRAM override means nothing here.
-        return EffectiveHardware { gpu: None, vram_gb: 0.0, backend };
+        return EffectiveHardware {
+            gpu: None,
+            vram_gb: 0.0,
+            backend,
+        };
     }
     let vram_gb = settings
         .vram_override_gb
         .filter(|v| v.is_finite() && *v > 0.0)
         .or_else(|| gpu.as_ref().map(|g| g.vram_gb))
         .unwrap_or(0.0);
-    EffectiveHardware { gpu, vram_gb, backend }
+    EffectiveHardware {
+        gpu,
+        vram_gb,
+        backend,
+    }
 }
 
 /// Current effective hardware (Settings + detection so far).
@@ -126,7 +148,13 @@ pub fn hardware_view(core: &AppCore) -> HardwareView {
     let detected = core.hardware.read().clone();
     let eff = effective_hardware(&settings, detected.as_ref());
     let tier = core.registry().hardware_profile(eff.vram_gb).name.clone();
-    HardwareView { detected, vram_gb: eff.vram_gb, gpu: eff.gpu, backend: eff.backend, tier }
+    HardwareView {
+        detected,
+        vram_gb: eff.vram_gb,
+        gpu: eff.gpu,
+        backend: eff.backend,
+        tier,
+    }
 }
 
 /// Detect hardware in the background, store it, emit `HardwareReady`.
@@ -136,7 +164,9 @@ pub fn start_hardware_detection(core: &Arc<AppCore>) {
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
             handle.spawn(async move {
-                let info = tokio::task::spawn_blocking(pinhole_hardware::detect).await.ok();
+                let info = tokio::task::spawn_blocking(pinhole_hardware::detect)
+                    .await
+                    .ok();
                 finish_detection(&core, info);
             });
         }
@@ -155,7 +185,9 @@ fn finish_detection(core: &AppCore, info: Option<HardwareInfo>) {
     let info = info.unwrap_or_else(|| HardwareInfo {
         gpus: Vec::new(),
         ram_gb: 0.0,
-        cpu_threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        cpu_threads: std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
         os: std::env::consts::OS.to_string(),
     });
     *core.hardware.write() = Some(info);
@@ -185,8 +217,15 @@ pub fn hw_context(core: &AppCore) -> HwContext {
     let settings = core.settings.read().clone();
     let detected = core.hardware.read().clone();
     let eff = effective_hardware(&settings, detected.as_ref());
-    let ram_gb = detected.map(|d| d.ram_gb).filter(|r| r.is_finite() && *r > 0.0).unwrap_or(0.0);
-    HwContext { vram_gb: eff.vram_gb, backend: eff.backend, ram_gb }
+    let ram_gb = detected
+        .map(|d| d.ram_gb)
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .unwrap_or(0.0);
+    HwContext {
+        vram_gb: eff.vram_gb,
+        backend: eff.backend,
+        ram_gb,
+    }
 }
 
 /// The Data folder ("Open Data folder" in Settings).
@@ -200,8 +239,13 @@ pub fn outputs_folder(core: &AppCore) -> CoreResult<PathBuf> {
 }
 
 fn ensure_dir(dir: PathBuf) -> CoreResult<PathBuf> {
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| CoreError::new("io", format!("Couldn't create the folder {}.", dir.display())).with_details(e.to_string()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        CoreError::new(
+            "io",
+            format!("Couldn't create the folder {}.", dir.display()),
+        )
+        .with_details(e.to_string())
+    })?;
     Ok(dir)
 }
 
@@ -225,7 +269,9 @@ pub(crate) mod tests {
     /// A real `AppCore` over a temp Data folder and the repo's `config/`.
     pub(crate) fn test_core(sink: Arc<dyn EventSink>) -> (tempfile::TempDir, Arc<AppCore>) {
         let tmp = tempfile::tempdir().unwrap();
-        let shipped = ShippedPaths { config_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config") };
+        let shipped = ShippedPaths {
+            config_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config"),
+        };
         let core = AppCore::new(shipped, DataDir::at(tmp.path().join("Data"), false), sink)
             .unwrap_or_else(|e| panic!("AppCore::new failed: {}", e.message));
         (tmp, core)
@@ -239,7 +285,10 @@ pub(crate) mod tests {
         // Before detection: no GPU, CPU backend.
         let v = hardware_view(&core);
         assert!(v.detected.is_none());
-        assert_eq!((v.vram_gb, v.backend.as_str(), v.gpu.is_none()), (0.0, "cpu", true));
+        assert_eq!(
+            (v.vram_gb, v.backend.as_str(), v.gpu.is_none()),
+            (0.0, "cpu", true)
+        );
 
         // Settings are normalised, persisted, and the offline flag applies at once.
         let mut s = get_settings(&core);
@@ -255,7 +304,14 @@ pub(crate) mod tests {
         let hw = hw_context(&core);
         assert_eq!((hw.vram_gb, hw.backend.as_str()), (16.0, "vulkan"));
         assert_eq!(hardware_view(&core).tier, "high");
-        set_settings(&core, Settings { offline: false, ..saved }).unwrap();
+        set_settings(
+            &core,
+            Settings {
+                offline: false,
+                ..saved
+            },
+        )
+        .unwrap();
         assert!(!core.offline.get());
 
         // Background detection fills `hardware` and emits hardware-ready.
@@ -273,12 +329,21 @@ pub(crate) mod tests {
     }
 
     fn gpu(index: usize, vendor: Vendor, vram_gb: f32) -> GpuInfo {
-        GpuInfo { index, vendor, name: format!("gpu{index}"), vram_gb }
+        GpuInfo {
+            index,
+            vendor,
+            name: format!("gpu{index}"),
+            vram_gb,
+        }
     }
 
     fn hw() -> HardwareInfo {
         HardwareInfo {
-            gpus: vec![gpu(0, Vendor::Nvidia, 15.9), gpu(1, Vendor::Intel, 0.0), gpu(2, Vendor::Amd, 8.0)],
+            gpus: vec![
+                gpu(0, Vendor::Nvidia, 15.9),
+                gpu(1, Vendor::Intel, 0.0),
+                gpu(2, Vendor::Amd, 8.0),
+            ],
             ram_gb: 32.0,
             cpu_threads: 16,
             os: "linux".into(),
@@ -286,7 +351,12 @@ pub(crate) mod tests {
     }
 
     fn settings(gpu: &str, vram: Option<f32>, backend: &str) -> Settings {
-        Settings { gpu: gpu.into(), vram_override_gb: vram, engine_backend: backend.into(), ..Settings::default() }
+        Settings {
+            gpu: gpu.into(),
+            vram_override_gb: vram,
+            engine_backend: backend.into(),
+            ..Settings::default()
+        }
     }
 
     #[test]
@@ -300,9 +370,19 @@ pub(crate) mod tests {
     #[test]
     fn picked_gpu_and_overrides() {
         let e = effective_hardware(&settings("gpu:2", None, "auto"), Some(&hw()));
-        assert_eq!((e.gpu.as_ref().unwrap().index, e.vram_gb, e.backend.as_str()), (2, 8.0, "vulkan"));
+        assert_eq!(
+            (e.gpu.as_ref().unwrap().index, e.vram_gb, e.backend.as_str()),
+            (2, 8.0, "vulkan")
+        );
         let e = effective_hardware(&settings("gpu:1", Some(6.0), "auto"), Some(&hw()));
-        assert_eq!((e.gpu.as_ref().unwrap().vendor, e.vram_gb, e.backend.as_str()), (Vendor::Intel, 6.0, "vulkan"));
+        assert_eq!(
+            (
+                e.gpu.as_ref().unwrap().vendor,
+                e.vram_gb,
+                e.backend.as_str()
+            ),
+            (Vendor::Intel, 6.0, "vulkan")
+        );
         // Unknown index → best GPU.
         let e = effective_hardware(&settings("gpu:9", None, "auto"), Some(&hw()));
         assert_eq!(e.gpu.as_ref().unwrap().index, 0);
@@ -313,63 +393,155 @@ pub(crate) mod tests {
 
     #[test]
     fn cpu_means_no_gpu_and_zero_vram() {
-        for s in [settings("cpu", Some(12.0), "auto"), settings("auto", Some(12.0), "cpu"), settings("cpu", None, "cuda")] {
+        for s in [
+            settings("cpu", Some(12.0), "auto"),
+            settings("auto", Some(12.0), "cpu"),
+            settings("cpu", None, "cuda"),
+        ] {
             let e = effective_hardware(&s, Some(&hw()));
-            assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+            assert_eq!(
+                e,
+                EffectiveHardware {
+                    gpu: None,
+                    vram_gb: 0.0,
+                    backend: "cpu".into()
+                }
+            );
         }
     }
 
     #[test]
     fn before_detection() {
         let e = effective_hardware(&settings("auto", None, "auto"), None);
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 0.0,
+                backend: "cpu".into()
+            }
+        );
         let e = effective_hardware(&settings("auto", Some(16.0), "cuda"), None);
         assert_eq!((e.vram_gb, e.backend.as_str()), (16.0, "cuda"));
         // Automatic backend before detection is "cpu": the override waits for a GPU backend.
         let e = effective_hardware(&settings("auto", Some(16.0), "auto"), None);
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 0.0,
+                backend: "cpu".into()
+            }
+        );
     }
 
     #[test]
     fn no_gpus_detected() {
-        let none = HardwareInfo { gpus: vec![], ram_gb: 8.0, cpu_threads: 4, os: "linux".into() };
+        let none = HardwareInfo {
+            gpus: vec![],
+            ram_gb: 8.0,
+            cpu_threads: 4,
+            os: "linux".into(),
+        };
         let e = effective_hardware(&settings("auto", None, "auto"), Some(&none));
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 0.0,
+                backend: "cpu".into()
+            }
+        );
         // A VRAM override without a GPU backend is ignored (was: vram 8 / tier "mid" / backend cpu).
         let e = effective_hardware(&settings("auto", Some(8.0), "auto"), Some(&none));
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 0.0,
+                backend: "cpu".into()
+            }
+        );
         // …but applies once a GPU backend is chosen explicitly (e.g. detection missed the card).
         let e = effective_hardware(&settings("auto", Some(8.0), "vulkan"), Some(&none));
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 8.0, backend: "vulkan".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 8.0,
+                backend: "vulkan".into()
+            }
+        );
         // A GPU no engine build supports (vendor Other) → processor, no VRAM.
-        let other = HardwareInfo { gpus: vec![gpu(0, Vendor::Other, 4.0)], ..none };
+        let other = HardwareInfo {
+            gpus: vec![gpu(0, Vendor::Other, 4.0)],
+            ..none
+        };
         let e = effective_hardware(&settings("auto", Some(6.0), "auto"), Some(&other));
-        assert_eq!(e, EffectiveHardware { gpu: None, vram_gb: 0.0, backend: "cpu".into() });
+        assert_eq!(
+            e,
+            EffectiveHardware {
+                gpu: None,
+                vram_gb: 0.0,
+                backend: "cpu".into()
+            }
+        );
     }
 
     #[tokio::test]
     async fn cpu_backend_view_and_context_are_consistent() {
         let rec = Arc::new(Recorder::default());
         let (_t, core) = test_core(rec);
-        *core.hardware.write() = Some(HardwareInfo { gpus: vec![], ram_gb: 15.6, cpu_threads: 8, os: "linux".into() });
-        let s = Settings { vram_override_gb: Some(12.0), ..get_settings(&core) };
+        *core.hardware.write() = Some(HardwareInfo {
+            gpus: vec![],
+            ram_gb: 15.6,
+            cpu_threads: 8,
+            os: "linux".into(),
+        });
+        let s = Settings {
+            vram_override_gb: Some(12.0),
+            ..get_settings(&core)
+        };
         set_settings(&core, s).unwrap();
         let v = hardware_view(&core);
-        assert_eq!((v.backend.as_str(), v.vram_gb, v.tier.as_str(), v.gpu.is_none()), ("cpu", 0.0, "low", true));
+        assert_eq!(
+            (
+                v.backend.as_str(),
+                v.vram_gb,
+                v.tier.as_str(),
+                v.gpu.is_none()
+            ),
+            ("cpu", 0.0, "low", true)
+        );
         let hw = hw_context(&core);
-        assert_eq!((hw.backend.as_str(), hw.vram_gb, hw.ram_gb), ("cpu", 0.0, 15.6));
+        assert_eq!(
+            (hw.backend.as_str(), hw.vram_gb, hw.ram_gb),
+            ("cpu", 0.0, 15.6)
+        );
         assert!(hw.cpu_only());
         // With an explicit GPU backend the override applies (tier follows it).
-        let s = Settings { engine_backend: "vulkan".into(), ..get_settings(&core) };
+        let s = Settings {
+            engine_backend: "vulkan".into(),
+            ..get_settings(&core)
+        };
         set_settings(&core, s).unwrap();
         let v = hardware_view(&core);
-        assert_eq!((v.backend.as_str(), v.vram_gb, v.tier.as_str()), ("vulkan", 12.0, "mid"));
+        assert_eq!(
+            (v.backend.as_str(), v.vram_gb, v.tier.as_str()),
+            ("vulkan", 12.0, "mid")
+        );
         assert!(!hw_context(&core).cpu_only());
     }
 
     #[test]
     fn view_json_shape_matches_types_ts() {
-        let v = HardwareView { detected: Some(hw()), vram_gb: 15.9, gpu: Some(gpu(0, Vendor::Nvidia, 15.9)), backend: "cuda".into(), tier: "high".into() };
+        let v = HardwareView {
+            detected: Some(hw()),
+            vram_gb: 15.9,
+            gpu: Some(gpu(0, Vendor::Nvidia, 15.9)),
+            backend: "cuda".into(),
+            tier: "high".into(),
+        };
         let j = serde_json::to_value(&v).unwrap();
         for k in ["detected", "vramGb", "gpu", "backend", "tier"] {
             assert!(j.get(k).is_some(), "{k}");
@@ -377,10 +549,21 @@ pub(crate) mod tests {
         for k in ["gpus", "ramGb", "cpuThreads", "os"] {
             assert!(j["detected"].get(k).is_some(), "{k}");
         }
-        let empty = HardwareView { detected: None, vram_gb: 0.0, gpu: None, backend: "cpu".into(), tier: "low".into() };
+        let empty = HardwareView {
+            detected: None,
+            vram_gb: 0.0,
+            gpu: None,
+            backend: "cpu".into(),
+            tier: "low".into(),
+        };
         let j = serde_json::to_value(&empty).unwrap();
         assert!(j["detected"].is_null() && j["gpu"].is_null());
-        let info = AppInfo { version: "0.1.0".into(), data_dir: "/d".into(), portable: false, os: "linux".into() };
+        let info = AppInfo {
+            version: "0.1.0".into(),
+            data_dir: "/d".into(),
+            portable: false,
+            os: "linux".into(),
+        };
         let j = serde_json::to_value(&info).unwrap();
         for k in ["version", "dataDir", "portable", "os"] {
             assert!(j.get(k).is_some(), "{k}");

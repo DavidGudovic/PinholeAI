@@ -24,7 +24,9 @@ pub(crate) fn is_safe_stem(s: &str) -> bool {
         && s.len() <= 200
         && !s.starts_with(['.', ' '])
         && !s.ends_with(['.', ' '])
-        && !s.chars().any(|c| c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+        && !s.chars().any(|c| {
+            c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+        })
 }
 
 /// `builtin:<stem>` → `Some(stem)`.
@@ -46,7 +48,9 @@ pub(crate) fn yaml_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, StoreErro
         if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
             continue;
         }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
         if !is_safe_stem(stem) || !path.is_file() {
             continue;
         }
@@ -60,12 +64,17 @@ pub(crate) fn yaml_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, StoreErro
 pub(crate) fn read_text(path: &Path) -> Result<String, StoreError> {
     let file = fs::File::open(path)?;
     let mut text = String::new();
-    file.take(MAX_FILE_BYTES + 1).read_to_string(&mut text).map_err(|e| StoreError::Parse {
-        path: path.display().to_string(),
-        msg: e.to_string(),
-    })?;
+    file.take(MAX_FILE_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| StoreError::Parse {
+            path: path.display().to_string(),
+            msg: e.to_string(),
+        })?;
     if text.len() as u64 > MAX_FILE_BYTES {
-        return Err(StoreError::Parse { path: path.display().to_string(), msg: "file is too large".into() });
+        return Err(StoreError::Parse {
+            path: path.display().to_string(),
+            msg: "file is too large".into(),
+        });
     }
     Ok(text)
 }
@@ -75,7 +84,9 @@ pub(crate) fn read_text_or_not_found(path: &Path, what: &str) -> Result<String, 
     match fs::metadata(path) {
         Ok(m) if m.is_file() => read_text(path),
         Ok(_) => Err(StoreError::NotFound(what.to_string())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound(what.to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(StoreError::NotFound(what.to_string()))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -85,27 +96,39 @@ pub(crate) fn read_text_or_not_found(path: &Path, what: &str) -> Result<String, 
 pub(crate) fn reserve_unique(dir: &Path, base: &str) -> Result<String, StoreError> {
     fs::create_dir_all(dir)?;
     for n in 1u32..10_000 {
-        let id = if n == 1 { base.to_string() } else { format!("{base}-{n}") };
-        match OpenOptions::new().write(true).create_new(true).open(dir.join(format!("{id}.yaml"))) {
+        let id = if n == 1 {
+            base.to_string()
+        } else {
+            format!("{base}-{n}")
+        };
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("{id}.yaml")))
+        {
             Ok(_) => return Ok(id),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e.into()),
         }
     }
-    Err(StoreError::Invalid("Too many items with this name. Pick a different name.".into()))
+    Err(StoreError::Invalid(
+        "Too many items with this name. Pick a different name.".into(),
+    ))
 }
 
 /// Serialize `value` as human-editable YAML for a library file: the `id` and
 /// `builtin` keys are dropped (the file name is the id), and nulls / empty
 /// lists / empty maps are left out.
 pub(crate) fn to_library_yaml<T: Serialize>(value: &T, header: &str) -> Result<String, StoreError> {
-    let v = serde_yaml::to_value(value).map_err(|e| StoreError::Invalid(format!("could not encode: {e}")))?;
+    let v = serde_yaml::to_value(value)
+        .map_err(|e| StoreError::Invalid(format!("could not encode: {e}")))?;
     let mut v = prune(v).unwrap_or(Value::Mapping(Mapping::new()));
     if let Value::Mapping(m) = &mut v {
         m.remove("id");
         m.remove("builtin");
     }
-    let body = serde_yaml::to_string(&v).map_err(|e| StoreError::Invalid(format!("could not encode: {e}")))?;
+    let body = serde_yaml::to_string(&v)
+        .map_err(|e| StoreError::Invalid(format!("could not encode: {e}")))?;
     Ok(format!("{header}{body}"))
 }
 
@@ -117,7 +140,10 @@ fn prune(v: Value) -> Option<Value> {
             (!s.is_empty()).then_some(Value::Sequence(s))
         }
         Value::Mapping(m) => {
-            let m: Mapping = m.into_iter().filter_map(|(k, v)| prune(v).map(|v| (k, v))).collect();
+            let m: Mapping = m
+                .into_iter()
+                .filter_map(|(k, v)| prune(v).map(|v| (k, v)))
+                .collect();
             (!m.is_empty()).then_some(Value::Mapping(m))
         }
         other => Some(other),
@@ -125,7 +151,10 @@ fn prune(v: Value) -> Option<Value> {
 }
 
 pub(crate) fn parse_error(path: &Path, e: impl std::fmt::Display) -> StoreError {
-    StoreError::Parse { path: path.display().to_string(), msg: e.to_string() }
+    StoreError::Parse {
+        path: path.display().to_string(),
+        msg: e.to_string(),
+    }
 }
 
 /// Trim; empty → None.
@@ -135,7 +164,10 @@ pub(crate) fn clean_opt(s: Option<String>) -> Option<String> {
 
 /// Case-insensitive name order, id as tie-breaker.
 pub(crate) fn name_order(a_name: &str, a_id: &str, b_name: &str, b_id: &str) -> std::cmp::Ordering {
-    a_name.to_lowercase().cmp(&b_name.to_lowercase()).then_with(|| a_id.cmp(b_id))
+    a_name
+        .to_lowercase()
+        .cmp(&b_name.to_lowercase())
+        .then_with(|| a_id.cmp(b_id))
 }
 
 #[cfg(test)]
@@ -157,7 +189,14 @@ mod tests {
         struct Inner {
             x: Option<u32>,
         }
-        let s = S { id: "x".into(), builtin: true, name: "N".into(), a: None, list: vec![], inner: Inner { x: None } };
+        let s = S {
+            id: "x".into(),
+            builtin: true,
+            name: "N".into(),
+            a: None,
+            list: vec![],
+            inner: Inner { x: None },
+        };
         let y = to_library_yaml(&s, "# h\n").unwrap();
         assert_eq!(y, "# h\nname: N\n");
     }
@@ -167,7 +206,22 @@ mod tests {
         for ok in ["film-photo", "Portrait", "My Style 2", "水彩画", "a.b"] {
             assert!(is_safe_stem(ok), "{ok}");
         }
-        for bad in ["", ".", "..", ".hidden", "a/b", "a\\b", "../x", "c:x", "builtin:x", "x.", " x", "a\u{0}b", "a?b", "a|b"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            ".hidden",
+            "a/b",
+            "a\\b",
+            "../x",
+            "c:x",
+            "builtin:x",
+            "x.",
+            " x",
+            "a\u{0}b",
+            "a?b",
+            "a|b",
+        ] {
             assert!(!is_safe_stem(bad), "{bad:?}");
         }
         assert!(!is_safe_stem(&"x".repeat(201)));
@@ -184,11 +238,22 @@ mod tests {
     #[test]
     fn yaml_files_filters() {
         let tmp = tempfile::tempdir().unwrap();
-        for n in ["b.yaml", "a.yaml", "x.yml", "Bad Name.yaml", ".a.yaml.1.0.tmp", "c.txt"] {
+        for n in [
+            "b.yaml",
+            "a.yaml",
+            "x.yml",
+            "Bad Name.yaml",
+            ".a.yaml.1.0.tmp",
+            "c.txt",
+        ] {
             fs::write(tmp.path().join(n), "name: x").unwrap();
         }
         fs::create_dir(tmp.path().join("d.yaml")).unwrap();
-        let stems: Vec<_> = yaml_files(tmp.path()).unwrap().into_iter().map(|(s, _)| s).collect();
+        let stems: Vec<_> = yaml_files(tmp.path())
+            .unwrap()
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
         assert_eq!(stems, vec!["Bad Name", "a", "b"]);
         assert!(yaml_files(&tmp.path().join("missing")).unwrap().is_empty());
     }

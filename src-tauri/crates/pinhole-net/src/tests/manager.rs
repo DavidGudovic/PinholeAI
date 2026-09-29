@@ -26,7 +26,10 @@ fn file(srv: &MockServer, path: &str, dir: &std::path::Path, body: &[u8]) -> Dow
 
 async fn wait_for_state(m: &DownloadManager, id: &str, state: DownloadState) {
     for _ in 0..200 {
-        if m.status().iter().any(|s| s.group_id == id && s.state == state) {
+        if m.status()
+            .iter()
+            .any(|s| s.group_id == id && s.state == state)
+        {
             return;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -45,7 +48,10 @@ async fn groups_run_in_order_and_files_sequentially() {
 
     let a = m.enqueue(
         "Model A".into(),
-        vec![file(&srv, "/a1", dir.path(), &body), file(&srv, "/a2", dir.path(), &body)],
+        vec![
+            file(&srv, "/a1", dir.path(), &body),
+            file(&srv, "/a2", dir.path(), &body),
+        ],
     );
     let b = m.enqueue("Model B".into(), vec![file(&srv, "/b1", dir.path(), &body)]);
     assert_ne!(a, b);
@@ -63,8 +69,14 @@ async fn groups_run_in_order_and_files_sequentially() {
     while let Ok(ev) = rx.try_recv() {
         events.push(ev);
     }
-    let a_done = events.iter().position(|e| e.group_id == a && e.state == DownloadState::Done).unwrap();
-    let b_start = events.iter().position(|e| e.group_id == b && e.state == DownloadState::Downloading).unwrap();
+    let a_done = events
+        .iter()
+        .position(|e| e.group_id == a && e.state == DownloadState::Done)
+        .unwrap();
+    let b_start = events
+        .iter()
+        .position(|e| e.group_id == b && e.state == DownloadState::Downloading)
+        .unwrap();
     assert!(a_done < b_start);
     assert_eq!(events[0].group_id, a);
     assert_eq!(events[0].state, DownloadState::Queued);
@@ -112,23 +124,41 @@ async fn cancel_queued_and_running_groups() {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
     m.cancel(&running);
-    assert_eq!(m.wait_detailed(&running).await.unwrap_err().code, "cancelled");
-    let states: Vec<(String, DownloadState)> = m.status().into_iter().map(|s| (s.group_id, s.state)).collect();
+    assert_eq!(
+        m.wait_detailed(&running).await.unwrap_err().code,
+        "cancelled"
+    );
+    let states: Vec<(String, DownloadState)> = m
+        .status()
+        .into_iter()
+        .map(|s| (s.group_id, s.state))
+        .collect();
     assert!(states.contains(&(running.clone(), DownloadState::Cancelled)));
     assert!(states.contains(&(queued.clone(), DownloadState::Cancelled)));
     // The queued group never hit the network; the running one kept its .part.
     assert!(srv.requests().iter().all(|r| r.path != "/q"));
-    assert_eq!(std::fs::metadata(part_path(&dir.path().join("r"))).unwrap().len(), 100_000);
+    assert_eq!(
+        std::fs::metadata(part_path(&dir.path().join("r")))
+            .unwrap()
+            .len(),
+        100_000
+    );
 
     // Cancelling a finished group is a no-op.
     m.cancel(&running);
 
     // A new group resumes from the kept .part.
     stall.store(false, Ordering::SeqCst);
-    let again = m.enqueue("Running again".into(), vec![file(&srv, "/r", dir.path(), &body)]);
+    let again = m.enqueue(
+        "Running again".into(),
+        vec![file(&srv, "/r", dir.path(), &body)],
+    );
     let got = m.wait(&again).await.unwrap();
     assert_eq!(got[0].sha256, sha(&body));
-    assert_eq!(srv.requests().last().unwrap().header("range"), Some("bytes=100000-"));
+    assert_eq!(
+        srv.requests().last().unwrap().header("range"),
+        Some("bytes=100000-")
+    );
 }
 
 #[tokio::test]
@@ -149,11 +179,18 @@ async fn failures_carry_plain_language_errors() {
     let s = m.status().into_iter().find(|s| s.group_id == id).unwrap();
     assert_eq!(s.state, DownloadState::Failed);
     assert_eq!(s.file_index, 1);
-    assert_eq!(s.error.as_deref(), Some("The download was corrupted (checksum mismatch). Try again."));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("The download was corrupted (checksum mismatch). Try again.")
+    );
 
     // Offline → plain message, and the queue keeps working afterwards.
-    let offline_m = DownloadManager::new(HttpClient::new_for_tests(OfflineFlag::new(true), true).unwrap());
-    let id = offline_m.enqueue("Offline".into(), vec![file(&srv, "/ok", dir.path(), b"fine")]);
+    let offline_m =
+        DownloadManager::new(HttpClient::new_for_tests(OfflineFlag::new(true), true).unwrap());
+    let id = offline_m.enqueue(
+        "Offline".into(),
+        vec![file(&srv, "/ok", dir.path(), b"fine")],
+    );
     let err = offline_m.wait_detailed(&id).await.unwrap_err();
     assert_eq!(err.code, "offline");
     assert!(err.message.starts_with("Offline mode is on"));
@@ -166,7 +203,11 @@ async fn failures_carry_plain_language_errors() {
     let id = m.enqueue("Huge".into(), vec![huge]);
     let err = m.wait_detailed(&id).await.unwrap_err();
     assert_eq!(err.code, "disk_space");
-    assert!(err.message.starts_with("Not enough disk space — free up "), "{}", err.message);
+    assert!(
+        err.message.starts_with("Not enough disk space — free up "),
+        "{}",
+        err.message
+    );
     assert_eq!(srv.requests().len(), before);
 }
 
@@ -175,7 +216,11 @@ async fn empty_group_and_status_history() {
     let srv = MockServer::start(|_| MockResponse::ok("x")).await;
     let dir = tempfile::tempdir().unwrap();
     let m = manager();
-    assert!(m.wait(&m.enqueue("Nothing".into(), vec![])).await.unwrap().is_empty());
+    assert!(m
+        .wait(&m.enqueue("Nothing".into(), vec![]))
+        .await
+        .unwrap()
+        .is_empty());
 
     let mut ids = Vec::new();
     for i in 0..25 {
@@ -186,7 +231,11 @@ async fn empty_group_and_status_history() {
         m.wait(id).await.unwrap();
     }
     let status = m.status();
-    assert_eq!(status.len(), 20, "only the last 20 finished groups are listed");
+    assert_eq!(
+        status.len(),
+        20,
+        "only the last 20 finished groups are listed"
+    );
     assert_eq!(status.last().unwrap().group_id, *ids.last().unwrap());
     // Older groups are still waitable.
     assert!(m.wait(&ids[0]).await.is_ok());
@@ -229,7 +278,10 @@ fn dropped_runtime_does_not_wedge_the_queue() {
 
     let rt2 = tokio::runtime::Runtime::new().unwrap();
     rt2.block_on(async {
-        assert_eq!(m.wait_detailed(&stalled).await.unwrap_err().code, "internal");
+        assert_eq!(
+            m.wait_detailed(&stalled).await.unwrap_err().code,
+            "internal"
+        );
         let id = m.enqueue("After".into(), vec![file(&srv, "/ok", dir.path(), b"ok")]);
         m.wait(&id).await.unwrap();
     });
@@ -240,15 +292,29 @@ fn dropped_runtime_does_not_wedge_the_queue() {
 async fn group_status_json_carries_kind() {
     let m = manager();
     let plain = m.enqueue("Nothing".into(), vec![]);
-    let engine = m.enqueue_kind("Image engine (CPU)".into(), crate::download::DownloadKind::Engine, vec![]);
+    let engine = m.enqueue_kind(
+        "Image engine (CPU)".into(),
+        crate::download::DownloadKind::Engine,
+        vec![],
+    );
     m.wait(&engine).await.unwrap();
     m.wait(&plain).await.unwrap();
     let all = m.status();
-    let find = |id: &str| serde_json::to_value(all.iter().find(|s| s.group_id == id).unwrap()).unwrap();
+    let find =
+        |id: &str| serde_json::to_value(all.iter().find(|s| s.group_id == id).unwrap()).unwrap();
     let e = find(&engine);
     assert_eq!(e["kind"], "engine");
     assert_eq!(e["groupId"], engine.as_str());
-    for k in ["label", "state", "currentFile", "fileIndex", "fileCount", "downloadedBytes", "totalBytes", "error"] {
+    for k in [
+        "label",
+        "state",
+        "currentFile",
+        "fileIndex",
+        "fileCount",
+        "downloadedBytes",
+        "totalBytes",
+        "error",
+    ] {
         assert!(e.get(k).is_some(), "{k}");
     }
     assert!(find(&plain)["kind"].is_null());
@@ -270,17 +336,28 @@ async fn content_check_failure_fails_the_group_with_its_message() {
     let dir = tempfile::tempdir().unwrap();
     let m = manager();
     let mut bad = file(&srv, "/a.safetensors", dir.path(), &body);
-    bad.content_check = Some(Arc::new(|_: &std::path::Path| Err("The downloaded file isn't a valid model file, so Pinhole removed it.".into())));
+    bad.content_check = Some(Arc::new(|_: &std::path::Path| {
+        Err("The downloaded file isn't a valid model file, so Pinhole removed it.".into())
+    }));
     let second = file(&srv, "/b.safetensors", dir.path(), &body);
     let id = m.enqueue("Model".into(), vec![bad, second]);
     let err = m.wait_detailed(&id).await.unwrap_err();
     assert_eq!(err.code, "invalid");
-    assert_eq!(err.message, "The downloaded file isn't a valid model file, so Pinhole removed it.");
+    assert_eq!(
+        err.message,
+        "The downloaded file isn't a valid model file, so Pinhole removed it."
+    );
     let st = m.status().into_iter().find(|s| s.group_id == id).unwrap();
     assert_eq!(st.state, DownloadState::Failed);
     assert_eq!(st.error.as_deref(), Some(err.message.as_str()));
-    assert!(!dir.path().join("a.safetensors").exists(), "rejected file removed");
-    assert!(!dir.path().join("b.safetensors").exists(), "the group stops at the rejected file");
+    assert!(
+        !dir.path().join("a.safetensors").exists(),
+        "rejected file removed"
+    );
+    assert!(
+        !dir.path().join("b.safetensors").exists(),
+        "the group stops at the rejected file"
+    );
 }
 
 #[tokio::test]
@@ -294,7 +371,10 @@ async fn approximate_sizes_feed_the_group_total() {
         label: name.into(),
         ..Default::default()
     };
-    let id = m.enqueue("Two files".into(), vec![spec("a", 1_000_000), spec("b", 2_000_000)]);
+    let id = m.enqueue(
+        "Two files".into(),
+        vec![spec("a", 1_000_000), spec("b", 2_000_000)],
+    );
     let st = m.status().into_iter().find(|s| s.group_id == id).unwrap();
     assert_eq!(st.total_bytes, 3_000_000);
     let _ = m.wait(&id).await;

@@ -24,14 +24,19 @@ pub fn value_to_string(v: &Value) -> Option<String> {
 
 pub fn value_to_u64(v: &Value) -> Option<u64> {
     match v {
-        Value::Number(n) => n
-            .as_u64()
-            .or_else(|| n.as_f64().filter(|f| f.is_finite() && *f >= 0.0).map(|f| f.round() as u64)),
+        Value::Number(n) => n.as_u64().or_else(|| {
+            n.as_f64()
+                .filter(|f| f.is_finite() && *f >= 0.0)
+                .map(|f| f.round() as u64)
+        }),
         Value::String(s) => {
             let s = s.trim();
-            s.parse::<u64>()
-                .ok()
-                .or_else(|| s.parse::<f64>().ok().filter(|f| f.is_finite() && *f >= 0.0).map(|f| f.round() as u64))
+            s.parse::<u64>().ok().or_else(|| {
+                s.parse::<f64>()
+                    .ok()
+                    .filter(|f| f.is_finite() && *f >= 0.0)
+                    .map(|f| f.round() as u64)
+            })
         }
         _ => None,
     }
@@ -91,7 +96,10 @@ pub fn opt_bool<'de, D: Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Erro
 /// Array of `T`; elements that fail to parse are skipped, non-arrays → empty.
 pub fn vec<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
     Ok(match Value::deserialize(d)? {
-        Value::Array(items) => items.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect(),
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|v| serde_json::from_value(v).ok())
+            .collect(),
         _ => Vec::new(),
     })
 }
@@ -102,7 +110,9 @@ pub fn obj<'de, D: Deserializer<'de>, T: DeserializeOwned + Default>(d: D) -> Re
 }
 
 /// Nested object; null or malformed → `None`.
-pub fn opt_obj<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Option<T>, D::Error> {
+pub fn opt_obj<'de, D: Deserializer<'de>, T: DeserializeOwned>(
+    d: D,
+) -> Result<Option<T>, D::Error> {
     let v = Value::deserialize(d)?;
     if v.is_null() {
         return Ok(None);
@@ -120,7 +130,12 @@ pub fn strings<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error>
         }
     }
     Ok(match Value::deserialize(d)? {
-        Value::Array(items) => items.iter().filter_map(one).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(one)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
         Value::String(s) if !s.trim().is_empty() => vec![s.trim().to_string()],
         _ => Vec::new(),
     })
@@ -129,7 +144,10 @@ pub fn strings<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error>
 /// Object with string values (`hashes`); non-string values are dropped.
 pub fn string_map<'de, D: Deserializer<'de>>(d: D) -> Result<BTreeMap<String, String>, D::Error> {
     Ok(match Value::deserialize(d)? {
-        Value::Object(o) => o.iter().filter_map(|(k, v)| value_to_string(v).map(|s| (k.clone(), s))).collect(),
+        Value::Object(o) => o
+            .iter()
+            .filter_map(|(k, v)| value_to_string(v).map(|s| (k.clone(), s)))
+            .collect(),
         _ => BTreeMap::new(),
     })
 }
@@ -196,7 +214,9 @@ mod tests {
         assert!(!t.d);
         assert_eq!(t.e, Some(4));
         assert_eq!(t.f, 1.5);
-        let t: T = serde_json::from_str(r#"{"a":3.0,"b":null,"c":"one","d":"true","e":8,"f":null}"#).unwrap();
+        let t: T =
+            serde_json::from_str(r#"{"a":3.0,"b":null,"c":"one","d":"true","e":8,"f":null}"#)
+                .unwrap();
         assert_eq!(t.a, 3);
         assert_eq!(t.b, None);
         assert_eq!(t.c, vec!["one"]);

@@ -29,7 +29,8 @@ use crate::{AppCore, CoreError, CoreResult};
 
 /// The GitHub repository releases come from.
 pub const REPO: &str = "DavidGudovic/PinholeAI";
-const RELEASES_API: &str = "https://api.github.com/repos/DavidGudovic/PinholeAI/releases?per_page=30";
+const RELEASES_API: &str =
+    "https://api.github.com/repos/DavidGudovic/PinholeAI/releases?per_page=30";
 const SUMS_FILE: &str = "SHA256SUMS.txt";
 const MAX_SUMS_BYTES: usize = 64 * 1024;
 /// Staging folder name (next to the app for portable / AppImage, in the OS temp
@@ -107,7 +108,9 @@ impl Target {
     fn asset_name(&self, version: &str) -> Option<String> {
         match self {
             Target::Installer { .. } => Some(format!("{PRODUCT}-{version}-windows-x64-setup.exe")),
-            Target::Portable { .. } => Some(format!("{PRODUCT}-{version}-windows-x64-portable.zip")),
+            Target::Portable { .. } => {
+                Some(format!("{PRODUCT}-{version}-windows-x64-portable.zip"))
+            }
             Target::AppImage { .. } => Some(format!("{PRODUCT}-{version}-linux-x86_64.AppImage")),
             Target::Manual => None,
         }
@@ -160,15 +163,21 @@ pub fn detect_target_with(env: &Environment) -> Target {
     match env.os {
         "windows" => {
             if env.exe_dir.join("uninstall.exe").is_file() {
-                Target::Installer { staging: env.temp_dir.join(INSTALLER_STAGING_DIR) }
+                Target::Installer {
+                    staging: env.temp_dir.join(INSTALLER_STAGING_DIR),
+                }
             } else if env.portable_data && env.exe_dir.join(format!("{PRODUCT}.exe")).is_file() {
-                Target::Portable { app_dir: env.exe_dir.clone() }
+                Target::Portable {
+                    app_dir: env.exe_dir.clone(),
+                }
             } else {
                 Target::Manual
             }
         }
         "linux" => match &env.appimage {
-            Some(file) if file.is_file() && file.parent().is_some_and(writable_dir) => Target::AppImage { file: file.clone() },
+            Some(file) if file.is_file() && file.parent().is_some_and(writable_dir) => {
+                Target::AppImage { file: file.clone() }
+            }
             _ => Target::Manual,
         },
         _ => Target::Manual,
@@ -212,7 +221,10 @@ fn tag_version(tag: &str) -> Option<semver::Version> {
 
 /// Newest published (non-draft) release newer than `current`. Pre-releases count:
 /// every build is a pre-release until RELEASE-SPEC is done.
-fn newest_release<'a>(releases: &'a [GhRelease], current: &semver::Version) -> Option<(&'a GhRelease, semver::Version)> {
+fn newest_release<'a>(
+    releases: &'a [GhRelease],
+    current: &semver::Version,
+) -> Option<(&'a GhRelease, semver::Version)> {
     newest_matching(releases, current, |_, _| true)
 }
 
@@ -232,7 +244,11 @@ fn newest_matching<'a>(
 /// The update to offer: the newest release that has this copy's file (and a
 /// checksum list), so a release missing one platform's build doesn't hide an
 /// installable one; otherwise the newest release, installed by hand.
-fn pick_update(releases: &[GhRelease], current: &semver::Version, target: &Target) -> Option<UpdateInfo> {
+fn pick_update(
+    releases: &[GhRelease],
+    current: &semver::Version,
+    target: &Target,
+) -> Option<UpdateInfo> {
     let installable = newest_matching(releases, current, |r, v| {
         let has = |name: &str| r.assets.iter().any(|a| a.name == name);
         target.asset_name(&v.to_string()).is_some_and(|n| has(&n)) && has(SUMS_FILE)
@@ -278,7 +294,10 @@ async fn github_token() -> Option<String> {
     if let Some(cached) = TOKEN_CACHE.lock().clone() {
         return cached;
     }
-    let token = crate::catalog::blocking(pinhole_store::keychain::get_github_token).await.ok()?.ok()?;
+    let token = crate::catalog::blocking(pinhole_store::keychain::get_github_token)
+        .await
+        .ok()?
+        .ok()?;
     *TOKEN_CACHE.lock() = Some(token.clone());
     token
 }
@@ -302,7 +321,10 @@ pub async fn clear_github_token() -> CoreResult<()> {
 }
 
 fn api_headers(token: Option<&str>, accept: &str) -> Vec<(String, String)> {
-    let mut h = vec![("accept".to_string(), accept.to_string()), ("x-github-api-version".to_string(), "2022-11-28".to_string())];
+    let mut h = vec![
+        ("accept".to_string(), accept.to_string()),
+        ("x-github-api-version".to_string(), "2022-11-28".to_string()),
+    ];
     if let Some(t) = token {
         h.push(("authorization".to_string(), format!("Bearer {t}")));
     }
@@ -318,7 +340,8 @@ pub fn release_page_url(version: Option<&str>) -> CoreResult<String> {
     match version {
         None => Ok(format!("https://github.com/{REPO}/releases")),
         Some(v) => {
-            let v = semver::Version::parse(v).map_err(|_| CoreError::invalid("That isn't a Pinhole version."))?;
+            let v = semver::Version::parse(v)
+                .map_err(|_| CoreError::invalid("That isn't a Pinhole version."))?;
             Ok(format!("https://github.com/{REPO}/releases/tag/v{v}"))
         }
     }
@@ -329,14 +352,18 @@ fn sum_for(sums: &str, name: &str) -> Option<String> {
     sums.lines().find_map(|line| {
         let (hash, file) = line.trim().split_once(char::is_whitespace)?;
         let file = file.trim_start().trim_start_matches('*');
-        (file == name && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit())).then(|| hash.to_ascii_lowercase())
+        (file == name && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
+            .then(|| hash.to_ascii_lowercase())
     })
 }
 
 /// The running app's version. The Tauri shell passes its own (tauri.conf.json,
 /// which the release workflow matches against the tag); tests use the crate's.
 pub fn parse_current(version: &str) -> CoreResult<semver::Version> {
-    semver::Version::parse(version).map_err(|_| CoreError::internal("Pinhole couldn't read its own version.").with_details(version.to_string()))
+    semver::Version::parse(version).map_err(|_| {
+        CoreError::internal("Pinhole couldn't read its own version.")
+            .with_details(version.to_string())
+    })
 }
 
 /// `CoreError.code` when GitHub doesn't show Pinhole's releases (private repository).
@@ -350,17 +377,29 @@ const UNAVAILABLE_WITH_TOKEN: &str = "GitHub doesn't show Pinhole's releases to 
 /// The release list, plus the token to use for the downloads. A token GitHub
 /// rejects (expired, or no access) falls back to asking without it, so an old
 /// token can't block updates once the repository is public.
-async fn fetch_releases(core: &AppCore, token: Option<String>) -> CoreResult<(Vec<GhRelease>, Option<String>)> {
+async fn fetch_releases(
+    core: &AppCore,
+    token: Option<String>,
+) -> CoreResult<(Vec<GhRelease>, Option<String>)> {
     let get = |t: Option<&str>| {
         let headers = api_headers(t, "application/vnd.github+json");
-        async move { core.http.get_json::<Vec<GhRelease>>(RELEASES_API, &as_refs(&headers)).await }
+        async move {
+            core.http
+                .get_json::<Vec<GhRelease>>(RELEASES_API, &as_refs(&headers))
+                .await
+        }
     };
     match get(token.as_deref()).await {
         Ok(list) => Ok((list, token)),
-        Err(pinhole_net::NetError::Unauthorized(code)) if token.is_some() => match get(None).await {
-            Ok(list) => Ok((list, None)),
-            Err(_) => Err(releases_error(pinhole_net::NetError::Unauthorized(code), true)),
-        },
+        Err(pinhole_net::NetError::Unauthorized(code)) if token.is_some() => {
+            match get(None).await {
+                Ok(list) => Ok((list, None)),
+                Err(_) => Err(releases_error(
+                    pinhole_net::NetError::Unauthorized(code),
+                    true,
+                )),
+            }
+        }
         Err(e) => Err(releases_error(e, token.is_some())),
     }
 }
@@ -368,8 +407,13 @@ async fn fetch_releases(core: &AppCore, token: Option<String>) -> CoreResult<(Ve
 /// Plain-language error for a failed asset download (checksum list).
 fn asset_error(e: pinhole_net::NetError, with_token: bool) -> CoreError {
     match e {
-        pinhole_net::NetError::Offline => CoreError::new("offline", "Offline mode is on. Turn it off in Settings to update."),
-        pinhole_net::NetError::Unauthorized(_) if with_token => CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string()),
+        pinhole_net::NetError::Offline => CoreError::new(
+            "offline",
+            "Offline mode is on. Turn it off in Settings to update.",
+        ),
+        pinhole_net::NetError::Unauthorized(_) if with_token => {
+            CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string())
+        }
         other => CoreError::from(other),
     }
 }
@@ -377,15 +421,30 @@ fn asset_error(e: pinhole_net::NetError, with_token: bool) -> CoreError {
 /// Plain-language error for a failed releases request.
 fn releases_error(e: pinhole_net::NetError, with_token: bool) -> CoreError {
     match e {
-        pinhole_net::NetError::Offline => CoreError::new("offline", "Offline mode is on. Turn it off in Settings to check for updates."),
+        pinhole_net::NetError::Offline => CoreError::new(
+            "offline",
+            "Offline mode is on. Turn it off in Settings to check for updates.",
+        ),
         // GitHub answers 404 (not 401) for a private repository or one that moved:
         // the releases can't be seen without signing in.
-        pinhole_net::NetError::Status(404) => {
-            CoreError::new(UNAVAILABLE, if with_token { UNAVAILABLE_WITH_TOKEN } else { UNAVAILABLE_MESSAGE }).with_details(e.to_string())
+        pinhole_net::NetError::Status(404) => CoreError::new(
+            UNAVAILABLE,
+            if with_token {
+                UNAVAILABLE_WITH_TOKEN
+            } else {
+                UNAVAILABLE_MESSAGE
+            },
+        )
+        .with_details(e.to_string()),
+        pinhole_net::NetError::Unauthorized(_) if with_token => {
+            CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string())
         }
-        pinhole_net::NetError::Unauthorized(_) if with_token => CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string()),
         pinhole_net::NetError::Unauthorized(_) | pinhole_net::NetError::Status(429) => {
-            CoreError::new("network", "GitHub is limiting update checks right now. Try again in an hour.").with_details(e.to_string())
+            CoreError::new(
+                "network",
+                "GitHub is limiting update checks right now. Try again in an hour.",
+            )
+            .with_details(e.to_string())
         }
         other => CoreError::from(other),
     }
@@ -396,7 +455,10 @@ pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreRes
     let current = parse_current(current_version)?;
     let (releases, _) = fetch_releases(core, github_token().await).await?;
     let target = detect_target_with(&Environment::current(core));
-    Ok(UpdateCheck { current_version: current.to_string(), update: pick_update(&releases, &current, &target) })
+    Ok(UpdateCheck {
+        current_version: current.to_string(),
+        update: pick_update(&releases, &current, &target),
+    })
 }
 
 /// Refuse while a picture is being made or other downloads are running: the
@@ -404,7 +466,9 @@ pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreRes
 pub fn ensure_idle(core: &AppCore, own_group: Option<&str>) -> CoreResult<()> {
     drop(crate::models::folder_read(core)?);
     if core.gen.run_lock.try_lock().is_err() {
-        return Err(CoreError::invalid("Pinhole is making a picture. Wait for it to finish (or cancel it), then update."));
+        return Err(CoreError::invalid(
+            "Pinhole is making a picture. Wait for it to finish (or cancel it), then update.",
+        ));
     }
     let busy = core
         .downloads
@@ -412,7 +476,9 @@ pub fn ensure_idle(core: &AppCore, own_group: Option<&str>) -> CoreResult<()> {
         .iter()
         .any(|g| !g.state.is_finished() && Some(g.group_id.as_str()) != own_group);
     if busy {
-        return Err(CoreError::invalid("Downloads are still running. Wait for them to finish (or cancel them), then update."));
+        return Err(CoreError::invalid(
+            "Downloads are still running. Wait for them to finish (or cancel them), then update.",
+        ));
     }
     Ok(())
 }
@@ -420,7 +486,11 @@ pub fn ensure_idle(core: &AppCore, own_group: Option<&str>) -> CoreResult<()> {
 /// Download `version`, verify it and put it in place. The caller (Tauri shell)
 /// then stops the engines and runs / relaunches what [`Prepared`] says. Only one
 /// update runs per app run.
-pub async fn install_update(core: &Arc<AppCore>, current_version: &str, version: &str) -> CoreResult<Prepared> {
+pub async fn install_update(
+    core: &Arc<AppCore>,
+    current_version: &str,
+    version: &str,
+) -> CoreResult<Prepared> {
     let current = parse_current(current_version)?;
     if UPDATING.swap(true, Ordering::SeqCst) {
         return Err(CoreError::invalid("An update is already under way."));
@@ -432,14 +502,20 @@ pub async fn install_update(core: &Arc<AppCore>, current_version: &str, version:
     result
 }
 
-async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: &str) -> CoreResult<Prepared> {
-    let wanted = semver::Version::parse(version).map_err(|_| CoreError::invalid("That isn't a Pinhole version."))?;
+async fn install_inner(
+    core: &Arc<AppCore>,
+    current: &semver::Version,
+    version: &str,
+) -> CoreResult<Prepared> {
+    let wanted = semver::Version::parse(version)
+        .map_err(|_| CoreError::invalid("That isn't a Pinhole version."))?;
     if &wanted <= current {
         return Err(CoreError::invalid("This version is already installed."));
     }
     ensure_idle(core, None)?;
     let target = detect_target_with(&Environment::current(core));
-    let (Some(name), Some(staging)) = (target.asset_name(&wanted.to_string()), target.staging()) else {
+    let (Some(name), Some(staging)) = (target.asset_name(&wanted.to_string()), target.staging())
+    else {
         return Err(CoreError::invalid("This copy of Pinhole can't update itself. Open the download page and install the new version from there."));
     };
 
@@ -447,19 +523,33 @@ async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: 
     let release = releases
         .iter()
         .find(|r| !r.draft && tag_version(&r.tag_name).as_ref() == Some(&wanted))
-        .ok_or_else(|| CoreError::not_found("That update isn't available any more. Check for updates again."))?;
+        .ok_or_else(|| {
+            CoreError::not_found("That update isn't available any more. Check for updates again.")
+        })?;
     let asset = release
         .assets
         .iter()
         .find(|a| a.name == name)
-        .ok_or_else(|| CoreError::not_found("This release has no download for your system. Open the download page instead."))?;
+        .ok_or_else(|| {
+            CoreError::not_found(
+                "This release has no download for your system. Open the download page instead.",
+            )
+        })?;
     let Some(sums_asset) = release.assets.iter().find(|a| a.name == SUMS_FILE) else {
         return Err(CoreError::new("hash_mismatch", "This release can't be checked (it has no SHA256SUMS.txt), so Pinhole won't install it."));
     };
     // Public repository: plain download URLs. Private (token): the API asset endpoint.
     let (sums_url, file_url, file_headers) = match token.as_deref() {
-        Some(t) => (asset_api_url(sums_asset.id), asset_api_url(asset.id), api_headers(Some(t), "application/octet-stream")),
-        None => (asset_url(&wanted, SUMS_FILE), asset_url(&wanted, &name), Vec::new()),
+        Some(t) => (
+            asset_api_url(sums_asset.id),
+            asset_api_url(asset.id),
+            api_headers(Some(t), "application/octet-stream"),
+        ),
+        None => (
+            asset_url(&wanted, SUMS_FILE),
+            asset_url(&wanted, &name),
+            Vec::new(),
+        ),
     };
     let sums = core
         .http
@@ -479,13 +569,19 @@ async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: 
         label: format!("{PRODUCT} {wanted}"),
         ..Default::default()
     };
-    let group = core.downloads.enqueue_kind(format!("{PRODUCT} {wanted}"), DownloadKind::AppUpdate, vec![spec]);
+    let group = core.downloads.enqueue_kind(
+        format!("{PRODUCT} {wanted}"),
+        DownloadKind::AppUpdate,
+        vec![spec],
+    );
     let files = crate::downloads::wait(core, &group).await?;
     ensure_idle(core, Some(&group))?;
     let downloaded = files
         .into_iter()
         .next()
-        .ok_or_else(|| CoreError::internal("The update download finished without a file. Try again."))?
+        .ok_or_else(|| {
+            CoreError::internal("The update download finished without a file. Try again.")
+        })?
         .path;
 
     match target {
@@ -494,14 +590,20 @@ async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: 
             let exe = app_dir.join(format!("{PRODUCT}.exe"));
             tokio::task::spawn_blocking(move || apply_portable(&downloaded, &app_dir))
                 .await
-                .map_err(|e| CoreError::internal("The update stopped unexpectedly. Try again.").with_details(e.to_string()))??;
+                .map_err(|e| {
+                    CoreError::internal("The update stopped unexpectedly. Try again.")
+                        .with_details(e.to_string())
+                })??;
             Ok(Prepared::Relaunch(exe))
         }
         Target::AppImage { file } => {
             let dest = file.clone();
             tokio::task::spawn_blocking(move || apply_appimage(&downloaded, &dest))
                 .await
-                .map_err(|e| CoreError::internal("The update stopped unexpectedly. Try again.").with_details(e.to_string()))??;
+                .map_err(|e| {
+                    CoreError::internal("The update stopped unexpectedly. Try again.")
+                        .with_details(e.to_string())
+                })??;
             Ok(Prepared::Relaunch(file))
         }
         Target::Manual => unreachable!("manual targets return early"),
@@ -521,7 +623,8 @@ pub fn apply_appimage(new_file: &Path, target: &Path) -> CoreResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(new_file, std::fs::Permissions::from_mode(0o755)).map_err(update_failed)?;
+        std::fs::set_permissions(new_file, std::fs::Permissions::from_mode(0o755))
+            .map_err(update_failed)?;
     }
     std::fs::rename(new_file, target).map_err(update_failed)
 }
@@ -542,7 +645,10 @@ pub fn apply_portable(zip_path: &Path, app_dir: &Path) -> CoreResult<()> {
     }
     unpack_portable(zip_path, &new_dir)?;
     if !new_dir.join(format!("{PRODUCT}.exe")).is_file() {
-        return Err(CoreError::new("invalid", "The downloaded update doesn't contain Pinhole. Nothing was changed."));
+        return Err(CoreError::new(
+            "invalid",
+            "The downloaded update doesn't contain Pinhole. Nothing was changed.",
+        ));
     }
 
     let mut entries: Vec<std::ffi::OsString> = std::fs::read_dir(&new_dir)
@@ -578,7 +684,11 @@ pub fn apply_portable(zip_path: &Path, app_dir: &Path) -> CoreResult<()> {
 fn rollback(app_dir: &Path, old_dir: &Path, done: &[(std::ffi::OsString, bool)]) {
     for (name, had_old) in done.iter().rev() {
         let live = app_dir.join(name);
-        let _ = if live.is_dir() { std::fs::remove_dir_all(&live) } else { std::fs::remove_file(&live) };
+        let _ = if live.is_dir() {
+            std::fs::remove_dir_all(&live)
+        } else {
+            std::fs::remove_file(&live)
+        };
         if *had_old {
             let _ = std::fs::rename(old_dir.join(name), &live);
         }
@@ -594,7 +704,11 @@ fn unpack_portable(zip_path: &Path, out: &Path) -> CoreResult<()> {
     }
     std::fs::create_dir_all(&raw).map_err(update_failed)?;
     pinhole_engine::install::extract_zip(zip_path, &raw).map_err(|e| {
-        CoreError::new("invalid", "The downloaded update couldn't be unpacked. Try again.").with_details(e.to_string())
+        CoreError::new(
+            "invalid",
+            "The downloaded update couldn't be unpacked. Try again.",
+        )
+        .with_details(e.to_string())
     })?;
     let root = raw.join(PRODUCT);
     if root.is_dir() {
@@ -617,7 +731,10 @@ pub fn cleanup_after_update(exe_dir: &Path) {
     if cfg!(windows) {
         dirs.push(std::env::temp_dir().join(INSTALLER_STAGING_DIR));
     }
-    if let Some(parent) = std::env::var_os("APPIMAGE").as_ref().and_then(|p| Path::new(p).parent().map(Path::to_path_buf)) {
+    if let Some(parent) = std::env::var_os("APPIMAGE")
+        .as_ref()
+        .and_then(|p| Path::new(p).parent().map(Path::to_path_buf))
+    {
         dirs.push(parent.join(STAGING_DIR));
     }
     for d in dirs {
@@ -637,7 +754,14 @@ mod tests {
             tag_name: tag.into(),
             draft,
             published_at: None,
-            assets: assets.iter().map(|(n, s)| GhAsset { id: 1, name: (*n).into(), size: *s }).collect(),
+            assets: assets
+                .iter()
+                .map(|(n, s)| GhAsset {
+                    id: 1,
+                    name: (*n).into(),
+                    size: *s,
+                })
+                .collect(),
         }
     }
 
@@ -653,9 +777,18 @@ mod tests {
             rel("v0.10.0-rc.1", false, &[]),
         ];
         let (r, v) = newest_release(&list, &current).unwrap();
-        assert_eq!((r.tag_name.as_str(), v.to_string().as_str()), ("v0.10.0-rc.1", "0.10.0-rc.1"));
-        assert!(newest_release(&list[4..5], &current).is_none(), "same version is not an update");
-        assert!(newest_release(&list[..1], &current).is_none(), "drafts are ignored");
+        assert_eq!(
+            (r.tag_name.as_str(), v.to_string().as_str()),
+            ("v0.10.0-rc.1", "0.10.0-rc.1")
+        );
+        assert!(
+            newest_release(&list[4..5], &current).is_none(),
+            "same version is not an update"
+        );
+        assert!(
+            newest_release(&list[..1], &current).is_none(),
+            "drafts are ignored"
+        );
     }
 
     #[test]
@@ -664,17 +797,37 @@ mod tests {
         let setup = |v: &str| format!("Pinhole-{v}-windows-x64-setup.exe");
         let (s3, s4) = (setup("0.3.0"), setup("0.4.0-rc.1"));
         let list = vec![
-            rel("v0.4.0-rc.1", false, &[("Pinhole-0.4.0-rc.1-linux-x86_64.AppImage", 1), ("SHA256SUMS.txt", 1)]),
+            rel(
+                "v0.4.0-rc.1",
+                false,
+                &[
+                    ("Pinhole-0.4.0-rc.1-linux-x86_64.AppImage", 1),
+                    ("SHA256SUMS.txt", 1),
+                ],
+            ),
             rel("v0.3.0", false, &[(s3.as_str(), 7), ("SHA256SUMS.txt", 1)]),
         ];
-        let win = Target::Installer { staging: PathBuf::from("t") };
+        let win = Target::Installer {
+            staging: PathBuf::from("t"),
+        };
         let u = pick_update(&list, &current, &win).unwrap();
-        assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.3.0", InstallMode::Installer, Some(7)));
+        assert_eq!(
+            (u.version.as_str(), u.install_mode, u.size_bytes),
+            ("0.3.0", InstallMode::Installer, Some(7))
+        );
         // No checksum list → not installable, offered by hand.
         let bare = vec![rel("v0.4.0-rc.1", false, &[(s4.as_str(), 9)])];
         let u = pick_update(&bare, &current, &win).unwrap();
-        assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.4.0-rc.1", InstallMode::Manual, None));
-        assert_eq!(pick_update(&list, &current, &Target::Manual).unwrap().version, "0.4.0-rc.1");
+        assert_eq!(
+            (u.version.as_str(), u.install_mode, u.size_bytes),
+            ("0.4.0-rc.1", InstallMode::Manual, None)
+        );
+        assert_eq!(
+            pick_update(&list, &current, &Target::Manual)
+                .unwrap()
+                .version,
+            "0.4.0-rc.1"
+        );
         assert!(pick_update(&list, &semver::Version::parse("0.4.0").unwrap(), &win).is_none());
     }
 
@@ -686,29 +839,67 @@ mod tests {
         assert_eq!(e.details.as_deref(), Some("HTTP 404"));
         let e = releases_error(pinhole_net::NetError::Status(404), true);
         assert!(e.message.contains("read access"), "{}", e.message);
-        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(401), true).code, UNAVAILABLE);
-        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(403), true).message, TOKEN_REFUSED);
+        assert_eq!(
+            releases_error(pinhole_net::NetError::Unauthorized(401), true).code,
+            UNAVAILABLE
+        );
+        assert_eq!(
+            releases_error(pinhole_net::NetError::Unauthorized(403), true).message,
+            TOKEN_REFUSED
+        );
         // A missing checksum file is not "the repo is private".
-        assert_eq!(asset_error(pinhole_net::NetError::Status(404), false).code, "network");
-        assert_eq!(asset_error(pinhole_net::NetError::Status(404), true).code, "network");
-        assert_eq!(asset_error(pinhole_net::NetError::Unauthorized(403), true).code, UNAVAILABLE);
-        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(403), false).code, "network");
-        assert_eq!(releases_error(pinhole_net::NetError::Offline, false).code, "offline");
-        assert_eq!(releases_error(pinhole_net::NetError::Status(500), false).code, "network");
+        assert_eq!(
+            asset_error(pinhole_net::NetError::Status(404), false).code,
+            "network"
+        );
+        assert_eq!(
+            asset_error(pinhole_net::NetError::Status(404), true).code,
+            "network"
+        );
+        assert_eq!(
+            asset_error(pinhole_net::NetError::Unauthorized(403), true).code,
+            UNAVAILABLE
+        );
+        assert_eq!(
+            releases_error(pinhole_net::NetError::Unauthorized(403), false).code,
+            "network"
+        );
+        assert_eq!(
+            releases_error(pinhole_net::NetError::Offline, false).code,
+            "offline"
+        );
+        assert_eq!(
+            releases_error(pinhole_net::NetError::Status(500), false).code,
+            "network"
+        );
         // The token only ever travels in the Authorization header.
         let h = api_headers(Some("ghp_x"), "application/octet-stream");
         assert!(h.contains(&("authorization".into(), "Bearer ghp_x".into())));
         assert!(!asset_api_url(7).contains("ghp_x"));
-        assert!(api_headers(None, "a").iter().all(|(k, _)| k != "authorization"));
+        assert!(api_headers(None, "a")
+            .iter()
+            .all(|(k, _)| k != "authorization"));
     }
 
     #[test]
     fn checksum_lookup() {
         let h = "a".repeat(64);
-        let sums = format!("{h}  Pinhole-0.2.0-windows-x64-setup.exe\n{}  *Pinhole-0.2.0-linux-x86_64.AppImage\n", "B".repeat(64));
-        assert_eq!(sum_for(&sums, "Pinhole-0.2.0-windows-x64-setup.exe"), Some(h));
-        assert_eq!(sum_for(&sums, "Pinhole-0.2.0-linux-x86_64.AppImage"), Some("b".repeat(64)));
-        assert_eq!(sum_for(&sums, "Pinhole-0.2.0-windows-x64-portable.zip"), None);
+        let sums = format!(
+            "{h}  Pinhole-0.2.0-windows-x64-setup.exe\n{}  *Pinhole-0.2.0-linux-x86_64.AppImage\n",
+            "B".repeat(64)
+        );
+        assert_eq!(
+            sum_for(&sums, "Pinhole-0.2.0-windows-x64-setup.exe"),
+            Some(h)
+        );
+        assert_eq!(
+            sum_for(&sums, "Pinhole-0.2.0-linux-x86_64.AppImage"),
+            Some("b".repeat(64))
+        );
+        assert_eq!(
+            sum_for(&sums, "Pinhole-0.2.0-windows-x64-portable.zip"),
+            None
+        );
         assert_eq!(sum_for("xyz  Pinhole.exe", "Pinhole.exe"), None);
     }
 
@@ -719,7 +910,10 @@ mod tests {
             asset_url(&v, "SHA256SUMS.txt"),
             "https://github.com/DavidGudovic/PinholeAI/releases/download/v0.2.0/SHA256SUMS.txt"
         );
-        assert_eq!(release_page_url(Some("0.2.0")).unwrap(), "https://github.com/DavidGudovic/PinholeAI/releases/tag/v0.2.0");
+        assert_eq!(
+            release_page_url(Some("0.2.0")).unwrap(),
+            "https://github.com/DavidGudovic/PinholeAI/releases/tag/v0.2.0"
+        );
         assert!(release_page_url(Some("../../evil")).is_err());
     }
 
@@ -744,10 +938,20 @@ mod tests {
         std::fs::write(dir.join("Pinhole.exe"), b"").unwrap();
         let mut e = env("windows", dir);
         e.portable_data = true;
-        assert_eq!(detect_target_with(&e), Target::Portable { app_dir: dir.to_path_buf() });
+        assert_eq!(
+            detect_target_with(&e),
+            Target::Portable {
+                app_dir: dir.to_path_buf()
+            }
+        );
         // Installer wins when uninstall.exe is there.
         std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
-        assert_eq!(detect_target_with(&e), Target::Installer { staging: dir.join("tmp").join("pinhole-update") });
+        assert_eq!(
+            detect_target_with(&e),
+            Target::Installer {
+                staging: dir.join("tmp").join("pinhole-update")
+            }
+        );
         // Dev builds never replace themselves.
         e.debug_build = true;
         assert_eq!(detect_target_with(&e), Target::Manual);
@@ -765,7 +969,8 @@ mod tests {
         let f = std::fs::File::create(path).unwrap();
         let mut z = zip::ZipWriter::new(f);
         for (name, data) in files {
-            z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            z.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
             z.write_all(data).unwrap();
         }
         z.finish().unwrap();
@@ -780,7 +985,11 @@ mod tests {
         std::fs::write(app.join("Pinhole.exe"), b"old exe").unwrap();
         std::fs::write(app.join("config").join("models.yaml"), b"old").unwrap();
         std::fs::write(app.join("config").join("removed.yaml"), b"stale").unwrap();
-        std::fs::write(app.join("Data").join("outputs").join("mine.png"), b"keep me").unwrap();
+        std::fs::write(
+            app.join("Data").join("outputs").join("mine.png"),
+            b"keep me",
+        )
+        .unwrap();
 
         let zip = tmp.path().join("u.zip");
         write_zip(
@@ -795,12 +1004,24 @@ mod tests {
         apply_portable(&zip, &app).unwrap();
 
         assert_eq!(std::fs::read(app.join("Pinhole.exe")).unwrap(), b"new exe");
-        assert_eq!(std::fs::read(app.join("config").join("models.yaml")).unwrap(), b"new");
-        assert!(!app.join("config").join("removed.yaml").exists(), "config/ is replaced as a whole");
-        assert_eq!(std::fs::read(app.join("Data").join("outputs").join("mine.png")).unwrap(), b"keep me");
+        assert_eq!(
+            std::fs::read(app.join("config").join("models.yaml")).unwrap(),
+            b"new"
+        );
+        assert!(
+            !app.join("config").join("removed.yaml").exists(),
+            "config/ is replaced as a whole"
+        );
+        assert_eq!(
+            std::fs::read(app.join("Data").join("outputs").join("mine.png")).unwrap(),
+            b"keep me"
+        );
         assert!(!app.join("Data").join("README.txt").exists());
         assert!(!app.join("evil.txt").exists());
-        assert_eq!(std::fs::read(app.join(STAGING_DIR).join("old").join("Pinhole.exe")).unwrap(), b"old exe");
+        assert_eq!(
+            std::fs::read(app.join(STAGING_DIR).join("old").join("Pinhole.exe")).unwrap(),
+            b"old exe"
+        );
 
         cleanup_after_update(&app);
         assert!(!app.join(STAGING_DIR).exists());
@@ -818,7 +1039,10 @@ mod tests {
         assert_eq!(std::fs::read(app.join("Pinhole.exe")).unwrap(), b"old exe");
         assert!(!app.join("config").exists());
         // Zip-slip entries are refused by the shared zip reader.
-        write_zip(&zip, &[("Pinhole/Pinhole.exe", b"new exe"), ("../escape.txt", b"x")]);
+        write_zip(
+            &zip,
+            &[("Pinhole/Pinhole.exe", b"new exe"), ("../escape.txt", b"x")],
+        );
         assert!(apply_portable(&zip, &app).is_err());
         assert_eq!(std::fs::read(app.join("Pinhole.exe")).unwrap(), b"old exe");
         assert!(!tmp.path().join("escape.txt").exists());
@@ -837,6 +1061,9 @@ mod tests {
         std::fs::write(&new, b"new").unwrap();
         apply_appimage(&new, &live).unwrap();
         assert_eq!(std::fs::read(&live).unwrap(), b"new");
-        assert_eq!(std::fs::metadata(&live).unwrap().permissions().mode() & 0o777, 0o755);
+        assert_eq!(
+            std::fs::metadata(&live).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
     }
 }

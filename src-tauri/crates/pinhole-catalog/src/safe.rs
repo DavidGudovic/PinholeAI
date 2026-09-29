@@ -74,7 +74,13 @@ pub enum AdultReason {
 pub fn image_ratings(m: &Model) -> (usize, usize) {
     let mut mature = 0;
     let mut rated = 0;
-    for level in m.model_versions.iter().flat_map(|v| v.images.iter()).filter_map(|i| i.nsfw_level).filter(|l| *l > 0) {
+    for level in m
+        .model_versions
+        .iter()
+        .flat_map(|v| v.images.iter())
+        .filter_map(|i| i.nsfw_level)
+        .filter(|l| *l > 0)
+    {
         rated += 1;
         if level >= LEVEL_R {
             mature += 1;
@@ -86,7 +92,10 @@ pub fn image_ratings(m: &Model) -> (usize, usize) {
 /// Lowercase words of a name: split on anything that isn't a letter or digit
 /// (`REED_XXX_SDXL` → `reed`, `xxx`, `sdxl`; `XXMix` stays one word).
 pub fn name_words(name: &str) -> Vec<String> {
-    name.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+    name.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 fn normalize(list: &mut [String]) {
@@ -127,7 +136,11 @@ impl SafeFilter {
         if let Some(t) = tags.iter().find(|t| self.hide_tags.contains(t)) {
             return Some(AdultReason::Tag(t.clone()));
         }
-        let mut suggestive: Vec<String> = tags.iter().filter(|t| self.suggestive_tags.contains(t)).cloned().collect();
+        let mut suggestive: Vec<String> = tags
+            .iter()
+            .filter(|t| self.suggestive_tags.contains(t))
+            .cloned()
+            .collect();
         suggestive.dedup();
         if suggestive.len() >= self.suggestive_tags_to_hide {
             return Some(AdultReason::SuggestiveTags(suggestive));
@@ -177,7 +190,10 @@ pub(crate) mod tests {
     }
 
     fn by_name<'a>(page: &'a ModelsPage, name: &str) -> &'a Model {
-        page.items.iter().find(|m| m.name.starts_with(name)).unwrap_or_else(|| panic!("{name} not in fixture"))
+        page.items
+            .iter()
+            .find(|m| m.name.starts_with(name))
+            .unwrap_or_else(|| panic!("{name} not in fixture"))
     }
 
     fn model(name: &str, tags: &[&str], levels: &[u32]) -> Model {
@@ -213,9 +229,16 @@ pub(crate) mod tests {
         assert_eq!(s.suggestive_tags_to_hide, 1);
         assert_eq!(s.max_mature_image_share, 1.0);
         assert_eq!(s.min_rated_images, 1);
-        assert_eq!(s.max_preview_level, LEVEL_PG13, "previews never above PG-13 in Safe");
+        assert_eq!(
+            s.max_preview_level, LEVEL_PG13,
+            "previews never above PG-13 in Safe"
+        );
         // Even an empty filter keeps the hard rules.
-        let empty = SafeFilter { max_mature_image_share: 1.0, ..Default::default() }.normalized();
+        let empty = SafeFilter {
+            max_mature_image_share: 1.0,
+            ..Default::default()
+        }
+        .normalized();
         let mut m = model("Plain", &[], &[1]);
         assert_eq!(empty.adult_reason(&m), None);
         m.nsfw = true;
@@ -227,28 +250,60 @@ pub(crate) mod tests {
 
     #[test]
     fn name_words_are_whole_words() {
-        assert_eq!(name_words("REED_XXX_illustrious_SDXL"), ["reed", "xxx", "illustrious", "sdxl"]);
-        assert_eq!(name_words("iNiverse Mix(SFW & NSFW)"), ["iniverse", "mix", "sfw", "nsfw"]);
+        assert_eq!(
+            name_words("REED_XXX_illustrious_SDXL"),
+            ["reed", "xxx", "illustrious", "sdxl"]
+        );
+        assert_eq!(
+            name_words("iNiverse Mix(SFW & NSFW)"),
+            ["iniverse", "mix", "sfw", "nsfw"]
+        );
         assert_eq!(name_words("XXMix_9realistic"), ["xxmix", "9realistic"]);
-        assert_eq!(name_words("Vixon’s Milk Factory"), ["vixon", "s", "milk", "factory"]);
+        assert_eq!(
+            name_words("Vixon’s Milk Factory"),
+            ["vixon", "s", "milk", "factory"]
+        );
         let s = &filters().safe;
         let hide = |n: &str| s.adult_reason(&model(n, &[], &[1]));
-        assert_eq!(hide("REED_XXX_illustrious_SDXL"), Some(AdultReason::NameWord("xxx".into())));
-        assert_eq!(hide("Vixon’s Milk Factory"), Some(AdultReason::NameWord("milk factory".into())));
-        assert_eq!(hide("MiaoMiao Harem"), Some(AdultReason::NameWord("harem".into())));
+        assert_eq!(
+            hide("REED_XXX_illustrious_SDXL"),
+            Some(AdultReason::NameWord("xxx".into()))
+        );
+        assert_eq!(
+            hide("Vixon’s Milk Factory"),
+            Some(AdultReason::NameWord("milk factory".into()))
+        );
+        assert_eq!(
+            hide("MiaoMiao Harem"),
+            Some(AdultReason::NameWord("harem".into()))
+        );
         assert_eq!(hide("XXMix_9realistic"), None, "not a whole word");
-        assert_eq!(hide("Plant Milk 🌿 - Model Suite"), None, "phrase needs both words");
+        assert_eq!(
+            hide("Plant Milk 🌿 - Model Suite"),
+            None,
+            "phrase needs both words"
+        );
         assert_eq!(hide("Essex Landscapes"), None);
     }
 
     #[test]
     fn tags_hide_strongly_or_in_pairs() {
         let s = &filters().safe;
-        assert_eq!(s.adult_reason(&model("A", &["anime", "Hentai"], &[1])), Some(AdultReason::Tag("hentai".into())));
-        assert_eq!(s.adult_reason(&model("B", &["photorealistic", "nsfw"], &[1])), None, "Juggernaut XL: one suggestive tag");
+        assert_eq!(
+            s.adult_reason(&model("A", &["anime", "Hentai"], &[1])),
+            Some(AdultReason::Tag("hentai".into()))
+        );
+        assert_eq!(
+            s.adult_reason(&model("B", &["photorealistic", "nsfw"], &[1])),
+            None,
+            "Juggernaut XL: one suggestive tag"
+        );
         assert_eq!(
             s.adult_reason(&model("C", &["sexy", "nsfw", "woman"], &[1])),
-            Some(AdultReason::SuggestiveTags(vec!["sexy".into(), "nsfw".into()]))
+            Some(AdultReason::SuggestiveTags(vec![
+                "sexy".into(),
+                "nsfw".into()
+            ]))
         );
     }
 
@@ -256,10 +311,25 @@ pub(crate) mod tests {
     fn mature_image_share() {
         let s = &filters().safe;
         // 3 of 5 rated images R or above → 0.6 > 0.5.
-        assert_eq!(s.adult_reason(&model("D", &[], &[1, 2, 4, 8, 16])), Some(AdultReason::MatureImages(0.6)));
-        assert_eq!(s.adult_reason(&model("E", &[], &[1, 1, 2, 4, 8, 16])), None, "exactly half is fine");
-        assert_eq!(s.adult_reason(&model("F", &[], &[4, 8, 16, 0])), None, "too few rated images to judge");
-        assert_eq!(image_ratings(&model("G", &[], &[1, 32, 0, 4])), (2, 3), "blocked counts as mature, unrated is skipped");
+        assert_eq!(
+            s.adult_reason(&model("D", &[], &[1, 2, 4, 8, 16])),
+            Some(AdultReason::MatureImages(0.6))
+        );
+        assert_eq!(
+            s.adult_reason(&model("E", &[], &[1, 1, 2, 4, 8, 16])),
+            None,
+            "exactly half is fine"
+        );
+        assert_eq!(
+            s.adult_reason(&model("F", &[], &[4, 8, 16, 0])),
+            None,
+            "too few rated images to judge"
+        );
+        assert_eq!(
+            image_ratings(&model("G", &[], &[1, 32, 0, 4])),
+            (2, 3),
+            "blocked counts as mature, unrated is skipped"
+        );
     }
 
     #[test]
@@ -267,9 +337,15 @@ pub(crate) mod tests {
         let s = &filters().safe;
         let img = |json: &str| serde_json::from_str::<ModelImage>(json).unwrap();
         assert!(s.is_safe_preview(&img(r#"{"url":"u","nsfwLevel":1}"#)));
-        assert!(!s.is_safe_preview(&img(r#"{"url":"u","nsfwLevel":2}"#)), "PG only, like Stability Matrix");
+        assert!(
+            !s.is_safe_preview(&img(r#"{"url":"u","nsfwLevel":2}"#)),
+            "PG only, like Stability Matrix"
+        );
         assert!(!s.is_safe_preview(&img(r#"{"url":"u"}"#)), "unrated");
-        assert!(s.is_safe_preview(&img(r#"{"url":"u","nsfw":"None"}"#)), "older answers: explicit not-NSFW");
+        assert!(
+            s.is_safe_preview(&img(r#"{"url":"u","nsfw":"None"}"#)),
+            "older answers: explicit not-NSFW"
+        );
         assert!(!s.is_safe_preview(&img(r#"{"url":"u","nsfw":true}"#)));
     }
 
@@ -280,14 +356,41 @@ pub(crate) mod tests {
         let page = live("month");
         let reason = |n: &str| s.adult_reason(by_name(&page, n));
         assert_eq!(reason("Babes"), Some(AdultReason::Tag("bimbo".into())));
-        assert_eq!(reason("MiaoMiao Harem"), Some(AdultReason::NameWord("harem".into())));
-        assert_eq!(reason("REED_XXX"), Some(AdultReason::NameWord("xxx".into())));
-        assert_eq!(reason("Vixon’s Milk Factory"), Some(AdultReason::NameWord("milk factory".into())));
-        assert_eq!(reason("Moody Krea 2 Mix (uncensored)"), Some(AdultReason::NameWord("uncensored".into())));
-        assert_eq!(reason("Unholy Desire Mix"), Some(AdultReason::Tag("porn".into())));
-        assert_eq!(reason("Five Stars Illustrious"), Some(AdultReason::SuggestiveTags(vec!["sexy".into(), "babes".into()])));
-        assert!(matches!(reason("One obsession"), Some(AdultReason::MatureImages(_))));
-        assert!(matches!(reason("Kodoranime"), Some(AdultReason::MatureImages(_))));
+        assert_eq!(
+            reason("MiaoMiao Harem"),
+            Some(AdultReason::NameWord("harem".into()))
+        );
+        assert_eq!(
+            reason("REED_XXX"),
+            Some(AdultReason::NameWord("xxx".into()))
+        );
+        assert_eq!(
+            reason("Vixon’s Milk Factory"),
+            Some(AdultReason::NameWord("milk factory".into()))
+        );
+        assert_eq!(
+            reason("Moody Krea 2 Mix (uncensored)"),
+            Some(AdultReason::NameWord("uncensored".into()))
+        );
+        assert_eq!(
+            reason("Unholy Desire Mix"),
+            Some(AdultReason::Tag("porn".into()))
+        );
+        assert_eq!(
+            reason("Five Stars Illustrious"),
+            Some(AdultReason::SuggestiveTags(vec![
+                "sexy".into(),
+                "babes".into()
+            ]))
+        );
+        assert!(matches!(
+            reason("One obsession"),
+            Some(AdultReason::MatureImages(_))
+        ));
+        assert!(matches!(
+            reason("Kodoranime"),
+            Some(AdultReason::MatureImages(_))
+        ));
         assert_eq!(reason("Big Love"), Some(AdultReason::MarkedNsfw));
         for keep in [
             "CyberRealistic Z-Image Turbo",
@@ -300,7 +403,11 @@ pub(crate) mod tests {
         ] {
             assert_eq!(reason(keep), None, "{keep}");
         }
-        let kept = page.items.iter().filter(|m| s.adult_reason(m).is_none()).count();
+        let kept = page
+            .items
+            .iter()
+            .filter(|m| s.adult_reason(m).is_none())
+            .count();
         assert_eq!(kept, 33, "a third of the old default page");
     }
 
@@ -327,10 +434,23 @@ pub(crate) mod tests {
         ] {
             assert_eq!(s.adult_reason(by_name(&page, keep)), None, "{keep}");
         }
-        for hide in ["Pony Realism", "One obsession", "Babes By Stable Yogi", "Analog Madness", "NTR MIX", "PicX_real", "Uber Realistic", "WAI-illustrious-SDXL"] {
+        for hide in [
+            "Pony Realism",
+            "One obsession",
+            "Babes By Stable Yogi",
+            "Analog Madness",
+            "NTR MIX",
+            "PicX_real",
+            "Uber Realistic",
+            "WAI-illustrious-SDXL",
+        ] {
             assert!(s.adult_reason(by_name(&page, hide)).is_some(), "{hide}");
         }
-        let kept = page.items.iter().filter(|m| s.adult_reason(m).is_none()).count();
+        let kept = page
+            .items
+            .iter()
+            .filter(|m| s.adult_reason(m).is_none())
+            .count();
         assert_eq!(kept, 52);
     }
 
@@ -340,14 +460,40 @@ pub(crate) mod tests {
         // include clothing / pose add-ons whose sample images are mostly R or above.
         let s = &filters().safe;
         let page = live("loras");
-        let kept: Vec<&str> = page.items.iter().filter(|m| s.adult_reason(m).is_none()).map(|m| m.name.as_str()).collect();
-        for keep in ["Detail Tweaker XL", "Add More Details", "blindbox", "Studio Ghibli Style LoRA", "Pixel Art XL", "Add Micro Details", "Pony: People's Works"] {
+        let kept: Vec<&str> = page
+            .items
+            .iter()
+            .filter(|m| s.adult_reason(m).is_none())
+            .map(|m| m.name.as_str())
+            .collect();
+        for keep in [
+            "Detail Tweaker XL",
+            "Add More Details",
+            "blindbox",
+            "Studio Ghibli Style LoRA",
+            "Pixel Art XL",
+            "Add Micro Details",
+            "Pony: People's Works",
+        ] {
             assert!(kept.iter().any(|k| k.starts_with(keep)), "{keep}");
         }
-        assert_eq!(s.adult_reason(by_name(&page, "STYLES | PONY & ANIMAGINE")), Some(AdultReason::Tag("sexual".into())));
-        assert_eq!(s.adult_reason(by_name(&page, "FURRY BABES")), Some(AdultReason::NameWord("babes".into())));
-        assert_eq!(s.adult_reason(by_name(&page, "苍铭明月")), Some(AdultReason::NoSafeContent), "nsfwLevel 30: no PG image at all");
-        assert!(matches!(s.adult_reason(by_name(&page, "Hairstyles Collection")), Some(AdultReason::MatureImages(_))));
+        assert_eq!(
+            s.adult_reason(by_name(&page, "STYLES | PONY & ANIMAGINE")),
+            Some(AdultReason::Tag("sexual".into()))
+        );
+        assert_eq!(
+            s.adult_reason(by_name(&page, "FURRY BABES")),
+            Some(AdultReason::NameWord("babes".into()))
+        );
+        assert_eq!(
+            s.adult_reason(by_name(&page, "苍铭明月")),
+            Some(AdultReason::NoSafeContent),
+            "nsfwLevel 30: no PG image at all"
+        );
+        assert!(matches!(
+            s.adult_reason(by_name(&page, "Hairstyles Collection")),
+            Some(AdultReason::MatureImages(_))
+        ));
         assert_eq!(kept.len(), 45, "{kept:?}");
     }
 }

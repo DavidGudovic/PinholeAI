@@ -7,7 +7,10 @@ use crate::{HttpClient, LocalClient, NetError, OfflineFlag};
 
 fn test_client() -> (HttpClient, OfflineFlag) {
     let offline = OfflineFlag::new(false);
-    (HttpClient::new_for_tests(offline.clone(), true).unwrap(), offline)
+    (
+        HttpClient::new_for_tests(offline.clone(), true).unwrap(),
+        offline,
+    )
 }
 
 #[test]
@@ -56,10 +59,19 @@ fn production_check_url_matrix() {
 fn offline_is_checked_before_anything_else() {
     let offline = OfflineFlag::new(true);
     let client = HttpClient::new(offline.clone()).unwrap();
-    assert_eq!(client.check_url("https://civitai.com/").unwrap_err(), NetError::Offline);
-    assert_eq!(client.check_url("https://evil.com/").unwrap_err(), NetError::Offline);
+    assert_eq!(
+        client.check_url("https://civitai.com/").unwrap_err(),
+        NetError::Offline
+    );
+    assert_eq!(
+        client.check_url("https://evil.com/").unwrap_err(),
+        NetError::Offline
+    );
     assert_eq!(client.check_url("garbage").unwrap_err(), NetError::Offline);
-    assert!(matches!(client.get("https://civitai.com/"), Err(NetError::Offline)));
+    assert!(matches!(
+        client.get("https://civitai.com/"),
+        Err(NetError::Offline)
+    ));
     offline.set(false);
     client.check_url("https://civitai.com/").unwrap();
 }
@@ -69,8 +81,20 @@ async fn offline_opens_no_socket() {
     let srv = MockServer::start(|_| MockResponse::ok("hello")).await;
     let (client, offline) = test_client();
     offline.set(true);
-    assert_eq!(client.get_bytes(&srv.url("/a"), &[], 1024).await.unwrap_err(), NetError::Offline);
-    assert_eq!(client.get_json::<serde_json::Value>(&srv.url("/b"), &[]).await.unwrap_err(), NetError::Offline);
+    assert_eq!(
+        client
+            .get_bytes(&srv.url("/a"), &[], 1024)
+            .await
+            .unwrap_err(),
+        NetError::Offline
+    );
+    assert_eq!(
+        client
+            .get_json::<serde_json::Value>(&srv.url("/b"), &[])
+            .await
+            .unwrap_err(),
+        NetError::Offline
+    );
     assert!(matches!(client.get(&srv.url("/c")), Err(NetError::Offline)));
 
     // A request built while online is still refused once Offline is switched on.
@@ -80,16 +104,28 @@ async fn offline_opens_no_socket() {
     assert_eq!(client.send(rb).await.unwrap_err(), NetError::Offline);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(srv.connections(), 0, "no connection may be opened in Offline mode");
+    assert_eq!(
+        srv.connections(),
+        0,
+        "no connection may be opened in Offline mode"
+    );
 }
 
 #[tokio::test]
 async fn resolver_refuses_when_offline() {
     use reqwest::dns::Resolve;
     use std::str::FromStr;
-    let r = crate::GuardedResolver { offline: OfflineFlag::new(true) };
-    let err = r.resolve(reqwest::dns::Name::from_str("civitai.com").unwrap()).await.err().unwrap();
-    assert!(err.downcast_ref::<NetError>().is_some_and(|e| *e == NetError::Offline));
+    let r = crate::GuardedResolver {
+        offline: OfflineFlag::new(true),
+    };
+    let err = r
+        .resolve(reqwest::dns::Name::from_str("civitai.com").unwrap())
+        .await
+        .err()
+        .unwrap();
+    assert!(err
+        .downcast_ref::<NetError>()
+        .is_some_and(|e| *e == NetError::Offline));
 }
 
 #[tokio::test]
@@ -104,13 +140,40 @@ async fn get_bytes_and_json() {
     .await;
     let (client, _) = test_client();
 
-    assert_eq!(client.get_bytes(&srv.url("/x"), &[], 1024).await.unwrap(), b"hello");
+    assert_eq!(
+        client.get_bytes(&srv.url("/x"), &[], 1024).await.unwrap(),
+        b"hello"
+    );
     let v: serde_json::Value = client.get_json(&srv.url("/json"), &[]).await.unwrap();
     assert_eq!(v["items"][2], 3);
-    assert!(matches!(client.get_json::<serde_json::Value>(&srv.url("/bad-json"), &[]).await, Err(NetError::Decode(_))));
-    assert_eq!(client.get_bytes(&srv.url("/big"), &[], 4096).await.unwrap_err(), NetError::TooLarge);
-    assert_eq!(client.get_bytes(&srv.url("/big-chunked"), &[], 4096).await.unwrap_err(), NetError::TooLarge);
-    assert_eq!(client.get_bytes(&srv.url("/big-chunked"), &[], 5000).await.unwrap().len(), 5000);
+    assert!(matches!(
+        client
+            .get_json::<serde_json::Value>(&srv.url("/bad-json"), &[])
+            .await,
+        Err(NetError::Decode(_))
+    ));
+    assert_eq!(
+        client
+            .get_bytes(&srv.url("/big"), &[], 4096)
+            .await
+            .unwrap_err(),
+        NetError::TooLarge
+    );
+    assert_eq!(
+        client
+            .get_bytes(&srv.url("/big-chunked"), &[], 4096)
+            .await
+            .unwrap_err(),
+        NetError::TooLarge
+    );
+    assert_eq!(
+        client
+            .get_bytes(&srv.url("/big-chunked"), &[], 5000)
+            .await
+            .unwrap()
+            .len(),
+        5000
+    );
 
     let reqs = srv.requests();
     let ua = reqs[0].header("user-agent").unwrap();
@@ -133,7 +196,13 @@ async fn status_mapping() {
         (429, NetError::Status(429)),
         (500, NetError::Status(500)),
     ] {
-        assert_eq!(client.get_bytes(&srv.url(&format!("/{code}")), &[], 1024).await.unwrap_err(), want);
+        assert_eq!(
+            client
+                .get_bytes(&srv.url(&format!("/{code}")), &[], 1024)
+                .await
+                .unwrap_err(),
+            want
+        );
     }
 }
 
@@ -141,24 +210,37 @@ async fn status_mapping() {
 async fn timeout_maps_to_timeout() {
     let srv = MockServer::start(|_| MockResponse::ok("late").delay(Duration::from_secs(5))).await;
     let (client, _) = test_client();
-    let rb = client.get(&srv.url("/slow")).unwrap().timeout(Duration::from_millis(300));
+    let rb = client
+        .get(&srv.url("/slow"))
+        .unwrap()
+        .timeout(Duration::from_millis(300));
     assert_eq!(client.send(rb).await.unwrap_err(), NetError::Timeout);
 }
 
 #[tokio::test]
 async fn transport_errors_never_contain_the_url() {
     // Bind then drop a listener to get a closed port.
-    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
     let (client, _) = test_client();
     let url = format!("http://127.0.0.1:{port}/file?token=SECRET_TOKEN");
     match client.get_bytes(&url, &[], 16).await.unwrap_err() {
         NetError::Transport(msg) => {
-            assert!(!msg.contains("SECRET_TOKEN") && !msg.contains("127.0.0.1"), "{msg}");
+            assert!(
+                !msg.contains("SECRET_TOKEN") && !msg.contains("127.0.0.1"),
+                "{msg}"
+            );
             assert!(msg.contains("refused"), "root cause should be kept: {msg}");
         }
         other => panic!("unexpected {other:?}"),
     }
-    assert_eq!(crate::scrub_urls("error for url (https://x.y/a?t=1) here"), "error for url (<url>) here");
+    assert_eq!(
+        crate::scrub_urls("error for url (https://x.y/a?t=1) here"),
+        "error for url (<url>) here"
+    );
 }
 
 #[tokio::test]
@@ -173,13 +255,25 @@ async fn redirect_to_disallowed_host_is_refused() {
     .await;
     let (client, _) = test_client();
     assert_eq!(
-        client.get_bytes(&srv.url("/evil"), &[], 16).await.unwrap_err(),
+        client
+            .get_bytes(&srv.url("/evil"), &[], 16)
+            .await
+            .unwrap_err(),
         NetError::HostNotAllowed("example.com".into())
     );
-    assert!(matches!(client.get_bytes(&srv.url("/lookalike"), &[], 16).await, Err(NetError::HostNotAllowed(_))));
-    assert!(matches!(client.get_bytes(&srv.url("/downgrade"), &[], 16).await, Err(NetError::BadUrl(_))));
+    assert!(matches!(
+        client.get_bytes(&srv.url("/lookalike"), &[], 16).await,
+        Err(NetError::HostNotAllowed(_))
+    ));
+    assert!(matches!(
+        client.get_bytes(&srv.url("/downgrade"), &[], 16).await,
+        Err(NetError::BadUrl(_))
+    ));
     // An R2 URL is only acceptable when the chain started on civitai.com.
-    assert!(matches!(client.get_bytes(&srv.url("/wrong-owner"), &[], 16).await, Err(NetError::HostNotAllowed(_))));
+    assert!(matches!(
+        client.get_bytes(&srv.url("/wrong-owner"), &[], 16).await,
+        Err(NetError::HostNotAllowed(_))
+    ));
 }
 
 #[tokio::test]
@@ -190,11 +284,20 @@ async fn cdn_host_only_reachable_by_redirect() {
     let (client, _) = test_client();
 
     // Direct request to the CDN host: refused before connecting.
-    assert!(matches!(client.get_bytes(&cdn.cdn_url("/blob"), &[], 64).await, Err(NetError::HostNotAllowed(_))));
+    assert!(matches!(
+        client.get_bytes(&cdn.cdn_url("/blob"), &[], 64).await,
+        Err(NetError::HostNotAllowed(_))
+    ));
     assert_eq!(cdn.connections(), 0);
 
     // Via a redirect from its owner: followed.
-    assert_eq!(client.get_bytes(&origin.url("/file"), &[], 64).await.unwrap(), b"from-cdn");
+    assert_eq!(
+        client
+            .get_bytes(&origin.url("/file"), &[], 64)
+            .await
+            .unwrap(),
+        b"from-cdn"
+    );
     assert_eq!(cdn.requests().len(), 1);
     assert_eq!(cdn.requests()[0].path, "/blob?sig=abc");
 }
@@ -223,16 +326,28 @@ async fn authorization_is_stripped_on_cross_host_redirect() {
     let seen = target.requests();
     assert_eq!(seen.len(), 2);
     for r in &seen {
-        assert_eq!(r.header("authorization"), None, "API key leaked to {}", r.path);
+        assert_eq!(
+            r.header("authorization"),
+            None,
+            "API key leaked to {}",
+            r.path
+        );
         assert_eq!(r.header("referer"), None, "Referer leaks the origin URL");
         // Resume must survive the hop to the CDN.
         assert_eq!(r.header("range"), Some("bytes=10-"));
     }
 
     // Same host: the key is kept (reqwest only strips it across hosts).
-    let rb = client.get(&origin.url("/same-host")).unwrap().header("authorization", "Bearer SECRET_KEY");
+    let rb = client
+        .get(&origin.url("/same-host"))
+        .unwrap()
+        .header("authorization", "Bearer SECRET_KEY");
     client.send(rb).await.unwrap();
-    let landing = origin.requests().into_iter().find(|r| r.path == "/landing").unwrap();
+    let landing = origin
+        .requests()
+        .into_iter()
+        .find(|r| r.path == "/landing")
+        .unwrap();
     assert_eq!(landing.header("authorization"), Some("Bearer SECRET_KEY"));
 }
 
@@ -247,7 +362,13 @@ async fn offline_switched_on_mid_redirect_stops_the_chain() {
         MockResponse::redirect(&cdn_url)
     })
     .await;
-    assert_eq!(client.get_bytes(&origin.url("/start"), &[], 16).await.unwrap_err(), NetError::Offline);
+    assert_eq!(
+        client
+            .get_bytes(&origin.url("/start"), &[], 16)
+            .await
+            .unwrap_err(),
+        NetError::Offline
+    );
     assert_eq!(cdn.connections(), 0);
 }
 
@@ -259,7 +380,10 @@ async fn redirect_loops_are_capped() {
     })
     .await;
     let (client, _) = test_client();
-    assert!(matches!(client.get_bytes(&srv.url("/0"), &[], 16).await, Err(NetError::Transport(_))));
+    assert!(matches!(
+        client.get_bytes(&srv.url("/0"), &[], 16).await,
+        Err(NetError::Transport(_))
+    ));
     assert_eq!(srv.requests().len(), crate::allow::MAX_REDIRECTS + 1);
 }
 
@@ -291,11 +415,28 @@ async fn local_client_is_loopback_only() {
     }
 
     // Works (and works regardless of Offline mode: it has no offline flag at all).
-    let v: serde_json::Value = local.get(&base, "/sdcpp/v1/capabilities").unwrap().send().await.unwrap().json().await.unwrap();
+    let v: serde_json::Value = local
+        .get(&base, "/sdcpp/v1/capabilities")
+        .unwrap()
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     assert_eq!(v["ok"], true);
-    let resp = local.post_json(&base, "/sdcpp/v1/img_gen", &serde_json::json!({"a": 1})).unwrap().send().await.unwrap();
+    let resp = local
+        .post_json(&base, "/sdcpp/v1/img_gen", &serde_json::json!({"a": 1}))
+        .unwrap()
+        .send()
+        .await
+        .unwrap();
     assert!(resp.status().is_success());
-    let posted = srv.requests().into_iter().find(|r| r.method == "POST").unwrap();
+    let posted = srv
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "POST")
+        .unwrap();
     assert_eq!(posted.body, br#"{"a":1}"#);
 
     // Never follows redirects (could point off-box).
@@ -317,7 +458,9 @@ async fn json_asks_for_gzip_and_inflates_it() {
     let packed = gzip(&body);
     assert!(packed.len() * 8 < body.len());
     let srv = MockServer::start(move |req| match req.path.as_str() {
-        "/gz" => MockResponse::ok(packed.clone()).header("content-type", "application/json").header("content-encoding", "gzip"),
+        "/gz" => MockResponse::ok(packed.clone())
+            .header("content-type", "application/json")
+            .header("content-encoding", "gzip"),
         "/plain" => MockResponse::json(&serde_json::json!({ "items": [1] })),
         "/br" => MockResponse::ok("x").header("content-encoding", "br"),
         _ => MockResponse::ok(b"\x1f\x8b\x08garbage".to_vec()).header("content-encoding", "gzip"),
@@ -328,19 +471,38 @@ async fn json_asks_for_gzip_and_inflates_it() {
     assert_eq!(v["items"].as_array().unwrap().len(), 2000);
     let v: serde_json::Value = client.get_json(&srv.url("/plain"), &[]).await.unwrap();
     assert_eq!(v["items"][0], 1, "servers that don't compress still work");
-    assert!(matches!(client.get_json::<serde_json::Value>(&srv.url("/br"), &[]).await, Err(NetError::Decode(_))));
-    assert!(matches!(client.get_json::<serde_json::Value>(&srv.url("/bad"), &[]).await, Err(NetError::Decode(_))));
+    assert!(matches!(
+        client
+            .get_json::<serde_json::Value>(&srv.url("/br"), &[])
+            .await,
+        Err(NetError::Decode(_))
+    ));
+    assert!(matches!(
+        client
+            .get_json::<serde_json::Value>(&srv.url("/bad"), &[])
+            .await,
+        Err(NetError::Decode(_))
+    ));
     let reqs = srv.requests();
     assert_eq!(reqs[0].header("accept-encoding"), Some("gzip"));
     // Raw byte downloads (previews, model files) never ask for compression.
-    client.get_bytes(&srv.url("/plain"), &[], 1024).await.unwrap();
-    assert_eq!(srv.requests().last().unwrap().header("accept-encoding"), None);
+    client
+        .get_bytes(&srv.url("/plain"), &[], 1024)
+        .await
+        .unwrap();
+    assert_eq!(
+        srv.requests().last().unwrap().header("accept-encoding"),
+        None
+    );
 }
 
 #[test]
 fn gunzip_is_bounded() {
     let bomb = gzip(&vec![0u8; 1 << 20]);
     assert!(bomb.len() * 100 < 1 << 20, "{}", bomb.len());
-    assert_eq!(crate::gunzip(&bomb, 64 * 1024).unwrap_err(), NetError::TooLarge);
+    assert_eq!(
+        crate::gunzip(&bomb, 64 * 1024).unwrap_err(),
+        NetError::TooLarge
+    );
     assert_eq!(crate::gunzip(&bomb, 1 << 20).unwrap().len(), 1 << 20);
 }

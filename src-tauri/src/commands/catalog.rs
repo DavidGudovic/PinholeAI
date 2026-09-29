@@ -2,25 +2,35 @@
 
 use std::sync::Arc;
 
-use pinhole_core::catalog::{BrowsePage, BrowseQuery, CatalogFilterOptions, ContentMode, InstallPlan};
+use pinhole_core::catalog::{
+    BrowsePage, BrowseQuery, CatalogFilterOptions, ContentMode, InstallPlan,
+};
 use pinhole_core::gallery::ModelGallery;
 use pinhole_core::{AppCore, CoreError, InstallStarted};
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
-pub async fn catalog_filters(core: State<'_, Arc<AppCore>>) -> Result<CatalogFilterOptions, CoreError> {
+pub async fn catalog_filters(
+    core: State<'_, Arc<AppCore>>,
+) -> Result<CatalogFilterOptions, CoreError> {
     pinhole_core::catalog::catalog_filters(&core)
 }
 
 #[tauri::command]
-pub async fn browse_catalog(core: State<'_, Arc<AppCore>>, query: BrowseQuery) -> Result<BrowsePage, CoreError> {
+pub async fn browse_catalog(
+    core: State<'_, Arc<AppCore>>,
+    query: BrowseQuery,
+) -> Result<BrowsePage, CoreError> {
     pinhole_core::catalog::browse(&core, query).await
 }
 
 /// Preview image bytes → `ArrayBuffer` in JS (the WebView makes no network calls).
 #[tauri::command]
-pub async fn fetch_preview(core: State<'_, Arc<AppCore>>, url: String) -> Result<tauri::ipc::Response, CoreError> {
+pub async fn fetch_preview(
+    core: State<'_, Arc<AppCore>>,
+    url: String,
+) -> Result<tauri::ipc::Response, CoreError> {
     let bytes = pinhole_core::catalog::fetch_preview(&core, &url).await?;
     Ok(tauri::ipc::Response::new(bytes))
 }
@@ -48,11 +58,21 @@ pub async fn open_civitai_page(
     handle
         .opener()
         .open_url(url.as_str(), None::<&str>)
-        .map_err(|e| CoreError::new("io", format!("Couldn't open your browser. The page is {url}")).with_details(e.to_string()))
+        .map_err(|e| {
+            CoreError::new(
+                "io",
+                format!("Couldn't open your browser. The page is {url}"),
+            )
+            .with_details(e.to_string())
+        })
 }
 
 #[tauri::command]
-pub async fn plan_civitai_install(core: State<'_, Arc<AppCore>>, version_id: u64, file_id: Option<u64>) -> Result<InstallPlan, CoreError> {
+pub async fn plan_civitai_install(
+    core: State<'_, Arc<AppCore>>,
+    version_id: u64,
+    file_id: Option<u64>,
+) -> Result<InstallPlan, CoreError> {
     pinhole_core::catalog::plan_civitai_install(&core, version_id, file_id).await
 }
 

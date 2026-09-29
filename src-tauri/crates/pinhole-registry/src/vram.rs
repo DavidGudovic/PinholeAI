@@ -124,7 +124,11 @@ pub fn estimate(
     let main = gib(main_file_bytes);
     let act = family.activation_gb.max(0.0);
     let diffusion = main + gib(other_component_bytes) + act + ENGINE_RESERVE_GB;
-    let prompt = if text_encoder_bytes > 0 { gib(text_encoder_bytes) + TEXT_ENCODER_COMPUTE_GB + ENGINE_RESERVE_GB } else { 0.0 };
+    let prompt = if text_encoder_bytes > 0 {
+        gib(text_encoder_bytes) + TEXT_ENCODER_COMPUTE_GB + ENGINE_RESERVE_GB
+    } else {
+        0.0
+    };
     let gb = ceil_tenth(diffusion.max(prompt));
     let min_gb = ceil_tenth(MIN_RESIDENT_SHARE * main + act + ENGINE_RESERVE_GB).min(gb);
     VramNeed {

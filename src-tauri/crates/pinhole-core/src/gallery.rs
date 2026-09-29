@@ -13,11 +13,11 @@
 //! It is never logged or written anywhere.
 
 use pinhole_catalog::api::{civitai_auth_header, is_preview_url, ModelImage, API_BASE};
-use pinhole_net::NetError;
 use pinhole_catalog::cards::thumbnail_url;
 use pinhole_catalog::filters::ContentMode;
 use pinhole_catalog::lenient;
 use pinhole_catalog::safe::{SafeFilter, LEVEL_BLOCKED};
+use pinhole_net::NetError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -46,16 +46,27 @@ pub struct VersionImage {
 impl VersionImage {
     /// Unrated images of an NSFW model count as NSFW (same rule as the cards).
     fn is_nsfw(&self, model_nsfw: bool) -> bool {
-        self.image.is_nsfw() || (self.image.nsfw_level.is_none() && self.image.nsfw.is_none() && model_nsfw)
+        self.image.is_nsfw()
+            || (self.image.nsfw_level.is_none() && self.image.nsfw.is_none() && model_nsfw)
     }
 }
 
 /// The details page's gallery. Asked anonymously first; on 401/403 (a
 /// sign-in-only version) asked once more with the API key, like install
 /// planning. Offline mode: no request, `offline: true`.
-pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode, model_nsfw: bool) -> CoreResult<ModelGallery> {
+pub async fn model_gallery(
+    core: &AppCore,
+    version_id: u64,
+    content: ContentMode,
+    model_nsfw: bool,
+) -> CoreResult<ModelGallery> {
     if core.offline.get() {
-        return Ok(ModelGallery { items: Vec::new(), hidden_nsfw: 0, trained_words: Vec::new(), offline: true });
+        return Ok(ModelGallery {
+            items: Vec::new(),
+            hidden_nsfw: 0,
+            trained_words: Vec::new(),
+            offline: true,
+        });
     }
     let filters = crate::catalog::filters(core)?;
     let url = format!("{API_BASE}/model-versions/{version_id}");
@@ -70,7 +81,13 @@ pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode
         other => other,
     }
     .map_err(crate::catalog::net_error)?;
-    Ok(gallery(&version, content, model_nsfw, &filters.safe, filters.preview_width))
+    Ok(gallery(
+        &version,
+        content,
+        model_nsfw,
+        &filters.safe,
+        filters.preview_width,
+    ))
 }
 
 /// `https://civitai.com/models/…` (civitai.red for NSFW models), for the
@@ -144,7 +161,13 @@ pub struct ModelGallery {
 /// Gallery for a version. Videos and images CivitAI blocked are skipped. With
 /// Safe mode on, only images that pass the same rule as card previews
 /// ([`SafeFilter::is_safe_preview`]: rated PG, or flagged not NSFW) are shown.
-pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, safe: &SafeFilter, thumb_width: u32) -> ModelGallery {
+pub fn gallery(
+    version: &VersionImages,
+    content: ContentMode,
+    model_nsfw: bool,
+    safe: &SafeFilter,
+    thumb_width: u32,
+) -> ModelGallery {
     let mut hidden_nsfw = 0;
     let items = version
         .images
@@ -160,7 +183,12 @@ pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, 
             Some(it)
         })
         .collect();
-    ModelGallery { items, hidden_nsfw, trained_words: version.trained_words.clone(), offline: false }
+    ModelGallery {
+        items,
+        hidden_nsfw,
+        trained_words: version.trained_words.clone(),
+        offline: false,
+    }
 }
 
 fn item(index: usize, v: &VersionImage, model_nsfw: bool, thumb_width: u32) -> Option<GalleryItem> {
@@ -181,9 +209,19 @@ fn item(index: usize, v: &VersionImage, model_nsfw: bool, thumb_width: u32) -> O
 
 /// Only the keys the UI maps; `None` when there is nothing to apply.
 fn kept_meta(meta: &Map<String, Value>) -> Option<Map<String, Value>> {
-    let kept: Map<String, Value> =
-        KEPT_META_KEYS.iter().filter_map(|k| meta.get(*k).filter(|v| !v.is_null()).map(|v| (k.to_string(), v.clone()))).collect();
-    let useful = kept.get("prompt").and_then(Value::as_str).is_some_and(|p| !p.trim().is_empty()) || kept.contains_key("steps");
+    let kept: Map<String, Value> = KEPT_META_KEYS
+        .iter()
+        .filter_map(|k| {
+            meta.get(*k)
+                .filter(|v| !v.is_null())
+                .map(|v| (k.to_string(), v.clone()))
+        })
+        .collect();
+    let useful = kept
+        .get("prompt")
+        .and_then(Value::as_str)
+        .is_some_and(|p| !p.trim().is_empty())
+        || kept.contains_key("steps");
     useful.then_some(kept)
 }
 
@@ -194,10 +232,21 @@ pub fn original_url(url: &str) -> String {
         return url.to_string();
     }
     let (path, rest) = url.split_at(url.find(['?', '#']).unwrap_or(url.len()));
-    let is_transform = |s: &str| s.split(',').all(|p| p.contains('=')) && s.split(',').any(|p| p.starts_with("width=") || p == "original=true");
+    let is_transform = |s: &str| {
+        s.split(',').all(|p| p.contains('='))
+            && s.split(',')
+                .any(|p| p.starts_with("width=") || p == "original=true")
+    };
     let mut segs: Vec<&str> = path.split('/').collect();
     // Skip "https:", "" and the host.
-    let Some(pos) = segs.iter().skip(3).position(|s| is_transform(s)).map(|p| p + 3) else { return url.to_string() };
+    let Some(pos) = segs
+        .iter()
+        .skip(3)
+        .position(|s| is_transform(s))
+        .map(|p| p + 3)
+    else {
+        return url.to_string();
+    };
     segs[pos] = "original=true";
     format!("{}{rest}", segs.join("/"))
 }
@@ -241,22 +290,47 @@ mod tests {
 
     #[test]
     fn safe_mode_hides_nsfw_and_skips_videos_and_foreign_hosts() {
-        let g = gallery(&version(), ContentMode::Safe, false, &SafeFilter::default(), 450);
+        let g = gallery(
+            &version(),
+            ContentMode::Safe,
+            false,
+            &SafeFilter::default(),
+            450,
+        );
         // Image 0 is PG-13: fine with Safe mode off, but not PG, so hidden with it on.
         assert_eq!(g.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![4]);
         assert_eq!(g.hidden_nsfw, 2);
         assert_eq!(g.trained_words, vec!["analog style"]);
-        let all = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
-        assert_eq!(all.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 1, 4]);
+        let all = gallery(
+            &version(),
+            ContentMode::All,
+            false,
+            &SafeFilter::default(),
+            450,
+        );
+        assert_eq!(
+            all.items.iter().map(|i| i.index).collect::<Vec<_>>(),
+            vec![0, 1, 4]
+        );
         assert!(all.items[1].nsfw && all.hidden_nsfw == 0);
     }
 
     #[test]
     fn keeps_only_known_generation_keys() {
-        let g = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
+        let g = gallery(
+            &version(),
+            ContentMode::All,
+            false,
+            &SafeFilter::default(),
+            450,
+        );
         let m = g.items[0].generation.as_ref().unwrap();
         assert_eq!(m.get("steps"), Some(&Value::from(6)));
-        assert!(m.contains_key("prompt") && m.contains_key("Model hash") && m.contains_key("Lora hashes"));
+        assert!(
+            m.contains_key("prompt")
+                && m.contains_key("Model hash")
+                && m.contains_key("Lora hashes")
+        );
         assert!(!m.contains_key("ADetailer model") && !m.contains_key("Version"));
         // Only a model name: nothing to apply.
         assert!(g.items[1].generation.is_none());
@@ -264,58 +338,135 @@ mod tests {
 
     #[test]
     fn renditions() {
-        let g = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
-        assert_eq!(g.items[0].thumb_url, thumbnail_url("https://image.civitai.com/xG1/5403/original=true/12221833.jpeg", 450));
+        let g = gallery(
+            &version(),
+            ContentMode::All,
+            false,
+            &SafeFilter::default(),
+            450,
+        );
+        assert_eq!(
+            g.items[0].thumb_url,
+            thumbnail_url(
+                "https://image.civitai.com/xG1/5403/original=true/12221833.jpeg",
+                450
+            )
+        );
         assert!(g.items[0].thumb_url.contains("/width="));
-        assert_eq!(g.items[0].full_url, "https://image.civitai.com/xG1/5403/original=true/12221833.jpeg");
-        assert_eq!(original_url("https://image.civitai.com/a/u/width=450/2.jpeg"), "https://image.civitai.com/a/u/original=true/2.jpeg");
-        assert_eq!(original_url("https://image.civitai.com/a/u/width=450,optimized=true/2.jpeg"), "https://image.civitai.com/a/u/original=true/2.jpeg");
-        assert_eq!(original_url("https://image.civitai.com/a/u/2.jpeg"), "https://image.civitai.com/a/u/2.jpeg");
+        assert_eq!(
+            g.items[0].full_url,
+            "https://image.civitai.com/xG1/5403/original=true/12221833.jpeg"
+        );
+        assert_eq!(
+            original_url("https://image.civitai.com/a/u/width=450/2.jpeg"),
+            "https://image.civitai.com/a/u/original=true/2.jpeg"
+        );
+        assert_eq!(
+            original_url("https://image.civitai.com/a/u/width=450,optimized=true/2.jpeg"),
+            "https://image.civitai.com/a/u/original=true/2.jpeg"
+        );
+        assert_eq!(
+            original_url("https://image.civitai.com/a/u/2.jpeg"),
+            "https://image.civitai.com/a/u/2.jpeg"
+        );
     }
 
     #[test]
     fn unrated_images_of_nsfw_models_are_nsfw() {
         let v = VersionImages {
             images: vec![VersionImage {
-                image: ModelImage { url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(), ..Default::default() },
+                image: ModelImage {
+                    url: "https://image.civitai.com/a/b/width=450/1.jpeg".into(),
+                    ..Default::default()
+                },
                 meta: None,
             }],
             ..Default::default()
         };
-        assert!(gallery(&v, ContentMode::Safe, true, &SafeFilter::default(), 450).items.is_empty());
+        assert!(
+            gallery(&v, ContentMode::Safe, true, &SafeFilter::default(), 450)
+                .items
+                .is_empty()
+        );
         // Unrated images need an explicit "not NSFW" flag in Safe mode, like card previews.
-        assert!(gallery(&v, ContentMode::Safe, false, &SafeFilter::default(), 450).items.is_empty());
+        assert!(
+            gallery(&v, ContentMode::Safe, false, &SafeFilter::default(), 450)
+                .items
+                .is_empty()
+        );
         let mut flagged = v.clone();
         flagged.images[0].image.nsfw = Some(false);
-        assert_eq!(gallery(&flagged, ContentMode::Safe, false, &SafeFilter::default(), 450).items.len(), 1);
-        assert_eq!(gallery(&v, ContentMode::All, false, &SafeFilter::default(), 450).items.len(), 1);
+        assert_eq!(
+            gallery(
+                &flagged,
+                ContentMode::Safe,
+                false,
+                &SafeFilter::default(),
+                450
+            )
+            .items
+            .len(),
+            1
+        );
+        assert_eq!(
+            gallery(&v, ContentMode::All, false, &SafeFilter::default(), 450)
+                .items
+                .len(),
+            1
+        );
     }
 
     #[test]
     fn safe_mode_uses_the_preview_rule_and_blocked_images_never_show() {
         let img = |level: u32| VersionImage {
-            image: ModelImage { url: format!("https://image.civitai.com/a/b/width=450/{level}.jpeg"), nsfw_level: Some(level), ..Default::default() },
+            image: ModelImage {
+                url: format!("https://image.civitai.com/a/b/width=450/{level}.jpeg"),
+                nsfw_level: Some(level),
+                ..Default::default()
+            },
             meta: None,
         };
-        let v = VersionImages { images: vec![img(1), img(2), img(32)], ..Default::default() };
+        let v = VersionImages {
+            images: vec![img(1), img(2), img(32)],
+            ..Default::default()
+        };
         let safe = gallery(&v, ContentMode::Safe, false, &SafeFilter::default(), 450);
-        assert_eq!(safe.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0]);
+        assert_eq!(
+            safe.items.iter().map(|i| i.index).collect::<Vec<_>>(),
+            vec![0]
+        );
         assert_eq!(safe.hidden_nsfw, 1);
         let all = gallery(&v, ContentMode::All, false, &SafeFilter::default(), 450);
-        assert_eq!(all.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(
+            all.items.iter().map(|i| i.index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 
     #[tokio::test]
     async fn offline_needs_no_network() {
-        let (_t, core) = crate::app::tests::test_core(std::sync::Arc::new(crate::app::tests::Recorder::default()));
+        let (_t, core) = crate::app::tests::test_core(std::sync::Arc::new(
+            crate::app::tests::Recorder::default(),
+        ));
         core.offline.set(true);
-        assert!(model_gallery(&core, 1, ContentMode::Safe, false).await.unwrap().offline);
+        assert!(
+            model_gallery(&core, 1, ContentMode::Safe, false)
+                .await
+                .unwrap()
+                .offline
+        );
         assert_eq!(civitai_page(0, None, false).unwrap_err().code, "invalid");
     }
 
     #[test]
     fn page_urls() {
-        assert_eq!(civitai_page_url(4201, Some(501240), false), "https://civitai.com/models/4201?modelVersionId=501240");
-        assert_eq!(civitai_page_url(4201, None, true), "https://civitai.red/models/4201");
+        assert_eq!(
+            civitai_page_url(4201, Some(501240), false),
+            "https://civitai.com/models/4201?modelVersionId=501240"
+        );
+        assert_eq!(
+            civitai_page_url(4201, None, true),
+            "https://civitai.red/models/4201"
+        );
     }
 }

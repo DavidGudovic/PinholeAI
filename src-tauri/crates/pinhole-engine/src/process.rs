@@ -76,7 +76,10 @@ pub struct EngineProcess {
 
 impl std::fmt::Debug for EngineProcess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EngineProcess").field("exe", &self.exe).field("port", &self.port).finish()
+        f.debug_struct("EngineProcess")
+            .field("exe", &self.exe)
+            .field("port", &self.port)
+            .finish()
     }
 }
 
@@ -96,8 +99,17 @@ impl EngineProcess {
     /// [`EngineProcess::spawn`] with extra environment variables. Secrets (e.g.
     /// llama-server's per-launch API key) go here, not in `args`: other local
     /// users can read a process's command line, but not its environment.
-    pub fn spawn_with_env(exe: &Path, args: &[String], env: &[(&str, &str)], port: u16, logs: Arc<LogBuffer>) -> io::Result<Self> {
-        let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    pub fn spawn_with_env(
+        exe: &Path,
+        args: &[String],
+        env: &[(&str, &str)],
+        port: u16,
+        logs: Arc<LogBuffer>,
+    ) -> io::Result<Self> {
+        let exe_dir = exe
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
         let mut cmd = Command::new(exe);
         cmd.envs(env.iter().copied());
         cmd.args(args)
@@ -179,7 +191,17 @@ impl EngineProcess {
             }));
         }
 
-        Ok(Self { child, pid, port, args: args.to_vec(), exe: exe.to_path_buf(), logs, readers, exit: None, started: Instant::now() })
+        Ok(Self {
+            child,
+            pid,
+            port,
+            args: args.to_vec(),
+            exe: exe.to_path_buf(),
+            logs,
+            readers,
+            exit: None,
+            started: Instant::now(),
+        })
     }
 
     /// OS process id (None once tokio reaped it).
@@ -294,7 +316,10 @@ impl EngineProcess {
             unsafe {
                 libc::kill(pid as libc::pid_t, libc::SIGTERM);
             }
-            if tokio::time::timeout(Duration::from_secs(3), self.child.wait()).await.is_ok() {
+            if tokio::time::timeout(Duration::from_secs(3), self.child.wait())
+                .await
+                .is_ok()
+            {
                 self.drain_readers().await;
                 return;
             }
@@ -337,8 +362,9 @@ mod winjob {
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
     struct Job(HANDLE);
@@ -399,14 +425,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let exe = script(tmp.path(), "echo \"cwd=$(pwd)\"; echo '[ERROR] new_sd_ctx_t failed' 1>&2; printf '\\r  |==>   | 2/8 - 1.0it/s'; exit 3");
         let logs = Arc::new(LogBuffer::default());
-        let mut p = EngineProcess::spawn(&exe, &["--listen-port".into(), "1".into()], 1, logs.clone()).unwrap();
+        let mut p =
+            EngineProcess::spawn(&exe, &["--listen-port".into(), "1".into()], 1, logs.clone())
+                .unwrap();
         let cancel = CancellationToken::new();
-        let err = p.wait_ready(|| async { false }, Duration::from_secs(10), &cancel, |_| {}).await.unwrap_err();
+        let err = p
+            .wait_ready(|| async { false }, Duration::from_secs(10), &cancel, |_| {})
+            .await
+            .unwrap_err();
         assert_eq!(err, ReadyError::Exited { code: Some(3) });
         let text = logs.tail_text(10);
         assert!(text.contains("new_sd_ctx_t failed"), "{text}");
         let cwd = std::fs::canonicalize(tmp.path()).unwrap();
-        assert!(text.contains(&format!("cwd={}", cwd.display())), "working dir = exe dir: {text}");
+        assert!(
+            text.contains(&format!("cwd={}", cwd.display())),
+            "working dir = exe dir: {text}"
+        );
         let prog = logs.progress().unwrap();
         assert_eq!((prog.step, prog.total), (2, 8));
         assert_eq!(p.exit_code(), Some(3));
@@ -434,14 +468,28 @@ mod tests {
         .await
         .unwrap();
         assert!(p.is_running());
-        let err = p.wait_ready(|| async { false }, Duration::from_millis(1), &cancel, |_| {}).await.unwrap_err();
+        let err = p
+            .wait_ready(
+                || async { false },
+                Duration::from_millis(1),
+                &cancel,
+                |_| {},
+            )
+            .await
+            .unwrap_err();
         assert_eq!(err, ReadyError::Timeout);
         cancel.cancel();
-        let err = p.wait_ready(|| async { false }, Duration::from_secs(5), &cancel, |_| {}).await.unwrap_err();
+        let err = p
+            .wait_ready(|| async { false }, Duration::from_secs(5), &cancel, |_| {})
+            .await
+            .unwrap_err();
         assert_eq!(err, ReadyError::Cancelled);
         let t = Instant::now();
         p.stop().await;
-        assert!(t.elapsed() < Duration::from_secs(4), "SIGTERM stops sleep quickly");
+        assert!(
+            t.elapsed() < Duration::from_secs(4),
+            "SIGTERM stops sleep quickly"
+        );
     }
 
     #[tokio::test]
@@ -449,9 +497,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let exe = script(tmp.path(), "echo \"key=$PINHOLE_TEST_KEY args=$*\"");
         let logs = Arc::new(LogBuffer::default());
-        let mut p = EngineProcess::spawn_with_env(&exe, &["--port".into(), "1".into()], &[("PINHOLE_TEST_KEY", "k123")], 1, logs.clone()).unwrap();
-        let _ = p.wait_ready(|| async { false }, Duration::from_secs(10), &CancellationToken::new(), |_| {}).await;
-        assert!(logs.tail_text(5).contains("key=k123 args=--port 1"), "{}", logs.tail_text(5));
+        let mut p = EngineProcess::spawn_with_env(
+            &exe,
+            &["--port".into(), "1".into()],
+            &[("PINHOLE_TEST_KEY", "k123")],
+            1,
+            logs.clone(),
+        )
+        .unwrap();
+        let _ = p
+            .wait_ready(
+                || async { false },
+                Duration::from_secs(10),
+                &CancellationToken::new(),
+                |_| {},
+            )
+            .await;
+        assert!(
+            logs.tail_text(5).contains("key=k123 args=--port 1"),
+            "{}",
+            logs.tail_text(5)
+        );
         assert!(!p.args().iter().any(|a| a.contains("k123")));
         p.stop().await;
     }

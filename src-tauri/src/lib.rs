@@ -28,10 +28,14 @@ fn shipped_paths(app: &AppHandle) -> ShippedPaths {
     if let Ok(res) = app.path().resource_dir() {
         let candidate = res.join("config");
         if candidate.join("models.yaml").exists() {
-            return ShippedPaths { config_dir: candidate };
+            return ShippedPaths {
+                config_dir: candidate,
+            };
         }
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("config");
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("config");
     ShippedPaths { config_dir: dev }
 }
 
@@ -72,7 +76,8 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
 /// (laggy scrolling, gray boxes over images). The widely used fix is to switch it off
 /// before GTK starts. Only for that driver, and never over the user's own setting.
 fn webkit_env_fixes(nvidia_driver: bool, user_set: bool) -> Option<(&'static str, &'static str)> {
-    (cfg!(target_os = "linux") && nvidia_driver && !user_set).then_some(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"))
+    (cfg!(target_os = "linux") && nvidia_driver && !user_set)
+        .then_some(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"))
 }
 
 fn apply_webkit_env_fixes() {
@@ -97,8 +102,10 @@ pub fn run() {
             let shipped = shipped_paths(&handle);
             let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
             // Under WebDriver the (non-incognito) profile stays inside the test's Data/.
-            let webview_dir = (data.portable || under_webdriver()).then(|| data.root.join("webview"));
-            let core = AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone()))).map_err(|e| e.message)?;
+            let webview_dir =
+                (data.portable || under_webdriver()).then(|| data.root.join("webview"));
+            let core = AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone())))
+                .map_err(|e| e.message)?;
             create_main_window(&handle, webview_dir)?;
             {
                 let core = core.clone();
@@ -127,7 +134,10 @@ mod tests {
     #[test]
     fn dmabuf_renderer_off_only_for_nvidia_on_linux_unless_user_set() {
         let fix = Some(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
-        assert_eq!(webkit_env_fixes(true, false), if cfg!(target_os = "linux") { fix } else { None });
+        assert_eq!(
+            webkit_env_fixes(true, false),
+            if cfg!(target_os = "linux") { fix } else { None }
+        );
         assert_eq!(webkit_env_fixes(true, true), None);
         assert_eq!(webkit_env_fixes(false, false), None);
     }

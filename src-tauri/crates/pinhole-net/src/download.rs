@@ -107,7 +107,10 @@ fn human_mb(mb: u64) -> String {
 }
 
 fn host_of(url: &str) -> String {
-    url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)).unwrap_or_default()
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 fn net_message(e: &NetError, url: &str) -> String {
@@ -117,7 +120,8 @@ fn net_message(e: &NetError, url: &str) -> String {
         NetError::Unauthorized(code) => {
             let host = host_of(url);
             if host_matches(&host, "civitai.com") {
-                "CivitAI needs an API key for this download. Add one in Settings, then try again.".into()
+                "CivitAI needs an API key for this download. Add one in Settings, then try again."
+                    .into()
             } else if host_matches(&host, "huggingface.co") || host_matches(&host, "hf.co") {
                 "Hugging Face refused this download (the model may need a login or license approval). Pick another model."
                     .into()
@@ -128,12 +132,19 @@ fn net_message(e: &NetError, url: &str) -> String {
         NetError::Status(404) | NetError::Status(410) => {
             "This file is no longer available on the server. Pick another model or version.".into()
         }
-        NetError::Status(429) => "The server is busy (too many requests). Wait a minute and try again.".into(),
-        NetError::Status(code) if *code >= 500 => format!("The server had a problem (HTTP {code}). Try again later."),
+        NetError::Status(429) => {
+            "The server is busy (too many requests). Wait a minute and try again.".into()
+        }
+        NetError::Status(code) if *code >= 500 => {
+            format!("The server had a problem (HTTP {code}). Try again later.")
+        }
         NetError::Status(code) => format!("The download failed (HTTP {code}). Try again later."),
-        NetError::Timeout => "The download timed out — check your internet connection and try again.".into(),
+        NetError::Timeout => {
+            "The download timed out — check your internet connection and try again.".into()
+        }
         NetError::HostNotAllowed(_) => {
-            "The download was redirected to a server Pinhole doesn't trust, so it was stopped.".into()
+            "The download was redirected to a server Pinhole doesn't trust, so it was stopped."
+                .into()
         }
         NetError::BadUrl(_) => "The download link is invalid.".into(),
         NetError::TooLarge => "The server sent more data than expected.".into(),
@@ -293,7 +304,11 @@ async fn fetch_verified(
                 let actual = hex::encode(hasher.finalize());
                 if &actual == exp {
                     progress(len, Some(len));
-                    return Ok(DownloadedFile { path: spec.dest.clone(), sha256: actual, size_bytes: len });
+                    return Ok(DownloadedFile {
+                        path: spec.dest.clone(),
+                        sha256: actual,
+                        size_bytes: len,
+                    });
                 }
             }
         }
@@ -304,13 +319,27 @@ async fn fetch_verified(
     let mut carried: Option<(Sha256, u64)> = None;
     // `.part` holds bytes from before this call (e.g. a leftover of an older
     // upload of the file). Cleared once an attempt starts the file over.
-    let mut leftover = tokio::fs::metadata(&part).await.is_ok_and(|m| m.is_file() && m.len() > 0);
+    let mut leftover = tokio::fs::metadata(&part)
+        .await
+        .is_ok_and(|m| m.is_file() && m.len() > 0);
     let mut attempt = 0;
     let mut restarted_after_mismatch = false;
     loop {
         attempt += 1;
         let mut started_over = false;
-        let r = try_once(client, spec, &dir, &part, expected.as_deref(), cancel, progress, phase, &mut carried, &mut started_over).await;
+        let r = try_once(
+            client,
+            spec,
+            &dir,
+            &part,
+            expected.as_deref(),
+            cancel,
+            progress,
+            phase,
+            &mut carried,
+            &mut started_over,
+        )
+        .await;
         leftover &= !started_over;
         match r {
             // The user cancelled while this attempt was failing (e.g. still connecting):
@@ -356,11 +385,19 @@ fn parent_dir(dest: &Path) -> PathBuf {
 
 /// Parse `Content-Range: bytes START-END/TOTAL` (TOTAL may be `*`).
 fn content_range(resp: &reqwest::Response) -> Option<(Option<u64>, Option<u64>)> {
-    let v = resp.headers().get(reqwest::header::CONTENT_RANGE)?.to_str().ok()?;
+    let v = resp
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)?
+        .to_str()
+        .ok()?;
     let rest = v.trim().strip_prefix("bytes")?.trim();
     let (range, total) = rest.split_once('/')?;
     let total = total.trim().parse::<u64>().ok();
-    let start = if range.trim() == "*" { None } else { range.split('-').next()?.trim().parse::<u64>().ok() };
+    let start = if range.trim() == "*" {
+        None
+    } else {
+        range.split('-').next()?.trim().parse::<u64>().ok()
+    };
     Some((start, total))
 }
 
@@ -434,7 +471,10 @@ async fn try_once(
                 }
             }
         }
-        if offset > 0 && (status == 416 || (status == 206 && content_range(&resp).and_then(|c| c.0) != Some(offset))) {
+        if offset > 0
+            && (status == 416
+                || (status == 206 && content_range(&resp).and_then(|c| c.0) != Some(offset)))
+        {
             // Can't resume from here: start from zero, once.
             drop(resp);
             if restarted {
@@ -475,7 +515,10 @@ async fn try_once(
     }
 
     let file = if append {
-        tokio::fs::OpenOptions::new().append(true).open(part).await?
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(part)
+            .await?
     } else {
         tokio::fs::File::create(part).await?
     };
@@ -563,11 +606,18 @@ async fn finalize(
     if let Some(exp) = expected {
         if actual != exp {
             remove_quietly(part).await;
-            return Err(DownloadError::HashMismatch { expected: exp.to_string(), actual });
+            return Err(DownloadError::HashMismatch {
+                expected: exp.to_string(),
+                actual,
+            });
         }
     }
     tokio::fs::rename(part, &spec.dest).await?;
-    Ok(DownloadedFile { path: spec.dest.clone(), sha256: actual, size_bytes: size })
+    Ok(DownloadedFile {
+        path: spec.dest.clone(),
+        sha256: actual,
+        size_bytes: size,
+    })
 }
 
 async fn remove_quietly(path: &Path) {
@@ -576,7 +626,11 @@ async fn remove_quietly(path: &Path) {
 
 /// Hash the first `len` bytes of `path` (whole file when `None`) off the async
 /// threads. Returns the hasher and the number of bytes hashed.
-async fn hash_prefix(path: PathBuf, len: Option<u64>, cancel: CancellationToken) -> Result<(Sha256, u64), DownloadError> {
+async fn hash_prefix(
+    path: PathBuf,
+    len: Option<u64>,
+    cancel: CancellationToken,
+) -> Result<(Sha256, u64), DownloadError> {
     tokio::task::spawn_blocking(move || -> Result<(Sha256, u64), DownloadError> {
         let file = std::fs::File::open(&path)?;
         let mut reader: Box<dyn Read> = match len {
@@ -629,7 +683,10 @@ pub fn check_free_space(dir: &Path, need_bytes: u64) -> Result<(), DownloadError
     let free = fs2::available_space(probe)?;
     let need = need_bytes.saturating_add(DISK_MARGIN_BYTES);
     if free < need {
-        return Err(DownloadError::DiskSpace { need_mb: need.div_ceil(MB), free_mb: free / MB });
+        return Err(DownloadError::DiskSpace {
+            need_mb: need.div_ceil(MB),
+            free_mb: free / MB,
+        });
     }
     Ok(())
 }
@@ -664,7 +721,10 @@ pub enum DownloadState {
 
 impl DownloadState {
     pub fn is_finished(self) -> bool {
-        matches!(self, DownloadState::Done | DownloadState::Failed | DownloadState::Cancelled)
+        matches!(
+            self,
+            DownloadState::Done | DownloadState::Failed | DownloadState::Cancelled
+        )
     }
 }
 
@@ -721,7 +781,10 @@ pub struct GroupError {
 
 impl GroupError {
     fn new(code: &str, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into() }
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
     }
     fn cancelled() -> Self {
         Self::new("cancelled", "Cancelled")
@@ -766,7 +829,13 @@ pub struct DownloadManager {
 impl DownloadManager {
     pub fn new(client: HttpClient) -> Self {
         let (events, _) = broadcast::channel(256);
-        Self { client, shared: Arc::new(Shared { state: Mutex::new(State::default()), events }) }
+        Self {
+            client,
+            shared: Arc::new(Shared {
+                state: Mutex::new(State::default()),
+                events,
+            }),
+        }
     }
 
     /// Queue a group. Returns its id immediately; completion is observable via
@@ -776,11 +845,21 @@ impl DownloadManager {
     }
 
     /// [`DownloadManager::enqueue`] with a [`DownloadKind`] the UI can match on.
-    pub fn enqueue_kind(&self, label: String, kind: DownloadKind, files: Vec<DownloadSpec>) -> String {
+    pub fn enqueue_kind(
+        &self,
+        label: String,
+        kind: DownloadKind,
+        files: Vec<DownloadSpec>,
+    ) -> String {
         self.enqueue_group(label, Some(kind), files)
     }
 
-    fn enqueue_group(&self, label: String, kind: Option<DownloadKind>, files: Vec<DownloadSpec>) -> String {
+    fn enqueue_group(
+        &self,
+        label: String,
+        kind: Option<DownloadKind>,
+        files: Vec<DownloadSpec>,
+    ) -> String {
         let group_id = uuid::Uuid::new_v4().to_string();
         let status = GroupStatus {
             group_id: group_id.clone(),
@@ -799,7 +878,12 @@ impl DownloadManager {
             let (done, _) = watch::channel(None);
             st.groups.insert(
                 group_id.clone(),
-                Group { status: status.clone(), files, cancel: CancellationToken::new(), done },
+                Group {
+                    status: status.clone(),
+                    files,
+                    cancel: CancellationToken::new(),
+                    done,
+                },
             );
             st.order.push(group_id.clone());
             st.queue.push_back(group_id.clone());
@@ -826,14 +910,24 @@ impl DownloadManager {
             let st = self.shared.state.lock();
             match st.groups.get(group_id) {
                 Some(g) => g.done.subscribe(),
-                None => return Err(GroupError::new("not_found", "This download is no longer listed.")),
+                None => {
+                    return Err(GroupError::new(
+                        "not_found",
+                        "This download is no longer listed.",
+                    ))
+                }
             }
         };
         let outcome = match rx.wait_for(|v| v.is_some()).await {
             Ok(v) => v.clone(),
             Err(_) => None,
         };
-        outcome.unwrap_or_else(|| Err(GroupError::new("internal", "The download stopped unexpectedly. Try again.")))
+        outcome.unwrap_or_else(|| {
+            Err(GroupError::new(
+                "internal",
+                "The download stopped unexpectedly. Try again.",
+            ))
+        })
     }
 
     /// Cancel a queued or running group. Running files keep their `.part` for a
@@ -848,7 +942,12 @@ impl DownloadManager {
             match state {
                 DownloadState::Queued => {
                     st.queue.retain(|id| id != group_id);
-                    finish_locked(&mut st, group_id, DownloadState::Cancelled, Err(GroupError::cancelled()))
+                    finish_locked(
+                        &mut st,
+                        group_id,
+                        DownloadState::Cancelled,
+                        Err(GroupError::cancelled()),
+                    )
                 }
                 DownloadState::Downloading | DownloadState::Verifying => {
                     if let Some(g) = st.groups.get(group_id) {
@@ -890,12 +989,17 @@ impl DownloadManager {
                 handle.spawn(async move { this.run_worker().await });
             }
             Err(_) => {
-                let spawned = std::thread::Builder::new().name("pinhole-downloads".into()).spawn(move || {
-                    match tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                        Ok(rt) => rt.block_on(this.run_worker()),
-                        Err(e) => this.fail_all(&format!("Could not start downloads ({e}).")),
-                    }
-                });
+                let spawned = std::thread::Builder::new()
+                    .name("pinhole-downloads".into())
+                    .spawn(move || {
+                        match tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                        {
+                            Ok(rt) => rt.block_on(this.run_worker()),
+                            Err(e) => this.fail_all(&format!("Could not start downloads ({e}).")),
+                        }
+                    });
                 if spawned.is_err() {
                     self.fail_all("Could not start downloads.");
                 }
@@ -910,7 +1014,14 @@ impl DownloadManager {
             st.worker_running = false;
             let ids: Vec<String> = st.queue.drain(..).collect();
             ids.iter()
-                .filter_map(|id| finish_locked(&mut st, id, DownloadState::Failed, Err(GroupError::new("internal", message))))
+                .filter_map(|id| {
+                    finish_locked(
+                        &mut st,
+                        id,
+                        DownloadState::Failed,
+                        Err(GroupError::new("internal", message)),
+                    )
+                })
                 .collect()
         };
         for s in emitted {
@@ -919,7 +1030,11 @@ impl DownloadManager {
     }
 
     async fn run_worker(self) {
-        let mut guard = WorkerGuard { shared: self.shared.clone(), current: None, armed: true };
+        let mut guard = WorkerGuard {
+            shared: self.shared.clone(),
+            current: None,
+            armed: true,
+        };
         loop {
             let next = {
                 let mut st = self.shared.state.lock();
@@ -937,17 +1052,24 @@ impl DownloadManager {
                     }
                 }
             };
-            let Some((id, files, cancel, status)) = next else { return };
+            let Some((id, files, cancel, status)) = next else {
+                return;
+            };
             guard.current = Some(id.clone());
             let _ = self.shared.events.send(status);
-            let outcome = std::panic::AssertUnwindSafe(self.run_group(&id, &files, &cancel)).catch_unwind().await;
+            let outcome = std::panic::AssertUnwindSafe(self.run_group(&id, &files, &cancel))
+                .catch_unwind()
+                .await;
             let (state, outcome) = match outcome {
                 Ok(Ok(done)) => (DownloadState::Done, Ok(done)),
                 Ok(Err(e)) if e.code == "cancelled" => (DownloadState::Cancelled, Err(e)),
                 Ok(Err(e)) => (DownloadState::Failed, Err(e)),
                 Err(_) => (
                     DownloadState::Failed,
-                    Err(GroupError::new("internal", "Something went wrong while downloading. Try again.")),
+                    Err(GroupError::new(
+                        "internal",
+                        "Something went wrong while downloading. Try again.",
+                    )),
                 ),
             };
             let emitted = finish_locked(&mut self.shared.state.lock(), &id, state, outcome);
@@ -958,7 +1080,12 @@ impl DownloadManager {
         }
     }
 
-    async fn run_group(&self, id: &str, files: &[DownloadSpec], cancel: &CancellationToken) -> Outcome {
+    async fn run_group(
+        &self,
+        id: &str,
+        files: &[DownloadSpec],
+        cancel: &CancellationToken,
+    ) -> Outcome {
         // Whole-group disk check first, so the message covers everything missing.
         let need = remaining_bytes(files).await;
         let mut dirs: Vec<PathBuf> = files.iter().map(|f| parent_dir(&f.dest)).collect();
@@ -1025,7 +1152,9 @@ impl DownloadManager {
     fn update(&self, id: &str, f: impl FnOnce(&mut GroupStatus)) {
         let status = {
             let mut st = self.shared.state.lock();
-            let Some(g) = st.groups.get_mut(id) else { return };
+            let Some(g) = st.groups.get_mut(id) else {
+                return;
+            };
             if g.status.state.is_finished() {
                 return;
             }
@@ -1070,10 +1199,16 @@ async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
     let mut need = 0u64;
     for f in files {
         let Some(size) = f.size_hint() else { continue };
-        if tokio::fs::metadata(&f.dest).await.is_ok_and(|m| m.is_file()) {
+        if tokio::fs::metadata(&f.dest)
+            .await
+            .is_ok_and(|m| m.is_file())
+        {
             continue;
         }
-        let have = tokio::fs::metadata(part_path(&f.dest)).await.map(|m| m.len()).unwrap_or(0);
+        let have = tokio::fs::metadata(part_path(&f.dest))
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
         need = need.saturating_add(size.saturating_sub(have));
     }
     need
@@ -1081,7 +1216,12 @@ async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
 
 /// Mark a group finished, publish its outcome, prune old history. Returns the
 /// status to broadcast (caller sends it after releasing the lock).
-fn finish_locked(st: &mut State, id: &str, state: DownloadState, outcome: Outcome) -> Option<GroupStatus> {
+fn finish_locked(
+    st: &mut State,
+    id: &str,
+    state: DownloadState,
+    outcome: Outcome,
+) -> Option<GroupStatus> {
     let g = st.groups.get_mut(id)?;
     if g.status.state.is_finished() {
         return None;
