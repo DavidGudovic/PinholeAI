@@ -354,9 +354,10 @@ pub async fn shutdown(core: &AppCore) {
 }
 
 /// Stop sd-server before deleting a model's files: when it has `model_id`
-/// loaded, and whenever it runs at all, because with `--mmap` it keeps the
-/// files it read (a LoRA, a shared component) mapped, and Windows can't delete
-/// a mapped file. The next Generate loads the model again.
+/// loaded, has one of the files open (a shared component), or the file is a
+/// LoRA or upscaler (the engine reads those from their folders per job), because
+/// with `--mmap` it keeps the files it read mapped, and Windows can't delete a
+/// mapped file. The next Generate loads the model again.
 pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
     {
         let mut off = core.gen.offloaded.lock();
@@ -367,7 +368,8 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
     let mut slot = core.gen.slot.lock().await;
     // Also when the running engine has one of the files open (a shared
     // component): Windows can't delete a mapped file (`--mmap`).
-    let uses_file = files.iter().any(|f| slot.args.iter().any(|a| Path::new(a) == f.as_path()));
+    let per_job_dirs = [core.data.models(ModelKind::Lora), core.data.models(ModelKind::Upscaler)];
+    let uses_file = files.iter().any(|f| slot.args.iter().any(|a| Path::new(a) == f.as_path()) || per_job_dirs.iter().any(|d| f.starts_with(d)));
     if slot.model_id.as_deref() == Some(model_id) || uses_file {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
@@ -799,8 +801,18 @@ fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallb
     fb
 }
 
+/// Weights in system memory stick while this model runs with the same
+/// settings (see `GenState::offloaded`); anything else tries the card again.
+pub(crate) fn with_remembered_offload(core: &AppCore, model_id: &str, wiring_args: &[String], fb: MemFallback, gpu_backend: bool) -> MemFallback {
+    let offload = gpu_backend && {
+        let with_offload = with_memory_choices(wiring_args, MemFallback { offload: true, ..fb });
+        core.gen.offloaded.lock().as_ref().is_some_and(|(id, a)| id == model_id && *a == with_offload)
+    };
+    MemFallback { offload, ..fb }
+}
+
 /// Wiring args with the memory choices applied.
-fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
+pub(crate) fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Vec<String> {
     let mut args = wiring_args.to_vec();
     if fb.te_on_cpu && !text_encoder_on_cpu(&args) {
         with_text_encoder_on_cpu(&mut args);
@@ -1402,13 +1414,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
-    let mut fb = memory_choices(core, &prep.model.id, gpu_backend);
-    // Weights in system memory stick while this model runs with the same
-    // settings (see `GenState::offloaded`); anything else tries the card again.
-    fb.offload = gpu_backend && {
-        let with_offload = with_memory_choices(&wiring_args, MemFallback { offload: true, ..fb });
-        core.gen.offloaded.lock().as_ref().is_some_and(|(id, a)| *id == prep.model.id && *a == with_offload)
-    };
+    let fb = memory_choices(core, &prep.model.id, gpu_backend);
+    let mut fb = with_remembered_offload(core, &prep.model.id, &wiring_args, fb, gpu_backend);
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
     let job = loop {
@@ -1677,7 +1684,11 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
                 use_taesd: false,
             };
             let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
-            let args = with_memory_choices(&args, memory_choices(core, &model_id, hw.backend != "cpu"));
+            // The same memory choices as Generate, so this launch doesn't forget
+            // that the model's weights had to go to system memory.
+            let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
+            let fb = with_remembered_offload(core, &model_id, &args, memory_choices(core, &model_id, gpu_backend), gpu_backend);
+            let args = with_memory_choices(&args, fb);
             let r = ensure_engine(core, &args, &model_id, &prep_model.0.friendly_name, cancel, t0).await;
             emit_progress(core, if r.is_ok() { GenPhase::Done } else { GenPhase::Failed }, &prep_model.0.friendly_name, None, None, t0);
             r?
