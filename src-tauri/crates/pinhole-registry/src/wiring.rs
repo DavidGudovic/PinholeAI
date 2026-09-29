@@ -663,6 +663,13 @@ const DEFAULT_STEPS: u32 = 20;
 /// sd.cpp's default `txt_cfg`.
 const DEFAULT_CFG: f32 = 7.0;
 const DEFAULT_HIRES_SCALE: f32 = 1.5;
+/// Output size (pixels, after hires) from which the VAE works in tiles from the
+/// start. sd.cpp retries a decode with tiles by itself when it runs out of
+/// memory, but not an encode, and hires fix encodes the upscaled picture at
+/// full size (image.cpp `upscale_hires_latent` → `encode_first_stage`): an SDXL
+/// copied example at 896×1152 ×2 ran out there on a 16 GB card. Forge tiles
+/// big VAE work the same way. Fine-tune "VAE tiling: Off" still wins.
+pub const TILED_VAE_FROM_PIXELS: f64 = 2_500_000.0;
 const DEFAULT_HIRES_DENOISE: f32 = 0.45;
 const MAX_SIDE: u32 = 4096;
 
@@ -735,7 +742,8 @@ fn position([lo, hi]: [f32; 2], value: f32, inverted: bool) -> f32 {
 ///   CFG / guidance pushes the edit further away from the source image;
 /// * hires fix at Best when `hires_at_best.enabled` (txt2img only; Fine-tune
 ///   `hires` can force it on/off);
-/// * `vae_tiling` from the hardware profile flags unless overridden;
+/// * `vae_tiling` from the hardware profile flags, or on for a big output
+///   ([`TILED_VAE_FROM_PIXELS`], hires included), unless overridden;
 /// * `batch_count` = `dials.count`.
 pub fn resolve_params(
     registry: &Registry,
@@ -807,12 +815,15 @@ pub fn resolve_params(
         })
     };
 
+    let out_scale = hires.as_ref().map_or(1.0, |h| f64::from(h.scale));
+    let out_pixels = f64::from(width) * f64::from(height) * out_scale * out_scale;
     let vae_tiling = fine.vae_tiling.unwrap_or_else(|| {
-        registry
-            .hardware_profile(hw.vram_gb)
-            .flags
-            .iter()
-            .any(|f| f == "--vae-tiling")
+        out_pixels >= TILED_VAE_FROM_PIXELS
+            || registry
+                .hardware_profile(hw.vram_gb)
+                .flags
+                .iter()
+                .any(|f| f == "--vae-tiling")
     });
 
     ResolvedParams {
