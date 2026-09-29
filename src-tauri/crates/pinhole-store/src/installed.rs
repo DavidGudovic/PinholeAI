@@ -1,7 +1,7 @@
 //! `Data/catalog/installed.json` — index of installed files: path, sha256,
 //! family, CivitAI ids, observed VRAM. Never contains prompts.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -85,7 +85,12 @@ impl InstalledIndex {
     /// the app still starts (the model files themselves stay on disk and can be
     /// re-added with "Add a file I already have").
     pub fn load(dir: &DataDir) -> Result<Self, StoreError> {
-        let path = dir.installed_file();
+        Self::load_from(&dir.installed_file())
+    }
+
+    /// [`InstalledIndex::load`] from an explicit index file.
+    pub fn load_from(path: &Path) -> Result<Self, StoreError> {
+        let path = path.to_path_buf();
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::new()),
@@ -104,11 +109,22 @@ impl InstalledIndex {
 
     /// Atomic, pretty-printed JSON at schema version 1.
     pub fn save(&self, dir: &DataDir) -> Result<(), StoreError> {
+        self.save_to(dir, &dir.installed_file())
+    }
+
+    /// Save to an explicit index file (moving the Models folder). Never creates
+    /// a missing user-picked Models folder (an unmounted drive).
+    pub fn save_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
+        if dir.models_home.as_ref().is_some_and(|home| path.starts_with(home) && !home.is_dir()) {
+            return Err(StoreError::Invalid(
+                "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
+            ));
+        }
         let out = IndexOut { schema_version: SCHEMA_VERSION, files: &self.files };
         let mut json = serde_json::to_vec_pretty(&out)
             .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
         json.push(b'\n');
-        write_atomic(&dir.installed_file(), &json)
+        write_atomic(path, &json)
     }
 
     pub fn get(&self, id: &str) -> Option<&InstalledFile> {
@@ -134,22 +150,12 @@ impl InstalledIndex {
         let pos = self.files.iter().position(|f| f.id == id)?;
         Some(self.files.remove(pos))
     }
-    /// Absolute path of `file`. `rel_path` is split on `/` (and `\`, for
-    /// hand-edited files); empty, `.`, `..` and drive/root parts are dropped,
-    /// so a damaged or hostile index can never point outside the Data folder.
+    /// Absolute path of `file` ([`DataDir::resolve_rel`]): `rel_path` is split
+    /// on `/` (and `\`, for hand-edited files); empty, `.`, `..` and drive/root
+    /// parts are dropped, so a damaged or hostile index can never point outside
+    /// the Data folder or the Models folder.
     pub fn abs_path(&self, dir: &DataDir, file: &InstalledFile) -> PathBuf {
-        let mut path = dir.root.clone();
-        for part in file.rel_path.split(['/', '\\']) {
-            if part.is_empty() || part == "." || part == ".." || part.contains(':') {
-                continue;
-            }
-            // Only plain names (no embedded prefixes/roots on any platform).
-            let mut comps = Path::new(part).components();
-            if let (Some(Component::Normal(_)), None) = (comps.next(), comps.next()) {
-                path.push(part);
-            }
-        }
-        path
+        dir.resolve_rel(&file.rel_path)
     }
     /// Main models: checkpoints + diffusion files.
     pub fn models(&self) -> impl Iterator<Item = &InstalledFile> {

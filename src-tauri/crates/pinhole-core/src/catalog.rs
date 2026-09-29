@@ -190,7 +190,7 @@ pub async fn plan_civitai_install(core: &AppCore, version_id: u64, file_id: Opti
     let hw = crate::app::hw_context(core);
     let index = core.installed.lock().clone();
 
-    let free = local::free_space(&core.data.root.join("models"));
+    let free = local::free_space(&core.data.models_root());
     let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
     let plan = plan::build_plan(&env, &version, model.as_ref(), free, false, file_id);
     // Does the download need a key (401/403)? Only asked when there is

@@ -43,7 +43,7 @@ pub async fn open_outputs_folder(handle: AppHandle, core: State<'_, Arc<AppCore>
 }
 
 /// Open a folder in the system file manager (no network, no WebView navigation).
-fn open_folder(handle: &AppHandle, dir: &Path) -> Result<(), CoreError> {
+pub(crate) fn open_folder(handle: &AppHandle, dir: &Path) -> Result<(), CoreError> {
     handle.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| {
         CoreError::new(
             "io",
