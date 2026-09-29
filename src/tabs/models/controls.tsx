@@ -1,11 +1,11 @@
 // Small building blocks used by the Models tab, Settings and First run (frontend B).
 // The shared primitives live in src/components/ui (frontend A) and are only imported here.
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { asCoreError, setCivitaiKey } from "../../lib/api";
 import type { CoreError, FamilyChoice, Fit, GroupStatus, VramNeed } from "../../lib/types";
 import { fitWords } from "../../lib/format";
-import { Badge, Button, Dialog, ErrorNotice, ProgressBar, Select as UiSelect, Spinner, focusRing, inputClass } from "../../components/ui";
+import { Badge, Button, Dialog, ErrorNotice, ProgressBar, Select as UiSelect, Spinner, cx, focusRing, inputClass } from "../../components/ui";
 import { groupFraction, isActive, progressText, stateLabel } from "./lib/words";
 
 /** Typed wrapper around the shared native Select. */
@@ -112,7 +112,11 @@ export function GroupProgress({ group, onCancel, compact }: { group: GroupStatus
           </span>
         </span>
         {active && onCancel && (
-          <button type="button" onClick={onCancel} className="shrink-0 rounded px-1 font-medium text-neutral-600 hover:text-red-600 hover:underline dark:text-neutral-400 dark:hover:text-red-400">
+          <button
+            type="button"
+            onClick={onCancel}
+            className={cx("shrink-0 rounded px-1 font-medium text-neutral-600 hover:text-red-600 hover:underline dark:text-neutral-400 dark:hover:text-red-400", focusRing)}
+          >
             Cancel
           </button>
         )}
@@ -181,6 +185,8 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
   const [key, setKey] = useState("");
   const [show, setShow] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Set synchronously so two Enters in the same frame can't both save.
+  const inFlight = useRef(false);
   const [error, setError] = useState<CoreError | null>(null);
   const inputId = useId();
 
@@ -193,7 +199,9 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
 
   const save = async () => {
     const k = key.trim();
-    if (!k) return;
+    // Enter submits the form even while the Save button is disabled.
+    if (!k || inFlight.current) return;
+    inFlight.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -204,6 +212,7 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
     } catch (e) {
       setError(asCoreError(e));
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   };
@@ -259,7 +268,7 @@ export function ApiKeyDialog({ open, onClose, onSaved, reason }: { open: boolean
             <button
               type="button"
               onClick={() => setShow((s) => !s)}
-              className="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200"
+              className={cx("absolute top-1/2 right-2 -translate-y-1/2 rounded p-1 text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200", focusRing)}
               aria-label={show ? "Hide key" : "Show key"}
             >
               {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

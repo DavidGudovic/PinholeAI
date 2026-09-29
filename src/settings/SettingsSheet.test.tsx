@@ -27,4 +27,25 @@ describe("SettingsSheet", () => {
     fireEvent.click(radio("Off"));
     await waitFor(async () => expect((await getSettings()).textEncoderOnCpu).toBe("off"));
   }, 10_000);
+
+  it("names every choice group for screen readers", async () => {
+    render(<SettingsSheet open onClose={() => undefined} />);
+    expect(await screen.findByRole("radiogroup", { name: "Theme" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Information inside saved pictures" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "Safe mode" })).toBeTruthy();
+  });
+
+  it("doesn't show an old 'Saved' tick after closing right after a change", async () => {
+    const { rerender } = render(<SettingsSheet open onClose={() => undefined} />);
+    fireEvent.click(await screen.findByRole("switch", { name: "Show paid models" }));
+    await screen.findByText("Saved");
+    // Closed well within the 1.8 s the tick stays up.
+    rerender(<SettingsSheet open={false} onClose={() => undefined} />);
+    rerender(<SettingsSheet open onClose={() => undefined} />);
+    await screen.findByRole("radiogroup", { name: "Theme" });
+    expect(screen.queryByText("Saved")).toBeNull();
+    // Put the setting back for the other tests.
+    fireEvent.click(screen.getByRole("switch", { name: "Show paid models" }));
+    await screen.findByText("Saved");
+  });
 });

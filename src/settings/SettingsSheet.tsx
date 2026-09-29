@@ -33,6 +33,10 @@ const TE_ON_CPU_LABEL = "Read the prompt on the processor";
 export function SettingsSheet(props: { open: boolean; onClose: () => void }) {
   const { open, onClose } = props;
   const [saved, setSaved] = useState<"idle" | "saving" | "saved">("idle");
+  // The body (and its timer that hides "Saved") unmounts on close: start each visit clean.
+  useEffect(() => {
+    if (open) setSaved("idle");
+  }, [open]);
 
   return (
     <Sheet
@@ -407,6 +411,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         >
           <Segmented<"none" | "settings">
             size="sm"
+            ariaLabel="Information inside saved pictures"
             options={[
               { value: "none", label: "None" },
               { value: "settings", label: "Settings (no prompt)" },
@@ -455,6 +460,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         <Labeled label="Theme">
           <Segmented<Settings["theme"]>
             size="sm"
+            ariaLabel="Theme"
             options={[
               { value: "system", label: "System" },
               { value: "light", label: "Light" },
