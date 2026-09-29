@@ -335,7 +335,7 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 const ACTIVE_DL = new Set(["queued", "downloading", "verifying"]);
-export const isActiveDownload = (d: GroupStatus) => ACTIVE_DL.has(d.state);
+export const isActiveDownload = (d: Pick<GroupStatus, "state">) => ACTIVE_DL.has(d.state);
 
 // ------------------------------------------------------------------ reducer
 

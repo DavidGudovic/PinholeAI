@@ -649,8 +649,10 @@ export function Popover({
   useEscape(open, close);
   // Keyboard: move focus into the menu on open (the selected item, else the first
   // control), and back to the trigger on close, unless the user clicked elsewhere.
+  const closedByOutsideClick = useRef(false);
   useEffect(() => {
     if (!open) return;
+    closedByOutsideClick.current = false;
     const el = panel.current;
     const t = setTimeout(() => {
       const target =
@@ -660,6 +662,9 @@ export function Popover({
     }, 0);
     return () => {
       clearTimeout(t);
+      // A click on a part of the page that can't take focus leaves it on body: don't
+      // pull focus (and the sidebar's scroll) back to the trigger then.
+      if (closedByOutsideClick.current) return;
       const active = document.activeElement;
       if (!active || active === document.body || el?.contains(active)) anchor.current?.focus();
     };
@@ -669,6 +674,7 @@ export function Popover({
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (panel.current?.contains(t) || anchor.current?.contains(t)) return;
+      closedByOutsideClick.current = true;
       close();
     };
     window.addEventListener("mousedown", onDown);

@@ -132,6 +132,26 @@ describe("preset notice: Get the model", () => {
     act(() => store.dispatch({ type: "download", status: group("done") }));
     expect(screen.getByText(/Downloaded/)).toBeTruthy();
   });
+
+  it("never offers a second install when the download isn't listed", async () => {
+    const store = createStore();
+    withApp(store, <PresetNoticeCard notice={notice} onDismiss={() => undefined} />);
+    const button = () => screen.getByRole("button", { name: /Get the model|Downloading|Try again/ }) as HTMLButtonElement;
+    fireEvent.click(button());
+    // Started, but no download event yet (and the refresh found nothing).
+    await act(async () => install.resolve({ groupId: "g1" }));
+    await flush();
+    expect(button().textContent).toContain("Downloading…");
+    expect(button().disabled).toBe(true);
+
+    act(() => store.dispatch({ type: "download", status: group("done") }));
+    // Clear finished downloads removes the entry; the card still says it's downloaded.
+    act(() => store.dispatch({ type: "clearFinishedDownloads" }));
+    expect(store.getState().downloads).toHaveLength(0);
+    expect(screen.getByText(/Downloaded/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Get the model/ })).toBeNull();
+    expect(api.installCivitai).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("Save as preset", () => {

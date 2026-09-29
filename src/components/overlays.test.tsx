@@ -115,6 +115,25 @@ describe("keyboard focus", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("leaves focus alone when the menu closes by a click outside it", async () => {
+    render(
+      <>
+        <Menu />
+        <div data-testid="blank">results</div>
+      </>,
+    );
+    const trigger = screen.getByRole("button", { name: "Open menu" });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await tick();
+    // A mousedown on a part of the page that can't take focus leaves focus on body.
+    (document.activeElement as HTMLElement).blur();
+    fireEvent.mouseDown(screen.getByTestId("blank"));
+    await tick();
+    expect(screen.queryByRole("menuitem")).toBeNull();
+    expect(document.activeElement).toBe(document.body);
+  });
+
   it("returns to the menu button after a dialog opened from the menu closes", async () => {
     function Harness() {
       const [open, setOpen] = useState(false);

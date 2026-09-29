@@ -9,7 +9,7 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
-import type { CoreError } from "../../lib/types";
+import type { CoreError, GroupStatus } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import { createModels, isActiveDownload } from "../../lib/state/model";
@@ -188,14 +188,21 @@ export function PresetNoticeCard({ notice, onDismiss }: { notice: PresetNotice; 
   const [error, setError] = useState<CoreError | null>(null);
   const { preset, app } = notice;
   const vid = app.missingModel?.civitaiVersionId ?? null;
-  const downloading = !!dl && isActiveDownload(dl);
-  const failed = !!dl && !downloading && dl.state !== "done";
+  // Remember the last state seen: the entry can vanish (Clear finished downloads) or not
+  // be listed yet (refresh failed, no event yet), and that must not offer a second install.
+  const lastState = useRef<GroupStatus["state"] | null>(null);
+  if (dl) lastState.current = dl.state;
+  const state = dl?.state ?? lastState.current;
+  const done = state === "done";
+  const downloading = !!groupId && (state == null || isActiveDownload({ state }));
+  const failed = !!groupId && !downloading && !done;
   const getModel = async () => {
-    if (vid == null || starting) return;
+    if (vid == null || starting || downloading || done) return;
     setError(null);
     setStarting(true);
     try {
       const started = await api.installCivitai(vid, app.missingModel?.family ?? null);
+      lastState.current = null;
       setGroupId(started.groupId);
       await actions.refreshDownloads().catch(() => undefined);
     } catch (e) {
@@ -220,12 +227,12 @@ export function PresetNoticeCard({ notice, onDismiss }: { notice: PresetNotice; 
           )}
           {app.missingStyle && <p className="text-xs text-neutral-600 dark:text-neutral-400">Its style was deleted; your style is kept.</p>}
           <div className="flex flex-wrap gap-2 pt-1">
-            {app.missingModel && vid != null && dl?.state === "done" && (
+            {app.missingModel && vid != null && done && (
               <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
                 <Check className="h-3.5 w-3.5" /> Downloaded. Pick it in the model list.
               </span>
             )}
-            {app.missingModel && vid != null && dl?.state !== "done" && (
+            {app.missingModel && vid != null && !done && (
               <Button size="sm" variant="primary" disabled={starting || downloading} onClick={() => void getModel()}>
                 {starting ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}{" "}
                 {downloading ? "Downloading…" : failed ? "Try again" : "Get the model"}

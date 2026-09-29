@@ -169,7 +169,6 @@ export function makeActions(store: Store) {
     try {
       await withJob("upscale", async () => {
         const nonce = get().sessionNonce;
-        if (cancelRequested) throw cancelledError();
         const im = await api.upscaleImage(resultId, factor);
         // Cancel pressed while the upscaler was still downloading (the engine had no job
         // to stop yet): drop the image instead of adding it.
