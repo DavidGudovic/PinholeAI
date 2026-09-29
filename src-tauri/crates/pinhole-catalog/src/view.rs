@@ -224,6 +224,7 @@ pub struct InstalledLora {
     pub base_model: Option<String>,
     pub trained_words: Vec<String>,
     pub size_bytes: u64,
+    pub civitai_model_id: Option<u64>,
     pub civitai_version_id: Option<u64>,
 }
 

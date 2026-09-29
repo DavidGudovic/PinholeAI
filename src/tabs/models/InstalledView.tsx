@@ -1,13 +1,14 @@
 // Models → Installed: installed models + style add-ons, delete, "Add a file I already have".
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { CircleCheck, Compass, FilePlus2, FolderOpen, Puzzle, Trash2, TriangleAlert, Wrench } from "lucide-react";
+import { CircleCheck, Compass, FilePlus2, FolderOpen, Images, Puzzle, Trash2, TriangleAlert, Wrench } from "lucide-react";
 import {
   addLocalModel,
   asCoreError,
   confirmFamily,
   deleteHelper,
   deleteModel,
+  getSettings,
   listHelpers,
   listLoras,
   listModels,
@@ -16,17 +17,51 @@ import {
   openModelsFolder,
   previewDelete,
 } from "../../lib/api";
-import type { AddFileResult, CoreError, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, ModelsFolderInfo } from "../../lib/types";
+import type { AddFileResult, CatalogCard, ContentMode, CoreError, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, ModelsFolderInfo } from "../../lib/types";
 import { FOLDER_PROBLEM } from "../../settings/ModelsFolderSection";
 import { formatBytes } from "../../lib/format";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge } from "../../components/ui";
 import { EmptyState, FamilyPicker, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
+import { ModelDetails } from "./ModelDetails";
 import { useHardware, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
 
 type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
+
+type CivitaiLinked = { friendlyName: string; baseModel: string | null; familyId: string | null; sizeBytes: number; civitaiModelId: number | null; civitaiVersionId: number | null };
+
+// The details page takes a catalog card; an installed CivitAI file knows enough to build one.
+// Files without a CivitAI link (added by hand, built-in downloads) have no page to show.
+function detailsCard(x: CivitaiLinked, type: string, styleBadge: string | null): CatalogCard | null {
+  if (!x.civitaiModelId || !x.civitaiVersionId) return null;
+  return {
+    modelId: x.civitaiModelId,
+    versionId: x.civitaiVersionId,
+    name: x.friendlyName,
+    versionName: "",
+    type,
+    baseModel: x.baseModel ?? "",
+    familyId: x.familyId,
+    styleBadge,
+    creator: null,
+    previewUrl: null,
+    previewIsVideo: false,
+    previewNsfw: false,
+    modelNsfw: false,
+    thumbsUpRatio: null,
+    downloadCount: 0,
+    downloadBytes: x.sizeBytes,
+    vram: null,
+    fit: null,
+    earlyAccess: false,
+    commercialOk: false,
+    licenseNote: null,
+    installed: true,
+    blockedReason: null,
+  };
+}
 
 // Files are added with the native file chooser only. Dropping files onto the window
 // can't work here: the main window is created with `disable_drag_drop_handler()`
@@ -45,6 +80,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
   const [addError, setAddError] = useState<CoreError | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [choice, setChoice] = useState<NeedsChoice | null>(null);
+  const [detailsFor, setDetailsFor] = useState<CatalogCard | null>(null);
+  const [content, setContent] = useState<ContentMode>("safe");
   const hw = useHardware();
 
   const refresh = useCallback(async () => {
@@ -69,6 +106,13 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
       .catch(() => undefined);
   }, []);
   useTauriEvent(onModelsChanged, () => void refresh());
+
+  const showDetails = (card: CatalogCard) => {
+    getSettings()
+      .then((s) => setContent(s.contentMode))
+      .catch(() => undefined)
+      .finally(() => setDetailsFor(card));
+  };
 
   const handleResult = useCallback(
     (r: AddFileResult) => {
@@ -218,7 +262,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                 <Th>Size</Th>
                 <Th>{isCpuOnly(hw) ? "Memory" : "Graphics memory"}</Th>
                 <Th className="hidden md:table-cell">Last used</Th>
-                <Th className="w-10">
+                <Th className="w-20">
                   <span className="sr-only">Actions</span>
                 </Th>
               </tr>
@@ -258,9 +302,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   <Td>{m.vram ? <VramBadge vram={m.vram} fit={m.fit} /> : <span className="text-xs text-neutral-400">Unknown</span>}</Td>
                   <Td className="hidden whitespace-nowrap text-neutral-600 md:table-cell dark:text-neutral-400">{lastUsedText(m.lastUsed)}</Td>
                   <Td>
-                    <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
-                      <Trash2 className="h-4 w-4" />
-                    </IconButton>
+                    <RowActions card={detailsCard(m, "Checkpoint", m.styleBadge)} onShow={showDetails}>
+                      <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
+                        <Trash2 className="h-4 w-4" />
+                      </IconButton>
+                    </RowActions>
                   </Td>
                 </tr>
               ))}
@@ -278,7 +324,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                 <Th>Works with</Th>
                 <Th className="hidden md:table-cell">Trigger words</Th>
                 <Th>Size</Th>
-                <Th className="w-10">
+                <Th className="w-20">
                   <span className="sr-only">Actions</span>
                 </Th>
               </tr>
@@ -303,9 +349,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   </Td>
                   <Td className="whitespace-nowrap text-neutral-600 tabular-nums dark:text-neutral-400">{formatBytes(l.sizeBytes)}</Td>
                   <Td>
-                    <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
-                      <Trash2 className="h-4 w-4" />
-                    </IconButton>
+                    <RowActions card={detailsCard(l, "LORA", null)} onShow={showDetails}>
+                      <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
+                        <Trash2 className="h-4 w-4" />
+                      </IconButton>
+                    </RowActions>
                   </Td>
                 </tr>
               ))}
@@ -361,6 +409,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           handleResult(r);
         }}
       />
+      {detailsFor && <ModelDetails card={detailsFor} content={content} installed onInstall={() => undefined} onClose={() => setDetailsFor(null)} />}
       <InstallDialog versionId={missingFor?.civitaiVersionId ?? null} title={missingFor?.friendlyName} onClose={() => setMissingFor(null)} />
     </div>
   );
@@ -375,6 +424,20 @@ function TableCard({ title, icon, children }: { title: string; icon?: ReactNode;
       </h2>
       <div className="overflow-x-auto">{children}</div>
     </section>
+  );
+}
+
+// Trailing icons of a row: "Show" (only when the file came from CivitAI) and Delete.
+function RowActions({ card, onShow, children }: { card: CatalogCard | null; onShow: (c: CatalogCard) => void; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      {card && (
+        <IconButton size="sm" label={`Show ${card.name}`} onClick={() => onShow(card)}>
+          <Images className="h-4 w-4" />
+        </IconButton>
+      )}
+      {children}
+    </div>
   );
 }
 
