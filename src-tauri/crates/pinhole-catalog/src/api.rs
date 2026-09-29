@@ -2,7 +2,7 @@
 //! [`pinhole_net::HttpClient`] (the only internet client).
 //!
 //! Endpoints used:
-//! * `GET /api/v1/models` — browse/search (cursor paging only; `page` × `limit`
+//! * `GET /api/v1/models` — browse/search (cursor paging; text searches page by number; `page` × `limit`
 //!   > 1000 answers 429);
 //! * `GET /api/v1/models/{id}`;
 //! * `GET /api/v1/model-versions/{id}`;
@@ -41,17 +41,29 @@ pub struct ModelsPage {
 
 impl ModelsPage {
     /// Cursor for the next page: `metadata.nextCursor`, or the `cursor` query
-    /// parameter of `metadata.nextPage`.
+    /// parameter of `metadata.nextPage`. Text searches are answered page by
+    /// page (`nextPage` has `page=N` and no `cursor`): that comes back as
+    /// `page:N`, which [`PAGE_CURSOR_PREFIX`] tells the request builder to send as `page`.
     pub fn next_cursor(&self) -> Option<String> {
         if let Some(c) = self.metadata.next_cursor.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             return Some(c.to_string());
         }
         let next = self.metadata.next_page.as_deref()?;
         let url = url::Url::parse(next).ok()?;
-        let cursor = url.query_pairs().find(|(k, _)| k == "cursor").map(|(_, v)| v.into_owned());
-        cursor.filter(|c| !c.trim().is_empty())
+        let param = |name: &str| url.query_pairs().find(|(k, _)| k == name).map(|(_, v)| v.into_owned()).filter(|v| !v.trim().is_empty());
+        if let Some(c) = param("cursor") {
+            return Some(c);
+        }
+        // CivitAI answers 429 once `page` × `limit` passes 1000: end the list there.
+        let page: u32 = param("page")?.trim().parse().ok()?;
+        let limit: u32 = param("limit").and_then(|l| l.trim().parse().ok()).unwrap_or(100);
+        (page.saturating_mul(limit) <= 1000).then(|| format!("{PAGE_CURSOR_PREFIX}{page}"))
     }
 }
+
+/// Marks a cursor that is really a page number (CivitAI pages text searches by
+/// `page`, not `cursor`).
+pub const PAGE_CURSOR_PREFIX: &str = "page:";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -660,6 +672,10 @@ mod tests {
         assert_eq!(p.next_cursor().as_deref(), Some("12345"));
         let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{}}"#).unwrap();
         assert_eq!(p.next_cursor(), None);
+        let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{"currentPage":1,"nextPage":"https://civitai.com/api/v1/models?query=neon&limit=50&page=2"}}"#).unwrap();
+        assert_eq!(p.next_cursor().as_deref(), Some("page:2"), "text search pages by number");
+        let p: ModelsPage = serde_json::from_str(r#"{"items":[],"metadata":{"nextPage":"https://civitai.com/api/v1/models?query=neon&limit=50&page=21"}}"#).unwrap();
+        assert_eq!(p.next_cursor(), None, "page x limit > 1000 would answer 429");
         let p: ModelsPage = serde_json::from_str(r#"{}"#).unwrap();
         assert!(p.items.is_empty());
     }
