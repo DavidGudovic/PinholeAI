@@ -1111,7 +1111,7 @@ mod tests {
             "registry figure for the bf16 file"
         );
         assert_eq!(r.pick.note, None);
-        // An installed Q8 encoder does not count at 24 GB: the bf16 one is required.
+        // An installed Q8 encoder is reused at 24 GB: no second text encoder download.
         let idx = index(vec![
             model(
                 "zit",
@@ -1123,8 +1123,8 @@ mod tests {
             component(&reg, "qwen3_4b_q8"),
         ]);
         let r = recommend_role(&reg, &idx, &hw(24.0), "realistic").unwrap();
-        assert!(!r.pick.installed);
-        assert_eq!(r.pick.download_bytes, 8045 * MB);
+        assert!(r.pick.installed);
+        assert_eq!(r.pick.download_bytes, 0);
     }
 
     #[test]
