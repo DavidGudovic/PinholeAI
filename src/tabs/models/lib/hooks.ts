@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { asCoreError, engineStatus, getHardware, installEngine, onEngine, onHardwareReady } from "../../../lib/api";
-import type { CoreError, EngineStatus, GroupStatus, HardwareView } from "../../../lib/types";
+import type { CoreError, EngineStatus, GroupStatus, HardwareView, Settings } from "../../../lib/types";
 import { onSettingsChanged } from "../../../settings/events";
 import { getTagged, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
 
@@ -43,6 +43,29 @@ export function useHardware(): HardwareView | null {
   }, [load]);
   useTauriEvent(onHardwareReady, load);
   return hw;
+}
+
+/** The Settings fields that change the effective hardware (and so every fit badge). */
+export const hardwareKey = (s: Settings) => JSON.stringify([s.gpu, s.vramOverrideGb, s.engineBackend]);
+
+/**
+ * Calls `cb` when the effective hardware may have changed: detection finished, or a
+ * GPU / VRAM / backend override was saved in Settings. Use it to refetch anything sized
+ * against the hardware (fit badges, recommended picks).
+ */
+export function useOnHardwareChange(cb: () => void) {
+  const ref = useRef(cb);
+  ref.current = cb;
+  useEffect(() => {
+    let last: string | null = null;
+    return onSettingsChanged((s) => {
+      const k = hardwareKey(s);
+      if (k === last) return;
+      last = k;
+      ref.current();
+    });
+  }, []);
+  useTauriEvent(onHardwareReady, () => ref.current());
 }
 
 export function useDebounced<T>(value: T, ms: number): T {
