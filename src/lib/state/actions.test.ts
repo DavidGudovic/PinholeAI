@@ -3,6 +3,7 @@ import type { GenerateResult, InstalledModel, ResultImage } from "../types";
 
 // The IPC layer, faked: each generate call waits until the test resolves it.
 let pending: ((r: GenerateResult) => void) | null = null;
+let pendingUpscale: ((r: ResultImage) => void) | null = null;
 const discarded: string[] = [];
 let failGetImage = new Set<string>();
 vi.mock("../api", async (orig) => {
@@ -10,6 +11,7 @@ vi.mock("../api", async (orig) => {
   return {
     ...real,
     generate: vi.fn(() => new Promise<GenerateResult>((res) => (pending = res))),
+    upscaleImage: vi.fn(() => new Promise<ResultImage>((res) => (pendingUpscale = res))),
     getImage: vi.fn(async (id: string) => {
       if (failGetImage.has(id)) throw { code: "not_found", message: "gone", details: null };
       return new ArrayBuffer(8);
@@ -93,6 +95,32 @@ describe("async results after the screen moved on", () => {
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
   });
 
+  it("locks the history from the moment Edit is pressed", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const run = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    expect(store.getState().job?.kind).toBe("edit");
+    // Loading another image while it runs is refused, before and after reading the file.
+    await expect(actions.importToEdit(new Blob([new Uint8Array(4)]))).rejects.toMatchObject({ code: "invalid" });
+    await tick();
+    pending!({ images: [img("r")] } as GenerateResult);
+    await run;
+    expect(store.getState().job).toBeNull();
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
+  });
+
+  it("drops an upscale that finishes after Reset", async () => {
+    const { store, actions } = setup();
+    const run = actions.upscale("x", 2);
+    await tick();
+    await actions.clearSession();
+    pendingUpscale!(img("u"));
+    await run;
+    expect(store.getState().results).toEqual([]);
+    expect(discarded).toContain("u");
+  });
+
   it("drops generated images that finish after Reset", async () => {
     const { store, actions } = setup();
     const run = actions.generateCreate();
@@ -121,8 +149,10 @@ describe("Paste from CivitAI", () => {
   it("keeps the typed prompt when only settings are pasted", async () => {
     const { applyPastedText } = await import("../../tabs/create/pasteApply");
     const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { fineTune: { negativePrompt: "blurry" } } });
     await applyPastedText("Steps: 30, Sampler: Euler a, CFG scale: 7, Seed: 5, Size: 832x1216", store, actions);
     expect(store.getState().create.prompt).toBe("a lighthouse");
+    expect(store.getState().create.fineTune.negativePrompt).toBe("blurry");
     await applyPastedText("a castle in fog\nSteps: 30, Sampler: Euler a, CFG scale: 7", store, actions);
     expect(store.getState().create.prompt).toBe("a castle in fog");
   });

@@ -284,7 +284,8 @@ const escapeStack: { close: () => void }[] = [];
 function onEscapeKey(e: KeyboardEvent) {
   const top = escapeStack[escapeStack.length - 1];
   if (e.key !== "Escape" || !top) return;
-  e.stopPropagation();
+  // Other window-level Escape handlers (e.g. a details page) wait for the next press.
+  e.stopImmediatePropagation();
   top.close();
 }
 
@@ -297,10 +298,10 @@ function useEscape(open: boolean, onClose: () => void) {
     if (!open) return;
     const entry = { close: () => close.current() };
     escapeStack.push(entry);
-    if (escapeStack.length === 1) window.addEventListener("keydown", onEscapeKey);
+    if (escapeStack.length === 1) window.addEventListener("keydown", onEscapeKey, true);
     return () => {
       escapeStack.splice(escapeStack.indexOf(entry), 1);
-      if (!escapeStack.length) window.removeEventListener("keydown", onEscapeKey);
+      if (!escapeStack.length) window.removeEventListener("keydown", onEscapeKey, true);
     };
   }, [open]);
 }

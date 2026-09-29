@@ -93,7 +93,7 @@ export function EditTab() {
   }, [node?.imageId]);
 
   const run = async () => {
-    if (store.getState().job || !current || !model) return;
+    if (store.getState().job || importing || !current || !model) return;
     setError(null);
     try {
       const m = maskOn && painted ? await mask.current?.exportPng() : null;
@@ -127,7 +127,7 @@ export function EditTab() {
 
   const needsEditModel = mode === "instruction" && !autoEdit;
   const text = mode === "instruction" ? e.instruction : e.restylePrompt;
-  const canRun = !!current && !!model && !job && (text.trim().length > 0 || !!e.styleId) && !needsEditModel;
+  const canRun = !!current && !!model && !job && !importing && (text.trim().length > 0 || !!e.styleId) && !needsEditModel;
 
   return (
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">

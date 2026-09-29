@@ -41,10 +41,13 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
     const onPaste = (e: ClipboardEvent) => {
       // A dialog over the tab owns the paste.
       if (document.querySelector("[role=dialog]")) return;
-      // Text copied from Word or a browser often carries a picture too: pasting it into a text field stays a text paste.
+      // Text copied from Word or a web page often carries a picture too: pasting it into a
+      // text field stays a text paste. (A file copied in a file manager also has its path
+      // as text, with a uri-list: that one is an image paste.)
       const t = e.target as HTMLElement | null;
       const editable = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
-      if (editable && Array.from(e.clipboardData?.types ?? []).includes("text/plain")) return;
+      const types = Array.from(e.clipboardData?.types ?? []);
+      if (editable && types.includes("text/plain") && !types.includes("text/uri-list")) return;
       const f = imageFromTransfer(e.clipboardData);
       if (!f) return;
       e.preventDefault();

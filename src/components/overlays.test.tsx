@@ -61,6 +61,13 @@ describe("image paste", () => {
     expect(e.defaultPrevented).toBe(false);
   });
 
+  it("takes a file copied in a file manager, even in a text field", () => {
+    const onFile = vi.fn();
+    const { getByLabelText } = render(<PasteProbe onFile={onFile} />);
+    getByLabelText("text").dispatchEvent(pasteEvent(["text/plain", "text/uri-list", "Files"]));
+    expect(onFile).toHaveBeenCalledTimes(1);
+  });
+
   it("takes a picture pasted anywhere else", () => {
     const onFile = vi.fn();
     render(<PasteProbe onFile={onFile} />);
