@@ -132,7 +132,7 @@ export function ModelDetails({
       versionId: card.versionId,
       modelName: card.name,
       versionName: card.versionName,
-    });
+    }, item);
     if (!text) return;
     if (!hasCreateModel) {
       actions.toast("Install a model first. Its settings can be used once it's on this computer.");
