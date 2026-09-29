@@ -141,7 +141,7 @@ pub fn preview(core: &AppCore, folder: Option<&str>) -> CoreResult<ModelsFolderP
     Ok(ModelsFolderPreview {
         path: to.models_root().display().to_string(),
         is_default: to.models_home.is_none(),
-        files: (from_index.files.len() + from_index.unknown.len()) as u32,
+        files: from_index.files.len() as u32,
         bytes: plan.iter().filter(|s| s.action == Action::Move).map(|s| s.entry.size_bytes).sum(),
         existing_models: to_index.models().count() as u32,
         same_drive: same_drive(&core.data.models_root(), &to.models_root()),
@@ -192,9 +192,7 @@ enum Action {
     Move,
     /// The target already has this file (same SHA-256): keep its entry, drop ours.
     Duplicate,
-    /// Nothing to move: our file is missing on disk (the entry is carried over
-    /// at a free path), or an unreadable entry is carried over as it is or
-    /// points at a file another step moves.
+    /// Our file is missing on disk: carry the entry over (at a free path).
     Missing,
 }
 
@@ -207,10 +205,6 @@ struct Step {
     old_id: String,
     src: PathBuf,
     dest: PathBuf,
-    /// An entry this version can't read, as it goes into the target index
-    /// (`relPath` rewritten when its file moves). `entry` then only carries
-    /// the size and recorded hash for the copy.
-    raw: Option<serde_json::Value>,
 }
 
 /// Pure planning: what happens to each entry of `from_index`.
@@ -224,7 +218,7 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
                 && std::fs::metadata(to.resolve_rel(&t.rel_path)).is_ok_and(|m| m.is_file() && m.len() == f.size_bytes)
         });
         if let Some(t) = dup {
-            steps.push(Step { action: Action::Duplicate, entry: t.clone(), old_id: f.id.clone(), src, dest: to.resolve_rel(&t.rel_path), raw: None });
+            steps.push(Step { action: Action::Duplicate, entry: t.clone(), old_id: f.id.clone(), src, dest: to.resolve_rel(&t.rel_path) });
             continue;
         }
         // `models/<sub>/<name>` → same sub-folder in the target, name made
@@ -241,49 +235,7 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
         let mut entry = f.clone();
         entry.rel_path = to.relative(&dest).unwrap_or_else(|| f.rel_path.clone());
         let action = if src.is_file() { Action::Move } else { Action::Missing };
-        steps.push(Step { action, entry, old_id: f.id.clone(), src, dest, raw: None });
-    }
-    // Entries this version can't read (a newer Pinhole's, or damaged): their
-    // file moves like any other when the entry names a safe `models/…` path;
-    // otherwise the entry is carried over as it is.
-    for raw in &from_index.unknown {
-        let text = |key: &str| raw.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-        let mut entry = InstalledFile {
-            id: text("id"),
-            rel_path: text("relPath"),
-            kind: pinhole_store::datadir::ModelKind::Checkpoint,
-            sha256: text("sha256"),
-            size_bytes: 0,
-            family: None,
-            component_id: None,
-            friendly_name: text("friendlyName"),
-            civitai: None,
-            added_at: 0,
-            last_used: None,
-            observed_vram_gb: None,
-            dtype: None,
-        };
-        let movable = pinhole_catalog::inventory::is_safe_rel_path(&entry.rel_path)
-            && entry.rel_path.split(['/', '\\']).next() == Some("models");
-        if !movable {
-            steps.push(Step { action: Action::Missing, entry, old_id: String::new(), src: PathBuf::new(), dest: PathBuf::new(), raw: Some(raw.clone()) });
-            continue;
-        }
-        let src = from.resolve_rel(&entry.rel_path);
-        let size = std::fs::metadata(&src).ok().filter(|m| m.is_file()).map(|m| m.len());
-        // Another entry already moves this file: point at where it goes.
-        let shared = steps.iter().find(|s| size.is_some() && matches!(s.action, Action::Move | Action::Duplicate) && s.src == src);
-        let (action, dest) = match shared {
-            Some(s) => (Action::Missing, s.dest.clone()),
-            None => (if size.is_some() { Action::Move } else { Action::Missing }, free_dest(&to.resolve_rel(&entry.rel_path), to, &mut taken)),
-        };
-        let mut moved = raw.clone();
-        if let (Some(obj), Some(rel)) = (moved.as_object_mut(), to.relative(&dest)) {
-            obj.insert("relPath".into(), serde_json::Value::String(rel.clone()));
-            entry.rel_path = rel;
-        }
-        entry.size_bytes = size.unwrap_or(0);
-        steps.push(Step { action, entry, old_id: String::new(), src, dest, raw: Some(moved) });
+        steps.push(Step { action, entry, old_id: f.id.clone(), src, dest });
     }
     steps
 }
@@ -479,10 +431,8 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
     let previous_target = std::fs::read(&target_file).ok();
     let mut merged = to_index.clone();
     for s in &steps {
-        match &s.raw {
-            Some(raw) => merged.unknown.push(raw.clone()),
-            None if s.action != Action::Duplicate => merged.upsert(s.entry.clone()),
-            None => {}
+        if s.action != Action::Duplicate {
+            merged.upsert(s.entry.clone());
         }
     }
     let restore_target = || match &previous_target {
@@ -543,9 +493,17 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
             let _ = std::fs::remove_file(&s.src);
         }
     }
+    // Entries this version can't read stay behind with their files (we never
+    // move files we don't understand): the old index keeps only them, e.g.
+    // for the newer install on the other OS sharing the old folder.
     let old_index = from.installed_file();
     if old_index != target_file {
-        let _ = std::fs::remove_file(&old_index);
+        if from_index.unknown.is_empty() {
+            let _ = std::fs::remove_file(&old_index);
+        } else {
+            let left = InstalledIndex { files: Vec::new(), ..from_index.clone() };
+            let _ = left.save_to(from, &old_index);
+        }
     }
     Ok(())
 }
@@ -709,33 +667,27 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_entries_of_our_own_are_carried_across() {
+    fn unreadable_entries_of_our_own_stay_behind() {
         let (_tmp, core) = test_core();
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let v = core.data.resolve_rel("models/video/v.safetensors");
         std::fs::create_dir_all(v.parent().unwrap()).unwrap();
         std::fs::write(&v, b"video").unwrap();
-        let moving = serde_json::json!({"id": "v", "relPath": "models/video/v.safetensors", "kind": "video", "extra": 7});
-        let no_path = serde_json::json!({"id": "n", "kind": "video"});
-        let unsafe_path = serde_json::json!({"id": "u", "relPath": "../outside.bin"});
-        let same_file = serde_json::json!({"id": "s", "relPath": a.rel_path, "kind": "video"});
-        core.installed.lock().unknown.extend([moving, no_path.clone(), unsafe_path.clone(), same_file]);
+        let newer = serde_json::json!({"id": "v", "relPath": "models/video/v.safetensors", "kind": "video", "extra": 7});
+        core.installed.lock().unknown.push(newer.clone());
         let shared = tempfile::tempdir().unwrap();
         let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
 
+        let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
+        assert_eq!(p.files, 1, "only the models this version can move");
         move_all_with(&core, to.clone(), true).unwrap();
-        assert!(!v.exists());
-        assert_eq!(std::fs::read(to.resolve_rel("models/video/v.safetensors")).unwrap(), b"video");
         assert_eq!(std::fs::read(to.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
-        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(to.installed_file()).unwrap()).unwrap();
-        let files = saved["files"].as_array().unwrap();
-        let by_id = |id: &str| files.iter().find(|f| f["id"] == id).cloned().unwrap();
-        assert_eq!(by_id("v")["relPath"], "models/video/v.safetensors");
-        assert_eq!(by_id("v")["extra"], 7, "unknown fields are kept");
-        assert_eq!(by_id("n"), no_path);
-        assert_eq!(by_id("u"), unsafe_path);
-        // Shares our model's file: follows it instead of moving it twice.
-        assert_eq!(by_id("s")["relPath"], serde_json::json!(a.rel_path));
+        // Its file and entry stay where they were: the old index keeps only it.
+        assert_eq!(std::fs::read(&v).unwrap(), b"video");
+        let old: serde_json::Value = serde_json::from_slice(&std::fs::read(core.data.installed_file()).unwrap()).unwrap();
+        assert_eq!(old["files"], serde_json::json!([newer]));
+        let moved = InstalledIndex::load(&to).unwrap();
+        assert!(moved.unknown.is_empty() && moved.get(&a.id).is_some());
     }
 
     #[tokio::test]
