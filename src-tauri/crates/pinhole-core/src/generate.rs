@@ -81,7 +81,8 @@ const OFFLOAD_SPARE_RAM_GB: f64 = 2.0;
 const TE_ON_CPU_NOTE: &str = "Your prompt is read on the processor for this model because the graphics card ran out of memory earlier. You can change this in Settings → Engine (“Read the prompt on the processor”).";
 const TILING_ON_NOTE: &str = "This model finishes pictures in smaller pieces to save memory, because it ran out of memory earlier (a bit slower). You can turn this off in Fine-tune.";
 /// Reading the prompt failed without any sign of running out of memory.
-pub const ENCODER_FAILED_MESSAGE: &str = "The engine couldn't read your prompt. One of this model's files may be damaged or the wrong version: reinstall it in Models. If other programs are using the graphics card, close them and try again.";
+/// (Memory lines can be missing from the output, so closing other programs comes first.)
+pub const ENCODER_FAILED_MESSAGE: &str = "The engine couldn't read your prompt. Close other programs that use the graphics card and try again. If it keeps happening, one of this model's files may be damaged or the wrong version: reinstall it in Models.";
 
 // ================================================================ IPC types (mirror src/lib/types.ts)
 
