@@ -290,11 +290,28 @@ pub fn is_text_encoder_kind(kind: &str) -> bool {
     matches!(kind, "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision")
 }
 
+/// Whether a registry component is installed (by id or verified SHA-256).
+fn installed_pred<'a>(
+    registry: &'a Registry,
+    index: &'a InstalledIndex,
+) -> impl Fn(&str) -> bool + 'a {
+    move |id: &str| {
+        registry
+            .component(id)
+            .is_some_and(|c| installed_component(index, id, c).is_some())
+    }
+}
+
 /// Bytes of the components that stay on the GPU (registry
 /// `wiring::gpu_resident_components`), for `vram::estimate`:
 /// `(other components such as the VAE, text encoders)`.
-pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext) -> (u64, u64) {
-    wiring::gpu_resident_components(registry, family, hw)
+pub fn gpu_component_bytes(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    index: &InstalledIndex,
+) -> (u64, u64) {
+    wiring::gpu_resident_components_with(registry, family, hw, &installed_pred(registry, index))
         .iter()
         .filter_map(|rc| registry.component(&rc.component_id))
         .fold((0, 0), |(other, te), c| {
@@ -312,9 +329,10 @@ pub fn estimate_need(
     registry: &Registry,
     family: &Family,
     hw: &HwContext,
+    index: &InstalledIndex,
     main_bytes: u64,
 ) -> VramNeed {
-    let (other, te) = gpu_component_bytes(registry, family, hw);
+    let (other, te) = gpu_component_bytes(registry, family, hw, index);
     vram::estimate(registry, family, main_bytes, other, te)
 }
 
@@ -335,11 +353,12 @@ pub fn family_need(
     registry: &Registry,
     family: &Family,
     hw: &HwContext,
+    index: &InstalledIndex,
     main_bytes: u64,
 ) -> VramNeed {
     match &family.vram_gb {
         Some(v) => need_from(v),
-        None => estimate_need(registry, family, hw, main_bytes),
+        None => estimate_need(registry, family, hw, index, main_bytes),
     }
 }
 
@@ -349,9 +368,10 @@ pub fn cpu_weight_bytes(
     registry: &Registry,
     family: &Family,
     hw: &HwContext,
+    index: &InstalledIndex,
     main_bytes: u64,
 ) -> u64 {
-    wiring::required_components(registry, family, hw)
+    wiring::required_components_with(registry, family, hw, &installed_pred(registry, index))
         .iter()
         .filter_map(|rc| registry.component(&rc.component_id))
         .fold(main_bytes, |sum, c| {
@@ -367,11 +387,12 @@ pub fn need_and_fit(
     registry: &Registry,
     family: &Family,
     hw: &HwContext,
+    index: &InstalledIndex,
     need: VramNeed,
     main_bytes: u64,
 ) -> (VramNeed, Fit) {
     let weights = if hw.cpu_only() {
-        cpu_weight_bytes(registry, family, hw, main_bytes)
+        cpu_weight_bytes(registry, family, hw, index, main_bytes)
     } else {
         main_bytes
     };
@@ -520,6 +541,7 @@ pub fn installed_need(
     family: &Family,
     file: &InstalledFile,
     hw: &HwContext,
+    index: &InstalledIndex,
 ) -> VramNeed {
     if let Some(o) = file.observed_vram_gb.filter(|o| o.is_finite() && *o > 0.0) {
         return VramNeed {
@@ -541,7 +563,7 @@ pub fn installed_need(
             return need_from(&v);
         }
     }
-    family_need(registry, family, hw, file.size_bytes)
+    family_need(registry, family, hw, index, file.size_bytes)
 }
 
 #[cfg(test)]

@@ -141,7 +141,8 @@ fn installed_resolved(
                 env.registry,
                 fam,
                 env.hw,
-                families::installed_need(env.registry, fam, f, env.hw),
+                env.index,
+                families::installed_need(env.registry, fam, f, env.hw, env.index),
                 f.size_bytes,
             )
             .1,
@@ -199,7 +200,8 @@ fn from_version(
                 env.registry,
                 fam,
                 env.hw,
-                families::family_need(env.registry, fam, env.hw, b),
+                env.index,
+                families::family_need(env.registry, fam, env.hw, env.index, b),
                 b,
             )
             .1,

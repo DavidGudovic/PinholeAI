@@ -46,6 +46,8 @@ pub struct RegistryEnv<'a> {
     pub hw: HwContext,
     pub installed_versions: HashSet<u64>,
     pub installed_sha: HashSet<String>,
+    /// Installed files: an installed text encoder option counts in the fit.
+    pub index: InstalledIndex,
 }
 
 impl<'a> RegistryEnv<'a> {
@@ -63,6 +65,7 @@ impl<'a> RegistryEnv<'a> {
                 .iter()
                 .map(|f| f.sha256.to_ascii_lowercase())
                 .collect(),
+            index: index.clone(),
         }
     }
 }
@@ -89,11 +92,12 @@ impl CatalogEnv for RegistryEnv<'_> {
 
     fn vram_for(&self, family_id: &str, main_bytes: u64) -> Option<(VramNeed, Fit)> {
         let f = self.registry.family(family_id)?;
-        let need = families::family_need(self.registry, f, &self.hw, main_bytes);
+        let need = families::family_need(self.registry, f, &self.hw, &self.index, main_bytes);
         Some(families::need_and_fit(
             self.registry,
             f,
             &self.hw,
+            &self.index,
             need,
             main_bytes,
         ))

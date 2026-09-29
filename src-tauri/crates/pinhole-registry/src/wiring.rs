@@ -392,6 +392,18 @@ pub fn gpu_resident_components(
     family: &Family,
     hw: &HwContext,
 ) -> Vec<RequiredComponent> {
+    gpu_resident_components_with(registry, family, hw, &|_| false)
+}
+
+/// [`gpu_resident_components`] for the components that will actually run:
+/// an installed option of a VRAM-dependent choice stands in for the pick
+/// ([`required_components_with`]).
+pub fn gpu_resident_components_with(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    is_installed: &dyn Fn(&str) -> bool,
+) -> Vec<RequiredComponent> {
     let te_on_cpu = family.flags.iter().any(|f| f == "--clip-on-cpu")
         || family.flags.windows(2).any(|w| {
             w[0] == "--backend"
@@ -400,7 +412,7 @@ pub fn gpu_resident_components(
                     a == "cpu" || a == "te=cpu" || a == "clip=cpu"
                 })
         });
-    required_components(registry, family, hw)
+    required_components_with(registry, family, hw, is_installed)
         .into_iter()
         .filter(|c| {
             !(te_on_cpu && matches!(c.kind.as_str(), "clip_l" | "clip_g" | "t5xxl" | "llm"))
