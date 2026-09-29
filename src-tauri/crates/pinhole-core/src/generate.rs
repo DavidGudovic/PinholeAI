@@ -14,8 +14,10 @@
 //! (`--backend te=cpu`, remembered per model for the app session; Settings
 //! `textEncoderOnCpu` can force it on or off); decoding / unknown stage →
 //! `--vae-tiling` if it isn't on yet; then (right away when denoising runs
-//! out) the weights stay in system memory and are streamed to the card
-//! (`--offload-to-cpu`, only while that engine stays loaded). Otherwise the error is `vram` with a
+//! out) more of the card is kept free (`--max-vram -4`, every GPU launch has
+//! `-2`, see [`VRAM_RESERVE_GIB`]); then the weights stay in system memory and
+//! are streamed to the card (`--offload-to-cpu`, only while that engine stays
+//! loaded). Otherwise the error is `vram` with a
 //! message that says what to do next (never the generic "couldn't make this
 //! image").
 //!
@@ -80,7 +82,27 @@ pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory whi
 pub(crate) const TILING_RETRY_NOTE: &str =
     "Your graphics card ran out of memory — trying once more with memory-saving settings.";
 pub(crate) const OFFLOAD_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with the model kept in system memory and sent to the card as needed (slower).";
-const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE, OFFLOAD_RETRY_NOTE];
+pub(crate) const MORE_ROOM_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with more of the card kept free and the model sent to it in parts (slower).";
+const RETRY_NOTES: &[&str] = &[
+    TE_RETRY_NOTE,
+    TILING_RETRY_NOTE,
+    MORE_ROOM_RETRY_NOTE,
+    OFFLOAD_RETRY_NOTE,
+];
+const MORE_ROOM_NOTE: &str = "This model keeps more of the graphics card free and is sent to it in parts, because the card ran out of memory earlier. Pictures take a bit longer.";
+/// Graphics memory (GiB) every GPU launch keeps free on top of the engine's own
+/// estimate (`--max-vram -2`). sd.cpp budgets weights + working memory + 0.5 GiB
+/// (backend_fit.cpp, model_manager.cpp `check_capacity`) and runs the whole
+/// model in one piece when that fits the free memory it measured. On Windows /
+/// CUDA the real use was ~0.85 GiB higher (a Krea 2 edit on a 16 GB card: 12.5 GB
+/// of weights staged, then 1.6 GB free for a 1.9 GB workspace), and the job
+/// failed with every weight held for that one piece, so nothing could be
+/// evicted. With a budget below free memory, a model that would only just fit
+/// runs in parts instead (ggml_runner.cpp segmented execution): the card caches
+/// what fits and the rest streams in, like Forge's reserved inference memory.
+pub(crate) const VRAM_RESERVE_GIB: u8 = 2;
+/// The reserve after running out of memory anyway ([`MORE_ROOM_RETRY_NOTE`]).
+pub(crate) const MORE_ROOM_RESERVE_GIB: u8 = 4;
 const OFFLOAD_NOTE: &str = "This model is kept in system memory and sent to the graphics card as needed, because the card ran out of memory. Pictures take longer until the model is next loaded.";
 /// System memory kept free when deciding whether a model fits there (OS, other apps).
 const OFFLOAD_SPARE_RAM_GB: f64 = 2.0;
@@ -248,6 +270,9 @@ pub(crate) struct MemFallback {
     /// make room for its working memory. Never remembered for the session: it
     /// only sticks while the engine that needed it stays loaded.
     pub offload: bool,
+    /// `--max-vram -N`: graphics memory (GiB) the engine keeps free beyond its
+    /// own estimate. 0 = don't pass it (CPU engine). See [`VRAM_RESERVE_GIB`].
+    pub vram_reserve_gib: u8,
 }
 
 /// Settings `textEncoderOnCpu`.
@@ -1009,6 +1034,11 @@ fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallb
             TeChoice::Off => false,
             TeChoice::Auto => fb.te_on_cpu,
         };
+    fb.vram_reserve_gib = if gpu_backend {
+        fb.vram_reserve_gib.max(VRAM_RESERVE_GIB)
+    } else {
+        0
+    };
     fb
 }
 
@@ -1050,7 +1080,30 @@ pub(crate) fn with_memory_choices(wiring_args: &[String], fb: MemFallback) -> Ve
     if fb.offload && !args.iter().any(|a| a == "--offload-to-cpu") {
         args.push("--offload-to-cpu".into());
     }
+    // A --max-vram from the registry (family / hardware profile) wins.
+    if fb.vram_reserve_gib > 0 && !has_max_vram(&args) {
+        args.extend(["--max-vram".into(), format!("-{}", fb.vram_reserve_gib)]);
+    }
     args
+}
+
+fn has_max_vram(args: &[String]) -> bool {
+    args.iter()
+        .any(|a| a == "--max-vram" || a.starts_with("--max-vram="))
+}
+
+/// The value of the last `flag value` / `flag=value` in `args`.
+fn flag_value(args: &[String], flag: &str) -> Option<String> {
+    let eq = format!("{flag}=");
+    let mut found = None;
+    for (i, a) in args.iter().enumerate() {
+        if a == flag {
+            found = args.get(i + 1).cloned();
+        } else if let Some(v) = a.strip_prefix(&eq) {
+            found = Some(v.to_string());
+        }
+    }
+    found
 }
 
 /// Weight files these launch args load (main model + components), in GiB.
@@ -1071,17 +1124,21 @@ fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
 }
 
 /// The next retry after running out of memory at `stage`, if any. Each
-/// choice is made at most once, so a job is retried at most three times:
+/// choice is made at most once, so a job is retried at most four times:
 /// * reading the prompt → text encoder on the processor (Settings Automatic,
-///   GPU backend, not there yet); with Settings Off → weights to system memory;
+///   GPU backend, not there yet); with Settings Off → more room, then weights
+///   to system memory;
 /// * decoding (VAE) or unknown → VAE tiling (not on yet and allowed), then
-///   weights to system memory;
-/// * denoising → weights to system memory right away (tiling only when they
-///   don't fit there). Tiling only helps the
-///   VAE, while sd.cpp auto-fit decides once, at launch, to keep the weights
-///   on the card with a fixed ~2 GB for working memory
-///   (src/core/backend_fit.cpp), so a bigger picture or a reference image has
-///   no room. Offloaded weights are only cached on the card and give way.
+///   more room, then weights to system memory;
+/// * denoising → more room, then weights to system memory (tiling only as a
+///   last resort: it only helps the VAE).
+///
+/// "More room" raises the graphics memory the engine keeps free from
+/// [`VRAM_RESERVE_GIB`] to [`MORE_ROOM_RESERVE_GIB`] (`--max-vram`), so a model
+/// that almost fits runs in parts and its weights give way to working memory.
+/// Weights in system memory alone don't help: sd.cpp still runs the model in
+/// one piece when its estimate fits, holding every weight on the card
+/// (src/core/ggml_runner.cpp), which is why the `--max-vram` budget stays on.
 ///
 /// Weights go to system memory only on a GPU backend and when they fit there
 /// (`offload_ok`, see [`offload_fits_ram`]). Returns the new choices and the note.
@@ -1109,6 +1166,20 @@ fn next_memory_fallback(
             },
             OFFLOAD_RETRY_NOTE,
         ));
+    // Only when the budget in `args` is Pinhole's own (not a registry --max-vram).
+    let own_reserve = flag_value(args, "--max-vram") == Some(format!("-{}", fb.vram_reserve_gib));
+    let more_room = (gpu_backend
+        && fb.vram_reserve_gib > 0
+        && fb.vram_reserve_gib < MORE_ROOM_RESERVE_GIB
+        && own_reserve)
+        .then_some((
+            MemFallback {
+                vram_reserve_gib: MORE_ROOM_RESERVE_GIB,
+                ..fb
+            },
+            MORE_ROOM_RETRY_NOTE,
+        ))
+        .or(offload);
     match stage {
         // No GPU, or the text encoder already on the processor: it's system memory.
         Stage::TextEncoder if !gpu_backend || text_encoder_on_cpu(args) => None,
@@ -1119,11 +1190,11 @@ fn next_memory_fallback(
             },
             TE_RETRY_NOTE,
         )),
-        Stage::TextEncoder => offload,
-        Stage::Diffusion if gpu_backend && offload_ok => offload,
+        Stage::TextEncoder => more_room,
+        Stage::Diffusion if gpu_backend && offload_ok => more_room,
         // Tiling as a last resort: the stage is read from the engine output.
-        Stage::Diffusion => tiling,
-        Stage::Vae | Stage::Unknown => tiling.or(offload),
+        Stage::Diffusion => more_room.or(tiling),
+        Stage::Vae | Stage::Unknown => tiling.or(more_room),
     }
 }
 
@@ -1242,6 +1313,9 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     }
     if fb.vae_tiling {
         notes.push(TILING_ON_NOTE.to_string());
+    }
+    if fb.vram_reserve_gib >= MORE_ROOM_RESERVE_GIB && core.gen.offloaded.lock().is_none() {
+        notes.push(MORE_ROOM_NOTE.to_string());
     }
     if core.gen.offloaded.lock().is_some() {
         notes.push(OFFLOAD_NOTE.to_string());
@@ -1853,8 +1927,8 @@ async fn generate_inner(
 
     // Engine (restart only when the launch args differ) + job. When the graphics
     // card runs out of memory, each memory-saving choice is tried once (text
-    // encoder on the processor, VAE tiling, weights in system memory), so there
-    // are at most three retries (see `next_memory_fallback`).
+    // encoder on the processor, VAE tiling, more of the card kept free, weights
+    // in system memory), so there are at most four retries (see `next_memory_fallback`).
     // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
     let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd)
         .map_or(hw.backend != "cpu", |e| e.backend != "cpu");
@@ -1903,6 +1977,7 @@ async fn generate_inner(
                     let entry = remembered.entry(prep.model.id.clone()).or_default();
                     entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
                     entry.vae_tiling |= next_fb.vae_tiling;
+                    entry.vram_reserve_gib = entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
                 }
                 fb = next_fb;
                 set_retry_note(core, note);
@@ -2855,6 +2930,65 @@ mod tests {
             next_memory_fallback(none, Stage::Vae, TeChoice::Auto, false, &gpu, true, true)
                 .unwrap();
         assert_eq!((fb.vae_tiling, fb.offload), (true, false));
+    }
+
+    /// Field report (Windows, RTX 5070 Ti 16 GB, Krea 2 edit at 864×1536): the
+    /// weights were already in system memory, yet sd.cpp staged all 12.5 GB of
+    /// them for a one-piece run and had 1.6 GB left for a 1.9 GB workspace. Every
+    /// GPU launch keeps 2 GB free (`--max-vram -2`), and the retry keeps 4 GB
+    /// free so the model runs in parts, instead of repeating the same launch.
+    #[test]
+    fn krea2_edit_workspace_failure_retries_with_more_room() {
+        let log = "[WARN   ] model_manager.cpp:1753 - model manager memory on CUDA0: reported free 1644.26 MB / total 16275.44 MB, tracked weights 12535.73 MB / other runtime 0.00 MB / current runtime 0.00 MB\n\
+                   [WARN   ] model_manager.cpp:1919 - model manager cannot make enough memory available on CUDA0: need 1861.73 MB device / 1349.73 MB budget, available 1644.26 MB device / unlimited budget\n\
+                   [ERROR  ] ggml_runner.cpp:899  - krea2 segment 1/1 (graph) failed during workspace capacity check\n\
+                   [ERROR  ] diffusion_engine.cpp:2594 - diffusion model compute failed\n\
+                   [ERROR  ] diffusion_engine.cpp:2733 - Diffusion model sampling failed\n\
+                   [ERROR  ] image.cpp:907  - sampling for image 1/1 failed after 3.73s";
+        let stage = memory_failure(log).expect("out of memory");
+        assert_eq!(stage, Stage::Diffusion);
+        let wiring = v(&["--diffusion-model", "/krea2.safetensors"]);
+        let fb = MemFallback {
+            vram_reserve_gib: VRAM_RESERVE_GIB,
+            ..Default::default()
+        };
+        let args = with_memory_choices(&wiring, fb);
+        assert_eq!(flag_value(&args, "--max-vram").as_deref(), Some("-2"));
+        let next = |fb, args: &[String]| {
+            next_memory_fallback(fb, stage, TeChoice::Auto, true, args, true, true)
+        };
+        let (fb, note) = next(fb, &args).unwrap();
+        assert_eq!(
+            (fb.vram_reserve_gib, fb.offload, note),
+            (MORE_ROOM_RESERVE_GIB, false, MORE_ROOM_RETRY_NOTE)
+        );
+        let args = with_memory_choices(&wiring, fb);
+        assert_eq!(flag_value(&args, "--max-vram").as_deref(), Some("-4"));
+        assert_eq!(args.iter().filter(|a| *a == "--max-vram").count(), 1);
+        // Then system memory, keeping the 4 GB budget; then nothing is left.
+        let (fb, note) = next(fb, &args).unwrap();
+        assert_eq!(
+            (fb.vram_reserve_gib, fb.offload, note),
+            (MORE_ROOM_RESERVE_GIB, true, OFFLOAD_RETRY_NOTE)
+        );
+        let args = with_memory_choices(&wiring, fb);
+        assert_eq!(flag_value(&args, "--max-vram").as_deref(), Some("-4"));
+        assert!(next(fb, &args).is_none());
+
+        // A --max-vram from the registry wins and isn't raised.
+        let pinned = v(&["--diffusion-model", "/d", "--max-vram", "6"]);
+        let fb = MemFallback {
+            vram_reserve_gib: VRAM_RESERVE_GIB,
+            ..Default::default()
+        };
+        let args = with_memory_choices(&pinned, fb);
+        assert_eq!(flag_value(&args, "--max-vram").as_deref(), Some("6"));
+        let (fb, note) = next(fb, &args).unwrap();
+        assert_eq!((fb.offload, note), (true, OFFLOAD_RETRY_NOTE));
+        // CPU engine: no budget at all.
+        assert!(!with_memory_choices(&wiring, MemFallback::default())
+            .iter()
+            .any(|a| a == "--max-vram"));
     }
 
     #[test]

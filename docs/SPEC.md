@@ -620,13 +620,20 @@ build is shared.
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
   processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
-  note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising runs out, the
+  note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising
+  runs out, more of the card is kept free (`--max-vram -4` instead of `-2`, remembered per model for
+  the app session, shown in the engine note); then the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
   every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
   model runs with the same settings, also after the idle stop — another model, other settings or
-  deleting it tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
-  at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
-  or a reference image has no room; offloaded weights are only cached there. "failed to encode prompt" without a memory line is not
+  deleting it tries the card again; the engine status says so meanwhile). Every GPU launch passes
+  `--max-vram -2` (unless the registry sets `--max-vram`): sd.cpp runs a model in one piece when
+  its own estimate (weights + working memory + 0.5 GB) fits the free memory it measured, holding
+  every weight on the card for that piece, and on Windows/CUDA the real use ran ~0.85 GB over that
+  estimate (a Krea 2 edit on a 16 GB card failed with 1.6 GB free for a 1.9 GB workspace, twice,
+  with the weights already in system memory). A budget below free memory makes a model that only
+  just fits run in parts instead: the card caches what fits and the rest streams in, slower but it
+  finishes, like Forge's reserved inference memory. "failed to encode prompt" without a memory line is not
   treated as running out of memory. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
   the smaller version of the model; the engine output stays behind Details, led by the engine's
