@@ -194,6 +194,61 @@ pub fn memory_plan(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Why a GPU-backend engine ended up without the graphics card (see [`missed_gpu`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissedGpu {
+    /// The card was found but had no free memory: auto-fit put everything on the processor.
+    NoFreeMemory,
+    /// The card wasn't found (e.g. Linux without NVIDIA's Vulkan driver): integrated
+    /// graphics or the processor does the work.
+    NotFound,
+}
+
+/// After a GPU-backend launch, from the auto-fit lines of its log: did the engine
+/// end up without the graphics card? `expect_nvidia`: the machine has an NVIDIA
+/// card, so a plan without one (or with no dedicated GPU at all) means it was
+/// missed. Machines with only integrated graphics also report "no GPU devices",
+/// so without `expect_nvidia` that alone isn't a problem. No auto-fit lines: `None`.
+pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
+    let fit: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.contains("backend_fit.cpp"))
+        .collect();
+    if fit
+        .iter()
+        .any(|l| l.contains("no GPU memory budget available"))
+    {
+        return Some(MissedGpu::NoFreeMemory);
+    }
+    // The chosen backends: `auto-fit: --backend "diffusion=CUDA0,te=cpu,..."`.
+    let diffusion_on_cpu = fit
+        .iter()
+        .filter(|l| l.contains("auto-fit: --backend"))
+        .any(|l| {
+            l.to_ascii_lowercase()
+                .split(['"', ','])
+                .any(|part| part.trim() == "diffusion=cpu")
+        });
+    if !expect_nvidia {
+        return None;
+    }
+    if diffusion_on_cpu || fit.iter().any(|l| l.contains("auto-fit: no GPU devices")) {
+        return Some(MissedGpu::NotFound);
+    }
+    // Device lines: "<name> <description> free N MiB, budget N MiB" (the RAM line says "params budget").
+    // CUDA device names start with "CUDA"; not every NVIDIA card has "NVIDIA" in its name.
+    let is_nvidia = |l: &str| {
+        let l = l.to_ascii_lowercase();
+        [
+            "cuda", "nvidia", "geforce", "quadro", "tesla", "titan", "rtx ",
+        ]
+        .iter()
+        .any(|k| l.contains(k))
+    };
+    let devices: Vec<&&String> = fit.iter().filter(|l| l.contains("MiB, budget")).collect();
+    (!devices.is_empty() && !devices.iter().any(|l| is_nvidia(l))).then_some(MissedGpu::NotFound)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,5 +366,50 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
         assert_eq!(plan.len(), 5);
         assert!(plan[0].ends_with("auto-fit plan:"));
         assert!(memory_plan(&log[..1]).is_empty());
+    }
+
+    #[test]
+    fn notices_when_the_engine_is_not_on_the_graphics_card() {
+        let log = |lines: &[&str]| lines.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        let on_card = log(&[
+            "[INFO ] backend_fit.cpp:323  - auto-fit plan:",
+            "[INFO ] backend_fit.cpp:326  -     Vulkan0      NVIDIA GeForce RTX 5070 Ti       free  15010 MiB, budget  14498 MiB",
+            "[INFO ] backend_fit.cpp:333  -     RAM          free  24000 MiB, params budget  21600 MiB",
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"diffusion=Vulkan0,te=Vulkan0,vae=Vulkan0\"",
+        ]);
+        assert_eq!(missed_gpu(&on_card, true), None);
+        // A working card without "NVIDIA" in its name.
+        let quadro = log(&["[INFO ] backend_fit.cpp:326  -     CUDA0        Quadro RTX 5000                  free  15010 MiB, budget  14498 MiB"]);
+        assert_eq!(missed_gpu(&quadro, true), None);
+        let igpu_only = log(&[
+            "[INFO ] backend_fit.cpp:326  -     Vulkan0      AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) free   2048 MiB, budget   1536 MiB",
+            "[INFO ] backend_fit.cpp:333  -     RAM          free  24000 MiB, params budget  21600 MiB",
+        ]);
+        assert_eq!(missed_gpu(&igpu_only, true), Some(MissedGpu::NotFound));
+        assert_eq!(
+            missed_gpu(&igpu_only, false),
+            None,
+            "an AMD machine is fine on its AMD card"
+        );
+        let no_dgpu = log(&[
+            "[WARN ] backend_fit.cpp:444  - auto-fit: no GPU devices; using the default backend",
+        ]);
+        assert_eq!(missed_gpu(&no_dgpu, true), Some(MissedGpu::NotFound));
+        assert_eq!(
+            missed_gpu(&no_dgpu, false),
+            None,
+            "a laptop with only integrated graphics uses it"
+        );
+        // Text encoder on the processor (explicit plan) and no card found: diffusion on the processor too.
+        let te_cpu = log(&[
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"te=cpu,diffusion=cpu,vae=cpu\"",
+        ]);
+        assert_eq!(missed_gpu(&te_cpu, true), Some(MissedGpu::NotFound));
+        let full = log(&[
+            "[WARN ] backend_fit.cpp:446  - auto-fit: no GPU memory budget available; using CPU",
+        ]);
+        assert_eq!(missed_gpu(&full, true), Some(MissedGpu::NoFreeMemory));
+        assert_eq!(missed_gpu(&full, false), Some(MissedGpu::NoFreeMemory));
+        assert_eq!(missed_gpu(&[], true), None);
     }
 }
