@@ -208,20 +208,29 @@ pub fn installed_component<'a>(
 }
 
 /// Components to install for `family` on this hardware: required ones plus,
-/// when `with_optional`, the tiny live-preview decoder. Deduplicated.
+/// when `with_optional`, the tiny live-preview decoder. Deduplicated. When
+/// the pick for this VRAM is not installed but another option of the same
+/// choice is (another quant of the text encoder), that one is used instead of
+/// downloading a second copy.
 pub fn wanted_components(
     registry: &Registry,
     family: &Family,
     hw: &HwContext,
+    index: &InstalledIndex,
     with_optional: bool,
 ) -> Vec<RequiredComponent> {
+    let installed = |id: &str| {
+        registry
+            .component(id)
+            .is_some_and(|c| installed_component(index, id, c).is_some())
+    };
     let mut out: Vec<RequiredComponent> = Vec::new();
     let mut add = |rc: RequiredComponent| {
         if !out.iter().any(|o| o.component_id == rc.component_id) {
             out.push(rc);
         }
     };
-    wiring::required_components(registry, family, hw)
+    wiring::required_components_with(registry, family, hw, &installed)
         .into_iter()
         .for_each(&mut add);
     if with_optional {
@@ -240,7 +249,7 @@ pub fn missing_components<'a>(
     index: &InstalledIndex,
     with_optional: bool,
 ) -> Vec<(String, &'a Component)> {
-    wanted_components(registry, family, hw, with_optional)
+    wanted_components(registry, family, hw, index, with_optional)
         .into_iter()
         .filter_map(|rc| {
             registry
