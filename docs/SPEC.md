@@ -266,7 +266,7 @@ Two sub-views: **Browse** and **Installed**.
 | Search | free text | `query` |
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
-  (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`).
+  (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`); a text search is paged by `page=N` (CivitAI sends no cursor for it), other browsing by `cursor`.
 - Turning Safe mode off requires a one-time "I'm 18 or older" confirmation per session (stored
   in RAM only). There is no "adult only" mode: the NSFW tag is the only way to narrow to those
   models, and it needs Safe mode off.
