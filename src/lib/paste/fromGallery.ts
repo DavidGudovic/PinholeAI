@@ -102,8 +102,9 @@ function sizeFromImage(meta: Meta, image: GalleryImageSize | null | undefined): 
   const w = image?.width;
   const h = image?.height;
   if (!w || !h || w <= 0 || h <= 0) return null;
-  const hires = Number(scalar(meta["Hires upscale"]));
-  const scale = Number.isFinite(hires) && hires > 1 ? hires : 1;
+  // Same reading and range as the paste parser's "Hires upscale".
+  const hires = parseFloat(scalar(meta["Hires upscale"]) ?? "");
+  const scale = Number.isFinite(hires) && hires > 1 && hires <= 8 ? hires : 1;
   const [bw, bh] = [Math.round(w / scale), Math.round(h / scale)];
   // Bigger than any model's first pass: probably upscaled again after generating.
   if (bw > MAX_GUESSED_SIDE || bh > MAX_GUESSED_SIDE) return null;
