@@ -312,9 +312,23 @@ pub fn precision_label(f: &ModelFile) -> String {
         ("fp16" | "bf16" | "fp32", false) => "Full quality".into(),
         ("fp8", false) => "Compact (FP8)".into(),
         ("int8", false) => "Compact (INT8)".into(),
-        _ if gguf => match crate::families::quant_suffix(&f.name) {
+        // CivitAI renames files to "<model>_<version>.gguf", which often drops the
+        // quant; a GGUF is almost always quantised (the Krea 2 "Dark Beast" file was
+        // Q4_K), so an unnamed one is not "Full quality".
+        _ if gguf => match crate::families::quant_suffix(&f.name)
+            .or_else(|| crate::families::quant_suffix(&fp))
+        {
             Some(s) => format!("Compact ({s})"),
-            None => "Full quality".into(),
+            None if [f.name.as_str(), fp.as_str()].iter().any(|n| {
+                matches!(
+                    crate::families::quant_of_file(n).as_str(),
+                    "fp16" | "bf16" | "fp32"
+                )
+            }) =>
+            {
+                "Full quality".into()
+            }
+            None => "Compact (GGUF)".into(),
         },
         _ => "Standard".into(),
     }
@@ -941,6 +955,14 @@ mod tests {
         assert_eq!(precision_label(&files[0]), "Full quality");
         assert_eq!(precision_label(&files[1]), "Compact (FP8)");
         assert_eq!(precision_label(&files[2]), "Compact (Q4)");
+        let renamed = file("darkBeast_k2t.gguf", Some("GGUF"), None, None, true, 7e6);
+        assert_eq!(precision_label(&renamed), "Compact (GGUF)");
+        let tagged = file("m_v1.gguf", Some("GGUF"), Some("Q8_0"), None, true, 7e6);
+        assert_eq!(precision_label(&tagged), "Compact (Q8)");
+        let full = file("flux1-dev-F16.gguf", Some("GGUF"), None, None, true, 7e6);
+        assert_eq!(precision_label(&full), "Full quality");
+        let full_fp = file("m_v1.gguf", Some("GGUF"), Some("bf16"), None, true, 7e6);
+        assert_eq!(precision_label(&full_fp), "Full quality");
         assert_eq!(installable_files(&files, &allowed()).len(), 3);
         // All-in-one families (SDXL, SD 1.5) keep the usual format: no GGUF stand-in.
         let same = |vram: f64| {

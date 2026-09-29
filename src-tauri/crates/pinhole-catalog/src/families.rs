@@ -468,6 +468,18 @@ pub fn quant_suffix(q: &str) -> Option<&'static str> {
     }
 }
 
+/// `Q4`, `Q3`… for a weight type of 4 bits or fewer (`q4_k`, `q4_0`, `iq4_xs`,
+/// `q3_k`… as read from the file header), else `None`. A 4-bit copy of a
+/// large diffusion model keeps the composition but adds a fine grain over the
+/// whole picture (a CivitAI Krea 2 Q4_K finetune next to an fp8 one on the
+/// same card), so the Installed list says so.
+pub fn low_bit_quant(dtype: &str) -> Option<String> {
+    let d = dtype.trim().to_ascii_lowercase();
+    let rest = d.strip_prefix("iq").or_else(|| d.strip_prefix('q'))?;
+    let bits = rest.chars().next()?.to_digit(10)?;
+    (1..=4).contains(&bits).then(|| format!("Q{bits}"))
+}
+
 pub fn file_name_from_url(url: &str) -> String {
     let path = url.split(['?', '#']).next().unwrap_or(url);
     path.rsplit('/').next().unwrap_or(path).to_string()
@@ -582,6 +594,12 @@ mod tests {
         assert!(quant_rank("q8_0") < quant_rank("q4_k"));
         assert_eq!(quant_suffix("q4_k"), Some("Q4"));
         assert_eq!(quant_suffix("bf16"), None);
+        assert_eq!(low_bit_quant("q4_k").as_deref(), Some("Q4"));
+        assert_eq!(low_bit_quant("IQ4_XS").as_deref(), Some("Q4"));
+        assert_eq!(low_bit_quant("q3_k").as_deref(), Some("Q3"));
+        for d in ["q5_k", "q6_k", "q8_0", "f8_e4m3", "bf16", "f16", "", "qwen"] {
+            assert_eq!(low_bit_quant(d), None, "{d}");
+        }
         assert_eq!(
             file_name_from_url("https://huggingface.co/a/b/resolve/main/x-Q4_K.gguf?download=true"),
             "x-Q4_K.gguf"
