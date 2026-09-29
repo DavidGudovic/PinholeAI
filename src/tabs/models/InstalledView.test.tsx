@@ -11,6 +11,9 @@ const api = vi.hoisted(() => ({
   modelsFolderInfo: vi.fn(() => Promise.resolve({ path: "/models", problem: null })),
   getHardware: vi.fn(() => Promise.resolve(null as unknown as HardwareView)),
   getRecommended: vi.fn<() => Promise<RecommendedPick[]>>(() => Promise.resolve([])),
+  getSettings: vi.fn<() => Promise<Settings>>(() =>
+    Promise.resolve({ gpu: "auto", vramOverrideGb: null, engineBackend: "auto", theme: "system" } as Settings),
+  ),
   previewDelete: vi.fn<(id: string) => Promise<DeletePreview>>(),
   onModelsChanged: vi.fn(() => Promise.resolve(() => undefined)),
   onHardwareReady: vi.fn((cb: () => void) => {
@@ -74,6 +77,22 @@ describe("InstalledView", () => {
     api.listModels.mockResolvedValue([model("tight")]);
     act(() => hw.ready.forEach((cb) => cb()));
     expect(await screen.findByText("Tight")).toBeTruthy();
+  });
+
+  it("doesn't refetch when the first save after mount only changes the theme", async () => {
+    api.listModels.mockResolvedValue([model("fits")]);
+    render(<InstalledView onBrowse={() => undefined} />);
+    expect(await screen.findByText("Fits")).toBeTruthy();
+    await waitFor(() => expect(api.getSettings).toHaveBeenCalled());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const models = api.listModels.mock.calls.length;
+    const recommended = api.getRecommended.mock.calls.length;
+
+    act(() => emitSettingsChanged(settings({ theme: "dark" })));
+    expect(api.listModels.mock.calls.length).toBe(models);
+    expect(api.getRecommended.mock.calls.length).toBe(recommended);
   });
 
   it("offers Try again when the delete check fails", async () => {
