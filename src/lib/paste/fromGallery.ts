@@ -86,14 +86,42 @@ function resources(meta: Meta, source: GallerySource | null): Meta[] {
   return out;
 }
 
+/** Pixel size of the gallery image itself (the final image, after any hires fix). */
+export interface GalleryImageSize {
+  width?: number | null;
+  height?: number | null;
+}
+
+const MAX_GUESSED_SIDE = 2048;
+
+/**
+ * "Size" for data that doesn't name one: the image's own size, divided by the
+ * hires upscale when there is one (Size is the first-pass size).
+ */
+function sizeFromImage(meta: Meta, image: GalleryImageSize | null | undefined): string | null {
+  const w = image?.width;
+  const h = image?.height;
+  if (!w || !h || w <= 0 || h <= 0) return null;
+  const hires = Number(scalar(meta["Hires upscale"]));
+  const scale = Number.isFinite(hires) && hires > 1 ? hires : 1;
+  const [bw, bh] = [Math.round(w / scale), Math.round(h / scale)];
+  // Bigger than any model's first pass: probably upscaled again after generating.
+  if (bw > MAX_GUESSED_SIDE || bh > MAX_GUESSED_SIDE) return null;
+  return `${bw}x${bh}`;
+}
+
 /** A1111-style generation text for a gallery image, or null when there is nothing to apply. */
-export function galleryGenerationText(meta: Meta | null | undefined, source: GallerySource | null): string | null {
+export function galleryGenerationText(
+  meta: Meta | null | undefined,
+  source: GallerySource | null,
+  image?: GalleryImageSize | null,
+): string | null {
   if (!isObj(meta)) return null;
   const prompt = scalar(meta.prompt) ?? "";
   const negative = scalar(meta.negativePrompt);
   const pairs: string[] = [];
   for (const [label, keys] of SETTINGS) {
-    const v = keys.map((k) => scalar(meta[k])).find((x) => x != null);
+    const v = keys.map((k) => scalar(meta[k])).find((x) => x != null) ?? (label === "Size" ? sizeFromImage(meta, image) : null);
     if (v != null) pairs.push(`${label}: ${settingValue(v)}`);
   }
   if (isObj(meta.hashes)) pairs.push(`Hashes: ${JSON.stringify(meta.hashes)}`);

@@ -1771,13 +1771,10 @@ async fn generate_inner(
             distilled_guidance: params.guidance,
         },
     };
-    body.hires = params.hires.as_ref().map(|h| HiresRequest {
-        enabled: true,
-        upscaler: None,
-        scale: h.scale,
-        steps: h.steps,
-        denoising_strength: h.denoising_strength,
-    });
+    body.hires = params
+        .hires
+        .as_ref()
+        .map(|h| HiresRequest::image_space(h.scale, h.steps, h.denoising_strength));
     body.vae_tiling_params = if params.vae_tiling {
         Some(VaeTilingRequest { enabled: true })
     } else if req.fine_tune.vae_tiling == Some(false) {
