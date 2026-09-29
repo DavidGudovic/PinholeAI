@@ -40,7 +40,7 @@ export const FALLBACK_OPTIONS: CatalogFilterOptions = {
     { key: "nsfw", label: "NSFW", needsSafeModeOff: true },
   ],
   sorts: [
-    { label: "Top rated", api: "Highest Rated" },
+    { label: "Most liked", api: "Most Liked" },
     { label: "Most downloaded", api: "Most Downloaded" },
     { label: "Newest", api: "Newest" },
   ],

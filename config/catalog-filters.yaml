@@ -144,7 +144,7 @@ safe_filter:
   max_preview_level: 1
 
 sort:
-  - { label: "Top rated",       api: "Highest Rated" }
+  - { label: "Most liked",      api: "Most Liked" }
   - { label: "Most downloaded", api: "Most Downloaded" }
   - { label: "Newest",          api: "Newest" }
 # Opening sort + time. "Most downloaded · All time" surfaces the mainstream models (Realistic
