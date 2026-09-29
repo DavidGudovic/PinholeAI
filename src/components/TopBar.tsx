@@ -24,7 +24,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const busyTab: TabId | null = jobKind === "edit" ? "edit" : jobKind ? "create" : null;
 
   return (
-    <header className="flex h-13 shrink-0 items-center gap-3 border-b border-neutral-200 bg-white/90 px-3 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/90">
+    <header className="flex h-13 shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-3 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="flex items-center gap-2 pr-1 pl-1">
         <Logo className="h-7 w-7 rounded-[7px] dark:ring-1 dark:ring-white/15" />
         <span className="hidden text-[15px] font-semibold tracking-tight md:inline">Pinhole</span>
