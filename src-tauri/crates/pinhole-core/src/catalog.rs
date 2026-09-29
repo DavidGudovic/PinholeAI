@@ -214,13 +214,50 @@ pub use pinhole_catalog::api::is_preview_url;
 
 // ------------------------------------------------------------------ install
 
-async fn fetch_version(
-    client: &CivitaiClient,
-    version_id: u64,
-) -> CoreResult<(
+type VersionAndModel = (
     pinhole_catalog::api::ModelVersion,
     Option<pinhole_catalog::api::Model>,
-)> {
+);
+
+/// How long a fetched version (+ its model) is reused: the Install dialog
+/// plans again for every file pick and Install fetches it once more.
+const VERSION_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(180);
+const VERSION_CACHE_MAX: usize = 8;
+
+/// Recent CivitAI `/model-versions/{id}` + `/models/{id}` answers. RAM only.
+#[derive(Default)]
+pub(crate) struct VersionCache(
+    parking_lot::Mutex<Vec<(u64, std::time::Instant, Arc<VersionAndModel>)>>,
+);
+
+impl VersionCache {
+    fn get(&self, version_id: u64) -> Option<Arc<VersionAndModel>> {
+        let mut entries = self.0.lock();
+        entries.retain(|(_, at, _)| at.elapsed() < VERSION_CACHE_TTL);
+        entries
+            .iter()
+            .find(|(id, _, _)| *id == version_id)
+            .map(|(_, _, v)| v.clone())
+    }
+
+    fn put(&self, version_id: u64, value: Arc<VersionAndModel>) {
+        let mut entries = self.0.lock();
+        entries.retain(|(id, _, _)| *id != version_id);
+        entries.push((version_id, std::time::Instant::now(), value));
+        if entries.len() > VERSION_CACHE_MAX {
+            entries.remove(0);
+        }
+    }
+}
+
+async fn fetch_version(
+    cache: &VersionCache,
+    client: &CivitaiClient,
+    version_id: u64,
+) -> CoreResult<Arc<VersionAndModel>> {
+    if let Some(hit) = cache.get(version_id) {
+        return Ok(hit);
+    }
     let version = client.model_version(version_id).await.map_err(net_error)?;
     // Best effort: license / commercial use / type live on the model.
     let model = if version.model_id > 0 {
@@ -228,7 +265,13 @@ async fn fetch_version(
     } else {
         None
     };
-    Ok((version, model))
+    // Kept only when complete, so a failed model fetch is tried again.
+    let complete = model.is_some() || version.model_id == 0;
+    let value = Arc::new((version, model));
+    if complete {
+        cache.put(version_id, value.clone());
+    }
+    Ok(value)
 }
 
 /// Everything the Install dialog shows before downloading (SPEC §5.4).
@@ -239,7 +282,8 @@ pub async fn plan_civitai_install(
 ) -> CoreResult<InstallPlan> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
-    let (version, model) = fetch_version(&client, version_id).await?;
+    let fetched = fetch_version(&core.models.versions, &client, version_id).await?;
+    let (version, model) = (&fetched.0, &fetched.1);
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
     let index = core.installed.lock().clone();
@@ -251,7 +295,7 @@ pub async fn plan_civitai_install(
         hw: &hw,
         filters: &filters,
     };
-    let plan = plan::build_plan(&env, &version, model.as_ref(), free, false, file_id);
+    let plan = plan::build_plan(&env, version, model.as_ref(), free, false, file_id);
     // Does the download need a key (401/403)? Only asked when there is
     // something to download.
     let picked = plan.file_options.iter().find(|o| o.selected).and_then(|o| {
@@ -286,12 +330,13 @@ pub async fn install_civitai(
 ) -> CoreResult<InstallStarted> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
-    let (version, model) = fetch_version(&client, version_id).await?;
+    let fetched = fetch_version(&core.models.versions, &client, version_id).await?;
+    let (version, model) = (&fetched.0, &fetched.1);
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
     let index = core.installed.lock().clone();
 
-    let kind = plan::version_kind(&version, model.as_ref());
+    let kind = plan::version_kind(version, model.as_ref());
     let is_lora = filters.is_lora_type(&kind);
     let file = select::select_file(&version.files, &filters.allowed_file_formats)
         .map_err(CoreError::invalid)?;
@@ -329,7 +374,7 @@ pub async fn install_civitai(
         filters: &filters,
     };
     let install =
-        plan::civitai_install_files(&env, &version, model.as_ref(), family.as_deref(), file_id)
+        plan::civitai_install_files(&env, version, model.as_ref(), family.as_deref(), file_id)
             .map_err(CoreError::invalid)?;
     if install.files.is_empty() {
         return Err(CoreError::invalid("This model is already installed."));
@@ -356,6 +401,43 @@ pub async fn install_civitai(
 mod tests {
     use super::*;
     use crate::app::tests::{test_core, Recorder};
+
+    /// Re-planning for another file pick (and Install) reuses the version and
+    /// model it just fetched instead of asking CivitAI again.
+    #[tokio::test]
+    async fn install_dialog_reuses_the_fetched_version() {
+        use pinhole_net::testutil::{MockResponse, MockServer};
+        let srv = MockServer::start(|req| match req.path.as_str() {
+            "/model-versions/7" => {
+                MockResponse::json(&serde_json::json!({ "id": 7, "modelId": 70 }))
+            }
+            "/model-versions/8" => {
+                MockResponse::json(&serde_json::json!({ "id": 8, "modelId": 80 }))
+            }
+            "/models/70" => MockResponse::json(&serde_json::json!({ "id": 70, "name": "M" })),
+            _ => MockResponse::status(500),
+        })
+        .await;
+        let http =
+            pinhole_net::HttpClient::new_for_tests(pinhole_net::OfflineFlag::new(false), true)
+                .unwrap();
+        let client = CivitaiClient::with_base(http, None, srv.url(""));
+        let cache = VersionCache::default();
+        let count = |p: &str| srv.requests().iter().filter(|r| r.path == p).count();
+        for _ in 0..3 {
+            let got = fetch_version(&cache, &client, 7).await.unwrap();
+            assert_eq!(got.0.id, 7);
+            assert_eq!(got.1.as_ref().map(|m| m.id), Some(70));
+        }
+        assert_eq!(count("/model-versions/7"), 1);
+        assert_eq!(count("/models/70"), 1);
+        // The model fetch failed: not kept, so the next plan tries again.
+        for _ in 0..2 {
+            let got = fetch_version(&cache, &client, 8).await.unwrap();
+            assert!(got.1.is_none());
+        }
+        assert_eq!(count("/model-versions/8"), 2);
+    }
 
     #[tokio::test]
     async fn offline_browse_and_preview_guard() {

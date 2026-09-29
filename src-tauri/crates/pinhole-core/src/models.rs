@@ -48,6 +48,8 @@ pub struct ModelsState {
     pub(crate) filters: OnceLock<Arc<CatalogFilters>>,
     /// Recent CivitAI `/models` answers (RAM only; see `pinhole_catalog::cache`).
     pub(crate) page_cache: OnceLock<Arc<PageCache>>,
+    /// Recent CivitAI version + model answers for the Install dialog (RAM only).
+    pub(crate) versions: crate::catalog::VersionCache,
     /// Bumped by every Browse request; an older one still paging stops early.
     pub(crate) browse_gen: AtomicU64,
     /// A purge of expired cache entries is scheduled.
