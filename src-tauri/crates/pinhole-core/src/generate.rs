@@ -324,6 +324,9 @@ pub struct GenState {
     /// unload. The same model with the same settings keeps them there, also
     /// after the idle stop, so it doesn't run out of memory on the card again.
     pub(crate) offloaded: parking_lot::Mutex<Option<(String, Vec<String>)>>,
+    /// Set at each launch: the note when a GPU-backend engine isn't using the
+    /// graphics card (see `pinhole_engine::failure::missed_gpu`).
+    pub(crate) not_on_gpu: parking_lot::Mutex<Option<String>>,
     /// Tests: the launch args each run asked an external engine for.
     pub(crate) external_launches: parking_lot::Mutex<Vec<Vec<String>>>,
     /// Model id + launch args while an engine loads (it holds `slot` meanwhile).
@@ -349,6 +352,7 @@ impl Default for GenState {
             gpu_others: parking_lot::Mutex::new(None),
             memory_plan: parking_lot::Mutex::new(None),
             offloaded: parking_lot::Mutex::new(None),
+            not_on_gpu: parking_lot::Mutex::new(None),
             external_launches: parking_lot::Mutex::new(Vec::new()),
             loading: parking_lot::Mutex::new(None),
         }
@@ -854,7 +858,11 @@ fn emit_progress(
     step: Option<(u32, u32)>,
     t0: Instant,
 ) {
-    let note = core.gen.job_note.lock().join(" ");
+    let mut notes = core.gen.job_note.lock().clone();
+    if let Some(n) = core.gen.not_on_gpu.lock().clone() {
+        notes.insert(0, n);
+    }
+    let note = notes.join(" ");
     core.emit(CoreEvent::Generation(GenerationProgress {
         phase,
         model_label: Some(label.to_string()),
@@ -1204,7 +1212,7 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     if !flags.running {
         return None;
     }
-    let mut notes = Vec::new();
+    let mut notes: Vec<String> = core.gen.not_on_gpu.lock().iter().cloned().collect();
     let fb = flags
         .loaded_model_id
         .as_ref()
@@ -1356,6 +1364,30 @@ fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
         .then(|| (model_id.to_string(), wiring_args.to_vec()));
 }
 
+/// Shown while the engine runs when a GPU build ended up without the graphics card.
+pub(crate) const NOT_ON_GPU_NOTE: &str = "The engine isn't using your graphics card, so pictures are made much more slowly. Update or reinstall your graphics driver, then restart Pinhole.";
+/// Same, for Linux with an NVIDIA card: the engine reaches it through the NVIDIA Vulkan driver.
+pub(crate) const NOT_ON_GPU_NOTE_LINUX_NVIDIA: &str = "The engine can't reach your NVIDIA card, so pictures are made much more slowly. On Linux it needs NVIDIA's Vulkan driver: reinstall the NVIDIA driver (on Ubuntu: sudo ubuntu-drivers install), check that vulkaninfo --summary lists your card, then restart Pinhole.";
+/// The card was found but was full when the engine started.
+pub(crate) const GPU_FULL_NOTE: &str = "Your graphics card had no free memory when the model loaded, so pictures are made on the processor (much slower). Close other programs that use the card, then pick the model again.";
+
+fn not_on_gpu_note(core: &AppCore, gpu_backend: bool, log: &[String]) -> Option<String> {
+    if !gpu_backend {
+        return None;
+    }
+    let nvidia = crate::app::effective(core)
+        .gpu
+        .is_some_and(|g| g.vendor == pinhole_hardware::Vendor::Nvidia);
+    let note = match pinhole_engine::failure::missed_gpu(log, nvidia)? {
+        pinhole_engine::failure::MissedGpu::NoFreeMemory => GPU_FULL_NOTE,
+        pinhole_engine::failure::MissedGpu::NotFound if nvidia && cfg!(target_os = "linux") => {
+            NOT_ON_GPU_NOTE_LINUX_NVIDIA
+        }
+        pinhole_engine::failure::MissedGpu::NotFound => NOT_ON_GPU_NOTE,
+    };
+    Some(note.to_string())
+}
+
 /// Clears `GenState::loading` when [`ensure_engine`] returns, on every path.
 struct LoadingMark<'a>(&'a AppCore);
 
@@ -1407,6 +1439,7 @@ async fn ensure_engine(
         old.stop().await;
     }
     *slot = EngineSlot::default();
+    *core.gen.not_on_gpu.lock() = None;
     {
         let mut f = core.gen.flags.lock();
         f.running = false;
@@ -1492,10 +1525,12 @@ async fn ensure_engine(
     };
     match ready {
         Ok(()) => {
-            let plan = pinhole_engine::failure::memory_plan(&core.gen.logs.tail(usize::MAX));
+            let log = core.gen.logs.tail(usize::MAX);
+            let plan = pinhole_engine::failure::memory_plan(&log);
             if !plan.is_empty() {
                 *core.gen.memory_plan.lock() = Some((model_id.to_string(), plan));
             }
+            *core.gen.not_on_gpu.lock() = not_on_gpu_note(core, gpu_backend, &log);
             note_offload(core, model_id, wiring_args);
             slot.proc = Some(proc);
             slot.args = args;
