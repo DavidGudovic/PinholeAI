@@ -95,7 +95,11 @@ fn required_components_resolve_vram_choices() {
         (0.0, "qwen3_4b_q4km"),
     ] {
         for f in ["z_image_turbo", "z_image_base", "flux2_klein_4b"] {
-            let want = if f == "flux2_klein_4b" { "flux2_vae" } else { "flux_ae" };
+            let want = if f == "flux2_klein_4b" {
+                "flux2_vae"
+            } else {
+                "flux_ae"
+            };
             assert_eq!(
                 comps(&required_components(reg, fam(f), &hw(vram))),
                 vec![("vae", want), ("llm", te)],
@@ -177,14 +181,39 @@ fn installed_option_of_a_vram_choice_is_used() {
             .map(|c| c.component_id)
             .unwrap()
     };
-    assert_eq!(llm(&[], 16.0), "qwen3_4b_q8", "nothing installed: the pick for this VRAM");
-    assert_eq!(llm(&["qwen3_4b_q8", "qwen3_4b"], 16.0), "qwen3_4b_q8", "the pick wins when installed");
-    assert_eq!(llm(&["qwen3_4b"], 16.0), "qwen3_4b", "a larger installed option");
-    assert_eq!(llm(&["qwen3_4b", "qwen3_4b_q4km"], 16.0), "qwen3_4b_q4km", "closest smaller first");
-    assert_eq!(llm(&["qwen3_4b_q8"], 8.0), "qwen3_4b_q8", "closest larger when nothing smaller");
+    assert_eq!(
+        llm(&[], 16.0),
+        "qwen3_4b_q8",
+        "nothing installed: the pick for this VRAM"
+    );
+    assert_eq!(
+        llm(&["qwen3_4b_q8", "qwen3_4b"], 16.0),
+        "qwen3_4b_q8",
+        "the pick wins when installed"
+    );
+    assert_eq!(
+        llm(&["qwen3_4b"], 16.0),
+        "qwen3_4b",
+        "a larger installed option"
+    );
+    assert_eq!(
+        llm(&["qwen3_4b", "qwen3_4b_q4km"], 16.0),
+        "qwen3_4b_q4km",
+        "closest smaller first"
+    );
+    assert_eq!(
+        llm(&["qwen3_4b_q8"], 8.0),
+        "qwen3_4b_q8",
+        "closest larger when nothing smaller"
+    );
     // Fixed components are unaffected.
     assert_eq!(
-        comps(&required_components_with(reg, fam("z_image_turbo"), &hw(16.0), &|_| false)),
+        comps(&required_components_with(
+            reg,
+            fam("z_image_turbo"),
+            &hw(16.0),
+            &|_| false
+        )),
         comps(&required_components(reg, fam("z_image_turbo"), &hw(16.0)))
     );
 }
@@ -201,10 +230,19 @@ fn launch_args_z_image_turbo_16gb_cuda() {
         .collect();
     assert_eq!(
         te,
-        vec![("vae".to_string(), "flux_ae".to_string()), ("llm".to_string(), "qwen3_4b_q8".to_string())]
+        vec![
+            ("vae".to_string(), "flux_ae".to_string()),
+            ("llm".to_string(), "qwen3_4b_q8".to_string())
+        ]
     );
-    assert_eq!(reg.component("qwen3_4b_q8").unwrap().file, "Qwen3-4B-Q8_0.gguf");
-    assert_eq!(reg.hardware_profile(16.0).prefer_quant.as_deref(), Some("q8_0"));
+    assert_eq!(
+        reg.component("qwen3_4b_q8").unwrap().file,
+        "Qwen3-4B-Q8_0.gguf"
+    );
+    assert_eq!(
+        reg.hardware_profile(16.0).prefer_quant.as_deref(),
+        Some("q8_0")
+    );
     let f = files(
         "z_image_turbo",
         Layout::DiffusionOnly,
@@ -331,7 +369,13 @@ fn launch_args_other_families_and_overrides() {
     };
     assert_eq!(
         launch_args(reg, &x, &hw(6.0), &no_tiling),
-        vec!["--model", "/m/juggernaut.safetensors", "--vae", "/c/fix", "--diffusion-fa"]
+        vec![
+            "--model",
+            "/m/juggernaut.safetensors",
+            "--vae",
+            "/c/fix",
+            "--diffusion-fa"
+        ]
     );
     let tiling = LaunchExtras {
         vae_tiling: Some(true),
@@ -348,7 +392,12 @@ fn launch_args_other_families_and_overrides() {
     let s = files("sd15", Layout::AllInOne, "/m/sd15.safetensors", &[]);
     assert_eq!(
         launch_args(reg, &s, &hw(0.0), &LaunchExtras::default()),
-        vec!["--model", "/m/sd15.safetensors", "--diffusion-fa", "--vae-tiling"]
+        vec![
+            "--model",
+            "/m/sd15.safetensors",
+            "--diffusion-fa",
+            "--vae-tiling"
+        ]
     );
 
     // Profile flags merge with family flags: bools de-dup, list options comma-merge.
@@ -827,7 +876,10 @@ fn wired(family: &str, main: &str, vram: f32) -> Vec<String> {
         .into_iter()
         .map(|c| (c.kind, format!("/c/{}", c.component_id)))
         .collect();
-    let comps: Vec<(&str, &str)> = comps.iter().map(|(k, p)| (k.as_str(), p.as_str())).collect();
+    let comps: Vec<(&str, &str)> = comps
+        .iter()
+        .map(|(k, p)| (k.as_str(), p.as_str()))
+        .collect();
     launch_args(
         reg,
         &files(family, f.layout, main, &comps),
@@ -840,7 +892,11 @@ fn wired(family: &str, main: &str, vram: f32) -> Vec<String> {
 fn launch_args_krea2() {
     // docs/krea2.md: --diffusion-model + --llm Qwen3-VL-4B + --vae (Wan 2.1 layout) + --diffusion-fa.
     assert_eq!(
-        wired("krea2_turbo", "/m/krea2_turbo_int8_convrot.safetensors", 16.0),
+        wired(
+            "krea2_turbo",
+            "/m/krea2_turbo_int8_convrot.safetensors",
+            16.0
+        ),
         vec![
             "--diffusion-model",
             "/m/krea2_turbo_int8_convrot.safetensors",
@@ -876,11 +932,19 @@ fn launch_args_krea2() {
     );
     assert_eq!((p.steps, p.cfg, p.width, p.height), (8, 1.0, 1024, 1024));
     assert_eq!(p.sampler.as_deref(), Some("euler"));
-    assert_eq!(p.scheduler, None, "engine default + its Krea 2 flow shift (1.15)");
+    assert_eq!(
+        p.scheduler, None,
+        "engine default + its Krea 2 flow shift (1.15)"
+    );
     let raw = resolve_params(
         reg,
         fam("krea2_raw"),
-        &dials(Shape::Square, Quality::Best, family_ui(reg, fam("krea2_raw")).stick_default, 1),
+        &dials(
+            Shape::Square,
+            Quality::Best,
+            family_ui(reg, fam("krea2_raw")).stick_default,
+            1,
+        ),
         &FineTune::default(),
         GenMode::Txt2img,
         &hw(16.0),
@@ -906,9 +970,15 @@ fn launch_args_anima() {
     );
     let reg = shipped();
     let ui = family_ui(reg, fam("anima"));
-    assert_eq!(ui.auto_prompt_prefix.as_deref(), Some("masterpiece, best quality, score_7, safe, "));
+    assert_eq!(
+        ui.auto_prompt_prefix.as_deref(),
+        Some("masterpiece, best quality, score_7, safe, ")
+    );
     assert!(ui.uses_negative_prompt && ui.default_negative_prompt.is_some());
-    assert_eq!(reg.style_template(&fam("anima").style_template), Some("{prompt}, {style}"));
+    assert_eq!(
+        reg.style_template(&fam("anima").style_template),
+        Some("{prompt}, {style}")
+    );
     let turbo = family_ui(reg, fam("anima_turbo"));
     assert!(!turbo.show_stick && !turbo.uses_negative_prompt);
     assert_eq!(turbo.quality_steps, [8, 10, 12]);
@@ -959,8 +1029,18 @@ fn launch_args_flux2_klein_and_dev() {
     );
     let reg = shipped();
     let d = dials(Shape::Portrait, Quality::Balanced, 0.5, 2);
-    let k = resolve_params(reg, fam("flux2_klein_4b"), &d, &FineTune::default(), GenMode::Txt2img, &hw(16.0));
-    assert_eq!((k.steps, k.cfg, k.guidance, k.batch_count), (4, 1.0, None, 2));
+    let k = resolve_params(
+        reg,
+        fam("flux2_klein_4b"),
+        &d,
+        &FineTune::default(),
+        GenMode::Txt2img,
+        &hw(16.0),
+    );
+    assert_eq!(
+        (k.steps, k.cfg, k.guidance, k.batch_count),
+        (4, 1.0, None, 2)
+    );
     assert_eq!((k.width, k.height), (832, 1216));
     let b = family_ui(reg, fam("flux2_klein_4b_base"));
     assert!(b.show_stick && b.stick_maps_to == "cfg" && approx(b.default_cfg, 4.0));
@@ -990,7 +1070,11 @@ fn launch_args_other_new_families() {
         reg,
         fam("qwen_image_21"),
         &dials(Shape::Square, Quality::Balanced, 0.5, 1),
-        &FineTune { width: Some(1000), height: Some(1000), ..Default::default() },
+        &FineTune {
+            width: Some(1000),
+            height: Some(1000),
+            ..Default::default()
+        },
         GenMode::Txt2img,
         &hw(16.0),
     );
@@ -1025,7 +1109,11 @@ fn launch_args_other_new_families() {
     );
     // HiDream-O1: one file, --model, nothing else.
     assert_eq!(
-        wired("hidream_o1_dev", "/m/hidream_o1_image_dev_fp8_scaled.safetensors", 24.0),
+        wired(
+            "hidream_o1_dev",
+            "/m/hidream_o1_image_dev_fp8_scaled.safetensors",
+            24.0
+        ),
         vec!["--model", "/m/hidream_o1_image_dev_fp8_scaled.safetensors"]
     );
     // ERNIE-Image and Mage-Flow.
@@ -1062,7 +1150,9 @@ fn minimax_h3_is_not_wired() {
     // sd_version_supports_image_generation), so no family claims it.
     let reg = shipped();
     assert!(reg.families_for_base_model("MiniMax H3").is_empty());
-    assert!(!reg.all_civitai_base_models().contains(&"MiniMax H3".to_string()));
+    assert!(!reg
+        .all_civitai_base_models()
+        .contains(&"MiniMax H3".to_string()));
 }
 
 #[test]

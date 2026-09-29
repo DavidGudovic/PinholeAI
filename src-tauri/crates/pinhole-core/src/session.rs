@@ -55,7 +55,14 @@ impl Session {
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
         }
-        let img = SessionImage { id: meta.id.clone(), bytes: Arc::new(png), kind: Kind::Png, width: meta.width, height: meta.height, meta: Some(meta) };
+        let img = SessionImage {
+            id: meta.id.clone(),
+            bytes: Arc::new(png),
+            kind: Kind::Png,
+            width: meta.width,
+            height: meta.height,
+            meta: Some(meta),
+        };
         images.insert(img.id.clone(), img);
         true
     }
@@ -107,12 +114,27 @@ impl Session {
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
     let (bytes, width, height) = if info.kind == Kind::Png {
-        (pinhole_engine::png::scrub(&bytes).map_err(|_| CoreError::invalid("The PNG file is damaged."))?, info.width, info.height)
+        (
+            pinhole_engine::png::scrub(&bytes)
+                .map_err(|_| CoreError::invalid("The PNG file is damaged."))?,
+            info.width,
+            info.height,
+        )
     } else {
-        img::reencode_png(&bytes).map_err(|e| CoreError::invalid("This image couldn't be read. Try saving it as PNG first.").with_details(e.to_string()))?
+        img::reencode_png(&bytes).map_err(|e| {
+            CoreError::invalid("This image couldn't be read. Try saving it as PNG first.")
+                .with_details(e.to_string())
+        })?
     };
     let id = uuid::Uuid::new_v4().to_string();
-    core.session.insert(SessionImage { id: id.clone(), bytes: Arc::new(bytes), kind: Kind::Png, width, height, meta: None });
+    core.session.insert(SessionImage {
+        id: id.clone(),
+        bytes: Arc::new(bytes),
+        kind: Kind::Png,
+        width,
+        height,
+        meta: None,
+    });
     Ok(ImportedImage { id, width, height })
 }
 
@@ -140,7 +162,9 @@ pub async fn clear(core: &AppCore) {
 /// RGBA8 pixels for the clipboard.
 pub fn decode_rgba(core: &AppCore, id: &str) -> CoreResult<(Vec<u8>, u32, u32)> {
     let im = core.session.get(id).ok_or_else(missing)?;
-    img::decode_rgba(&im.bytes).map_err(|e| CoreError::invalid("This image couldn't be decoded.").with_details(e.to_string()))
+    img::decode_rgba(&im.bytes).map_err(|e| {
+        CoreError::invalid("This image couldn't be decoded.").with_details(e.to_string())
+    })
 }
 
 fn missing() -> CoreError {
@@ -170,8 +194,10 @@ fn bytes_for_save(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let with_settings = core.settings.read().saved_metadata == "settings";
     match (&im.meta, im.kind, with_settings) {
         (Some(m), Kind::Png, true) => {
-            let clean = pinhole_engine::png::scrub(&im.bytes).map_err(|_| CoreError::internal("The image in memory is damaged."))?;
-            pinhole_engine::png::add_text_chunk(&clean, "pinhole", &settings_text(m)).map_err(|_| CoreError::internal("Couldn't add the settings to the image."))
+            let clean = pinhole_engine::png::scrub(&im.bytes)
+                .map_err(|_| CoreError::internal("The image in memory is damaged."))?;
+            pinhole_engine::png::add_text_chunk(&clean, "pinhole", &settings_text(m))
+                .map_err(|_| CoreError::internal("Couldn't add the settings to the image."))
         }
         _ => Ok(im.bytes.as_ref().clone()),
     }
@@ -185,26 +211,43 @@ pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
     let dir = core.data.outputs();
     fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
-    let tag = im.meta.as_ref().map(|m| m.seed.to_string()).unwrap_or_else(|| "import".into());
+    let tag = im
+        .meta
+        .as_ref()
+        .map(|m| m.seed.to_string())
+        .unwrap_or_else(|| "import".into());
     let base = format!("pinhole_{stamp}_{tag}");
     let ext = im.kind.ext();
     for n in 1..10_000u32 {
-        let name = if n == 1 { format!("{base}.{ext}") } else { format!("{base}_{n}.{ext}") };
+        let name = if n == 1 {
+            format!("{base}.{ext}")
+        } else {
+            format!("{base}_{n}.{ext}")
+        };
         let path = dir.join(name);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(&bytes).and_then(|_| f.sync_all()) {
                     drop(f);
                     let _ = fs::remove_file(&path);
                     return Err(io_err(&path, e));
                 }
-                return Ok(SavedImage { path: path.to_string_lossy().into_owned() });
+                return Ok(SavedImage {
+                    path: path.to_string_lossy().into_owned(),
+                });
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(io_err(&path, e)),
         }
     }
-    Err(CoreError::new("io", "Couldn't find a free file name in the outputs folder."))
+    Err(CoreError::new(
+        "io",
+        "Couldn't find a free file name in the outputs folder.",
+    ))
 }
 
 /// Save to a user-chosen path (from the save dialog). A missing or wrong
@@ -213,13 +256,18 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
     let im = core.session.get(id).ok_or_else(missing)?;
     let mut path = PathBuf::from(path);
     if !path.is_absolute() || path.file_name().is_none() {
-        return Err(CoreError::invalid("Pick a folder and file name to save to."));
+        return Err(CoreError::invalid(
+            "Pick a folder and file name to save to.",
+        ));
     }
-    let ext_ok = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).is_some_and(|e| match im.kind {
-        Kind::Png => e == "png",
-        Kind::Jpeg => e == "jpg" || e == "jpeg",
-        Kind::Webp => e == "webp",
-    });
+    let ext_ok = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .is_some_and(|e| match im.kind {
+            Kind::Png => e == "png",
+            Kind::Jpeg => e == "jpg" || e == "jpeg",
+            Kind::Webp => e == "webp",
+        });
     if !ext_ok {
         let mut name = path.file_name().unwrap_or_default().to_os_string();
         name.push(format!(".{}", im.kind.ext()));
@@ -227,11 +275,15 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
     }
     let bytes = bytes_for_save(core, &im)?;
     write_file(&path, &bytes)?;
-    Ok(SavedImage { path: path.to_string_lossy().into_owned() })
+    Ok(SavedImage {
+        path: path.to_string_lossy().into_owned(),
+    })
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> CoreResult<()> {
-    let dir = path.parent().ok_or_else(|| CoreError::invalid("Pick a folder to save to."))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| CoreError::invalid("Pick a folder to save to."))?;
     let tmp = dir.join(format!(".pinhole-save-{}.tmp", uuid::Uuid::new_v4()));
     let res = (|| -> std::io::Result<()> {
         let mut f = fs::File::create(&tmp)?;
@@ -252,7 +304,14 @@ fn write_file(path: &Path, bytes: &[u8]) -> CoreResult<()> {
 }
 
 fn io_err(path: &Path, e: std::io::Error) -> CoreError {
-    CoreError::new("io", format!("Couldn't save to {}. Check the folder exists and you can write to it.", path.display())).with_details(e.to_string())
+    CoreError::new(
+        "io",
+        format!(
+            "Couldn't save to {}. Check the folder exists and you can write to it.",
+            path.display()
+        ),
+    )
+    .with_details(e.to_string())
 }
 
 #[cfg(test)]
@@ -301,7 +360,10 @@ mod tests {
         let epoch = s.epoch();
         assert!(s.insert_generated_since(epoch, png.clone(), meta("a")));
         s.clear();
-        assert!(!s.insert_generated_since(epoch, png.clone(), meta("b")), "Reset happened since the job started");
+        assert!(
+            !s.insert_generated_since(epoch, png.clone(), meta("b")),
+            "Reset happened since the job started"
+        );
         assert!(s.is_empty());
         assert!(s.insert_generated_since(s.epoch(), png, meta("c")));
     }

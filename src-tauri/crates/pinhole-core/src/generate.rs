@@ -36,10 +36,15 @@ use pinhole_engine::install::EngineKind;
 use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
 use pinhole_engine::pins::EngineConfig;
 use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
-use pinhole_engine::sdapi::{ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef, SampleParams, SdClient, UpscaleRequest, VaeTilingRequest};
+use pinhole_engine::sdapi::{
+    ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef,
+    SampleParams, SdClient, UpscaleRequest, VaeTilingRequest,
+};
 use pinhole_hardware::OtherGpuUse;
 use pinhole_registry::style::FinalPrompt;
-use pinhole_registry::wiring::{self, Dials, FamilyUi, FineTune, GenMode, HwContext, LaunchExtras, ModelFiles, Quality, Shape};
+use pinhole_registry::wiring::{
+    self, Dials, FamilyUi, FineTune, GenMode, HwContext, LaunchExtras, ModelFiles, Quality, Shape,
+};
 use pinhole_registry::{Family, Layout};
 use pinhole_store::datadir::ModelKind;
 use pinhole_store::InstalledFile;
@@ -72,7 +77,8 @@ pub const TE_ON_GPU_MESSAGE: &str = "Your graphics card ran out of memory while 
 /// A job that doesn't say why it failed.
 pub const UNKNOWN_JOB_MESSAGE: &str = "The engine couldn't make this image. Try again with different settings (e.g. the Fast setting or a smaller size).";
 pub(crate) const TE_RETRY_NOTE: &str = "Your graphics card ran out of memory while reading your prompt — trying again with that step on the processor (a bit slower).";
-pub(crate) const TILING_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying once more with memory-saving settings.";
+pub(crate) const TILING_RETRY_NOTE: &str =
+    "Your graphics card ran out of memory — trying once more with memory-saving settings.";
 pub(crate) const OFFLOAD_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with the model kept in system memory and sent to the card as needed (slower).";
 const RETRY_NOTES: &[&str] = &[TE_RETRY_NOTE, TILING_RETRY_NOTE, OFFLOAD_RETRY_NOTE];
 const OFFLOAD_NOTE: &str = "This model is kept in system memory and sent to the graphics card as needed, because the card ran out of memory. Pictures take longer until the model is next loaded.";
@@ -128,7 +134,12 @@ impl GenerateRequest {
             mode: GenMode::Txt2img,
             prompt: prompt.into(),
             style_id: None,
-            dials: Dials { shape: Shape::Square, quality: Quality::Fast, stick: 0.5, count: 1 },
+            dials: Dials {
+                shape: Shape::Square,
+                quality: Quality::Fast,
+                stick: 0.5,
+                count: 1,
+            },
             fine_tune: FineTune::default(),
             loras: Vec::new(),
             add_trigger_words: true,
@@ -376,8 +387,14 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
     let mut slot = core.gen.slot.lock().await;
     // Also when the running engine has one of the files open (a shared
     // component): Windows can't delete a mapped file (`--mmap`).
-    let per_job_dirs = [core.data.models(ModelKind::Lora), core.data.models(ModelKind::Upscaler)];
-    let uses_file = files.iter().any(|f| slot.args.iter().any(|a| Path::new(a) == f.as_path()) || per_job_dirs.iter().any(|d| f.starts_with(d)));
+    let per_job_dirs = [
+        core.data.models(ModelKind::Lora),
+        core.data.models(ModelKind::Upscaler),
+    ];
+    let uses_file = files.iter().any(|f| {
+        slot.args.iter().any(|a| Path::new(a) == f.as_path())
+            || per_job_dirs.iter().any(|d| f.starts_with(d))
+    });
     if slot.model_id.as_deref() == Some(model_id) || uses_file {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
@@ -395,7 +412,12 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
 /// engine slot for up to [`LOAD_TIMEOUT`]: cancel that job so a delete doesn't
 /// wait for it.
 fn cancel_load_of(core: &AppCore, model_id: &str, files: &[PathBuf]) {
-    let loading_it = core.gen.loading.lock().as_ref().is_some_and(|(id, args)| id == model_id || files.iter().any(|f| args.iter().any(|a| Path::new(a) == f.as_path())));
+    let loading_it = core.gen.loading.lock().as_ref().is_some_and(|(id, args)| {
+        id == model_id
+            || files
+                .iter()
+                .any(|f| args.iter().any(|a| Path::new(a) == f.as_path()))
+    });
     if loading_it {
         if let Some(tok) = core.gen.active.lock().as_ref() {
             tok.cancel();
@@ -449,7 +471,9 @@ pub(crate) async fn after_job(core: &Arc<AppCore>, epoch: u64) {
 /// After [`IDLE_STOP_AFTER`] without a new generate / upscale, stop sd-server
 /// if it holds finished results.
 pub(crate) fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
-    let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
     let after = *core.gen.idle_stop_after.lock();
     let weak = Arc::downgrade(core);
     rt.spawn(async move {
@@ -459,7 +483,9 @@ pub(crate) fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
             return;
         }
         // Holding the run lock keeps a new job from starting mid-stop.
-        let Ok(_run) = core.gen.run_lock.try_lock() else { return };
+        let Ok(_run) = core.gen.run_lock.try_lock() else {
+            return;
+        };
         if core.gen.activity.load(Ordering::SeqCst) == epoch {
             stop_if_results_cached(&core).await;
         }
@@ -469,7 +495,11 @@ pub(crate) fn arm_idle_stop(core: &Arc<AppCore>, epoch: u64) {
 /// Model path sd-server reports in `/sdcpp/v1/capabilities` for these launch
 /// args: `--model`, else `--diffusion-model` (upstream `resolve_display_model_path`).
 pub(crate) fn launched_model_path(args: &[String]) -> Option<&str> {
-    let value_of = |flags: &[&str]| args.windows(2).find(|w| flags.contains(&w[0].as_str())).map(|w| w[1].as_str());
+    let value_of = |flags: &[&str]| {
+        args.windows(2)
+            .find(|w| flags.contains(&w[0].as_str()))
+            .map(|w| w[1].as_str())
+    };
     value_of(&["--model", "-m"]).or_else(|| value_of(&["--diffusion-model"]))
 }
 
@@ -497,16 +527,27 @@ pub(crate) fn same_file_path(reported: &str, expected: &str) -> bool {
 
 /// After `wait_ready`: the server answering on the port must be the child we
 /// started (still running, reporting the model we launched it with).
-pub(crate) async fn verify_engine_identity(proc: &mut EngineProcess, client: &SdClient, args: &[String]) -> CoreResult<()> {
+pub(crate) async fn verify_engine_identity(
+    proc: &mut EngineProcess,
+    client: &SdClient,
+    args: &[String],
+) -> CoreResult<()> {
     let taken = || CoreError::new("engine_failed", PORT_TAKEN_MESSAGE);
     if !proc.is_running() {
-        return Err(taken().with_details("the engine exited while another program answered on its port"));
+        return Err(
+            taken().with_details("the engine exited while another program answered on its port")
+        );
     }
     if let Some(expected) = launched_model_path(args) {
-        let caps = client.capabilities().await.map_err(|e| taken().with_details(format!("capabilities check failed: {e}")))?;
+        let caps = client
+            .capabilities()
+            .await
+            .map_err(|e| taken().with_details(format!("capabilities check failed: {e}")))?;
         let reported = caps.model.map(|m| m.path).unwrap_or_default();
         if !same_file_path(&reported, expected) {
-            return Err(taken().with_details("the server on the engine's port reports a different model"));
+            return Err(
+                taken().with_details("the server on the engine's port reports a different model")
+            );
         }
     }
     if !proc.is_running() {
@@ -525,7 +566,9 @@ pub fn cancel(core: &AppCore) {
 /// Dials + Fine-tune defaults for a family.
 pub fn family_ui(core: &AppCore, family_id: &str) -> CoreResult<FamilyUi> {
     let reg = core.registry();
-    let fam = reg.family(family_id).ok_or_else(|| CoreError::not_found("Pinhole doesn't know this model family. Pick another model."))?;
+    let fam = reg.family(family_id).ok_or_else(|| {
+        CoreError::not_found("Pinhole doesn't know this model family. Pick another model.")
+    })?;
     Ok(wiring::family_ui(&reg, fam))
 }
 
@@ -541,9 +584,15 @@ struct Prepared {
 }
 
 /// Read-only "Final prompt sent to the model" (combined in memory, never stored).
-pub fn preview_final_prompt(core: &AppCore, req: &GenerateRequest) -> CoreResult<FinalPromptPreview> {
+pub fn preview_final_prompt(
+    core: &AppCore,
+    req: &GenerateRequest,
+) -> CoreResult<FinalPromptPreview> {
     let p = prepare(core, req)?;
-    Ok(FinalPromptPreview { prompt: p.final_prompt.prompt, negative: p.final_prompt.negative })
+    Ok(FinalPromptPreview {
+        prompt: p.final_prompt.prompt,
+        negative: p.final_prompt.negative,
+    })
 }
 
 fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
@@ -568,9 +617,19 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                 .filter(|r| !r.is_empty())
                 .ok_or_else(|| CoreError::invalid("A style add-on (LoRA) is stored outside Data/models/loras. Reinstall it from Models."))?;
             if !abs.is_file() {
-                return Err(CoreError::not_found(format!("The add-on “{}” is missing from the Data folder. Reinstall it from Models.", f.friendly_name)));
+                return Err(CoreError::not_found(format!(
+                    "The add-on “{}” is missing from the Data folder. Reinstall it from Models.",
+                    f.friendly_name
+                )));
             }
-            loras.push(LoraRef { path: rel, multiplier: if l.weight.is_finite() { l.weight.clamp(-4.0, 4.0) } else { 1.0 } });
+            loras.push(LoraRef {
+                path: rel,
+                multiplier: if l.weight.is_finite() {
+                    l.weight.clamp(-4.0, 4.0)
+                } else {
+                    1.0
+                },
+            });
             if req.add_trigger_words {
                 if let Some(c) = &f.civitai {
                     for w in &c.trained_words {
@@ -586,17 +645,31 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 
     let mut prompt = req.prompt.trim().to_string();
     let lower = prompt.to_lowercase();
-    let missing: Vec<&String> = triggers.iter().filter(|t| !lower.contains(&t.to_lowercase())).collect();
+    let missing: Vec<&String> = triggers
+        .iter()
+        .filter(|t| !lower.contains(&t.to_lowercase()))
+        .collect();
     if !missing.is_empty() {
-        let joined = missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
-        prompt = if prompt.is_empty() { joined } else { format!("{prompt}, {joined}") };
+        let joined = missing
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        prompt = if prompt.is_empty() {
+            joined
+        } else {
+            format!("{prompt}, {joined}")
+        };
     }
 
     let style = match req.style_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(id) => Some(crate::library::get_style(core, id).map_err(|_| CoreError::not_found("That style doesn't exist anymore. Pick another style."))?),
+        Some(id) => Some(crate::library::get_style(core, id).map_err(|_| {
+            CoreError::not_found("That style doesn't exist anymore. Pick another style.")
+        })?),
         None => None,
     };
-    let apply_prefix = req.fine_tune.auto_prompt_prefix.unwrap_or(true) && req.mode != GenMode::Edit;
+    let apply_prefix =
+        req.fine_tune.auto_prompt_prefix.unwrap_or(true) && req.mode != GenMode::Edit;
     let final_prompt = pinhole_registry::style::combine(
         &reg,
         &family,
@@ -617,7 +690,13 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     if let Some(s) = &style {
         secrets.push(s.positive.clone());
     }
-    Ok(Prepared { model, family, final_prompt, secrets, loras })
+    Ok(Prepared {
+        model,
+        family,
+        final_prompt,
+        secrets,
+        loras,
+    })
 }
 
 /// The installed model + its family. Edit mode uses the best installed edit model
@@ -625,8 +704,17 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(InstalledFile, Family)> {
     let reg = core.registry();
     let idx = core.installed.lock();
-    let chosen = idx.get(&req.model_id).filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion)).cloned();
-    let is_edit = |f: &InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).map(|fam| fam.role.as_deref() == Some("edit")).unwrap_or(false);
+    let chosen = idx
+        .get(&req.model_id)
+        .filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion))
+        .cloned();
+    let is_edit = |f: &InstalledFile| {
+        f.family
+            .as_deref()
+            .and_then(|id| reg.family(id))
+            .map(|fam| fam.role.as_deref() == Some("edit"))
+            .unwrap_or(false)
+    };
 
     let model = if req.mode == GenMode::Edit {
         match chosen.filter(|f| is_edit(f)) {
@@ -634,12 +722,24 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
             None => idx
                 .models()
                 .filter(|f| is_edit(f))
-                .min_by_key(|f| f.family.as_deref().and_then(|id| reg.family(id)).and_then(|fam| fam.edit_priority).unwrap_or(u32::MAX))
+                .min_by_key(|f| {
+                    f.family
+                        .as_deref()
+                        .and_then(|id| reg.family(id))
+                        .and_then(|fam| fam.edit_priority)
+                        .unwrap_or(u32::MAX)
+                })
                 .cloned()
-                .ok_or_else(|| CoreError::not_found("No edit model is installed yet. Get one from the Edit tab."))?,
+                .ok_or_else(|| {
+                    CoreError::not_found(
+                        "No edit model is installed yet. Get one from the Edit tab.",
+                    )
+                })?,
         }
     } else {
-        chosen.ok_or_else(|| CoreError::not_found("That model isn't installed anymore. Pick another model."))?
+        chosen.ok_or_else(|| {
+            CoreError::not_found("That model isn't installed anymore. Pick another model.")
+        })?
     };
     let fid = model
         .family
@@ -653,8 +753,12 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
     };
     if !family.modes.is_empty() && !family.modes.iter().any(|m| m == mode_name) {
         let msg = match req.mode {
-            GenMode::Edit => "This model can't do instruction edits. Use Restyle, or get an edit model.",
-            _ if family.modes.iter().all(|m| m == "edit") => "This is an edit model — use it in the Edit tab.",
+            GenMode::Edit => {
+                "This model can't do instruction edits. Use Restyle, or get an edit model."
+            }
+            _ if family.modes.iter().all(|m| m == "edit") => {
+                "This is an edit model — use it in the Edit tab."
+            }
             _ => "This model doesn't support that mode. Pick another model.",
         };
         return Err(CoreError::invalid(msg));
@@ -680,7 +784,12 @@ fn component_label(kind: &str) -> &'static str {
 /// Diffusion → `--diffusion-model`): CivitAI all-in-one Flux files are
 /// checkpoints of a diffusion-only family and carry their own VAE/encoders, so
 /// for those, missing shared components are not an error.
-pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family, hw: &HwContext) -> CoreResult<ModelFiles> {
+pub(crate) fn model_files(
+    core: &AppCore,
+    model: &InstalledFile,
+    family: &Family,
+    hw: &HwContext,
+) -> CoreResult<ModelFiles> {
     let layout = match model.kind {
         ModelKind::Checkpoint => Layout::AllInOne,
         ModelKind::Diffusion => Layout::DiffusionOnly,
@@ -691,11 +800,17 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
     let idx = core.installed.lock();
     // Another installed option of a VRAM-dependent choice (e.g. the bf16 text
     // encoder on a 16 GB card) is used rather than asking for a download.
-    let installed = |id: &str| idx.find_component(id).is_some_and(|f| idx.abs_path(&core.data, f).is_file());
+    let installed = |id: &str| {
+        idx.find_component(id)
+            .is_some_and(|f| idx.abs_path(&core.data, f).is_file())
+    };
     let required = wiring::required_components_with(&reg, family, hw, &installed);
     let main = idx.abs_path(&core.data, model);
     if !main.is_file() {
-        return Err(CoreError::not_found(format!("The file for “{}” is missing from the Data folder. Reinstall it from Models.", model.friendly_name)));
+        return Err(CoreError::not_found(format!(
+            "The file for “{}” is missing from the Data folder. Reinstall it from Models.",
+            model.friendly_name
+        )));
     }
     let mut components = BTreeMap::new();
     let mut missing = Vec::new();
@@ -706,7 +821,10 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
             }
             _ if components_optional => {}
             _ => {
-                let file = reg.component(&rc.component_id).map(|c| c.file.clone()).unwrap_or_else(|| rc.component_id.clone());
+                let file = reg
+                    .component(&rc.component_id)
+                    .map(|c| c.file.clone())
+                    .unwrap_or_else(|| rc.component_id.clone());
                 missing.push(format!("{} ({file})", component_label(&rc.kind)));
             }
         }
@@ -718,12 +836,24 @@ pub(crate) fn model_files(core: &AppCore, model: &InstalledFile, family: &Family
             if missing.len() == 1 { "it" } else { "them" }
         )));
     }
-    Ok(ModelFiles { family_id: family.id.clone(), main, layout, components })
+    Ok(ModelFiles {
+        family_id: family.id.clone(),
+        main,
+        layout,
+        components,
+    })
 }
 
 // ================================================================ engine lifecycle
 
-fn emit_progress(core: &AppCore, phase: GenPhase, label: &str, queue: Option<u32>, step: Option<(u32, u32)>, t0: Instant) {
+fn emit_progress(
+    core: &AppCore,
+    phase: GenPhase,
+    label: &str,
+    queue: Option<u32>,
+    step: Option<(u32, u32)>,
+    t0: Instant,
+) {
     let note = core.gen.job_note.lock().join(" ");
     core.emit(CoreEvent::Generation(GenerationProgress {
         phase,
@@ -758,10 +888,26 @@ pub(crate) fn set_retry_note(core: &AppCore, note: &str) {
 
 /// sd.cpp module names for the text encoder (`parse_backend_module`,
 /// src/core/ggml_extend_backend.cpp; case-insensitive, `-`/`_` ignored).
-const TE_MODULES: &[&str] = &["te", "clip", "text", "textencoder", "textencoders", "conditioner", "cond", "llm", "t5", "t5xxl"];
+const TE_MODULES: &[&str] = &[
+    "te",
+    "clip",
+    "text",
+    "textencoder",
+    "textencoders",
+    "conditioner",
+    "cond",
+    "llm",
+    "t5",
+    "t5xxl",
+];
 
 fn is_te_module(key: &str) -> bool {
-    let k: String = key.trim().chars().filter(|c| *c != '-' && *c != '_').collect::<String>().to_ascii_lowercase();
+    let k: String = key
+        .trim()
+        .chars()
+        .filter(|c| *c != '-' && *c != '_')
+        .collect::<String>()
+        .to_ascii_lowercase();
     TE_MODULES.contains(&k.as_str())
 }
 
@@ -774,7 +920,14 @@ pub(crate) fn text_encoder_on_cpu(args: &[String]) -> bool {
         for part in w[1].split(',').map(str::trim).filter(|p| !p.is_empty()) {
             match part.split_once('=') {
                 None => default = Some(part.to_string()),
-                Some((k, v)) if matches!(k.trim().to_ascii_lowercase().as_str(), "all" | "default" | "*") => default = Some(v.trim().to_string()),
+                Some((k, v))
+                    if matches!(
+                        k.trim().to_ascii_lowercase().as_str(),
+                        "all" | "default" | "*"
+                    ) =>
+                {
+                    default = Some(v.trim().to_string())
+                }
                 Some((k, v)) if is_te_module(k) => te = Some(v.trim().to_string()),
                 Some(_) => {}
             }
@@ -782,7 +935,10 @@ pub(crate) fn text_encoder_on_cpu(args: &[String]) -> bool {
     }
     match te {
         Some(b) => b.eq_ignore_ascii_case("cpu"),
-        None => args.iter().any(|a| a == "--clip-on-cpu") || default.is_some_and(|b| b.eq_ignore_ascii_case("cpu")),
+        None => {
+            args.iter().any(|a| a == "--clip-on-cpu")
+                || default.is_some_and(|b| b.eq_ignore_ascii_case("cpu"))
+        }
     }
 }
 
@@ -795,7 +951,9 @@ pub(crate) fn with_text_encoder_on_cpu(args: &mut Vec<String>) {
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--backend" && i + 1 < args.len() {
-            let keep = args[i + 1].split(',').map(str::trim).filter(|p| !p.is_empty() && !p.split_once('=').is_some_and(|(k, _)| is_te_module(k)));
+            let keep = args[i + 1].split(',').map(str::trim).filter(|p| {
+                !p.is_empty() && !p.split_once('=').is_some_and(|(k, _)| is_te_module(k))
+            });
             parts.extend(keep.map(String::from));
             i += 2;
         } else {
@@ -811,7 +969,13 @@ pub(crate) fn with_text_encoder_on_cpu(args: &mut Vec<String>) {
 /// This model's memory choices: Settings `textEncoderOnCpu` on / off, or (auto)
 /// what an out-of-memory retry chose earlier this session. GPU backends only.
 fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallback {
-    let mut fb = core.gen.mem_fallback.lock().get(model_id).copied().unwrap_or_default();
+    let mut fb = core
+        .gen
+        .mem_fallback
+        .lock()
+        .get(model_id)
+        .copied()
+        .unwrap_or_default();
     fb.te_on_cpu = gpu_backend
         && match TeChoice::current(core) {
             TeChoice::On => true,
@@ -823,10 +987,26 @@ fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallb
 
 /// Weights in system memory stick while this model runs with the same
 /// settings (see `GenState::offloaded`); anything else tries the card again.
-pub(crate) fn with_remembered_offload(core: &AppCore, model_id: &str, wiring_args: &[String], fb: MemFallback, gpu_backend: bool) -> MemFallback {
+pub(crate) fn with_remembered_offload(
+    core: &AppCore,
+    model_id: &str,
+    wiring_args: &[String],
+    fb: MemFallback,
+    gpu_backend: bool,
+) -> MemFallback {
     let offload = gpu_backend && {
-        let with_offload = with_memory_choices(wiring_args, MemFallback { offload: true, ..fb });
-        core.gen.offloaded.lock().as_ref().is_some_and(|(id, a)| id == model_id && *a == with_offload)
+        let with_offload = with_memory_choices(
+            wiring_args,
+            MemFallback {
+                offload: true,
+                ..fb
+            },
+        );
+        core.gen
+            .offloaded
+            .lock()
+            .as_ref()
+            .is_some_and(|(id, a)| id == model_id && *a == with_offload)
     };
     MemFallback { offload, ..fb }
 }
@@ -859,7 +1039,8 @@ fn weights_gb(args: &[String]) -> f64 {
 
 /// Every weight fits in system memory with room to spare (unknown RAM: assume so).
 fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
-    !(ram_gb.is_finite() && ram_gb > 0.0) || weights_gb(args) + OFFLOAD_SPARE_RAM_GB <= f64::from(ram_gb)
+    !(ram_gb.is_finite() && ram_gb > 0.0)
+        || weights_gb(args) + OFFLOAD_SPARE_RAM_GB <= f64::from(ram_gb)
 }
 
 /// The next retry after running out of memory at `stage`, if any. Each
@@ -877,13 +1058,40 @@ fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
 ///
 /// Weights go to system memory only on a GPU backend and when they fit there
 /// (`offload_ok`, see [`offload_fits_ram`]). Returns the new choices and the note.
-fn next_memory_fallback(fb: MemFallback, stage: Stage, te: TeChoice, gpu_backend: bool, args: &[String], tiling_allowed: bool, offload_ok: bool) -> Option<(MemFallback, &'static str)> {
-    let tiling = (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((MemFallback { vae_tiling: true, ..fb }, TILING_RETRY_NOTE));
-    let offload = (gpu_backend && offload_ok && !args.iter().any(|a| a == "--offload-to-cpu")).then_some((MemFallback { offload: true, ..fb }, OFFLOAD_RETRY_NOTE));
+fn next_memory_fallback(
+    fb: MemFallback,
+    stage: Stage,
+    te: TeChoice,
+    gpu_backend: bool,
+    args: &[String],
+    tiling_allowed: bool,
+    offload_ok: bool,
+) -> Option<(MemFallback, &'static str)> {
+    let tiling = (tiling_allowed && !args.iter().any(|a| a == "--vae-tiling")).then_some((
+        MemFallback {
+            vae_tiling: true,
+            ..fb
+        },
+        TILING_RETRY_NOTE,
+    ));
+    let offload = (gpu_backend && offload_ok && !args.iter().any(|a| a == "--offload-to-cpu"))
+        .then_some((
+            MemFallback {
+                offload: true,
+                ..fb
+            },
+            OFFLOAD_RETRY_NOTE,
+        ));
     match stage {
         // No GPU, or the text encoder already on the processor: it's system memory.
         Stage::TextEncoder if !gpu_backend || text_encoder_on_cpu(args) => None,
-        Stage::TextEncoder if te == TeChoice::Auto => Some((MemFallback { te_on_cpu: true, ..fb }, TE_RETRY_NOTE)),
+        Stage::TextEncoder if te == TeChoice::Auto => Some((
+            MemFallback {
+                te_on_cpu: true,
+                ..fb
+            },
+            TE_RETRY_NOTE,
+        )),
         Stage::TextEncoder => offload,
         Stage::Diffusion if gpu_backend && offload_ok => offload,
         // Tiling as a last resort: the stage is read from the engine output.
@@ -906,11 +1114,16 @@ fn gb_text(mib: u64) -> String {
 pub(crate) fn others_sentence(o: &OtherGpuUse) -> String {
     let mut names: Vec<(String, Option<u64>)> = Vec::new();
     for p in &o.processes {
-        match names.iter_mut().find(|(n, _)| n.eq_ignore_ascii_case(&p.name)) {
-            Some((_, used)) => *used = match (*used, p.used_mib) {
-                (Some(a), Some(b)) => Some(a + b),
-                (a, b) => a.or(b),
-            },
+        match names
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(&p.name))
+        {
+            Some((_, used)) => {
+                *used = match (*used, p.used_mib) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    (a, b) => a.or(b),
+                }
+            }
             None => names.push((p.name.clone(), p.used_mib)),
         }
     }
@@ -926,7 +1139,10 @@ pub(crate) fn others_sentence(o: &OtherGpuUse) -> String {
     if listed.is_empty() {
         format!("Other programs are using {amount} of your graphics memory.")
     } else {
-        format!("Other programs are using {amount} of your graphics memory: {}.", listed.join(", "))
+        format!(
+            "Other programs are using {amount} of your graphics memory: {}.",
+            listed.join(", ")
+        )
     }
 }
 
@@ -935,7 +1151,10 @@ const OTHERS_PREFIX: &str = "Other programs are using ";
 
 /// Shown while loading when other programs hold a lot of graphics memory.
 pub(crate) fn others_note(o: &OtherGpuUse) -> String {
-    format!("{} If pictures fail, close them and try again.", others_sentence(o))
+    format!(
+        "{} If pictures fail, close them and try again.",
+        others_sentence(o)
+    )
 }
 
 /// Out of graphics memory: names other programs when the engine start saw them.
@@ -986,7 +1205,11 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
         return None;
     }
     let mut notes = Vec::new();
-    let fb = flags.loaded_model_id.as_ref().and_then(|id| core.gen.mem_fallback.lock().get(id).copied()).unwrap_or_default();
+    let fb = flags
+        .loaded_model_id
+        .as_ref()
+        .and_then(|id| core.gen.mem_fallback.lock().get(id).copied())
+        .unwrap_or_default();
     if fb.te_on_cpu && TeChoice::current(core) == TeChoice::Auto {
         notes.push(TE_ON_CPU_NOTE.to_string());
     }
@@ -996,7 +1219,13 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     if core.gen.offloaded.lock().is_some() {
         notes.push(OFFLOAD_NOTE.to_string());
     }
-    if let Some(o) = core.gen.gpu_others.lock().clone().filter(OtherGpuUse::is_significant) {
+    if let Some(o) = core
+        .gen
+        .gpu_others
+        .lock()
+        .clone()
+        .filter(OtherGpuUse::is_significant)
+    {
         notes.push(others_sentence(&o));
     }
     (!notes.is_empty()).then(|| notes.join(" "))
@@ -1030,9 +1259,14 @@ fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
     let mut i = 0;
     while i < defaults.len() {
         let d = &defaults[i];
-        let takes_value = d.starts_with("--") && !d.contains('=') && defaults.get(i + 1).is_some_and(|v| is_value(v));
+        let takes_value = d.starts_with("--")
+            && !d.contains('=')
+            && defaults.get(i + 1).is_some_and(|v| is_value(v));
         let end = if takes_value { i + 2 } else { i + 1 };
-        let set = d.starts_with("--") && args.iter().any(|a| a.starts_with("--") && name(a) == name(d));
+        let set = d.starts_with("--")
+            && args
+                .iter()
+                .any(|a| a.starts_with("--") && name(a) == name(d));
         if !set {
             args.extend_from_slice(&defaults[i..end]);
         }
@@ -1042,9 +1276,22 @@ fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
 
 /// Full sd-server argv (without the port): wiring args + pinned defaults, forced
 /// to listen on 127.0.0.1, with LoRA / upscaler folders.
-pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineConfig) -> Vec<String> {
+pub(crate) fn full_sd_args(
+    core: &AppCore,
+    wiring_args: &[String],
+    cfg: &EngineConfig,
+) -> Vec<String> {
     let mut args = wiring_args.to_vec();
-    strip_flag(&mut args, &["--listen-ip", "-l", "--listen-port", "--log-level", "--serve-html-path"]);
+    strip_flag(
+        &mut args,
+        &[
+            "--listen-ip",
+            "-l",
+            "--listen-port",
+            "--log-level",
+            "--serve-html-path",
+        ],
+    );
     let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
     strip_flag(&mut defaults, &["--listen-ip", "-l", "--listen-port"]);
     // Log level: the pin's last `--log-level` (sd.cpp: the last one wins),
@@ -1066,10 +1313,22 @@ pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineC
         args.push("--disable-image-metadata".into());
     }
     if !args.iter().any(|a| a == "--lora-model-dir") {
-        args.extend(["--lora-model-dir".into(), core.data.models(ModelKind::Lora).to_string_lossy().into_owned()]);
+        args.extend([
+            "--lora-model-dir".into(),
+            core.data
+                .models(ModelKind::Lora)
+                .to_string_lossy()
+                .into_owned(),
+        ]);
     }
     if !args.iter().any(|a| a == "--hires-upscalers-dir") {
-        args.extend(["--hires-upscalers-dir".into(), core.data.models(ModelKind::Upscaler).to_string_lossy().into_owned()]);
+        args.extend([
+            "--hires-upscalers-dir".into(),
+            core.data
+                .models(ModelKind::Upscaler)
+                .to_string_lossy()
+                .into_owned(),
+        ]);
     }
     args.extend(["--listen-ip".into(), "127.0.0.1".into()]);
     args
@@ -1091,7 +1350,10 @@ enum ReadyFailure {
 /// measured (NVIDIA) — a lot of it becomes a progress note.
 /// Remember a launch with the weights in system memory (see `GenState::offloaded`).
 fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
-    *core.gen.offloaded.lock() = wiring_args.iter().any(|a| a == "--offload-to-cpu").then(|| (model_id.to_string(), wiring_args.to_vec()));
+    *core.gen.offloaded.lock() = wiring_args
+        .iter()
+        .any(|a| a == "--offload-to-cpu")
+        .then(|| (model_id.to_string(), wiring_args.to_vec()));
 }
 
 /// Clears `GenState::loading` when [`ensure_engine`] returns, on every path.
@@ -1103,7 +1365,14 @@ impl Drop for LoadingMark<'_> {
     }
 }
 
-async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
+async fn ensure_engine(
+    core: &Arc<AppCore>,
+    wiring_args: &[String],
+    model_id: &str,
+    label: &str,
+    cancel: &CancellationToken,
+    t0: Instant,
+) -> CoreResult<String> {
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
         core.gen.external_launches.lock().push(wiring_args.to_vec());
@@ -1158,14 +1427,27 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         crate::describe::stop_if_idle(core).await;
     }
     engine_setup::sweep_orphans(core).await;
-    let others = if gpu_backend { engine_setup::gpu_others(core).await } else { None };
-    set_others_note(core, others.as_ref().filter(|o| o.is_significant()).map(others_note));
+    let others = if gpu_backend {
+        engine_setup::gpu_others(core).await
+    } else {
+        None
+    };
+    set_others_note(
+        core,
+        others
+            .as_ref()
+            .filter(|o| o.is_significant())
+            .map(others_note),
+    );
     *core.gen.gpu_others.lock() = others;
 
     if cancel.is_cancelled() {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
-    let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
+    let port = free_port().map_err(|e| {
+        CoreError::internal("Couldn't find a free local port for the engine.")
+            .with_details(e.to_string())
+    })?;
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
     core.gen.logs.clear();
@@ -1191,7 +1473,10 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
             |_| {
                 if last_emit.elapsed() >= Duration::from_millis(500) {
                     last_emit = Instant::now();
-                    let step = logs.progress().filter(|p| p.kind == ProgressKind::Loading).map(|p| (p.step, p.total));
+                    let step = logs
+                        .progress()
+                        .filter(|p| p.kind == ProgressKind::Loading)
+                        .map(|p| (p.step, p.total));
                     emit_progress(core, GenPhase::LoadingModel, label, None, step, t0);
                 }
             },
@@ -1200,7 +1485,9 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     core.gen.flags.lock().loading = false;
     // Port squatting: whoever answered must be our child with our model.
     let ready = match ready {
-        Ok(()) => verify_engine_identity(&mut proc, &client, &args).await.map_err(ReadyFailure::NotOurs),
+        Ok(()) => verify_engine_identity(&mut proc, &client, &args)
+            .await
+            .map_err(ReadyFailure::NotOurs),
         Err(e) => Err(ReadyFailure::Ready(e)),
     };
     match ready {
@@ -1336,8 +1623,13 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
 }
 
 fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
-    let img = core.session.get(id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore. Add it again."))?;
-    Ok((base64::engine::general_purpose::STANDARD.encode(img.bytes.as_slice()), img))
+    let img = core.session.get(id).ok_or_else(|| {
+        CoreError::not_found("That image isn't in this session anymore. Add it again.")
+    })?;
+    Ok((
+        base64::engine::general_purpose::STANDARD.encode(img.bytes.as_slice()),
+        img,
+    ))
 }
 
 /// Run one generation. See module docs.
@@ -1354,20 +1646,34 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
     // The model that actually runs (Edit may pick another one than `req.model_id`).
-    let mut label = core.installed.lock().get(&req.model_id).map(|m| m.friendly_name.clone()).unwrap_or_default();
+    let mut label = core
+        .installed
+        .lock()
+        .get(&req.model_id)
+        .map(|m| m.friendly_name.clone())
+        .unwrap_or_default();
     let result = generate_inner(core, &req, &cancel, t0, session_epoch, &mut label).await;
     *core.gen.active.lock() = None;
     core.gen.logs.clear_secrets();
     match &result {
         Ok(_) => emit_progress(core, GenPhase::Done, &label, None, None, t0),
-        Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
+        Err(e) if e.code == "cancelled" => {
+            emit_progress(core, GenPhase::Cancelled, &label, None, None, t0)
+        }
         Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
     }
     after_job(core, epoch).await;
     result
 }
 
-async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant, session_epoch: u64, final_label: &mut String) -> CoreResult<GenerateResult> {
+async fn generate_inner(
+    core: &Arc<AppCore>,
+    req: &GenerateRequest,
+    cancel: &CancellationToken,
+    t0: Instant,
+    session_epoch: u64,
+    final_label: &mut String,
+) -> CoreResult<GenerateResult> {
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
@@ -1385,7 +1691,10 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     match req.mode {
         GenMode::Txt2img => {}
         GenMode::Img2img => {
-            let id = req.init_image_id.as_deref().ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
+            let id = req
+                .init_image_id
+                .as_deref()
+                .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
             let (b64, img) = b64_image(core, id)?;
             init_image = Some(b64);
             source = Some(img);
@@ -1421,13 +1730,25 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         use_taesd: false,
     };
     let wiring_args = wiring::launch_args(&reg, &files, &hw, &extras);
-    let params = wiring::resolve_params(&reg, &prep.family, &req.dials, &req.fine_tune, req.mode, &hw);
+    let params = wiring::resolve_params(
+        &reg,
+        &prep.family,
+        &req.dials,
+        &req.fine_tune,
+        req.mode,
+        &hw,
+    );
 
     let (mut width, mut height) = (params.width, params.height);
     if let Some(src) = &source {
         if req.fine_tune.width.is_none() && req.fine_tune.height.is_none() {
             let multiple = wiring::size_multiple(&prep.family);
-            (width, height) = size_like(src.width, src.height, u64::from(params.width) * u64::from(params.height), multiple);
+            (width, height) = size_like(
+                src.width,
+                src.height,
+                u64::from(params.width) * u64::from(params.height),
+                multiple,
+            );
         }
     }
     let seed: i64 = match req.fine_tune.seed {
@@ -1444,9 +1765,19 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         scheduler: params.scheduler.clone(),
         sample_steps: params.steps.max(1),
         flow_shift: params.flow_shift,
-        guidance: Guidance { txt_cfg: params.cfg, img_cfg: None, distilled_guidance: params.guidance },
+        guidance: Guidance {
+            txt_cfg: params.cfg,
+            img_cfg: None,
+            distilled_guidance: params.guidance,
+        },
     };
-    body.hires = params.hires.as_ref().map(|h| HiresRequest { enabled: true, upscaler: None, scale: h.scale, steps: h.steps, denoising_strength: h.denoising_strength });
+    body.hires = params.hires.as_ref().map(|h| HiresRequest {
+        enabled: true,
+        upscaler: None,
+        scale: h.scale,
+        steps: h.steps,
+        denoising_strength: h.denoising_strength,
+    });
     body.vae_tiling_params = if params.vae_tiling {
         Some(VaeTilingRequest { enabled: true })
     } else if req.fine_tune.vae_tiling == Some(false) {
@@ -1474,7 +1805,8 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     // encoder on the processor, VAE tiling, weights in system memory), so there
     // are at most three retries (see `next_memory_fallback`).
     // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
-    let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
+    let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd)
+        .map_or(hw.backend != "cpu", |e| e.backend != "cpu");
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     // (Fine-tune "VAE tiling: Off" still wins over a remembered tiling choice:
     // the request body turns tiling off per job, without an engine restart.)
@@ -1486,13 +1818,33 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         let args = with_memory_choices(&wiring_args, fb);
         let base = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
         let client = SdClient::new(core.local.clone(), base);
-        match run_job(core, &client, &body, &prep.secrets, &label, (steps, batches), cancel, t0).await {
+        match run_job(
+            core,
+            &client,
+            &body,
+            &prep.secrets,
+            &label,
+            (steps, batches),
+            cancel,
+            t0,
+        )
+        .await
+        {
             Ok(job) => break job,
             Err(RunError::Failed(e)) => return Err(e),
             Err(RunError::OutOfMemory { stage, details }) => {
                 let offload_ok = offload_fits_ram(&args, hw.ram_gb);
-                let Some((next_fb, note)) = next_memory_fallback(fb, stage, TeChoice::current(core), gpu_backend, &args, tiling_allowed, offload_ok) else {
-                    return Err(memory_error(core, stage, &args, gpu_backend).with_details(with_memory_plan(core, &prep.model.id, &args, details)));
+                let Some((next_fb, note)) = next_memory_fallback(
+                    fb,
+                    stage,
+                    TeChoice::current(core),
+                    gpu_backend,
+                    &args,
+                    tiling_allowed,
+                    offload_ok,
+                ) else {
+                    return Err(memory_error(core, stage, &args, gpu_backend)
+                        .with_details(with_memory_plan(core, &prep.model.id, &args, details)));
                 };
                 // Remember the automatic choice for this model (RAM only, app session).
                 {
@@ -1516,15 +1868,28 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     let mut images = job.result.map(|r| r.images).unwrap_or_default();
     images.sort_by_key(|i| i.index);
     if images.is_empty() {
-        return Err(CoreError::new("engine_failed", "The engine returned no image. Try again.").with_details(core.gen.logs.tail_text(20)));
+        return Err(
+            CoreError::new("engine_failed", "The engine returned no image. Try again.")
+                .with_details(core.gen.logs.tail_text(20)),
+        );
     }
     let parent_id = source.as_ref().map(|s| s.id.clone());
     let mut out = Vec::new();
     for (i, img) in images.into_iter().enumerate() {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(img.b64_json.as_bytes())
-            .map_err(|_| CoreError::new("engine_failed", "The engine returned a damaged image. Try again."))?;
-        let png = pinhole_engine::png::scrub(&raw).map_err(|_| CoreError::new("engine_failed", "The engine returned a damaged image. Try again."))?;
+            .map_err(|_| {
+                CoreError::new(
+                    "engine_failed",
+                    "The engine returned a damaged image. Try again.",
+                )
+            })?;
+        let png = pinhole_engine::png::scrub(&raw).map_err(|_| {
+            CoreError::new(
+                "engine_failed",
+                "The engine returned a damaged image. Try again.",
+            )
+        })?;
         let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -1542,7 +1907,10 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
         };
-        if !core.session.insert_generated_since(session_epoch, png, meta.clone()) {
+        if !core
+            .session
+            .insert_generated_since(session_epoch, png, meta.clone())
+        {
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
         }
@@ -1614,19 +1982,31 @@ async fn run_job(
             Ok(job) => {
                 errors = 0;
                 match job.status {
-                    JobStatus::Queued => emit_progress(core, GenPhase::Queued, label, Some(job.queue_position), None, t0),
+                    JobStatus::Queued => emit_progress(
+                        core,
+                        GenPhase::Queued,
+                        label,
+                        Some(job.queue_position),
+                        None,
+                        t0,
+                    ),
                     JobStatus::Generating => {
-                        let step = core.gen.logs.progress().filter(|p| p.kind == ProgressKind::Sampling).map(|p| {
-                            if batches > 1 && p.total == steps {
-                                if p.step < last_step {
-                                    passes += 1;
+                        let step = core
+                            .gen
+                            .logs
+                            .progress()
+                            .filter(|p| p.kind == ProgressKind::Sampling)
+                            .map(|p| {
+                                if batches > 1 && p.total == steps {
+                                    if p.step < last_step {
+                                        passes += 1;
+                                    }
+                                    last_step = p.step;
+                                    ((passes.min(batches - 1)) * steps + p.step, steps * batches)
+                                } else {
+                                    (p.step, p.total)
                                 }
-                                last_step = p.step;
-                                ((passes.min(batches - 1)) * steps + p.step, steps * batches)
-                            } else {
-                                (p.step, p.total)
-                            }
-                        });
+                            });
                         emit_progress(core, GenPhase::Generating, label, None, step, t0);
                     }
                     JobStatus::Completed => return Ok(job),
@@ -1637,23 +2017,39 @@ async fn run_job(
                         let msg = job.error.map(|e| e.message).unwrap_or_default();
                         let msg = redact_text(&msg, secrets);
                         let own = format!("{msg}\n{}", core.gen.logs.since_text(mark));
-                        let details = format!("{msg}\n{}", core.gen.logs.tail_text(40)).trim().to_string();
+                        let details = format!("{msg}\n{}", core.gen.logs.tail_text(40))
+                            .trim()
+                            .to_string();
                         if let Some(stage) = memory_failure(&own) {
                             return Err(RunError::OutOfMemory { stage, details });
                         }
                         let err = match classify(&own, None) {
                             // "failed to encode prompt" with no memory line: likely a broken or mismatched text encoder.
-                            Failure::Unknown if pinhole_engine::failure::failed_stage(&own) == Stage::TextEncoder => CoreError::new("model_load", ENCODER_FAILED_MESSAGE),
-                            Failure::Unknown => CoreError::new("engine_failed", UNKNOWN_JOB_MESSAGE),
+                            Failure::Unknown
+                                if pinhole_engine::failure::failed_stage(&own)
+                                    == Stage::TextEncoder =>
+                            {
+                                CoreError::new("model_load", ENCODER_FAILED_MESSAGE)
+                            }
+                            Failure::Unknown => {
+                                CoreError::new("engine_failed", UNKNOWN_JOB_MESSAGE)
+                            }
                             other => failure_error(other),
                         };
                         return Err(RunError::Failed(err.with_details(details)));
                     }
-                    JobStatus::Cancelled => return Err(RunError::Failed(CoreError::new("cancelled", "Cancelled."))),
+                    JobStatus::Cancelled => {
+                        return Err(RunError::Failed(CoreError::new("cancelled", "Cancelled.")))
+                    }
                     JobStatus::Unknown => {}
                 }
             }
-            Err(ApiError::NotFound) => return Err(RunError::Failed(CoreError::new("engine_failed", "The engine lost track of this job. Try again."))),
+            Err(ApiError::NotFound) => {
+                return Err(RunError::Failed(CoreError::new(
+                    "engine_failed",
+                    "The engine lost track of this job. Try again.",
+                )))
+            }
             Err(e) => {
                 errors += 1;
                 if errors >= 5 {
@@ -1669,7 +2065,10 @@ async fn run_job(
 fn job_failure(core: &AppCore, err: CoreError, mark: u64) -> RunError {
     if err.code == "vram" {
         let stage = pinhole_engine::failure::failed_stage(&core.gen.logs.since_text(mark));
-        RunError::OutOfMemory { stage, details: err.details.unwrap_or_default() }
+        RunError::OutOfMemory {
+            stage,
+            details: err.details.unwrap_or_default(),
+        }
     } else {
         RunError::Failed(err)
     }
@@ -1691,19 +2090,31 @@ async fn cancel_job(core: &AppCore, client: &SdClient, job_id: &str) -> CoreErro
 /// `text` with every line that holds prompt text (`secrets`) redacted.
 fn redact_text(text: &str, secrets: &[String]) -> String {
     let hidden = lowered(secrets);
-    text.lines().map(|l| pinhole_engine::logbuf::redact_line(l, &hidden)).collect::<Vec<_>>().join("\n")
+    text.lines()
+        .map(|l| pinhole_engine::logbuf::redact_line(l, &hidden))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Plain error for an API failure. The engine's answer goes into the details
 /// with prompt text (`secrets`) redacted: it may echo the request.
 pub(crate) fn api_failure(core: &AppCore, e: ApiError, secrets: &[String]) -> CoreError {
     let mut err = match e {
-        ApiError::QueueFull => CoreError::new("engine_failed", "The engine is busy. Wait for the current images to finish and try again."),
+        ApiError::QueueFull => CoreError::new(
+            "engine_failed",
+            "The engine is busy. Wait for the current images to finish and try again.",
+        ),
         ApiError::Connect | ApiError::Timeout => engine_failure(&core.gen.logs, None),
-        ApiError::Status { code: 400, error } => {
-            CoreError::new("invalid", "The engine didn't accept these settings. Try resetting Fine-tune to the defaults.").with_details(format!("HTTP 400: {error}"))
-        }
-        other => CoreError::new("engine_failed", "The engine stopped unexpectedly. Try again.").with_details(other.to_string()),
+        ApiError::Status { code: 400, error } => CoreError::new(
+            "invalid",
+            "The engine didn't accept these settings. Try resetting Fine-tune to the defaults.",
+        )
+        .with_details(format!("HTTP 400: {error}")),
+        other => CoreError::new(
+            "engine_failed",
+            "The engine stopped unexpectedly. Try again.",
+        )
+        .with_details(other.to_string()),
     };
     if let Some(d) = err.details.take() {
         err.details = Some(redact_text(&d, secrets));
@@ -1712,7 +2123,10 @@ pub(crate) fn api_failure(core: &AppCore, e: ApiError, secrets: &[String]) -> Co
 }
 
 fn now_secs() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// `last_used` in installed.json — a timestamp only.
@@ -1735,7 +2149,10 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     }
     // The result is dropped when Reset happens meanwhile (see `Session::insert_generated_since`).
     let session_epoch = core.session.epoch();
-    let src = core.session.get(id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore."))?;
+    let src = core
+        .session
+        .get(id)
+        .ok_or_else(|| CoreError::not_found("That image isn't in this session anymore."))?;
     if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
         return Err(CoreError::invalid("This image is already too large to upscale (max 8192 pixels per side after upscaling)."));
     }
@@ -1748,12 +2165,24 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
     let mut label = String::new();
-    let res = upscale_inner(core, &src, &upscaler, factor, &cancel, t0, session_epoch, &mut label).await;
+    let res = upscale_inner(
+        core,
+        &src,
+        &upscaler,
+        factor,
+        &cancel,
+        t0,
+        session_epoch,
+        &mut label,
+    )
+    .await;
     *core.gen.active.lock() = None;
     // The final event comes after the upscale itself (not after the model load).
     match &res {
         Ok(_) => emit_progress(core, GenPhase::Done, &label, None, None, t0),
-        Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
+        Err(e) if e.code == "cancelled" => {
+            emit_progress(core, GenPhase::Cancelled, &label, None, None, t0)
+        }
         Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
     }
     after_job(core, epoch).await;
@@ -1763,7 +2192,13 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
 /// Friendly name of the model the engine has loaded ("" when none).
 async fn loaded_model_label(core: &AppCore) -> String {
     let id = core.gen.slot.lock().await.model_id.clone();
-    id.and_then(|id| core.installed.lock().get(&id).map(|m| m.friendly_name.clone())).unwrap_or_default()
+    id.and_then(|id| {
+        core.installed
+            .lock()
+            .get(&id)
+            .map(|m| m.friendly_name.clone())
+    })
+    .unwrap_or_default()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1785,7 +2220,11 @@ async fn upscale_inner(
         None => {
             // sd-server needs a model loaded to run at all: start it with the image's
             // model, or the most recently used one.
-            let model_id = pick_model_for_upscale(core, src).ok_or_else(|| CoreError::not_found("Install a model first — the upscaler runs inside the image engine."))?;
+            let model_id = pick_model_for_upscale(core, src).ok_or_else(|| {
+                CoreError::not_found(
+                    "Install a model first — the upscaler runs inside the image engine.",
+                )
+            })?;
             let prep_model = model_and_family(core, &model_id)?;
             label.clone_from(&prep_model.0.friendly_name);
             let hw = crate::app::hw_context(core);
@@ -1799,10 +2238,25 @@ async fn upscale_inner(
             let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
             // The same memory choices as Generate, so this launch doesn't forget
             // that the model's weights had to go to system memory.
-            let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd).map_or(hw.backend != "cpu", |e| e.backend != "cpu");
-            let fb = with_remembered_offload(core, &model_id, &args, memory_choices(core, &model_id, gpu_backend), gpu_backend);
+            let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd)
+                .map_or(hw.backend != "cpu", |e| e.backend != "cpu");
+            let fb = with_remembered_offload(
+                core,
+                &model_id,
+                &args,
+                memory_choices(core, &model_id, gpu_backend),
+                gpu_backend,
+            );
             let args = with_memory_choices(&args, fb);
-            let r = ensure_engine(core, &args, &model_id, &prep_model.0.friendly_name, cancel, t0).await;
+            let r = ensure_engine(
+                core,
+                &args,
+                &model_id,
+                &prep_model.0.friendly_name,
+                cancel,
+                t0,
+            )
+            .await;
             r?
         }
     };
@@ -1827,25 +2281,43 @@ async fn upscale_inner(
     };
     let resp = resp.map_err(|e| match e {
         // The upscale request carries no prompt; `redact_text` still cuts prompt-like fields.
-        ApiError::Status { code: 400, error } => CoreError::new("invalid", "The upscaler couldn't process this image.").with_details(redact_text(&error, &[])),
+        ApiError::Status { code: 400, error } => {
+            CoreError::new("invalid", "The upscaler couldn't process this image.")
+                .with_details(redact_text(&error, &[]))
+        }
         other => api_failure(core, other, &[]),
     })?;
-    let img = resp.images.into_iter().next().ok_or_else(|| CoreError::new("engine_failed", "The upscaler returned no image. Try again."))?;
+    let img = resp.images.into_iter().next().ok_or_else(|| {
+        CoreError::new(
+            "engine_failed",
+            "The upscaler returned no image. Try again.",
+        )
+    })?;
     let raw = base64::engine::general_purpose::STANDARD
         .decode(img.b64_json.as_bytes())
         .map_err(|_| CoreError::new("engine_failed", "The upscaler returned a damaged image."))?;
     let png = tokio::task::spawn_blocking(move || -> CoreResult<Vec<u8>> {
-        let clean = pinhole_engine::png::scrub(&raw).map_err(|_| CoreError::new("engine_failed", "The upscaler returned a damaged image."))?;
+        let clean = pinhole_engine::png::scrub(&raw).map_err(|_| {
+            CoreError::new("engine_failed", "The upscaler returned a damaged image.")
+        })?;
         if factor == 4 {
             return Ok(clean);
         }
-        let (rgba, w, h) = pinhole_engine::image::decode_rgba(&clean).map_err(|e| CoreError::new("engine_failed", "The upscaler returned a damaged image.").with_details(e.to_string()))?;
+        let (rgba, w, h) = pinhole_engine::image::decode_rgba(&clean).map_err(|e| {
+            CoreError::new("engine_failed", "The upscaler returned a damaged image.")
+                .with_details(e.to_string())
+        })?;
         let (small, sw, sh) = pinhole_engine::image::downscale_2x_box(&rgba, w, h);
-        pinhole_engine::image::encode_png_rgba(&small, sw, sh).map_err(|e| CoreError::internal("Couldn't finish the 2× upscale.").with_details(e.to_string()))
+        pinhole_engine::image::encode_png_rgba(&small, sw, sh).map_err(|e| {
+            CoreError::internal("Couldn't finish the 2× upscale.").with_details(e.to_string())
+        })
     })
     .await
-    .map_err(|e| CoreError::internal("The upscale was interrupted.").with_details(e.to_string()))??;
-    let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((src.width * factor, src.height * factor));
+    .map_err(|e| {
+        CoreError::internal("The upscale was interrupted.").with_details(e.to_string())
+    })??;
+    let (w, h) =
+        pinhole_engine::png::dimensions(&png).unwrap_or((src.width * factor, src.height * factor));
     let mut meta = src.meta.clone().unwrap_or(ResultImage {
         id: String::new(),
         kind: ResultKind::Upscaled,
@@ -1867,7 +2339,11 @@ async fn upscale_inner(
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
-    if cancel.is_cancelled() || !core.session.insert_generated_since(session_epoch, png, meta.clone()) {
+    if cancel.is_cancelled()
+        || !core
+            .session
+            .insert_generated_since(session_epoch, png, meta.clone())
+    {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
     Ok(meta)
@@ -1876,8 +2352,16 @@ async fn upscale_inner(
 fn model_and_family(core: &AppCore, model_id: &str) -> CoreResult<(InstalledFile, Family)> {
     let reg = core.registry();
     let idx = core.installed.lock();
-    let m = idx.get(model_id).cloned().ok_or_else(|| CoreError::not_found("That model isn't installed anymore."))?;
-    let fam = m.family.as_deref().and_then(|f| reg.family(f)).cloned().ok_or_else(|| CoreError::invalid("Pinhole doesn't know how to run this model."))?;
+    let m = idx
+        .get(model_id)
+        .cloned()
+        .ok_or_else(|| CoreError::not_found("That model isn't installed anymore."))?;
+    let fam = m
+        .family
+        .as_deref()
+        .and_then(|f| reg.family(f))
+        .cloned()
+        .ok_or_else(|| CoreError::invalid("Pinhole doesn't know how to run this model."))?;
     Ok((m, fam))
 }
 
@@ -1894,16 +2378,28 @@ fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> 
     let idx = core.installed.lock();
     let reg = core.registry();
     let usable = |f: &&InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).is_some();
-    if let Some(m) = src.meta.as_ref().and_then(|m| idx.get(&m.model_id)).filter(|f| usable(f)) {
+    if let Some(m) = src
+        .meta
+        .as_ref()
+        .and_then(|m| idx.get(&m.model_id))
+        .filter(|f| usable(f))
+    {
         return Some(m.id.clone());
     }
-    idx.models().filter(usable).max_by_key(|f| (f.last_used.unwrap_or(0), f.added_at)).map(|f| f.id.clone())
+    idx.models()
+        .filter(usable)
+        .max_by_key(|f| (f.last_used.unwrap_or(0), f.added_at))
+        .map(|f| f.id.clone())
 }
 
 /// Make sure the Real-ESRGAN component is installed; returns its file stem (the
 /// sd-server upscaler name).
 async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
-    let stem_of = |f: &InstalledFile| std::path::Path::new(&f.rel_path).file_stem().map(|s| s.to_string_lossy().into_owned());
+    let stem_of = |f: &InstalledFile| {
+        std::path::Path::new(&f.rel_path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+    };
     {
         let idx = core.installed.lock();
         if let Some(f) = idx.find_component(UPSCALER_COMPONENT) {
@@ -1913,10 +2409,9 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         }
     }
     let reg = core.registry();
-    let comp = reg
-        .component(UPSCALER_COMPONENT)
-        .cloned()
-        .ok_or_else(|| CoreError::not_found("The upscaler isn't in Pinhole's model list. Update Pinhole."))?;
+    let comp = reg.component(UPSCALER_COMPONENT).cloned().ok_or_else(|| {
+        CoreError::not_found("The upscaler isn't in Pinhole's model list. Update Pinhole.")
+    })?;
     let dest = core.data.models(ModelKind::Upscaler).join(&comp.file);
     crate::models::models_dir_for_write(core, ModelKind::Upscaler)?;
     let sha = comp.sha256.trim().to_ascii_lowercase();
@@ -1930,9 +2425,20 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         label: "Upscaler (Real-ESRGAN 4×)".into(),
         ..Default::default()
     };
-    let group = core.downloads.enqueue_kind("Upscaler (Real-ESRGAN 4×)".into(), pinhole_net::download::DownloadKind::Upscaler, vec![spec]);
-    let files = core.downloads.wait_detailed(&group).await.map_err(|e| CoreError::new(&e.code, e.message))?;
-    let file = files.into_iter().next().ok_or_else(|| CoreError::internal("The upscaler download is incomplete. Try again."))?;
+    let group = core.downloads.enqueue_kind(
+        "Upscaler (Real-ESRGAN 4×)".into(),
+        pinhole_net::download::DownloadKind::Upscaler,
+        vec![spec],
+    );
+    let files = core
+        .downloads
+        .wait_detailed(&group)
+        .await
+        .map_err(|e| CoreError::new(&e.code, e.message))?;
+    let file = files
+        .into_iter()
+        .next()
+        .ok_or_else(|| CoreError::internal("The upscaler download is incomplete. Try again."))?;
     let reg_file = crate::models::register_download(
         core,
         &file,
@@ -1969,8 +2475,14 @@ mod tests {
     #[test]
     fn launched_model_path_mirrors_the_engine() {
         let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(launched_model_path(&a(&["--diffusion-model", "/d", "--model", "/m"])), Some("/m"));
-        assert_eq!(launched_model_path(&a(&["--vae", "/v", "--diffusion-model", "/d"])), Some("/d"));
+        assert_eq!(
+            launched_model_path(&a(&["--diffusion-model", "/d", "--model", "/m"])),
+            Some("/m")
+        );
+        assert_eq!(
+            launched_model_path(&a(&["--vae", "/v", "--diffusion-model", "/d"])),
+            Some("/d")
+        );
         assert_eq!(launched_model_path(&a(&["--vae", "/v"])), None);
     }
 
@@ -1985,8 +2497,14 @@ mod tests {
         assert!(same_file_path(&fs, &fs));
         let dotted = tmp.path().join(".").join("model.safetensors");
         assert!(same_file_path(&dotted.to_string_lossy(), &fs));
-        assert!(!same_file_path(&g.to_string_lossy(), &fs), "a different existing file");
-        assert!(same_file_path("/unresolvable/elsewhere/MODEL.safetensors", &fs), "re-encoded path: same name");
+        assert!(
+            !same_file_path(&g.to_string_lossy(), &fs),
+            "a different existing file"
+        );
+        assert!(
+            same_file_path("/unresolvable/elsewhere/MODEL.safetensors", &fs),
+            "re-encoded path: same name"
+        );
         assert!(!same_file_path("/mock/mock.safetensors", &fs));
         assert!(!same_file_path("", &fs) && !same_file_path(&fs, ""));
     }
@@ -1995,16 +2513,57 @@ mod tests {
     fn launch_defaults_skip_a_set_flag_with_its_value() {
         let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
         let mut args = v(&["--model", "m", "--threads", "4", "--mmap"]);
-        add_defaults(&mut args, &v(&["--threads", "8", "--mmap", "--seed", "-1", "--rng=cuda", "--disable-image-metadata"]));
-        assert_eq!(args, v(&["--model", "m", "--threads", "4", "--mmap", "--seed", "-1", "--rng=cuda", "--disable-image-metadata"]));
+        add_defaults(
+            &mut args,
+            &v(&[
+                "--threads",
+                "8",
+                "--mmap",
+                "--seed",
+                "-1",
+                "--rng=cuda",
+                "--disable-image-metadata",
+            ]),
+        );
+        assert_eq!(
+            args,
+            v(&[
+                "--model",
+                "m",
+                "--threads",
+                "4",
+                "--mmap",
+                "--seed",
+                "-1",
+                "--rng=cuda",
+                "--disable-image-metadata"
+            ])
+        );
         let mut args = v(&["--rng", "cpu"]);
-        add_defaults(&mut args, &v(&["--rng=cuda", "--offload-to-cpu", "--vae-tiling"]));
-        assert_eq!(args, v(&["--rng", "cpu", "--offload-to-cpu", "--vae-tiling"]));
+        add_defaults(
+            &mut args,
+            &v(&["--rng=cuda", "--offload-to-cpu", "--vae-tiling"]),
+        );
+        assert_eq!(
+            args,
+            v(&["--rng", "cpu", "--offload-to-cpu", "--vae-tiling"])
+        );
     }
 
     #[test]
     fn strip_flag_removes_values_and_equals_forms() {
-        let mut a: Vec<String> = ["--model", "m", "--listen-ip", "0.0.0.0", "--listen-port=9", "--vae", "v"].iter().map(|s| s.to_string()).collect();
+        let mut a: Vec<String> = [
+            "--model",
+            "m",
+            "--listen-ip",
+            "0.0.0.0",
+            "--listen-port=9",
+            "--vae",
+            "v",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         strip_flag(&mut a, &["--listen-ip", "--listen-port"]);
         assert_eq!(a, vec!["--model", "m", "--vae", "v"]);
     }
@@ -2023,7 +2582,10 @@ mod tests {
         assert_eq!(req.loras[0].lora_id, "l1");
         let dbg = format!("{req:?}");
         assert!(!dbg.contains("SENTINEL") && !dbg.contains("NEG"), "{dbg}");
-        let p = FinalPromptPreview { prompt: "PINHOLE_SENTINEL_7f3a".into(), negative: None };
+        let p = FinalPromptPreview {
+            prompt: "PINHOLE_SENTINEL_7f3a".into(),
+            negative: None,
+        };
         assert!(!format!("{p:?}").contains("SENTINEL"));
     }
 
@@ -2042,7 +2604,11 @@ mod tests {
         logs.push_line("[ERROR] main.cpp:91  - new_sd_ctx_t failed");
         let e = engine_failure(&logs, Some(1));
         assert_eq!(e.code, "model_load");
-        assert!(e.message.starts_with("This model couldn't be loaded"), "{}", e.message);
+        assert!(
+            e.message.starts_with("This model couldn't be loaded"),
+            "{}",
+            e.message
+        );
         assert!(e.details.unwrap().contains("new_sd_ctx_t failed"));
     }
 
@@ -2055,23 +2621,49 @@ mod tests {
         let mut a = v(&["--diffusion-model", "/d", "--diffusion-fa"]);
         assert!(!text_encoder_on_cpu(&a));
         with_text_encoder_on_cpu(&mut a);
-        assert_eq!(a, v(&["--diffusion-model", "/d", "--diffusion-fa", "--backend", "te=cpu"]));
+        assert_eq!(
+            a,
+            v(&[
+                "--diffusion-model",
+                "/d",
+                "--diffusion-fa",
+                "--backend",
+                "te=cpu"
+            ])
+        );
         assert!(text_encoder_on_cpu(&a));
 
         // Existing lists are merged; other text-encoder entries (any alias) dropped.
-        let mut a = v(&["--backend", "diffusion=cuda0,CLIP=cuda0,vae=cpu", "--vae", "/v", "--backend", "t5_xxl=cuda0"]);
+        let mut a = v(&[
+            "--backend",
+            "diffusion=cuda0,CLIP=cuda0,vae=cpu",
+            "--vae",
+            "/v",
+            "--backend",
+            "t5_xxl=cuda0",
+        ]);
         with_text_encoder_on_cpu(&mut a);
-        assert_eq!(a, v(&["--vae", "/v", "--backend", "diffusion=cuda0,vae=cpu,te=cpu"]));
+        assert_eq!(
+            a,
+            v(&["--vae", "/v", "--backend", "diffusion=cuda0,vae=cpu,te=cpu"])
+        );
         let mut a = v(&["--backend", "cuda0"]);
         with_text_encoder_on_cpu(&mut a);
         assert_eq!(a, v(&["--backend", "cuda0,te=cpu"]));
 
         // sd.cpp semantics: a later entry wins; --clip-on-cpu is prepended.
         assert!(text_encoder_on_cpu(&v(&["--backend", "cpu"])));
-        assert!(text_encoder_on_cpu(&v(&["--backend", "all=cpu,diffusion=cuda0"])));
+        assert!(text_encoder_on_cpu(&v(&[
+            "--backend",
+            "all=cpu,diffusion=cuda0"
+        ])));
         assert!(!text_encoder_on_cpu(&v(&["--backend", "cpu,te=cuda0"])));
         assert!(text_encoder_on_cpu(&v(&["--clip-on-cpu"])));
-        assert!(!text_encoder_on_cpu(&v(&["--clip-on-cpu", "--backend", "llm=cuda0"])));
+        assert!(!text_encoder_on_cpu(&v(&[
+            "--clip-on-cpu",
+            "--backend",
+            "llm=cuda0"
+        ])));
         assert!(!text_encoder_on_cpu(&v(&["--backend", "vae=cpu"])));
     }
 
@@ -2079,44 +2671,118 @@ mod tests {
     fn one_memory_retry_per_stage() {
         let gpu = v(&["--diffusion-model", "/d"]);
         let none = MemFallback::default();
-        let next = |fb, stage, te, args: &[String]| next_memory_fallback(fb, stage, te, true, args, true, true);
+        let next = |fb, stage, te, args: &[String]| {
+            next_memory_fallback(fb, stage, te, true, args, true, true)
+        };
         // Reading the prompt: text encoder to the processor, and nothing after that.
         let (fb, note) = next(none, Stage::TextEncoder, TeChoice::Auto, &gpu).unwrap();
-        assert_eq!((fb, note), (MemFallback { te_on_cpu: true, ..none }, TE_RETRY_NOTE));
+        assert_eq!(
+            (fb, note),
+            (
+                MemFallback {
+                    te_on_cpu: true,
+                    ..none
+                },
+                TE_RETRY_NOTE
+            )
+        );
         let args = with_memory_choices(&gpu, fb);
         assert!(text_encoder_on_cpu(&args), "{args:?}");
         assert!(next(fb, Stage::TextEncoder, TeChoice::Auto, &args).is_none());
         // Settings keeps it on the card: the weights go to system memory instead.
         let (fb, note) = next(none, Stage::TextEncoder, TeChoice::Off, &gpu).unwrap();
-        assert_eq!((fb, note), (MemFallback { offload: true, ..none }, OFFLOAD_RETRY_NOTE));
+        assert_eq!(
+            (fb, note),
+            (
+                MemFallback {
+                    offload: true,
+                    ..none
+                },
+                OFFLOAD_RETRY_NOTE
+            )
+        );
         // Denoising: straight to system memory (tiling only helps the VAE), once.
         let (fb, note) = next(none, Stage::Diffusion, TeChoice::Auto, &gpu).unwrap();
-        assert_eq!((fb, note), (MemFallback { offload: true, ..none }, OFFLOAD_RETRY_NOTE));
+        assert_eq!(
+            (fb, note),
+            (
+                MemFallback {
+                    offload: true,
+                    ..none
+                },
+                OFFLOAD_RETRY_NOTE
+            )
+        );
         let args = with_memory_choices(&gpu, fb);
         assert_eq!(args.iter().filter(|a| *a == "--offload-to-cpu").count(), 1);
         assert!(next(fb, Stage::Diffusion, TeChoice::Auto, &args).is_none());
         // Decoding / unknown: VAE tiling once, then system memory once.
         for stage in [Stage::Vae, Stage::Unknown] {
             let (fb, note) = next(none, stage, TeChoice::Auto, &gpu).unwrap();
-            assert_eq!((fb.vae_tiling, fb.offload, note), (true, false, TILING_RETRY_NOTE));
+            assert_eq!(
+                (fb.vae_tiling, fb.offload, note),
+                (true, false, TILING_RETRY_NOTE)
+            );
             let args = with_memory_choices(&gpu, fb);
             assert_eq!(args.iter().filter(|a| *a == "--vae-tiling").count(), 1);
             let (fb, note) = next(fb, stage, TeChoice::Auto, &args).unwrap();
-            assert_eq!((fb.vae_tiling, fb.offload, note), (true, true, OFFLOAD_RETRY_NOTE));
+            assert_eq!(
+                (fb.vae_tiling, fb.offload, note),
+                (true, true, OFFLOAD_RETRY_NOTE)
+            );
             assert!(next(fb, stage, TeChoice::Auto, &with_memory_choices(&gpu, fb)).is_none());
             // Fine-tune turned tiling off: system memory right away.
-            let (fb, _) = next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false, true).unwrap();
+            let (fb, _) =
+                next_memory_fallback(none, stage, TeChoice::Auto, true, &gpu, false, true).unwrap();
             assert_eq!((fb.vae_tiling, fb.offload), (false, true));
         }
         // Not enough system memory for every weight: no offload, tiling as a last resort.
-        let (fb, _) = next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, true, &gpu, true, false).unwrap();
+        let (fb, _) = next_memory_fallback(
+            none,
+            Stage::Diffusion,
+            TeChoice::Auto,
+            true,
+            &gpu,
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!((fb.vae_tiling, fb.offload), (true, false));
-        assert!(next_memory_fallback(fb, Stage::Diffusion, TeChoice::Auto, true, &with_memory_choices(&gpu, fb), true, false).is_none());
+        assert!(next_memory_fallback(
+            fb,
+            Stage::Diffusion,
+            TeChoice::Auto,
+            true,
+            &with_memory_choices(&gpu, fb),
+            true,
+            false
+        )
+        .is_none());
         // No GPU: VAE tiling only, never for the prompt.
-        assert!(next_memory_fallback(none, Stage::TextEncoder, TeChoice::Auto, false, &gpu, true, true).is_none());
-        let (fb, _) = next_memory_fallback(none, Stage::Diffusion, TeChoice::Auto, false, &gpu, true, true).unwrap();
+        assert!(next_memory_fallback(
+            none,
+            Stage::TextEncoder,
+            TeChoice::Auto,
+            false,
+            &gpu,
+            true,
+            true
+        )
+        .is_none());
+        let (fb, _) = next_memory_fallback(
+            none,
+            Stage::Diffusion,
+            TeChoice::Auto,
+            false,
+            &gpu,
+            true,
+            true,
+        )
+        .unwrap();
         assert_eq!((fb.vae_tiling, fb.offload), (true, false));
-        let (fb, _) = next_memory_fallback(none, Stage::Vae, TeChoice::Auto, false, &gpu, true, true).unwrap();
+        let (fb, _) =
+            next_memory_fallback(none, Stage::Vae, TeChoice::Auto, false, &gpu, true, true)
+                .unwrap();
         assert_eq!((fb.vae_tiling, fb.offload), (true, false));
     }
 
@@ -2127,27 +2793,61 @@ mod tests {
         let t = dir.path().join("t.safetensors");
         std::fs::write(&f, vec![0u8; 3 << 20]).unwrap();
         std::fs::write(&t, vec![0u8; 1 << 20]).unwrap();
-        let args = v(&["--diffusion-model", f.to_str().unwrap(), "--t5xxl", t.to_str().unwrap(), "--listen-ip", "127.0.0.1"]);
+        let args = v(&[
+            "--diffusion-model",
+            f.to_str().unwrap(),
+            "--t5xxl",
+            t.to_str().unwrap(),
+            "--listen-ip",
+            "127.0.0.1",
+        ]);
         assert!((weights_gb(&args) - 4.0 / 1024.0).abs() < 1e-9);
         assert!(offload_fits_ram(&args, 2.01));
-        assert!(!offload_fits_ram(&args, 2.0), "4 MB of weights + 2 GB spare > 2 GB");
+        assert!(
+            !offload_fits_ram(&args, 2.0),
+            "4 MB of weights + 2 GB spare > 2 GB"
+        );
         assert!(offload_fits_ram(&args, 0.0), "unknown RAM");
     }
 
     #[test]
     fn other_programs_are_named_with_their_memory() {
-        let p = |pid, name: &str, mib| pinhole_hardware::GpuProcess { pid, name: name.into(), used_mib: mib };
-        let o = OtherGpuUse { gpu_index: 0, total_mib: 16275, others_mib: 9216, processes: vec![p(7, "python.exe", Some(9114))] };
-        assert_eq!(others_sentence(&o), "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB).");
+        let p = |pid, name: &str, mib| pinhole_hardware::GpuProcess {
+            pid,
+            name: name.into(),
+            used_mib: mib,
+        };
+        let o = OtherGpuUse {
+            gpu_index: 0,
+            total_mib: 16275,
+            others_mib: 9216,
+            processes: vec![p(7, "python.exe", Some(9114))],
+        };
+        assert_eq!(
+            others_sentence(&o),
+            "Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB)."
+        );
         // WDDM: no per-process numbers; repeated names are listed once; at most three.
         let o = OtherGpuUse {
             others_mib: 10854,
-            processes: vec![p(1, "python.exe", None), p(2, "python.exe", None), p(3, "obs64.exe", None), p(4, "a.exe", None), p(5, "b.exe", None)],
+            processes: vec![
+                p(1, "python.exe", None),
+                p(2, "python.exe", None),
+                p(3, "obs64.exe", None),
+                p(4, "a.exe", None),
+                p(5, "b.exe", None),
+            ],
             ..o
         };
         assert_eq!(others_sentence(&o), "Other programs are using 10.6 GB of your graphics memory: python.exe, obs64.exe, a.exe.");
-        let o = OtherGpuUse { processes: vec![], ..o };
-        assert_eq!(others_sentence(&o), "Other programs are using 10.6 GB of your graphics memory.");
+        let o = OtherGpuUse {
+            processes: vec![],
+            ..o
+        };
+        assert_eq!(
+            others_sentence(&o),
+            "Other programs are using 10.6 GB of your graphics memory."
+        );
         assert!(others_note(&o).ends_with("If pictures fail, close them and try again."));
     }
 
@@ -2181,10 +2881,28 @@ mod tests {
             parent_id: None,
         };
         let v = serde_json::to_value(&r).unwrap();
-        for k in ["id", "kind", "width", "height", "seed", "modelId", "modelLabel", "familyId", "steps", "cfg", "guidance", "sampler", "scheduler", "parentId"] {
+        for k in [
+            "id",
+            "kind",
+            "width",
+            "height",
+            "seed",
+            "modelId",
+            "modelLabel",
+            "familyId",
+            "steps",
+            "cfg",
+            "guidance",
+            "sampler",
+            "scheduler",
+            "parentId",
+        ] {
             assert!(v.get(k).is_some(), "{k}");
         }
         assert_eq!(v["kind"], "upscaled");
-        assert_eq!(serde_json::to_value(ResultKind::Generated).unwrap(), "generated");
+        assert_eq!(
+            serde_json::to_value(ResultKind::Generated).unwrap(),
+            "generated"
+        );
     }
 }

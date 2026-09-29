@@ -81,14 +81,26 @@ pub struct AppCore {
 impl AppCore {
     /// Load registry, settings and installed index; build clients. Does not
     /// touch the network. Call [`AppCore::start_background`] afterwards.
-    pub fn new(shipped: ShippedPaths, data: DataDir, events: Arc<dyn EventSink>) -> CoreResult<Arc<Self>> {
+    pub fn new(
+        shipped: ShippedPaths,
+        data: DataDir,
+        events: Arc<dyn EventSink>,
+    ) -> CoreResult<Arc<Self>> {
         // Settings live in Data/config; they say where the Models folder is.
         std::fs::create_dir_all(data.config())?;
         let settings = pinhole_store::settings::load(&data)?;
-        let data = data.with_models_home(settings.models_folder.as_ref().map(std::path::PathBuf::from));
+        let data = data.with_models_home(
+            settings
+                .models_folder
+                .as_ref()
+                .map(std::path::PathBuf::from),
+        );
         data.ensure_layout()?;
         let overrides = data.overrides_file();
-        let registry = Registry::load(&shipped.config_dir, overrides.exists().then_some(overrides.as_path()))?;
+        let registry = Registry::load(
+            &shipped.config_dir,
+            overrides.exists().then_some(overrides.as_path()),
+        )?;
         let installed = InstalledIndex::load(&data)?;
         let offline = OfflineFlag::new(settings.offline);
         let http = HttpClient::new(offline.clone())?;

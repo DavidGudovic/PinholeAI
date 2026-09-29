@@ -109,7 +109,16 @@ pub struct BrowsePage {
 impl BrowsePage {
     /// Offline mode: no request; the cursor is handed back unchanged.
     pub fn offline(cursor: Option<String>) -> Self {
-        Self { items: Vec::new(), next_cursor: cursor, offline: true, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0, hidden_by_size: 0 }
+        Self {
+            items: Vec::new(),
+            next_cursor: cursor,
+            offline: true,
+            partial: false,
+            checked: 0,
+            hidden_by_content: 0,
+            hidden_by_filters: 0,
+            hidden_by_size: 0,
+        }
     }
 }
 
@@ -337,13 +346,25 @@ mod tests {
     fn serialises_camel_case() {
         let p = DeletePreview {
             model_id: "m".into(),
-            files: vec![DeleteFile { rel_path: "models/vae/ae.safetensors".into(), size_bytes: 1, reason: DeleteReason::OrphanComponent }],
+            files: vec![DeleteFile {
+                rel_path: "models/vae/ae.safetensors".into(),
+                size_bytes: 1,
+                reason: DeleteReason::OrphanComponent,
+            }],
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["modelId"], "m");
         assert_eq!(v["files"][0]["relPath"], "models/vae/ae.safetensors");
         assert_eq!(v["files"][0]["reason"], "orphanComponent");
-        let r = AddFileResult { model: None, lora: None, needs_choice: Some(NeedsChoice { token: "t".into(), file_name: "f".into(), candidates: vec![] }) };
+        let r = AddFileResult {
+            model: None,
+            lora: None,
+            needs_choice: Some(NeedsChoice {
+                token: "t".into(),
+                file_name: "f".into(),
+                candidates: vec![],
+            }),
+        };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["needsChoice"]["fileName"], "f");
     }

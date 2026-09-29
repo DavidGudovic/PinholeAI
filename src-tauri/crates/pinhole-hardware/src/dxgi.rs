@@ -1,7 +1,9 @@
 //! Windows: list display adapters with DXGI (`CreateDXGIFactory1` →
 //! `EnumAdapters1` → `GetDesc1`). No COM initialisation is needed for DXGI.
 
-use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE};
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+};
 
 use crate::DxgiAdapter;
 
@@ -18,9 +20,17 @@ pub(crate) fn adapters() -> Vec<DxgiAdapter> {
     };
     for i in 0..MAX_ADAPTERS {
         // Fails with DXGI_ERROR_NOT_FOUND after the last adapter.
-        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else { break };
-        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else { continue };
-        let len = desc.Description.iter().position(|&c| c == 0).unwrap_or(desc.Description.len());
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(i) }) else {
+            break;
+        };
+        let Ok(desc) = (unsafe { adapter.GetDesc1() }) else {
+            continue;
+        };
+        let len = desc
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(desc.Description.len());
         out.push(DxgiAdapter {
             vendor_id: desc.VendorId,
             description: String::from_utf16_lossy(&desc.Description[..len]),

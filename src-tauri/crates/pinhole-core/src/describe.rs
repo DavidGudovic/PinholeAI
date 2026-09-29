@@ -182,16 +182,27 @@ fn missing_parts(core: &AppCore) -> CoreResult<Vec<(DownloadSpec, Part)>> {
     let mut out = Vec::new();
     if captioner_files(core).is_none() {
         let reg = core.registry();
-        let def = reg
-            .captioner()
-            .default
-            .clone()
-            .ok_or_else(|| CoreError::not_found("No describe model is listed in Pinhole's model list. Update Pinhole."))?;
+        let def = reg.captioner().default.clone().ok_or_else(|| {
+            CoreError::not_found(
+                "No describe model is listed in Pinhole's model list. Update Pinhole.",
+            )
+        })?;
         let dir = core.data.models(ModelKind::Captioner);
         let idx = core.installed.lock();
-        for (file, part, label) in [(&def.model, Part::Model, "Describe model"), (&def.mmproj, Part::Mmproj, "Describe model (vision)")] {
-            let comp = if part == Part::Model { DEFAULT_MODEL_ID } else { DEFAULT_MMPROJ_ID };
-            if idx.find_component(comp).map(|f| idx.abs_path(&core.data, f).is_file()).unwrap_or(false) {
+        for (file, part, label) in [
+            (&def.model, Part::Model, "Describe model"),
+            (&def.mmproj, Part::Mmproj, "Describe model (vision)"),
+        ] {
+            let comp = if part == Part::Model {
+                DEFAULT_MODEL_ID
+            } else {
+                DEFAULT_MMPROJ_ID
+            };
+            if idx
+                .find_component(comp)
+                .map(|f| idx.abs_path(&core.data, f).is_file())
+                .unwrap_or(false)
+            {
                 continue;
             }
             out.push((
@@ -225,30 +236,51 @@ pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
         Err(_) => true, // busy starting / describing
     } || external;
     if external {
-        return CaptionerStatus { available: true, source: Some("default".into()), download_bytes: 0, running };
+        return CaptionerStatus {
+            available: true,
+            source: Some("default".into()),
+            download_bytes: 0,
+            running,
+        };
     }
-    let download_bytes = missing_parts(core).map(|p| p.iter().filter_map(|(s, _)| s.size_hint()).sum()).unwrap_or(0);
+    let download_bytes = missing_parts(core)
+        .map(|p| p.iter().filter_map(|(s, _)| s.size_hint()).sum())
+        .unwrap_or(0);
     let engine_ok = engine_setup::installed_engine(core, EngineKind::Llama).is_some();
-    CaptionerStatus { available: files.is_some() && engine_ok, source: files.map(|f| f.0.key().to_string()), download_bytes, running }
+    CaptionerStatus {
+        available: files.is_some() && engine_ok,
+        source: files.map(|f| f.0.key().to_string()),
+        download_bytes,
+        running,
+    }
 }
 
 /// Queue the default captioner (+ the llama.cpp engine if missing) as one
 /// download group; files are registered / unpacked when it finishes.
 pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted> {
-    let explicit = matches!(core.settings.read().engine_backend.as_str(), "cuda" | "vulkan" | "cpu");
+    let explicit = matches!(
+        core.settings.read().engine_backend.as_str(),
+        "cuda" | "vulkan" | "cpu"
+    );
     if !explicit && core.hardware.read().is_none() {
         crate::app::wait_for_hardware(core, Duration::from_secs(30)).await;
     }
     let parts = missing_parts(core)?;
     let (specs, roles): (Vec<DownloadSpec>, Vec<Part>) = parts.into_iter().unzip();
     crate::models::models_dir_for_write(core, ModelKind::Captioner)?;
-    let group_id = core.downloads.enqueue_kind("Describe model".into(), pinhole_net::download::DownloadKind::Captioner, specs);
+    let group_id = core.downloads.enqueue_kind(
+        "Describe model".into(),
+        pinhole_net::download::DownloadKind::Captioner,
+        specs,
+    );
     *core.describe.last_error.lock() = None;
     let core2 = core.clone();
     let gid = group_id.clone();
     tokio::spawn(async move {
         let _guard = core2.describe.install_lock.lock().await;
-        let Ok(files) = core2.downloads.wait_detailed(&gid).await else { return };
+        let Ok(files) = core2.downloads.wait_detailed(&gid).await else {
+            return;
+        };
         let mut engine_files = Vec::new();
         for (file, role) in files.into_iter().zip(roles) {
             let reg = match role {
@@ -279,7 +311,15 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
         }
         if !engine_files.is_empty() {
             let res = match engine_setup::selected_build(&core2, EngineKind::Llama) {
-                Ok((cfg, sel)) => engine_setup::unpack_downloaded(&core2, EngineKind::Llama, &cfg, &sel, engine_files).await.map(|_| ()),
+                Ok((cfg, sel)) => engine_setup::unpack_downloaded(
+                    &core2,
+                    EngineKind::Llama,
+                    &cfg,
+                    &sel,
+                    engine_files,
+                )
+                .await
+                .map(|_| ()),
                 Err(e) => Err(e),
             };
             if let Err(e) = res {
@@ -294,30 +334,46 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
 // ---------------------------------------------------------------- describe
 
 /// Describe a session image as a prompt (`sentence`) or booru tags (`tags`).
-pub async fn describe_image(core: &Arc<AppCore>, image_id: &str, style: DescribeStyle) -> CoreResult<String> {
+pub async fn describe_image(
+    core: &Arc<AppCore>,
+    image_id: &str,
+    style: DescribeStyle,
+) -> CoreResult<String> {
     // Held for the whole run: the Models folder can't move under the engine.
     let _folder = crate::models::folder_read(core)?;
-    let img = core.session.get(image_id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore. Add it again."))?;
+    let img = core.session.get(image_id).ok_or_else(|| {
+        CoreError::not_found("That image isn't in this session anymore. Add it again.")
+    })?;
     let reg = core.registry();
     let instruction = reg
         .captioner()
         .prompts
         .get(style.key())
         .cloned()
-        .ok_or_else(|| CoreError::not_found("This describe style isn't available. Update Pinhole."))?;
+        .ok_or_else(|| {
+            CoreError::not_found("This describe style isn't available. Update Pinhole.")
+        })?;
 
     // Shrink very large images (the VLM downsamples anyway).
     let (bytes, mime): (Vec<u8>, &str) = if img.width.max(img.height) > MAX_SIDE {
         let src = img.bytes.clone();
         let png = tokio::task::spawn_blocking(move || -> CoreResult<Vec<u8>> {
-            let (mut rgba, mut w, mut h) = pinhole_engine::image::decode_rgba(&src).map_err(|e| CoreError::invalid("This image couldn't be decoded.").with_details(e.to_string()))?;
+            let (mut rgba, mut w, mut h) =
+                pinhole_engine::image::decode_rgba(&src).map_err(|e| {
+                    CoreError::invalid("This image couldn't be decoded.")
+                        .with_details(e.to_string())
+                })?;
             while w.max(h) > MAX_SIDE {
                 (rgba, w, h) = pinhole_engine::image::downscale_2x_box(&rgba, w, h);
             }
-            pinhole_engine::image::encode_png_rgba(&rgba, w, h).map_err(|e| CoreError::internal("Couldn't prepare the image.").with_details(e.to_string()))
+            pinhole_engine::image::encode_png_rgba(&rgba, w, h).map_err(|e| {
+                CoreError::internal("Couldn't prepare the image.").with_details(e.to_string())
+            })
         })
         .await
-        .map_err(|e| CoreError::internal("Couldn't prepare the image.").with_details(e.to_string()))??;
+        .map_err(|e| {
+            CoreError::internal("Couldn't prepare the image.").with_details(e.to_string())
+        })??;
         (png, "image/png")
     } else {
         (img.bytes.as_ref().clone(), img.kind.mime())
@@ -327,9 +383,19 @@ pub async fn describe_image(core: &Arc<AppCore>, image_id: &str, style: Describe
     describe_inner(core, &instruction, mime, &bytes, style).await
 }
 
-async fn describe_inner(core: &Arc<AppCore>, instruction: &str, mime: &str, bytes: &[u8], style: DescribeStyle) -> CoreResult<String> {
+async fn describe_inner(
+    core: &Arc<AppCore>,
+    instruction: &str,
+    mime: &str,
+    bytes: &[u8],
+    style: DescribeStyle,
+) -> CoreResult<String> {
     let client = ensure_llama(core).await?;
-    let max_tokens = if style == DescribeStyle::Tags { 200 } else { 300 };
+    let max_tokens = if style == DescribeStyle::Tags {
+        200
+    } else {
+        300
+    };
     let text = client.describe(instruction, mime, bytes, max_tokens).await.map_err(|e| {
         let tail = core.describe.logs.tail_text(30);
         match classify(&tail, None) {
@@ -338,28 +404,47 @@ async fn describe_inner(core: &Arc<AppCore>, instruction: &str, mime: &str, byte
         }
     })?;
     if text.is_empty() {
-        return Err(CoreError::new("engine_failed", "The describe model returned nothing. Try again."));
+        return Err(CoreError::new(
+            "engine_failed",
+            "The describe model returned nothing. Try again.",
+        ));
     }
     Ok(text)
 }
 
 /// 32 random bytes as hex: llama-server's API key for one launch.
 fn new_api_key() -> String {
-    rand::random::<[u8; 32]>().iter().map(|b| format!("{b:02x}")).collect()
+    rand::random::<[u8; 32]>()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// After `wait_ready`: our child must still be running and the server on the
 /// port must report the model we launched it with (`GET /v1/models`, which also
 /// needs our API key) — otherwise another program holds the port.
-pub(crate) async fn verify_llama_identity(proc: &mut EngineProcess, client: &LlamaClient, model: &std::path::Path) -> CoreResult<()> {
+pub(crate) async fn verify_llama_identity(
+    proc: &mut EngineProcess,
+    client: &LlamaClient,
+    model: &std::path::Path,
+) -> CoreResult<()> {
     let taken = || CoreError::new("engine_failed", crate::generate::PORT_TAKEN_MESSAGE);
     if !proc.is_running() {
-        return Err(taken().with_details("the describe engine exited while another program answered on its port"));
+        return Err(taken().with_details(
+            "the describe engine exited while another program answered on its port",
+        ));
     }
-    let ids = client.model_ids().await.map_err(|e| taken().with_details(format!("model check failed: {e}")))?;
+    let ids = client
+        .model_ids()
+        .await
+        .map_err(|e| taken().with_details(format!("model check failed: {e}")))?;
     let expected = model.to_string_lossy();
-    if !ids.iter().any(|id| crate::generate::same_file_path(id, &expected)) {
-        return Err(taken().with_details("the server on the describe engine's port reports a different model"));
+    if !ids
+        .iter()
+        .any(|id| crate::generate::same_file_path(id, &expected))
+    {
+        return Err(taken()
+            .with_details("the server on the describe engine's port reports a different model"));
     }
     if !proc.is_running() {
         return Err(taken().with_details("the describe engine exited"));
@@ -375,14 +460,26 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
     if let Some(msg) = core.describe.last_error.lock().clone() {
         return Err(CoreError::new("engine_failed", msg));
     }
-    let (_, model, mmproj) = captioner_files(core).ok_or_else(|| CoreError::not_found("The describe model isn't installed yet. Click Get on the Describe tab."))?;
-    let engine = engine_setup::installed_engine(core, EngineKind::Llama)
-        .ok_or_else(|| CoreError::not_found("The describe engine isn't installed yet. Click Get on the Describe tab."))?;
+    let (_, model, mmproj) = captioner_files(core).ok_or_else(|| {
+        CoreError::not_found(
+            "The describe model isn't installed yet. Click Get on the Describe tab.",
+        )
+    })?;
+    let engine = engine_setup::installed_engine(core, EngineKind::Llama).ok_or_else(|| {
+        CoreError::not_found(
+            "The describe engine isn't installed yet. Click Get on the Describe tab.",
+        )
+    })?;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
         // Same files AND the same engine build (the backend may have changed in Settings).
-        if s.proc.is_running() && s.model == model && s.mmproj == mmproj && s.proc.exe() == engine.exe {
-            return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
+        if s.proc.is_running()
+            && s.model == model
+            && s.mmproj == mmproj
+            && s.proc.exe() == engine.exe
+        {
+            return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url())
+                .with_api_key(s.api_key.clone()));
         }
     }
     // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
@@ -400,23 +497,49 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
         return Err(cancelled());
     }
     let cfg = engine_setup::engine_config(core)?;
-    let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
+    let port = free_port().map_err(|e| {
+        CoreError::internal("Couldn't find a free local port.").with_details(e.to_string())
+    })?;
     // `launch_args` sets the host and port (loopback only).
     let mut args = cfg.llama_cpp.launch_defaults.clone();
     crate::generate::strip_flag(&mut args, &["--host", "--port"]);
-    args.extend(llama::launch_args(&model, &mmproj, port, &engine.backend, CTX_SIZE));
+    args.extend(llama::launch_args(
+        &model,
+        &mmproj,
+        port,
+        &engine.backend,
+        CTX_SIZE,
+    ));
     core.describe.logs.clear();
     let api_key = new_api_key();
-    let mut proc = EngineProcess::spawn_with_env(&engine.exe, &args, &[(llama::API_KEY_ENV, api_key.as_str())], port, core.describe.logs.clone())
-        .map_err(|e| CoreError::new("engine_failed", "The describe engine couldn't be started.").with_details(e.to_string()))?;
-    let client = LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
-    match proc.wait_ready(|| client.is_ready(), LOAD_TIMEOUT, &cancel, |_| {}).await {
+    let mut proc = EngineProcess::spawn_with_env(
+        &engine.exe,
+        &args,
+        &[(llama::API_KEY_ENV, api_key.as_str())],
+        port,
+        core.describe.logs.clone(),
+    )
+    .map_err(|e| {
+        CoreError::new("engine_failed", "The describe engine couldn't be started.")
+            .with_details(e.to_string())
+    })?;
+    let client =
+        LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
+    match proc
+        .wait_ready(|| client.is_ready(), LOAD_TIMEOUT, &cancel, |_| {})
+        .await
+    {
         Ok(()) => {
             if let Err(e) = verify_llama_identity(&mut proc, &client, &model).await {
                 proc.kill().await;
                 return Err(e);
             }
-            *slot = Some(LlamaSlot { proc, model, mmproj, api_key });
+            *slot = Some(LlamaSlot {
+                proc,
+                model,
+                mmproj,
+                api_key,
+            });
             *core.describe.last_used.lock() = Instant::now();
             Ok(client)
         }
@@ -449,10 +572,14 @@ pub fn start_idle_watchdog(core: &Arc<AppCore>) {
                 0 => 60,
                 s => s,
             };
-            if core.describe.is_busy() || core.describe.last_used.lock().elapsed() < Duration::from_secs(idle) {
+            if core.describe.is_busy()
+                || core.describe.last_used.lock().elapsed() < Duration::from_secs(idle)
+            {
                 continue;
             }
-            let Ok(mut slot) = core.describe.slot.try_lock() else { continue };
+            let Ok(mut slot) = core.describe.slot.try_lock() else {
+                continue;
+            };
             if let Some(s) = slot.take() {
                 s.proc.stop().await;
             }
@@ -466,7 +593,9 @@ pub(crate) async fn stop_if_idle(core: &AppCore) -> bool {
     if core.describe.is_busy() {
         return false;
     }
-    let Ok(mut slot) = core.describe.slot.try_lock() else { return false };
+    let Ok(mut slot) = core.describe.slot.try_lock() else {
+        return false;
+    };
     match slot.take() {
         Some(s) => {
             s.proc.stop().await;
@@ -516,7 +645,12 @@ mod tests {
         let s: DescribeStyle = serde_json::from_str("\"tags\"").unwrap();
         assert_eq!(s, DescribeStyle::Tags);
         assert_eq!(DescribeStyle::Sentence.key(), "sentence");
-        let st = CaptionerStatus { available: false, source: None, download_bytes: 5, running: false };
+        let st = CaptionerStatus {
+            available: false,
+            source: None,
+            download_bytes: 5,
+            running: false,
+        };
         let v = serde_json::to_value(&st).unwrap();
         assert_eq!(v["downloadBytes"], 5);
         assert!(v["source"].is_null());

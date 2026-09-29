@@ -11,11 +11,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-mod nvidia;
 #[cfg(windows)]
 mod dxgi;
+mod nvidia;
 
-pub use nvidia::{parse_compute_apps, parse_gpu_memory, parse_nvidia_smi, query_vram_usage, GpuMemory, GpuProcess, OtherGpuUse, VramUsage};
+pub use nvidia::{
+    parse_compute_apps, parse_gpu_memory, parse_nvidia_smi, query_vram_usage, GpuMemory,
+    GpuProcess, OtherGpuUse, VramUsage,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,7 +107,12 @@ pub fn detect() -> HardwareInfo {
     let nvidia = nvidia::query();
     let gpus = merge_gpus(nvidia, platform_gpus());
     let (ram_gb, cpu_threads) = memory_and_threads();
-    HardwareInfo { gpus, ram_gb, cpu_threads, os: os_label() }
+    HardwareInfo {
+        gpus,
+        ram_gb,
+        cpu_threads,
+        os: os_label(),
+    }
 }
 
 /// Engine backend for a vendor, per `config/engine.yaml → selection`:
@@ -122,8 +130,14 @@ pub fn default_backend(gpu: Option<&GpuInfo>) -> &'static str {
 /// only when `nvidia-smi` found nothing. Indices are reassigned 0..n.
 pub fn merge_gpus(mut nvidia: Vec<GpuInfo>, platform: Vec<GpuInfo>) -> Vec<GpuInfo> {
     nvidia.sort_by_key(|g| g.index);
-    let (platform_nvidia, others): (Vec<_>, Vec<_>) = platform.into_iter().partition(|g| g.vendor == Vendor::Nvidia);
-    let mut gpus = if nvidia.is_empty() { platform_nvidia } else { nvidia };
+    let (platform_nvidia, others): (Vec<_>, Vec<_>) = platform
+        .into_iter()
+        .partition(|g| g.vendor == Vendor::Nvidia);
+    let mut gpus = if nvidia.is_empty() {
+        platform_nvidia
+    } else {
+        nvidia
+    };
     gpus.extend(others);
     for (i, g) in gpus.iter_mut().enumerate() {
         g.index = i;
@@ -172,8 +186,17 @@ pub fn gpu_from_dxgi(a: &DxgiAdapter) -> Option<GpuInfo> {
         return None;
     }
     let name = a.description.trim();
-    let name = if name.is_empty() { fallback_name(vendor, vram_gb) } else { name.to_string() };
-    Some(GpuInfo { index: 0, vendor, name, vram_gb })
+    let name = if name.is_empty() {
+        fallback_name(vendor, vram_gb)
+    } else {
+        name.to_string()
+    };
+    Some(GpuInfo {
+        index: 0,
+        vendor,
+        name,
+        vram_gb,
+    })
 }
 
 // ---------------------------------------------------------------- Linux sysfs
@@ -208,10 +231,21 @@ pub fn gpu_from_sysfs(card: &SysfsCard) -> Option<GpuInfo> {
     if vendor == Vendor::Other {
         return None;
     }
-    let vram_bytes = card.vram_total.as_deref().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
+    let vram_bytes = card
+        .vram_total
+        .as_deref()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
     let vram_gb = dedicated_or_zero(vendor, bytes_to_gb(vram_bytes));
-    let pci_id = card.uevent.as_deref().and_then(|u| uevent_value(u, "PCI_ID"));
-    let product = card.product_name.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let pci_id = card
+        .uevent
+        .as_deref()
+        .and_then(|u| uevent_value(u, "PCI_ID"));
+    let product = card
+        .product_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let base = match product {
         Some(p) => p.to_string(),
         None => fallback_name(vendor, vram_gb),
@@ -220,12 +254,19 @@ pub fn gpu_from_sysfs(card: &SysfsCard) -> Option<GpuInfo> {
         Some(id) if product.is_none() => format!("{base} ({id})"),
         _ => base,
     };
-    Some(GpuInfo { index: 0, vendor, name, vram_gb })
+    Some(GpuInfo {
+        index: 0,
+        vendor,
+        name,
+        vram_gb,
+    })
 }
 
 /// Read every `cardN` under a drm class dir (normally `/sys/class/drm`).
 pub fn scan_sysfs(drm_dir: &Path) -> Vec<GpuInfo> {
-    let Ok(entries) = std::fs::read_dir(drm_dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(drm_dir) else {
+        return Vec::new();
+    };
     let mut cards: Vec<(u32, std::path::PathBuf)> = entries
         .flatten()
         .filter_map(|e| {
@@ -255,12 +296,19 @@ pub fn scan_sysfs(drm_dir: &Path) -> Vec<GpuInfo> {
 
 fn parse_hex_u32(s: &str) -> Option<u32> {
     let s = s.trim();
-    let s = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")).unwrap_or(s);
+    let s = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
     u32::from_str_radix(s, 16).ok()
 }
 
 fn uevent_value<'a>(uevent: &'a str, key: &str) -> Option<&'a str> {
-    uevent.lines().find_map(|l| l.trim().strip_prefix(key)?.strip_prefix('=')).map(str::trim).filter(|v| !v.is_empty())
+    uevent
+        .lines()
+        .find_map(|l| l.trim().strip_prefix(key)?.strip_prefix('='))
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
 }
 
 fn fallback_name(vendor: Vendor, vram_gb: f32) -> String {
@@ -296,7 +344,9 @@ fn memory_and_threads() -> (f32, usize) {
     let ram_gb = bytes_to_gb(sys.total_memory());
     sys.refresh_cpu_list(sysinfo::CpuRefreshKind::nothing());
     let threads = match sys.cpus().len() {
-        0 => std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
+        0 => std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1),
         n => n,
     };
     (ram_gb, threads)
@@ -315,21 +365,41 @@ mod tests {
     use super::*;
 
     fn gpu(index: usize, vendor: Vendor, vram_gb: f32) -> GpuInfo {
-        GpuInfo { index, vendor, name: format!("{vendor:?} {index}"), vram_gb }
+        GpuInfo {
+            index,
+            vendor,
+            name: format!("{vendor:?} {index}"),
+            vram_gb,
+        }
     }
 
     fn info(gpus: Vec<GpuInfo>) -> HardwareInfo {
-        HardwareInfo { gpus, ram_gb: 32.0, cpu_threads: 16, os: "linux".into() }
+        HardwareInfo {
+            gpus,
+            ram_gb: 32.0,
+            cpu_threads: 16,
+            os: "linux".into(),
+        }
     }
 
     #[test]
     fn best_gpu_prefers_vram_then_nvidia_then_index() {
         assert_eq!(info(vec![]).best_gpu(), None);
-        let hw = info(vec![gpu(0, Vendor::Intel, 0.0), gpu(1, Vendor::Nvidia, 8.0), gpu(2, Vendor::Amd, 16.0)]);
+        let hw = info(vec![
+            gpu(0, Vendor::Intel, 0.0),
+            gpu(1, Vendor::Nvidia, 8.0),
+            gpu(2, Vendor::Amd, 16.0),
+        ]);
         assert_eq!(hw.best_gpu().unwrap().index, 2);
-        let hw = info(vec![gpu(0, Vendor::Amd, 16.0), gpu(1, Vendor::Nvidia, 16.0)]);
+        let hw = info(vec![
+            gpu(0, Vendor::Amd, 16.0),
+            gpu(1, Vendor::Nvidia, 16.0),
+        ]);
         assert_eq!(hw.best_gpu().unwrap().index, 1);
-        let hw = info(vec![gpu(0, Vendor::Nvidia, 12.0), gpu(1, Vendor::Nvidia, 12.0)]);
+        let hw = info(vec![
+            gpu(0, Vendor::Nvidia, 12.0),
+            gpu(1, Vendor::Nvidia, 12.0),
+        ]);
         assert_eq!(hw.best_gpu().unwrap().index, 0);
         let hw = info(vec![gpu(0, Vendor::Intel, 0.0)]);
         assert_eq!(hw.best_gpu().unwrap().vendor, Vendor::Intel);
@@ -349,16 +419,46 @@ mod tests {
     #[test]
     fn merge_prefers_nvidia_smi_and_reindexes() {
         let smi = vec![
-            GpuInfo { index: 1, vendor: Vendor::Nvidia, name: "RTX 3060".into(), vram_gb: 12.0 },
-            GpuInfo { index: 0, vendor: Vendor::Nvidia, name: "RTX 5070 Ti".into(), vram_gb: 15.9 },
+            GpuInfo {
+                index: 1,
+                vendor: Vendor::Nvidia,
+                name: "RTX 3060".into(),
+                vram_gb: 12.0,
+            },
+            GpuInfo {
+                index: 0,
+                vendor: Vendor::Nvidia,
+                name: "RTX 5070 Ti".into(),
+                vram_gb: 15.9,
+            },
         ];
         let platform = vec![
-            GpuInfo { index: 0, vendor: Vendor::Intel, name: "Intel UHD".into(), vram_gb: 0.0 },
-            GpuInfo { index: 0, vendor: Vendor::Nvidia, name: "NVIDIA GeForce RTX 5070 Ti".into(), vram_gb: 15.6 },
+            GpuInfo {
+                index: 0,
+                vendor: Vendor::Intel,
+                name: "Intel UHD".into(),
+                vram_gb: 0.0,
+            },
+            GpuInfo {
+                index: 0,
+                vendor: Vendor::Nvidia,
+                name: "NVIDIA GeForce RTX 5070 Ti".into(),
+                vram_gb: 15.6,
+            },
         ];
         let merged = merge_gpus(smi, platform.clone());
-        let names: Vec<_> = merged.iter().map(|g| (g.index, g.name.as_str(), g.vram_gb)).collect();
-        assert_eq!(names, vec![(0, "RTX 5070 Ti", 15.9), (1, "RTX 3060", 12.0), (2, "Intel UHD", 0.0)]);
+        let names: Vec<_> = merged
+            .iter()
+            .map(|g| (g.index, g.name.as_str(), g.vram_gb))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (0, "RTX 5070 Ti", 15.9),
+                (1, "RTX 3060", 12.0),
+                (2, "Intel UHD", 0.0)
+            ]
+        );
 
         // nvidia-smi missing: platform NVIDIA entries are used, NVIDIA first.
         let merged = merge_gpus(vec![], platform);
@@ -393,7 +493,10 @@ mod tests {
             software: false,
         };
         let g = gpu_from_dxgi(&igpu).unwrap();
-        assert_eq!((g.vendor, g.vram_gb, g.name.as_str()), (Vendor::Intel, 0.0, "Intel(R) UHD Graphics 770"));
+        assert_eq!(
+            (g.vendor, g.vram_gb, g.name.as_str()),
+            (Vendor::Intel, 0.0, "Intel(R) UHD Graphics 770")
+        );
 
         let arc = DxgiAdapter {
             vendor_id: 0x8086,
@@ -410,31 +513,60 @@ mod tests {
             software: true,
         };
         assert_eq!(gpu_from_dxgi(&basic), None);
-        let remote = DxgiAdapter { software: false, ..basic };
+        let remote = DxgiAdapter {
+            software: false,
+            ..basic
+        };
         assert_eq!(gpu_from_dxgi(&remote), None);
 
-        let other = DxgiAdapter { vendor_id: 0x5143, description: " ".into(), dedicated_video_memory: 0, software: false };
+        let other = DxgiAdapter {
+            vendor_id: 0x5143,
+            description: " ".into(),
+            dedicated_video_memory: 0,
+            software: false,
+        };
         assert_eq!(gpu_from_dxgi(&other), None);
-        let other = DxgiAdapter { dedicated_video_memory: 4 << 30, ..other };
+        let other = DxgiAdapter {
+            dedicated_video_memory: 4 << 30,
+            ..other
+        };
         let g = gpu_from_dxgi(&other).unwrap();
-        assert_eq!((g.vendor, g.name.as_str(), g.vram_gb), (Vendor::Other, "GPU", 4.0));
+        assert_eq!(
+            (g.vendor, g.name.as_str(), g.vram_gb),
+            (Vendor::Other, "GPU", 4.0)
+        );
     }
 
     #[test]
     fn sysfs_cards() {
         let amd = SysfsCard {
             vendor: "0x1002\n".into(),
-            uevent: Some("DRIVER=amdgpu\nPCI_CLASS=30000\nPCI_ID=1002:744C\nPCI_SUBSYS_ID=1EAE:7901\n".into()),
+            uevent: Some(
+                "DRIVER=amdgpu\nPCI_CLASS=30000\nPCI_ID=1002:744C\nPCI_SUBSYS_ID=1EAE:7901\n"
+                    .into(),
+            ),
             product_name: Some("\n".into()),
             vram_total: Some("25753026560\n".into()),
         };
         let g = gpu_from_sysfs(&amd).unwrap();
-        assert_eq!((g.vendor, g.vram_gb, g.name.as_str()), (Vendor::Amd, 24.0, "AMD Radeon GPU (1002:744C)"));
+        assert_eq!(
+            (g.vendor, g.vram_gb, g.name.as_str()),
+            (Vendor::Amd, 24.0, "AMD Radeon GPU (1002:744C)")
+        );
 
-        let named = SysfsCard { product_name: Some("AMD Radeon RX 7900 XTX\n".into()), ..amd.clone() };
-        assert_eq!(gpu_from_sysfs(&named).unwrap().name, "AMD Radeon RX 7900 XTX");
+        let named = SysfsCard {
+            product_name: Some("AMD Radeon RX 7900 XTX\n".into()),
+            ..amd.clone()
+        };
+        assert_eq!(
+            gpu_from_sysfs(&named).unwrap().name,
+            "AMD Radeon RX 7900 XTX"
+        );
 
-        let apu = SysfsCard { vram_total: Some("536870912".into()), ..amd.clone() };
+        let apu = SysfsCard {
+            vram_total: Some("536870912".into()),
+            ..amd.clone()
+        };
         assert_eq!(gpu_from_sysfs(&apu).unwrap().vram_gb, 0.0);
 
         let intel = SysfsCard {
@@ -444,19 +576,38 @@ mod tests {
             vram_total: None,
         };
         let g = gpu_from_sysfs(&intel).unwrap();
-        assert_eq!((g.vendor, g.vram_gb, g.name.as_str()), (Vendor::Intel, 0.0, "Intel integrated graphics (8086:A780)"));
+        assert_eq!(
+            (g.vendor, g.vram_gb, g.name.as_str()),
+            (Vendor::Intel, 0.0, "Intel integrated graphics (8086:A780)")
+        );
 
-        let arc = SysfsCard { vram_total: Some("17179869184".into()), ..intel };
+        let arc = SysfsCard {
+            vram_total: Some("17179869184".into()),
+            ..intel
+        };
         let g = gpu_from_sysfs(&arc).unwrap();
-        assert_eq!((g.vram_gb, g.name.as_str()), (16.0, "Intel Arc GPU (8086:A780)"));
+        assert_eq!(
+            (g.vram_gb, g.name.as_str()),
+            (16.0, "Intel Arc GPU (8086:A780)")
+        );
 
-        let nvidia = SysfsCard { vendor: "0x10de".into(), uevent: Some("DRIVER=nvidia\nPCI_ID=10DE:2C05".into()), ..Default::default() };
+        let nvidia = SysfsCard {
+            vendor: "0x10de".into(),
+            uevent: Some("DRIVER=nvidia\nPCI_ID=10DE:2C05".into()),
+            ..Default::default()
+        };
         let g = gpu_from_sysfs(&nvidia).unwrap();
         assert_eq!((g.vendor, g.vram_gb), (Vendor::Nvidia, 0.0));
 
-        let virtio = SysfsCard { vendor: "0x1af4".into(), ..Default::default() };
+        let virtio = SysfsCard {
+            vendor: "0x1af4".into(),
+            ..Default::default()
+        };
         assert_eq!(gpu_from_sysfs(&virtio), None);
-        let garbage = SysfsCard { vendor: "zz".into(), ..Default::default() };
+        let garbage = SysfsCard {
+            vendor: "zz".into(),
+            ..Default::default()
+        };
         assert_eq!(gpu_from_sysfs(&garbage), None);
     }
 
@@ -472,7 +623,14 @@ mod tests {
                 std::fs::write(p, content).unwrap();
             }
         };
-        card("card1", &[("device/vendor", "0x1002\n"), ("device/mem_info_vram_total", "17163091968\n"), ("device/uevent", "PCI_ID=1002:73BF\n")]);
+        card(
+            "card1",
+            &[
+                ("device/vendor", "0x1002\n"),
+                ("device/mem_info_vram_total", "17163091968\n"),
+                ("device/uevent", "PCI_ID=1002:73BF\n"),
+            ],
+        );
         card("card0", &[("device/vendor", "0x8086\n")]);
         card("card0-DP-1", &[("device/vendor", "0x1002\n")]); // connector, ignored
         card("card2", &[("device/vendor", "0x1234\n")]); // QEMU VGA, ignored

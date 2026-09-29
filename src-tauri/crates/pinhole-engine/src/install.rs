@@ -76,7 +76,10 @@ pub struct InstalledEngine {
 
 /// `Data/engine/<sd|llama>/<version>/<backend>/`
 pub fn install_dir(engine_root: &Path, kind: EngineKind, version: &str, backend: &str) -> PathBuf {
-    engine_root.join(kind.dir_name()).join(sanitize(version)).join(sanitize(backend))
+    engine_root
+        .join(kind.dir_name())
+        .join(sanitize(version))
+        .join(sanitize(backend))
 }
 
 /// Where archives are downloaded before unpacking (`Data/engine/downloads/`).
@@ -85,11 +88,26 @@ pub fn download_dir(engine_root: &Path) -> PathBuf {
 }
 
 fn sanitize(s: &str) -> String {
-    s.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') { c } else { '_' }).collect::<String>().trim_matches('.').to_string()
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_string()
 }
 
 /// Read the marker of an installed engine; `None` if missing / other version / binary gone.
-pub fn find_installed(engine_root: &Path, kind: EngineKind, version: &str, backend: &str) -> Option<InstalledEngine> {
+pub fn find_installed(
+    engine_root: &Path,
+    kind: EngineKind,
+    version: &str,
+    backend: &str,
+) -> Option<InstalledEngine> {
     let dir = install_dir(engine_root, kind, version, backend);
     let text = fs::read_to_string(dir.join(MARKER_FILE)).ok()?;
     let marker: InstallMarker = serde_json::from_str(&text).ok()?;
@@ -98,11 +116,22 @@ pub fn find_installed(engine_root: &Path, kind: EngineKind, version: &str, backe
     }
     let rel = safe_relative(&marker.binary)?;
     let exe = dir.join(rel);
-    exe.is_file().then(|| InstalledEngine { kind, dir: dir.clone(), exe, version: marker.version, backend: marker.backend })
+    exe.is_file().then(|| InstalledEngine {
+        kind,
+        dir: dir.clone(),
+        exe,
+        version: marker.version,
+        backend: marker.backend,
+    })
 }
 
 /// Any installed backend of this engine version (prefers `preferred` order).
-pub fn find_any_installed(engine_root: &Path, kind: EngineKind, version: &str, preferred: &[String]) -> Option<InstalledEngine> {
+pub fn find_any_installed(
+    engine_root: &Path,
+    kind: EngineKind,
+    version: &str,
+    preferred: &[String],
+) -> Option<InstalledEngine> {
     for b in preferred {
         if let Some(e) = find_installed(engine_root, kind, version, b) {
             return Some(e);
@@ -117,7 +146,12 @@ pub fn find_any_installed(engine_root: &Path, kind: EngineKind, version: &str, p
 }
 
 /// Download specs for a selected build (archives go to `Data/engine/downloads/`).
-pub fn download_specs(engine_root: &Path, kind: EngineKind, pin: &EnginePin, sel: &SelectedBuild) -> Vec<pinhole_net::download::DownloadSpec> {
+pub fn download_specs(
+    engine_root: &Path,
+    kind: EngineKind,
+    pin: &EnginePin,
+    sel: &SelectedBuild,
+) -> Vec<pinhole_net::download::DownloadSpec> {
     let dir = download_dir(engine_root);
     let archives = sel.build.archives();
     let n = archives.len();
@@ -126,12 +160,21 @@ pub fn download_specs(engine_root: &Path, kind: EngineKind, pin: &EnginePin, sel
         .enumerate()
         .map(|(i, a)| pinhole_net::download::DownloadSpec {
             url: a.url.clone(),
-            dest: dir.join(format!("{}-{}-{}", kind.dir_name(), sanitize(&pin.version), a.file_name())),
+            dest: dir.join(format!(
+                "{}-{}-{}",
+                kind.dir_name(),
+                sanitize(&pin.version),
+                a.file_name()
+            )),
             sha256: a.verified_sha256(),
             // `size_bytes` in engine.yaml is exact; `size_mb` is only an estimate.
             size_bytes: a.size_bytes,
             approx_size_bytes: a.bytes(),
-            label: if n > 1 { format!("{} ({}/{n})", kind.label(), i + 1) } else { kind.label().to_string() },
+            label: if n > 1 {
+                format!("{} ({}/{n})", kind.label(), i + 1)
+            } else {
+                kind.label().to_string()
+            },
             ..Default::default()
         })
         .collect()
@@ -153,14 +196,24 @@ pub fn unpack_build(
         }
         if let Some(expected) = spec.verified_sha256() {
             if !expected.eq_ignore_ascii_case(actual) {
-                return Err(EngineError::HashMismatch { file: spec.file_name(), expected, actual: actual.clone() });
+                return Err(EngineError::HashMismatch {
+                    file: spec.file_name(),
+                    expected,
+                    actual: actual.clone(),
+                });
             }
         }
     }
     let final_dir = install_dir(engine_root, kind, &pin.version, &sel.backend);
-    let parent = final_dir.parent().ok_or_else(|| EngineError::Config("bad install dir".into()))?;
+    let parent = final_dir
+        .parent()
+        .ok_or_else(|| EngineError::Config("bad install dir".into()))?;
     fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(".{}.tmp-{}", sanitize(&sel.backend), std::process::id()));
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}",
+        sanitize(&sel.backend),
+        std::process::id()
+    ));
     if tmp.exists() {
         fs::remove_dir_all(&tmp)?;
     }
@@ -174,24 +227,36 @@ pub fn unpack_build(
             let stage = tmp.join(format!(".stage-{i}"));
             fs::create_dir_all(&stage)?;
             extract_archive(path, &stage).map_err(|e| match e {
-                EngineError::Archive(m) => EngineError::Archive(format!("{}: {m}", spec.file_name())),
+                EngineError::Archive(m) => {
+                    EngineError::Archive(format!("{}: {m}", spec.file_name()))
+                }
                 other => other,
             })?;
             let src = single_subdir(&stage).unwrap_or_else(|| stage.clone());
             merge_move(&src, &tmp)?;
             let _ = fs::remove_dir_all(&stage);
         }
-        let exe = find_binary(&tmp, &pin.binary).ok_or_else(|| EngineError::BinaryMissing(exe_name(&pin.binary)))?;
+        let exe = find_binary(&tmp, &pin.binary)
+            .ok_or_else(|| EngineError::BinaryMissing(exe_name(&pin.binary)))?;
         make_executable(&exe)?;
-        let rel = exe.strip_prefix(&tmp).map_err(|_| EngineError::BinaryMissing(pin.binary.clone()))?;
-        let rel = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
+        let rel = exe
+            .strip_prefix(&tmp)
+            .map_err(|_| EngineError::BinaryMissing(pin.binary.clone()))?;
+        let rel = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
         Ok(InstallMarker {
             engine: kind,
             version: pin.version.clone(),
             backend: sel.backend.clone(),
             build: sel.key.clone(),
             binary: rel,
-            archives: downloaded.iter().map(|(s, _, h)| (s.file_name(), h.clone())).collect(),
+            archives: downloaded
+                .iter()
+                .map(|(s, _, h)| (s.file_name(), h.clone()))
+                .collect(),
             installed_at: now_secs(),
         })
     })();
@@ -202,13 +267,15 @@ pub fn unpack_build(
             return Err(e);
         }
     };
-    let json = serde_json::to_vec_pretty(&marker).map_err(|e| EngineError::Archive(e.to_string()))?;
+    let json =
+        serde_json::to_vec_pretty(&marker).map_err(|e| EngineError::Archive(e.to_string()))?;
     fs::write(tmp.join(MARKER_FILE), json)?;
     if final_dir.exists() {
         fs::remove_dir_all(&final_dir)?;
     }
     fs::rename(&tmp, &final_dir)?;
-    find_installed(engine_root, kind, &pin.version, &sel.backend).ok_or_else(|| EngineError::BinaryMissing(pin.binary.clone()))
+    find_installed(engine_root, kind, &pin.version, &sel.backend)
+        .ok_or_else(|| EngineError::BinaryMissing(pin.binary.clone()))
 }
 
 /// `Some(dir/only_child)` when `dir` contains exactly one entry and it is a real directory.
@@ -287,15 +354,19 @@ pub async fn install_direct(
     let pin2 = pin.clone();
     let sel2 = sel.clone();
     let dl = downloaded.clone();
-    let installed = tokio::task::spawn_blocking(move || unpack_build(&root, kind, &pin2, &sel2, &dl))
-        .await
-        .map_err(|e| EngineError::Archive(e.to_string()))??;
+    let installed =
+        tokio::task::spawn_blocking(move || unpack_build(&root, kind, &pin2, &sel2, &dl))
+            .await
+            .map_err(|e| EngineError::Archive(e.to_string()))??;
     cleanup_downloads(&downloaded.iter().map(|d| d.1.clone()).collect::<Vec<_>>());
     Ok(installed)
 }
 
 fn now_secs() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 // ------------------------------------------------------------------ Windows runtime
@@ -306,7 +377,13 @@ fn now_secs() -> i64 {
 pub fn msvc_runtime_dlls(kind: EngineKind) -> &'static [&'static str] {
     match kind {
         // ggml-base / ggml-cpu use MSVC OpenMP (vcomp140); stable-diffusion.dll uses codecvt ids.
-        EngineKind::Sd => &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll", "msvcp140_codecvt_ids.dll"],
+        EngineKind::Sd => &[
+            "msvcp140.dll",
+            "vcruntime140.dll",
+            "vcruntime140_1.dll",
+            "vcomp140.dll",
+            "msvcp140_codecvt_ids.dll",
+        ],
         // llama.cpp ships its own libomp.dll.
         EngineKind::Llama => &["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"],
     }
@@ -316,7 +393,11 @@ pub fn msvc_runtime_dlls(kind: EngineKind) -> &'static [&'static str] {
 /// `exe_dir` (found there or in System32; otherwise copied from `bundled`, e.g.
 /// the app's `vcrt/` resource folder). Returns the DLLs still missing. Always
 /// empty on other systems.
-pub fn provide_runtime_dlls(exe_dir: &Path, kind: EngineKind, bundled: &[PathBuf]) -> Vec<&'static str> {
+pub fn provide_runtime_dlls(
+    exe_dir: &Path,
+    kind: EngineKind,
+    bundled: &[PathBuf],
+) -> Vec<&'static str> {
     if !cfg!(windows) {
         return Vec::new();
     }
@@ -324,13 +405,23 @@ pub fn provide_runtime_dlls(exe_dir: &Path, kind: EngineKind, bundled: &[PathBuf
     runtime_dlls_missing_after_copy(exe_dir, msvc_runtime_dlls(kind), system.as_deref(), bundled)
 }
 
-fn runtime_dlls_missing_after_copy(exe_dir: &Path, dlls: &[&'static str], system: Option<&Path>, bundled: &[PathBuf]) -> Vec<&'static str> {
+fn runtime_dlls_missing_after_copy(
+    exe_dir: &Path,
+    dlls: &[&'static str],
+    system: Option<&Path>,
+    bundled: &[PathBuf],
+) -> Vec<&'static str> {
     let mut missing = Vec::new();
     for dll in dlls {
         if exe_dir.join(dll).is_file() || system.map(|s| s.join(dll).is_file()).unwrap_or(false) {
             continue;
         }
-        let copied = bundled.iter().map(|b| b.join(dll)).find(|p| p.is_file()).map(|src| fs::copy(&src, exe_dir.join(dll)).is_ok()).unwrap_or(false);
+        let copied = bundled
+            .iter()
+            .map(|b| b.join(dll))
+            .find(|p| p.is_file())
+            .map(|src| fs::copy(&src, exe_dir.join(dll)).is_ok())
+            .unwrap_or(false);
         if !copied {
             missing.push(*dll);
         }
@@ -365,12 +456,17 @@ pub fn safe_relative(name: &str) -> Option<PathBuf> {
 
 /// Join an archive entry name under `dest`, refusing zip-slip.
 pub fn safe_join(dest: &Path, name: &str) -> Result<PathBuf, EngineError> {
-    safe_relative(name).map(|rel| dest.join(rel)).ok_or_else(|| EngineError::UnsafeArchive(name.chars().take(200).collect()))
+    safe_relative(name)
+        .map(|rel| dest.join(rel))
+        .ok_or_else(|| EngineError::UnsafeArchive(name.chars().take(200).collect()))
 }
 
 /// Extract `.zip` or `.tar.gz`/`.tgz` into `dest` (must exist).
 pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), EngineError> {
-    let name = archive.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
     let mut head = [0u8; 4];
     {
         let mut f = fs::File::open(archive)?;
@@ -390,9 +486,12 @@ pub fn extract_archive(archive: &Path, dest: &Path) -> Result<(), EngineError> {
 
 pub fn extract_zip(archive: &Path, dest: &Path) -> Result<(), EngineError> {
     let file = fs::File::open(archive)?;
-    let mut zip = zip::ZipArchive::new(io::BufReader::new(file)).map_err(|e| EngineError::Archive(e.to_string()))?;
+    let mut zip = zip::ZipArchive::new(io::BufReader::new(file))
+        .map_err(|e| EngineError::Archive(e.to_string()))?;
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i).map_err(|e| EngineError::Archive(e.to_string()))?;
+        let mut entry = zip
+            .by_index(i)
+            .map_err(|e| EngineError::Archive(e.to_string()))?;
         let raw_name = entry.name().to_string();
         let out = safe_join(dest, &raw_name)?;
         if entry.is_dir() {
@@ -427,7 +526,9 @@ pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<(), EngineError> {
     let file = fs::File::open(archive)?;
     let gz = flate2::read::GzDecoder::new(io::BufReader::new(file));
     let mut tar = tar::Archive::new(gz);
-    let entries = tar.entries().map_err(|e| EngineError::Archive(e.to_string()))?;
+    let entries = tar
+        .entries()
+        .map_err(|e| EngineError::Archive(e.to_string()))?;
     for entry in entries {
         let mut entry = entry.map_err(|e| EngineError::Archive(e.to_string()))?;
         let raw_name = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
@@ -438,10 +539,17 @@ pub fn extract_tar_gz(archive: &Path, dest: &Path) -> Result<(), EngineError> {
         }
         if kind.is_symlink() {
             let out = safe_join(dest, &raw_name)?;
-            let target = entry.link_name().map_err(|e| EngineError::Archive(e.to_string()))?.map(|t| t.to_string_lossy().into_owned()).unwrap_or_default();
+            let target = entry
+                .link_name()
+                .map_err(|e| EngineError::Archive(e.to_string()))?
+                .map(|t| t.to_string_lossy().into_owned())
+                .unwrap_or_default();
             // Only sibling links like `libggml.so -> libggml.so.0` are allowed.
-            if target.is_empty() || target.contains(['/', '\\']) || target == ".." || target == "." {
-                return Err(EngineError::UnsafeArchive(format!("{raw_name} -> {target}")));
+            if target.is_empty() || target.contains(['/', '\\']) || target == ".." || target == "."
+            {
+                return Err(EngineError::UnsafeArchive(format!(
+                    "{raw_name} -> {target}"
+                )));
             }
             if let Some(parent) = out.parent() {
                 fs::create_dir_all(parent)?;
@@ -490,11 +598,17 @@ pub fn find_binary(dir: &Path, binary: &str) -> Option<PathBuf> {
             let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
             entries.sort();
             for p in entries {
-                let is_link = fs::symlink_metadata(&p).map(|m| m.file_type().is_symlink()).unwrap_or(true);
+                let is_link = fs::symlink_metadata(&p)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(true);
                 if is_link {
                     continue;
                 }
-                if p.is_file() && p.file_name().map(|n| n.to_string_lossy().eq_ignore_ascii_case(&wanted)).unwrap_or(false) {
+                if p.is_file()
+                    && p.file_name()
+                        .map(|n| n.to_string_lossy().eq_ignore_ascii_case(&wanted))
+                        .unwrap_or(false)
+                {
                     return Some(p);
                 }
                 if p.is_dir() {
@@ -569,15 +683,27 @@ mod tests {
     #[test]
     fn runtime_dlls_are_found_or_copied_from_bundle() {
         let tmp = tempfile::tempdir().unwrap();
-        let (exe_dir, system, bundle) = (tmp.path().join("engine"), tmp.path().join("System32"), tmp.path().join("vcrt"));
+        let (exe_dir, system, bundle) = (
+            tmp.path().join("engine"),
+            tmp.path().join("System32"),
+            tmp.path().join("vcrt"),
+        );
         for d in [&exe_dir, &system, &bundle] {
             fs::create_dir_all(d).unwrap();
         }
         fs::write(system.join("msvcp140.dll"), b"x").unwrap();
         fs::write(bundle.join("vcomp140.dll"), b"x").unwrap();
         let dlls = msvc_runtime_dlls(EngineKind::Sd);
-        let missing = runtime_dlls_missing_after_copy(&exe_dir, dlls, Some(&system), std::slice::from_ref(&bundle));
-        assert!(exe_dir.join("vcomp140.dll").is_file(), "copied next to the engine");
+        let missing = runtime_dlls_missing_after_copy(
+            &exe_dir,
+            dlls,
+            Some(&system),
+            std::slice::from_ref(&bundle),
+        );
+        assert!(
+            exe_dir.join("vcomp140.dll").is_file(),
+            "copied next to the engine"
+        );
         assert!(!missing.contains(&"msvcp140.dll") && !missing.contains(&"vcomp140.dll"));
         assert!(missing.contains(&"vcruntime140.dll"));
         if !cfg!(windows) {
@@ -587,9 +713,24 @@ mod tests {
 
     #[test]
     fn safe_relative_rejects_escapes() {
-        assert_eq!(safe_relative("bin/sd-server"), Some(PathBuf::from("bin").join("sd-server")));
-        assert_eq!(safe_relative("./a\\b.dll"), Some(PathBuf::from("a").join("b.dll")));
-        for bad in ["../evil", "a/../../evil", "/etc/passwd", "\\\\server\\share\\x", "C:\\Windows\\x.dll", "C:evil", "", "a\0b"] {
+        assert_eq!(
+            safe_relative("bin/sd-server"),
+            Some(PathBuf::from("bin").join("sd-server"))
+        );
+        assert_eq!(
+            safe_relative("./a\\b.dll"),
+            Some(PathBuf::from("a").join("b.dll"))
+        );
+        for bad in [
+            "../evil",
+            "a/../../evil",
+            "/etc/passwd",
+            "\\\\server\\share\\x",
+            "C:\\Windows\\x.dll",
+            "C:evil",
+            "",
+            "a\0b",
+        ] {
             assert_eq!(safe_relative(bad), None, "{bad}");
         }
     }
@@ -598,7 +739,10 @@ mod tests {
     fn zip_slip_is_rejected() {
         let tmp = tempfile::tempdir().unwrap();
         let zip_path = tmp.path().join("evil.zip");
-        make_zip(&zip_path, &[("ok.txt", b"ok"), ("../../escaped.txt", b"pwned")]);
+        make_zip(
+            &zip_path,
+            &[("ok.txt", b"ok"), ("../../escaped.txt", b"pwned")],
+        );
         let dest = tmp.path().join("out");
         fs::create_dir_all(&dest).unwrap();
         let err = extract_zip(&zip_path, &dest).unwrap_err();
@@ -615,12 +759,18 @@ mod tests {
 
         let evil = tmp.path().join("evil.tar.gz");
         make_tgz(&evil, &[("../escaped", b"x")], &[]);
-        assert!(matches!(extract_tar_gz(&evil, &dest), Err(EngineError::UnsafeArchive(_))));
+        assert!(matches!(
+            extract_tar_gz(&evil, &dest),
+            Err(EngineError::UnsafeArchive(_))
+        ));
         assert!(!tmp.path().join("escaped").exists());
 
         let evil_link = tmp.path().join("link.tar.gz");
         make_tgz(&evil_link, &[], &[("llama-b1/libx.so", "/etc/passwd")]);
-        assert!(matches!(extract_tar_gz(&evil_link, &dest), Err(EngineError::UnsafeArchive(_))));
+        assert!(matches!(
+            extract_tar_gz(&evil_link, &dest),
+            Err(EngineError::UnsafeArchive(_))
+        ));
     }
 
     #[test]
@@ -630,7 +780,14 @@ mod tests {
         let exe = exe_name("llama-server");
         let tgz = tmp.path().join("llama-b1-bin-ubuntu-x64.tar.gz");
         let exe_path = format!("llama-b1/{exe}");
-        make_tgz(&tgz, &[(exe_path.as_str(), b"#!/bin/sh\n"), ("llama-b1/libllama.so.0.5.0", b"lib")], &[("llama-b1/libllama.so", "libllama.so.0.5.0")]);
+        make_tgz(
+            &tgz,
+            &[
+                (exe_path.as_str(), b"#!/bin/sh\n"),
+                ("llama-b1/libllama.so.0.5.0", b"lib"),
+            ],
+            &[("llama-b1/libllama.so", "libllama.so.0.5.0")],
+        );
         let pin = EnginePin {
             repo: "r".into(),
             version: "b1".into(),
@@ -640,10 +797,29 @@ mod tests {
             backend_override: Default::default(),
             builds: Default::default(),
         };
-        let build = BuildSpec { url: "https://github.com/x/releases/download/b1/a.tar.gz".into(), sha256: "TODO".into(), size_bytes: None, size_mb: None, extra: vec![], note: None, min_glibc: None };
-        let sel = SelectedBuild { key: "linux_cpu".into(), backend: "cpu".into(), build: build.clone() };
+        let build = BuildSpec {
+            url: "https://github.com/x/releases/download/b1/a.tar.gz".into(),
+            sha256: "TODO".into(),
+            size_bytes: None,
+            size_mb: None,
+            extra: vec![],
+            note: None,
+            min_glibc: None,
+        };
+        let sel = SelectedBuild {
+            key: "linux_cpu".into(),
+            backend: "cpu".into(),
+            build: build.clone(),
+        };
         let spec = build.archives()[0].clone();
-        let got = unpack_build(&root, EngineKind::Llama, &pin, &sel, &[(spec.clone(), tgz.clone(), "abc".into())]).unwrap();
+        let got = unpack_build(
+            &root,
+            EngineKind::Llama,
+            &pin,
+            &sel,
+            &[(spec.clone(), tgz.clone(), "abc".into())],
+        )
+        .unwrap();
         // The single top-level `llama-b1/` folder is flattened away.
         assert_eq!(got.exe, got.dir.join(&exe));
         assert_eq!(got.dir, install_dir(&root, EngineKind::Llama, "b1", "cpu"));
@@ -651,13 +827,26 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             assert!(fs::metadata(&got.exe).unwrap().permissions().mode() & 0o111 != 0);
-            assert!(fs::symlink_metadata(got.dir.join("libllama.so")).unwrap().file_type().is_symlink());
+            assert!(fs::symlink_metadata(got.dir.join("libllama.so"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
         }
-        assert_eq!(find_installed(&root, EngineKind::Llama, "b1", "cpu"), Some(got.clone()));
+        assert_eq!(
+            find_installed(&root, EngineKind::Llama, "b1", "cpu"),
+            Some(got.clone())
+        );
         assert_eq!(find_installed(&root, EngineKind::Llama, "b2", "cpu"), None);
-        assert_eq!(find_any_installed(&root, EngineKind::Llama, "b1", &["vulkan".into()]), Some(got));
+        assert_eq!(
+            find_any_installed(&root, EngineKind::Llama, "b1", &["vulkan".into()]),
+            Some(got)
+        );
         // No temp folders left behind.
-        let leftovers: Vec<_> = fs::read_dir(root.join("llama").join("b1")).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name()).collect();
+        let leftovers: Vec<_> = fs::read_dir(root.join("llama").join("b1"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
         assert_eq!(leftovers.len(), 1, "{leftovers:?}");
     }
 
@@ -670,28 +859,66 @@ mod tests {
         make_zip(&main, &[(exe.as_str(), b"bin"), ("ggml.dll", b"dll")]);
         let extra = tmp.path().join("cudart.zip");
         make_zip(&extra, &[("cudart64_12.dll", b"rt")]);
-        let pin = EnginePin { repo: "r".into(), version: "master-1-abc".into(), commit: None, binary: "sd-server".into(), launch_defaults: vec![], backend_override: Default::default(), builds: Default::default() };
+        let pin = EnginePin {
+            repo: "r".into(),
+            version: "master-1-abc".into(),
+            commit: None,
+            binary: "sd-server".into(),
+            launch_defaults: vec![],
+            backend_override: Default::default(),
+            builds: Default::default(),
+        };
         let good = "a".repeat(64);
         let build = BuildSpec {
             url: "https://github.com/x/releases/download/v/sd-bin.zip".into(),
             sha256: good.clone(),
             size_bytes: Some(3),
             size_mb: None,
-            extra: vec![ArchiveSpec { url: "https://github.com/x/releases/download/v/cudart.zip".into(), sha256: "TODO".into(), size_bytes: None, size_mb: None }],
+            extra: vec![ArchiveSpec {
+                url: "https://github.com/x/releases/download/v/cudart.zip".into(),
+                sha256: "TODO".into(),
+                size_bytes: None,
+                size_mb: None,
+            }],
             note: None,
             min_glibc: None,
         };
-        let sel = SelectedBuild { key: "windows_cuda".into(), backend: "cuda".into(), build: build.clone() };
+        let sel = SelectedBuild {
+            key: "windows_cuda".into(),
+            backend: "cuda".into(),
+            build: build.clone(),
+        };
         let a = build.archives();
         // Wrong hash → refused, nothing installed.
-        let err = unpack_build(&root, EngineKind::Sd, &pin, &sel, &[(a[0].clone(), main.clone(), "b".repeat(64)), (a[1].clone(), extra.clone(), "c".repeat(64))]).unwrap_err();
+        let err = unpack_build(
+            &root,
+            EngineKind::Sd,
+            &pin,
+            &sel,
+            &[
+                (a[0].clone(), main.clone(), "b".repeat(64)),
+                (a[1].clone(), extra.clone(), "c".repeat(64)),
+            ],
+        )
+        .unwrap_err();
         assert!(matches!(err, EngineError::HashMismatch { .. }));
         assert!(find_installed(&root, EngineKind::Sd, "master-1-abc", "cuda").is_none());
         // Right hash → both archives land in one folder.
-        let got = unpack_build(&root, EngineKind::Sd, &pin, &sel, &[(a[0].clone(), main, good), (a[1].clone(), extra, "c".repeat(64))]).unwrap();
+        let got = unpack_build(
+            &root,
+            EngineKind::Sd,
+            &pin,
+            &sel,
+            &[
+                (a[0].clone(), main, good),
+                (a[1].clone(), extra, "c".repeat(64)),
+            ],
+        )
+        .unwrap();
         assert!(got.dir.join("cudart64_12.dll").is_file());
         assert!(got.dir.join("ggml.dll").is_file());
-        let marker: InstallMarker = serde_json::from_str(&fs::read_to_string(got.dir.join(MARKER_FILE)).unwrap()).unwrap();
+        let marker: InstallMarker =
+            serde_json::from_str(&fs::read_to_string(got.dir.join(MARKER_FILE)).unwrap()).unwrap();
         assert_eq!(marker.build, "windows_cuda");
         assert_eq!(marker.archives.len(), 2);
     }
@@ -703,22 +930,62 @@ mod tests {
         let exe = exe_name("llama-server");
         let main = tmp.path().join("llama-b9-bin-ubuntu-cuda-12.8-x64.tar.gz");
         let exe_path = format!("llama-b9/{exe}");
-        make_tgz(&main, &[(exe_path.as_str(), b"bin"), ("llama-b9/LICENSE", b"mit")], &[]);
-        let rt = tmp.path().join("cudart-llama-b9-bin-ubuntu-cuda-12.8-x64.tar.gz");
-        make_tgz(&rt, &[("cudart-llama-b9/libcudart.so.12", b"rt"), ("cudart-llama-b9/libcublas.so.12", b"blas")], &[]);
-        let pin = EnginePin { repo: "r".into(), version: "b9".into(), commit: None, binary: "llama-server".into(), launch_defaults: vec![], backend_override: Default::default(), builds: Default::default() };
+        make_tgz(
+            &main,
+            &[(exe_path.as_str(), b"bin"), ("llama-b9/LICENSE", b"mit")],
+            &[],
+        );
+        let rt = tmp
+            .path()
+            .join("cudart-llama-b9-bin-ubuntu-cuda-12.8-x64.tar.gz");
+        make_tgz(
+            &rt,
+            &[
+                ("cudart-llama-b9/libcudart.so.12", b"rt"),
+                ("cudart-llama-b9/libcublas.so.12", b"blas"),
+            ],
+            &[],
+        );
+        let pin = EnginePin {
+            repo: "r".into(),
+            version: "b9".into(),
+            commit: None,
+            binary: "llama-server".into(),
+            launch_defaults: vec![],
+            backend_override: Default::default(),
+            builds: Default::default(),
+        };
         let build = BuildSpec {
             url: "https://github.com/x/releases/download/b9/main.tar.gz".into(),
             sha256: "TODO".into(),
             size_bytes: None,
             size_mb: None,
-            extra: vec![ArchiveSpec { url: "https://github.com/x/releases/download/b9/rt.tar.gz".into(), sha256: "TODO".into(), size_bytes: None, size_mb: None }],
+            extra: vec![ArchiveSpec {
+                url: "https://github.com/x/releases/download/b9/rt.tar.gz".into(),
+                sha256: "TODO".into(),
+                size_bytes: None,
+                size_mb: None,
+            }],
             note: None,
             min_glibc: None,
         };
-        let sel = SelectedBuild { key: "linux_cuda".into(), backend: "cuda".into(), build: build.clone() };
+        let sel = SelectedBuild {
+            key: "linux_cuda".into(),
+            backend: "cuda".into(),
+            build: build.clone(),
+        };
         let a = build.archives();
-        let got = unpack_build(&root, EngineKind::Llama, &pin, &sel, &[(a[0].clone(), main, "x".into()), (a[1].clone(), rt, "y".into())]).unwrap();
+        let got = unpack_build(
+            &root,
+            EngineKind::Llama,
+            &pin,
+            &sel,
+            &[
+                (a[0].clone(), main, "x".into()),
+                (a[1].clone(), rt, "y".into()),
+            ],
+        )
+        .unwrap();
         assert_eq!(got.exe, got.dir.join(&exe));
         assert!(got.dir.join("libcudart.so.12").is_file());
         assert!(got.dir.join("libcublas.so.12").is_file());
@@ -727,14 +994,24 @@ mod tests {
 
     #[test]
     fn download_specs_point_into_engine_downloads() {
-        let cfg = EngineConfig::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml")).unwrap();
-        let sel = cfg.select_build(&cfg.stable_diffusion_cpp, "windows", "cuda").unwrap();
+        let cfg = EngineConfig::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml"),
+        )
+        .unwrap();
+        let sel = cfg
+            .select_build(&cfg.stable_diffusion_cpp, "windows", "cuda")
+            .unwrap();
         let root = Path::new("/data/engine");
         let specs = download_specs(root, EngineKind::Sd, &cfg.stable_diffusion_cpp, &sel);
         assert_eq!(specs.len(), 2);
         assert!(specs.iter().all(|s| s.dest.starts_with(download_dir(root))));
-        assert!(specs.iter().all(|s| s.sha256.as_deref().map(|h| h.len() == 64).unwrap_or(false)));
-        assert!(specs[1].dest.to_string_lossy().ends_with("cudart-sd-bin-win-cu12-x64.zip"));
+        assert!(specs
+            .iter()
+            .all(|s| s.sha256.as_deref().map(|h| h.len() == 64).unwrap_or(false)));
+        assert!(specs[1]
+            .dest
+            .to_string_lossy()
+            .ends_with("cudart-sd-bin-win-cu12-x64.zip"));
         assert_eq!(specs[0].size_bytes, Some(337915440));
     }
 
@@ -746,17 +1023,57 @@ mod tests {
         if std::env::var("PINHOLE_NET_INSTALL").ok().as_deref() != Some("1") {
             return;
         }
-        let cfg = EngineConfig::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml")).unwrap();
+        let cfg = EngineConfig::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml"),
+        )
+        .unwrap();
         let client = pinhole_net::HttpClient::new(pinhole_net::OfflineFlag::new(false)).unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let cancel = tokio_util::sync::CancellationToken::new();
-        let got = install_direct(&client, tmp.path(), &cfg, EngineKind::Sd, crate::pins::current_os(), "cpu", &cancel).await.unwrap();
+        let got = install_direct(
+            &client,
+            tmp.path(),
+            &cfg,
+            EngineKind::Sd,
+            crate::pins::current_os(),
+            "cpu",
+            &cancel,
+        )
+        .await
+        .unwrap();
         assert!(got.exe.is_file());
-        assert!(fs::read_dir(download_dir(tmp.path())).unwrap().next().is_none(), "archives cleaned up");
-        let out = std::process::Command::new(&got.exe).arg("--version").current_dir(&got.dir).output().unwrap();
-        assert!(String::from_utf8_lossy(&out.stdout).contains(cfg.stable_diffusion_cpp.commit.as_deref().unwrap_or("x").get(..7).unwrap()));
+        assert!(
+            fs::read_dir(download_dir(tmp.path()))
+                .unwrap()
+                .next()
+                .is_none(),
+            "archives cleaned up"
+        );
+        let out = std::process::Command::new(&got.exe)
+            .arg("--version")
+            .current_dir(&got.dir)
+            .output()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains(
+            cfg.stable_diffusion_cpp
+                .commit
+                .as_deref()
+                .unwrap_or("x")
+                .get(..7)
+                .unwrap()
+        ));
         // Second call is a no-op (marker found).
-        let again = install_direct(&client, tmp.path(), &cfg, EngineKind::Sd, crate::pins::current_os(), "cpu", &cancel).await.unwrap();
+        let again = install_direct(
+            &client,
+            tmp.path(),
+            &cfg,
+            EngineKind::Sd,
+            crate::pins::current_os(),
+            "cpu",
+            &cancel,
+        )
+        .await
+        .unwrap();
         assert_eq!(again, got);
     }
 
@@ -764,9 +1081,14 @@ mod tests {
     /// (e.g. sd-master-…-bin-Linux-Ubuntu-24.04-x86_64.zip); skipped otherwise.
     #[test]
     fn unpack_real_archive_if_provided() {
-        let Ok(path) = std::env::var("PINHOLE_ENGINE_ARCHIVE") else { return };
+        let Ok(path) = std::env::var("PINHOLE_ENGINE_ARCHIVE") else {
+            return;
+        };
         let tmp = tempfile::tempdir().unwrap();
         extract_archive(Path::new(&path), tmp.path()).unwrap();
-        assert!(find_binary(tmp.path(), "sd-server").is_some() || find_binary(tmp.path(), "llama-server").is_some());
+        assert!(
+            find_binary(tmp.path(), "sd-server").is_some()
+                || find_binary(tmp.path(), "llama-server").is_some()
+        );
     }
 }

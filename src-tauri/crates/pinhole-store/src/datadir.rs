@@ -107,7 +107,9 @@ impl DataDir {
     ///
     /// Does not create anything; call [`DataDir::ensure_layout`] next.
     pub fn resolve(exe_dir: &Path) -> Result<Self, StoreError> {
-        let env = std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()).map(PathBuf::from);
+        let env = std::env::var_os(DATA_DIR_ENV)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from);
         #[allow(unused_mut)]
         let mut portable = vec![exe_dir.join("Data")];
         #[cfg(target_os = "linux")]
@@ -116,13 +118,18 @@ impl DataDir {
                 portable.push(dir.join("Data"));
             }
         }
-        let installed = installed_root().or_else(|| dirs::home_dir().map(|h| h.join(".pinhole").join("Data")));
+        let installed =
+            installed_root().or_else(|| dirs::home_dir().map(|h| h.join(".pinhole").join("Data")));
         resolve_with(env, &portable, installed)
     }
 
     /// Use an explicit root (tests).
     pub fn at(root: PathBuf, portable: bool) -> Self {
-        Self { root, portable, models_home: None }
+        Self {
+            root,
+            portable,
+            models_home: None,
+        }
     }
 
     /// Use `folder` (absolute) as the Models folder; `None` = `Data/models/`.
@@ -165,7 +172,9 @@ impl DataDir {
 
     /// Folder holding the model sub-folders (`checkpoints/`, `vae/`, …).
     pub fn models_root(&self) -> PathBuf {
-        self.models_home.clone().unwrap_or_else(|| self.root.join("models"))
+        self.models_home
+            .clone()
+            .unwrap_or_else(|| self.root.join("models"))
     }
 
     pub fn models(&self, kind: ModelKind) -> PathBuf {
@@ -177,8 +186,12 @@ impl DataDir {
     /// download path goes through this before writing a model file.
     pub fn models_dir_for_write(&self, kind: ModelKind) -> Result<PathBuf, StoreError> {
         match self.models_problem() {
-            Some(ModelsFolderProblem::Missing) => return Err(StoreError::Invalid(MISSING_MESSAGE.into())),
-            Some(ModelsFolderProblem::ReadOnly) => return Err(StoreError::Invalid(READ_ONLY_MESSAGE.into())),
+            Some(ModelsFolderProblem::Missing) => {
+                return Err(StoreError::Invalid(MISSING_MESSAGE.into()))
+            }
+            Some(ModelsFolderProblem::ReadOnly) => {
+                return Err(StoreError::Invalid(READ_ONLY_MESSAGE.into()))
+            }
             None => {}
         }
         let dir = self.models(kind);
@@ -197,12 +210,24 @@ impl DataDir {
             None
         }
     }
-    pub fn outputs(&self) -> PathBuf { self.root.join("outputs") }
-    pub fn presets(&self) -> PathBuf { self.root.join("presets") }
-    pub fn styles(&self) -> PathBuf { self.root.join("styles") }
-    pub fn config(&self) -> PathBuf { self.root.join("config") }
-    pub fn settings_file(&self) -> PathBuf { self.config().join("settings.yaml") }
-    pub fn overrides_file(&self) -> PathBuf { self.config().join("overrides.yaml") }
+    pub fn outputs(&self) -> PathBuf {
+        self.root.join("outputs")
+    }
+    pub fn presets(&self) -> PathBuf {
+        self.root.join("presets")
+    }
+    pub fn styles(&self) -> PathBuf {
+        self.root.join("styles")
+    }
+    pub fn config(&self) -> PathBuf {
+        self.root.join("config")
+    }
+    pub fn settings_file(&self) -> PathBuf {
+        self.config().join("settings.yaml")
+    }
+    pub fn overrides_file(&self) -> PathBuf {
+        self.config().join("overrides.yaml")
+    }
     /// The installed-models index: `Data/catalog/installed.json`, or
     /// [`MODELS_INDEX_FILE`] inside a user-picked Models folder.
     pub fn installed_file(&self) -> PathBuf {
@@ -211,8 +236,12 @@ impl DataDir {
             None => self.default_installed_file(),
         }
     }
-    pub fn default_installed_file(&self) -> PathBuf { self.root.join("catalog").join("installed.json") }
-    pub fn engine(&self) -> PathBuf { self.root.join("engine") }
+    pub fn default_installed_file(&self) -> PathBuf {
+        self.root.join("catalog").join("installed.json")
+    }
+    pub fn engine(&self) -> PathBuf {
+        self.root.join("engine")
+    }
 
     /// `/`-separated path of `path` relative to the Data root (the form stored in
     /// `installed.json`), or `None` if `path` is not inside the Data folder.
@@ -254,7 +283,10 @@ fn rel_parts(rel_path: &str) -> Vec<&str> {
             }
             // Only plain names (no embedded prefixes/roots on any platform).
             let mut comps = Path::new(part).components();
-            matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None))
+            matches!(
+                (comps.next(), comps.next()),
+                (Some(Component::Normal(_)), None)
+            )
         })
         .collect()
 }
@@ -295,13 +327,29 @@ fn installed_root() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("pinhole").join("Data"))
 }
 
-fn resolve_with(env: Option<PathBuf>, portable: &[PathBuf], installed: Option<PathBuf>) -> Result<DataDir, StoreError> {
+fn resolve_with(
+    env: Option<PathBuf>,
+    portable: &[PathBuf],
+    installed: Option<PathBuf>,
+) -> Result<DataDir, StoreError> {
     if let Some(root) = env {
-        let root = if root.is_absolute() { root } else { std::env::current_dir()?.join(root) };
-        return Ok(DataDir { root, portable: false, models_home: None });
+        let root = if root.is_absolute() {
+            root
+        } else {
+            std::env::current_dir()?.join(root)
+        };
+        return Ok(DataDir {
+            root,
+            portable: false,
+            models_home: None,
+        });
     }
     if let Some(root) = portable.iter().find(|p| p.is_dir() && is_writable_dir(p)) {
-        return Ok(DataDir { root: root.clone(), portable: true, models_home: None });
+        return Ok(DataDir {
+            root: root.clone(),
+            portable: true,
+            models_home: None,
+        });
     }
     installed.map(|root| DataDir { root, portable: false, models_home: None }).ok_or_else(|| {
         StoreError::Invalid(
@@ -319,8 +367,15 @@ pub fn is_writable_dir(dir: &Path) -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.subsec_nanos())
         .unwrap_or(0);
-    let probe = dir.join(format!(".pinhole-write-test-{}-{nanos}", std::process::id()));
-    match fs::OpenOptions::new().write(true).create_new(true).open(&probe) {
+    let probe = dir.join(format!(
+        ".pinhole-write-test-{}-{nanos}",
+        std::process::id()
+    ));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
         Ok(f) => {
             drop(f);
             fs::remove_file(&probe).is_ok()
@@ -337,7 +392,10 @@ mod tests {
     fn normalize_rel_matches_resolve_rel() {
         for (raw, want) in [
             ("models/loras/x.safetensors", "models/loras/x.safetensors"),
-            (".\\models\\loras\\\\x.safetensors", "models/loras/x.safetensors"),
+            (
+                ".\\models\\loras\\\\x.safetensors",
+                "models/loras/x.safetensors",
+            ),
             ("/models/../loras/x", "models/loras/x"),
             ("C:\\models\\x", "models/x"),
         ] {
@@ -353,7 +411,12 @@ mod tests {
         let portable = tmp.path().join("exe").join("Data");
         fs::create_dir_all(&portable).unwrap();
         let env = tmp.path().join("ci-data");
-        let d = resolve_with(Some(env.clone()), &[portable], Some(tmp.path().join("installed"))).unwrap();
+        let d = resolve_with(
+            Some(env.clone()),
+            &[portable],
+            Some(tmp.path().join("installed")),
+        )
+        .unwrap();
         assert_eq!(d.root, env);
         assert!(!d.portable);
     }
@@ -370,7 +433,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let portable = tmp.path().join("Data");
         fs::create_dir_all(&portable).unwrap();
-        let d = resolve_with(None, std::slice::from_ref(&portable), Some(tmp.path().join("installed"))).unwrap();
+        let d = resolve_with(
+            None,
+            std::slice::from_ref(&portable),
+            Some(tmp.path().join("installed")),
+        )
+        .unwrap();
         assert_eq!(d.root, portable);
         assert!(d.portable);
         // The probe file is cleaned up.
@@ -382,7 +450,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let second = tmp.path().join("appimage-dir").join("Data");
         fs::create_dir_all(&second).unwrap();
-        let d = resolve_with(None, &[tmp.path().join("nope").join("Data"), second.clone()], None).unwrap();
+        let d = resolve_with(
+            None,
+            &[tmp.path().join("nope").join("Data"), second.clone()],
+            None,
+        )
+        .unwrap();
         assert_eq!(d.root, second);
         assert!(d.portable);
     }
@@ -417,7 +490,12 @@ mod tests {
         // Root can write anywhere; only assert when the permission actually bites.
         let writable = is_writable_dir(&portable);
         let installed = tmp.path().join("inst");
-        let d = resolve_with(None, std::slice::from_ref(&portable), Some(installed.clone())).unwrap();
+        let d = resolve_with(
+            None,
+            std::slice::from_ref(&portable),
+            Some(installed.clone()),
+        )
+        .unwrap();
         if writable {
             assert_eq!(d.root, portable);
         } else {
@@ -450,10 +528,25 @@ mod tests {
         for kind in ModelKind::ALL {
             assert!(d.models(kind).is_dir(), "{kind:?}");
         }
-        for p in [d.outputs(), d.presets(), d.styles(), d.config(), d.engine(), d.installed_file().parent().unwrap().to_path_buf()] {
+        for p in [
+            d.outputs(),
+            d.presets(),
+            d.styles(),
+            d.config(),
+            d.engine(),
+            d.installed_file().parent().unwrap().to_path_buf(),
+        ] {
             assert!(p.is_dir(), "{}", p.display());
         }
-        for sub in ["checkpoints", "diffusion", "text_encoders", "vae", "loras", "upscalers", "captioners"] {
+        for sub in [
+            "checkpoints",
+            "diffusion",
+            "text_encoders",
+            "vae",
+            "loras",
+            "upscalers",
+            "captioners",
+        ] {
             assert!(d.root.join("models").join(sub).is_dir());
         }
     }
@@ -462,15 +555,28 @@ mod tests {
     fn model_dirs() {
         let d = DataDir::at(PathBuf::from("/data"), false);
         assert_eq!(d.models(ModelKind::Taesd), d.models(ModelKind::Vae));
-        assert_eq!(d.models(ModelKind::Checkpoint), PathBuf::from("/data/models/checkpoints"));
-        assert_eq!(d.models(ModelKind::TextEncoder), PathBuf::from("/data/models/text_encoders"));
-        assert_eq!(d.models(ModelKind::Lora), PathBuf::from("/data/models/loras"));
+        assert_eq!(
+            d.models(ModelKind::Checkpoint),
+            PathBuf::from("/data/models/checkpoints")
+        );
+        assert_eq!(
+            d.models(ModelKind::TextEncoder),
+            PathBuf::from("/data/models/text_encoders")
+        );
+        assert_eq!(
+            d.models(ModelKind::Lora),
+            PathBuf::from("/data/models/loras")
+        );
     }
 
     #[test]
     fn relative_paths() {
         let d = DataDir::at(PathBuf::from("/data"), false);
-        assert_eq!(d.relative(Path::new("/data/models/vae/ae.safetensors")).as_deref(), Some("models/vae/ae.safetensors"));
+        assert_eq!(
+            d.relative(Path::new("/data/models/vae/ae.safetensors"))
+                .as_deref(),
+            Some("models/vae/ae.safetensors")
+        );
         assert_eq!(d.relative(Path::new("/elsewhere/x")), None);
         assert_eq!(d.relative(Path::new("/data")), None);
         assert_eq!(d.relative(Path::new("/data/../etc/passwd")), None);
@@ -478,17 +584,39 @@ mod tests {
 
     #[test]
     fn picked_models_folder_maps_models_paths() {
-        let abs = |p: &str| if cfg!(windows) { PathBuf::from(format!("C:{p}")) } else { PathBuf::from(p) };
+        let abs = |p: &str| {
+            if cfg!(windows) {
+                PathBuf::from(format!("C:{p}"))
+            } else {
+                PathBuf::from(p)
+            }
+        };
         let home = abs("/shared/Pinhole Models");
         let d = DataDir::at(abs("/data"), false).with_models_home(Some(home.clone()));
         assert_eq!(d.models(ModelKind::Checkpoint), home.join("checkpoints"));
         assert_eq!(d.installed_file(), home.join(MODELS_INDEX_FILE));
-        assert_eq!(d.default_installed_file(), abs("/data/catalog/installed.json"));
-        assert_eq!(d.relative(&home.join("vae").join("ae.safetensors")).as_deref(), Some("models/vae/ae.safetensors"));
+        assert_eq!(
+            d.default_installed_file(),
+            abs("/data/catalog/installed.json")
+        );
+        assert_eq!(
+            d.relative(&home.join("vae").join("ae.safetensors"))
+                .as_deref(),
+            Some("models/vae/ae.safetensors")
+        );
         assert_eq!(d.relative(&abs("/data/models/vae/ae.safetensors")), None);
-        assert_eq!(d.relative(&abs("/data/outputs/x.png")).as_deref(), Some("outputs/x.png"));
-        assert_eq!(d.resolve_rel("models/vae/ae.safetensors"), home.join("vae").join("ae.safetensors"));
-        assert_eq!(d.resolve_rel("models\\..\\..\\etc/passwd"), home.join("etc").join("passwd"));
+        assert_eq!(
+            d.relative(&abs("/data/outputs/x.png")).as_deref(),
+            Some("outputs/x.png")
+        );
+        assert_eq!(
+            d.resolve_rel("models/vae/ae.safetensors"),
+            home.join("vae").join("ae.safetensors")
+        );
+        assert_eq!(
+            d.resolve_rel("models\\..\\..\\etc/passwd"),
+            home.join("etc").join("passwd")
+        );
         assert_eq!(d.resolve_rel("outputs/x.png"), abs("/data/outputs/x.png"));
         // Relative picks are ignored.
         let rel = DataDir::at(abs("/data"), false).with_models_home(Some(PathBuf::from("models2")));

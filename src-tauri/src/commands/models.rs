@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use pinhole_core::models::{
-    AddFileResult, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, PastedResource, RecommendedPick, ResolvedResources,
+    AddFileResult, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, PastedResource,
+    RecommendedPick, ResolvedResources,
 };
 use pinhole_core::models_folder::{self, ModelsFolderInfo, ModelsFolderPreview};
 use pinhole_core::{AppCore, CoreError, InstallStarted};
@@ -20,32 +21,50 @@ pub async fn list_loras(core: State<'_, Arc<AppCore>>) -> Result<Vec<InstalledLo
 }
 
 #[tauri::command]
-pub async fn get_recommended(core: State<'_, Arc<AppCore>>) -> Result<Vec<RecommendedPick>, CoreError> {
+pub async fn get_recommended(
+    core: State<'_, Arc<AppCore>>,
+) -> Result<Vec<RecommendedPick>, CoreError> {
     pinhole_core::models::get_recommended(&core)
 }
 
 #[tauri::command]
-pub async fn install_recommended(core: State<'_, Arc<AppCore>>, role: String) -> Result<InstallStarted, CoreError> {
+pub async fn install_recommended(
+    core: State<'_, Arc<AppCore>>,
+    role: String,
+) -> Result<InstallStarted, CoreError> {
     pinhole_core::models::install_recommended(core.inner(), &role).await
 }
 
 #[tauri::command]
-pub async fn add_local_model(core: State<'_, Arc<AppCore>>, path: String) -> Result<AddFileResult, CoreError> {
+pub async fn add_local_model(
+    core: State<'_, Arc<AppCore>>,
+    path: String,
+) -> Result<AddFileResult, CoreError> {
     pinhole_core::models::add_local_model(core.inner(), &path).await
 }
 
 #[tauri::command]
-pub async fn confirm_family(core: State<'_, Arc<AppCore>>, token: String, family_id: String) -> Result<AddFileResult, CoreError> {
+pub async fn confirm_family(
+    core: State<'_, Arc<AppCore>>,
+    token: String,
+    family_id: String,
+) -> Result<AddFileResult, CoreError> {
     pinhole_core::models::confirm_family(&core, &token, &family_id)
 }
 
 #[tauri::command]
-pub async fn preview_delete(core: State<'_, Arc<AppCore>>, model_id: String) -> Result<DeletePreview, CoreError> {
+pub async fn preview_delete(
+    core: State<'_, Arc<AppCore>>,
+    model_id: String,
+) -> Result<DeletePreview, CoreError> {
     pinhole_core::models::preview_delete(&core, &model_id)
 }
 
 #[tauri::command]
-pub async fn delete_model(core: State<'_, Arc<AppCore>>, model_id: String) -> Result<(), CoreError> {
+pub async fn delete_model(
+    core: State<'_, Arc<AppCore>>,
+    model_id: String,
+) -> Result<(), CoreError> {
     pinhole_core::models::delete_model(&core, &model_id).await
 }
 
@@ -59,18 +78,26 @@ pub async fn resolve_civitai_resources(
 }
 
 #[tauri::command]
-pub async fn list_helpers(core: State<'_, Arc<AppCore>>) -> Result<Vec<InstalledHelper>, CoreError> {
+pub async fn list_helpers(
+    core: State<'_, Arc<AppCore>>,
+) -> Result<Vec<InstalledHelper>, CoreError> {
     pinhole_core::models::list_helpers(&core)
 }
 
 #[tauri::command]
-pub async fn delete_helper(core: State<'_, Arc<AppCore>>, helper_id: String) -> Result<(), CoreError> {
+pub async fn delete_helper(
+    core: State<'_, Arc<AppCore>>,
+    helper_id: String,
+) -> Result<(), CoreError> {
     pinhole_core::models::delete_helper(&core, &helper_id).await
 }
 
 /// Models → Installed → "Open folder".
 #[tauri::command]
-pub async fn open_models_folder(handle: AppHandle, core: State<'_, Arc<AppCore>>) -> Result<(), CoreError> {
+pub async fn open_models_folder(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+) -> Result<(), CoreError> {
     let dir = core.data.models_root();
     if !dir.is_dir() {
         return Err(CoreError::new(
@@ -82,20 +109,29 @@ pub async fn open_models_folder(handle: AppHandle, core: State<'_, Arc<AppCore>>
 }
 
 #[tauri::command]
-pub async fn models_folder_info(core: State<'_, Arc<AppCore>>) -> Result<ModelsFolderInfo, CoreError> {
+pub async fn models_folder_info(
+    core: State<'_, Arc<AppCore>>,
+) -> Result<ModelsFolderInfo, CoreError> {
     Ok(models_folder::info(&core))
 }
 
 /// What moving to `folder` (`None` = back to the default) would do.
 #[tauri::command]
-pub async fn preview_models_folder(core: State<'_, Arc<AppCore>>, folder: Option<String>) -> Result<ModelsFolderPreview, CoreError> {
+pub async fn preview_models_folder(
+    core: State<'_, Arc<AppCore>>,
+    folder: Option<String>,
+) -> Result<ModelsFolderPreview, CoreError> {
     models_folder::preview(&core, folder.as_deref())
 }
 
 /// Move the models to `folder` (progress: `models-move-progress`), then
 /// restart Pinhole so every path uses the new folder. Returns only on failure.
 #[tauri::command]
-pub async fn change_models_folder(handle: AppHandle, core: State<'_, Arc<AppCore>>, folder: Option<String>) -> Result<(), CoreError> {
+pub async fn change_models_folder(
+    handle: AppHandle,
+    core: State<'_, Arc<AppCore>>,
+    folder: Option<String>,
+) -> Result<(), CoreError> {
     let core = core.inner().clone();
     models_folder::change(&core, folder).await?;
     core.shutdown().await;

@@ -11,9 +11,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::{round1, GpuInfo, Vendor};
 
-const QUERY_ARGS: &[&str] = &["--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"];
-const MEMORY_ARGS: &[&str] = &["--query-gpu=index,memory.total,memory.used,memory.free", "--format=csv,noheader,nounits"];
-const APPS_ARGS: &[&str] = &["--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"];
+const QUERY_ARGS: &[&str] = &[
+    "--query-gpu=index,name,memory.total",
+    "--format=csv,noheader,nounits",
+];
+const MEMORY_ARGS: &[&str] = &[
+    "--query-gpu=index,memory.total,memory.used,memory.free",
+    "--format=csv,noheader,nounits",
+];
+const APPS_ARGS: &[&str] = &[
+    "--query-compute-apps=pid,process_name,used_memory",
+    "--format=csv,noheader,nounits",
+];
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// Output cap (a line per GPU; anything near this is not nvidia-smi).
 const MAX_OUTPUT: u64 = 64 * 1024;
@@ -32,16 +41,32 @@ pub fn parse_nvidia_smi(output: &str) -> Vec<GpuInfo> {
             let index = parts[0].parse::<usize>().ok()?;
             let mem = parts[parts.len() - 1];
             let name = parts[1..parts.len() - 1].join(", ");
-            let name = if name.is_empty() { "NVIDIA GPU".to_string() } else { name };
-            let vram_gb = mem.parse::<f64>().ok().filter(|m| m.is_finite() && *m > 0.0).map(|mib| round1(mib / 1024.0)).unwrap_or(0.0);
-            Some(GpuInfo { index, vendor: Vendor::Nvidia, name, vram_gb })
+            let name = if name.is_empty() {
+                "NVIDIA GPU".to_string()
+            } else {
+                name
+            };
+            let vram_gb = mem
+                .parse::<f64>()
+                .ok()
+                .filter(|m| m.is_finite() && *m > 0.0)
+                .map(|mib| round1(mib / 1024.0))
+                .unwrap_or(0.0);
+            Some(GpuInfo {
+                index,
+                vendor: Vendor::Nvidia,
+                name,
+                vram_gb,
+            })
         })
         .collect()
 }
 
 /// Run nvidia-smi (first candidate that exists). Empty on any failure.
 pub(crate) fn query() -> Vec<GpuInfo> {
-    run_smi(QUERY_ARGS).map(|out| parse_nvidia_smi(&out)).unwrap_or_default()
+    run_smi(QUERY_ARGS)
+        .map(|out| parse_nvidia_smi(&out))
+        .unwrap_or_default()
 }
 
 /// `nvidia-smi <args>` with the first candidate that exists; `None` on any failure.
@@ -125,7 +150,12 @@ pub fn parse_gpu_memory(output: &str) -> Vec<GpuMemory> {
             let total_mib = num(parts[1]).filter(|t| *t > 0)?;
             let used_mib = num(parts[2])?;
             let free_mib = num(parts[3]).unwrap_or_else(|| total_mib.saturating_sub(used_mib));
-            Some(GpuMemory { index, total_mib, used_mib, free_mib })
+            Some(GpuMemory {
+                index,
+                total_mib,
+                used_mib,
+                free_mib,
+            })
         })
         .collect()
 }
@@ -143,9 +173,22 @@ pub fn parse_compute_apps(output: &str) -> Vec<GpuProcess> {
             let pid = parts[0].parse::<u32>().ok()?;
             let used_mib = parts[parts.len() - 1].parse::<u64>().ok();
             let full = parts[1..parts.len() - 1].join(", ");
-            let name = full.rsplit(['/', '\\']).next().unwrap_or("").trim().to_string();
-            let name = if name.is_empty() { format!("process {pid}") } else { name };
-            Some(GpuProcess { pid, name, used_mib })
+            let name = full
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let name = if name.is_empty() {
+                format!("process {pid}")
+            } else {
+                name
+            };
+            Some(GpuProcess {
+                pid,
+                name,
+                used_mib,
+            })
         })
         .collect()
 }
@@ -161,10 +204,35 @@ impl VramUsage {
             None => self.gpus.iter().min_by_key(|g| g.index)?,
         };
         let single = self.gpus.len() == 1;
-        let our_mib: u64 = if single { self.processes.iter().filter(|p| ours.contains(&p.pid)).filter_map(|p| p.used_mib).sum() } else { 0 };
-        let mut processes: Vec<GpuProcess> = if single { self.processes.iter().filter(|p| !ours.contains(&p.pid)).cloned().collect() } else { Vec::new() };
-        processes.sort_by(|a, b| b.used_mib.cmp(&a.used_mib).then_with(|| a.name.cmp(&b.name)));
-        Some(OtherGpuUse { gpu_index: g.index, total_mib: g.total_mib, others_mib: g.used_mib.saturating_sub(our_mib), processes })
+        let our_mib: u64 = if single {
+            self.processes
+                .iter()
+                .filter(|p| ours.contains(&p.pid))
+                .filter_map(|p| p.used_mib)
+                .sum()
+        } else {
+            0
+        };
+        let mut processes: Vec<GpuProcess> = if single {
+            self.processes
+                .iter()
+                .filter(|p| !ours.contains(&p.pid))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        processes.sort_by(|a, b| {
+            b.used_mib
+                .cmp(&a.used_mib)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        Some(OtherGpuUse {
+            gpu_index: g.index,
+            total_mib: g.total_mib,
+            others_mib: g.used_mib.saturating_sub(our_mib),
+            processes,
+        })
     }
 }
 
@@ -176,18 +244,27 @@ pub fn query_vram_usage() -> Option<VramUsage> {
     if gpus.is_empty() {
         return None;
     }
-    let processes = run_smi(APPS_ARGS).map(|out| parse_compute_apps(&out)).unwrap_or_default();
+    let processes = run_smi(APPS_ARGS)
+        .map(|out| parse_compute_apps(&out))
+        .unwrap_or_default();
     Some(VramUsage { gpus, processes })
 }
 
 #[cfg(windows)]
 fn candidates() -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let system_root = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
     out.push(system_root.join("System32").join("nvidia-smi.exe"));
     out.push(PathBuf::from(r"C:\Windows\System32\nvidia-smi.exe"));
     if let Some(pf) = std::env::var_os("ProgramFiles") {
-        out.push(PathBuf::from(pf).join("NVIDIA Corporation").join("NVSMI").join("nvidia-smi.exe"));
+        out.push(
+            PathBuf::from(pf)
+                .join("NVIDIA Corporation")
+                .join("NVSMI")
+                .join("nvidia-smi.exe"),
+        );
     }
     out.push(PathBuf::from("nvidia-smi.exe")); // PATH
     out.dedup();
@@ -196,7 +273,10 @@ fn candidates() -> Vec<PathBuf> {
 
 #[cfg(not(windows))]
 fn candidates() -> Vec<PathBuf> {
-    vec![PathBuf::from("nvidia-smi"), PathBuf::from("/usr/bin/nvidia-smi")]
+    vec![
+        PathBuf::from("nvidia-smi"),
+        PathBuf::from("/usr/bin/nvidia-smi"),
+    ]
 }
 
 pub(crate) enum RunResult {
@@ -210,7 +290,9 @@ pub(crate) enum RunResult {
 /// Spawn without a console window (Windows), wait at most `timeout`, kill on
 /// timeout. stdout is read on a helper thread so a chatty child can't block.
 pub(crate) fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunResult {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -237,7 +319,11 @@ pub(crate) fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunResult
         match child.try_wait() {
             Ok(Some(status)) => {
                 let out = reader.join().unwrap_or_default();
-                return if status.success() { RunResult::Ok(String::from_utf8_lossy(&out).into_owned()) } else { RunResult::Failed };
+                return if status.success() {
+                    RunResult::Ok(String::from_utf8_lossy(&out).into_owned())
+                } else {
+                    RunResult::Failed
+                };
             }
             Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(25)),
             _ => {
@@ -258,7 +344,15 @@ mod tests {
         let out = "0, NVIDIA GeForce RTX 5070 Ti, 16303\n1, NVIDIA GeForce RTX 3060, 12288\n";
         let gpus = parse_nvidia_smi(out);
         assert_eq!(gpus.len(), 2);
-        assert_eq!(gpus[0], GpuInfo { index: 0, vendor: Vendor::Nvidia, name: "NVIDIA GeForce RTX 5070 Ti".into(), vram_gb: 15.9 });
+        assert_eq!(
+            gpus[0],
+            GpuInfo {
+                index: 0,
+                vendor: Vendor::Nvidia,
+                name: "NVIDIA GeForce RTX 5070 Ti".into(),
+                vram_gb: 15.9
+            }
+        );
         assert_eq!(gpus[1].vram_gb, 12.0);
         assert_eq!(gpus[1].index, 1);
     }
@@ -289,25 +383,55 @@ mod tests {
     #[test]
     fn parses_memory_use() {
         let gpus = parse_gpu_memory("0, 16303, 9234, 6726\r\n1, 12288, 0, 12045\nNVIDIA-SMI has failed\n2, [N/A], [N/A], [N/A]\n");
-        assert_eq!(gpus, vec![
-            GpuMemory { index: 0, total_mib: 16303, used_mib: 9234, free_mib: 6726 },
-            GpuMemory { index: 1, total_mib: 12288, used_mib: 0, free_mib: 12045 },
-        ]);
+        assert_eq!(
+            gpus,
+            vec![
+                GpuMemory {
+                    index: 0,
+                    total_mib: 16303,
+                    used_mib: 9234,
+                    free_mib: 6726
+                },
+                GpuMemory {
+                    index: 1,
+                    total_mib: 12288,
+                    used_mib: 0,
+                    free_mib: 12045
+                },
+            ]
+        );
         assert_eq!(parse_gpu_memory("0, 8192, 100, [N/A]")[0].free_mib, 8092);
         assert!(parse_gpu_memory("").is_empty());
-        assert!(parse_gpu_memory("0, 8192, 100").is_empty(), "wrong field count");
+        assert!(
+            parse_gpu_memory("0, 8192, 100").is_empty(),
+            "wrong field count"
+        );
     }
 
     #[test]
     fn parses_compute_apps_on_linux_and_windows() {
         let linux = "4242, /home/ana/ComfyUI/venv/bin/python3, 9102\n777, /home/ana/Pinhole/Data/engine/sd/v/vulkan/sd-server, 7000\n";
         let apps = parse_compute_apps(linux);
-        assert_eq!(apps[0], GpuProcess { pid: 4242, name: "python3".into(), used_mib: Some(9102) });
+        assert_eq!(
+            apps[0],
+            GpuProcess {
+                pid: 4242,
+                name: "python3".into(),
+                used_mib: Some(9102)
+            }
+        );
         assert_eq!(apps[1].name, "sd-server");
         // WDDM: no per-process numbers; names are full Windows paths (may contain commas).
         let windows = "13520, C:\\Users\\Ana\\StabilityMatrix\\Packages\\ComfyUI\\venv\\Scripts\\python.exe, [N/A]\r\n9, C:\\Games\\Big, Game\\game.exe, [N/A]\r\n";
         let apps = parse_compute_apps(windows);
-        assert_eq!(apps[0], GpuProcess { pid: 13520, name: "python.exe".into(), used_mib: None });
+        assert_eq!(
+            apps[0],
+            GpuProcess {
+                pid: 13520,
+                name: "python.exe".into(),
+                used_mib: None
+            }
+        );
         assert_eq!(apps[1].name, "game.exe");
         assert!(parse_compute_apps("No running processes found").is_empty());
         assert_eq!(parse_compute_apps("5, , 10")[0].name, "process 5");
@@ -316,32 +440,99 @@ mod tests {
     #[test]
     fn others_leave_out_our_processes() {
         let usage = VramUsage {
-            gpus: vec![GpuMemory { index: 0, total_mib: 16303, used_mib: 16000, free_mib: 303 }],
+            gpus: vec![GpuMemory {
+                index: 0,
+                total_mib: 16303,
+                used_mib: 16000,
+                free_mib: 303,
+            }],
             processes: vec![
-                GpuProcess { pid: 1, name: "sd-server.exe".into(), used_mib: Some(7000) },
-                GpuProcess { pid: 2, name: "python.exe".into(), used_mib: Some(8900) },
-                GpuProcess { pid: 3, name: "obs64.exe".into(), used_mib: None },
+                GpuProcess {
+                    pid: 1,
+                    name: "sd-server.exe".into(),
+                    used_mib: Some(7000),
+                },
+                GpuProcess {
+                    pid: 2,
+                    name: "python.exe".into(),
+                    used_mib: Some(8900),
+                },
+                GpuProcess {
+                    pid: 3,
+                    name: "obs64.exe".into(),
+                    used_mib: None,
+                },
             ],
         };
         let o = usage.others(Some(0), &[1]).unwrap();
         assert_eq!(o.others_mib, 9000);
-        assert_eq!(o.processes.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), vec!["python.exe", "obs64.exe"]);
+        assert_eq!(
+            o.processes
+                .iter()
+                .map(|p| p.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["python.exe", "obs64.exe"]
+        );
         assert!(o.is_significant());
         assert!(usage.others(Some(3), &[]).is_none());
         // WDDM: nothing to subtract, everything in use counts.
-        let wddm = VramUsage { gpus: usage.gpus.clone(), processes: vec![GpuProcess { pid: 2, name: "python.exe".into(), used_mib: None }] };
+        let wddm = VramUsage {
+            gpus: usage.gpus.clone(),
+            processes: vec![GpuProcess {
+                pid: 2,
+                name: "python.exe".into(),
+                used_mib: None,
+            }],
+        };
         assert_eq!(wddm.others(None, &[1]).unwrap().others_mib, 16000);
         // Desktop + browser (~1–3 GB on a 16 GB card) is not worth a note; 1.5 GB of a 4 GB card,
         // 2.5 GB of an 8 GB card and 4.5 GB of a 16 GB card are. Never 1 GB or less.
-        let quiet = OtherGpuUse { gpu_index: 0, total_mib: 16303, others_mib: 1100, processes: vec![] };
+        let quiet = OtherGpuUse {
+            gpu_index: 0,
+            total_mib: 16303,
+            others_mib: 1100,
+            processes: vec![],
+        };
         assert!(!quiet.is_significant());
-        assert!(!OtherGpuUse { others_mib: 3000, ..quiet.clone() }.is_significant());
-        assert!(OtherGpuUse { others_mib: 4600, ..quiet.clone() }.is_significant());
-        assert!(OtherGpuUse { total_mib: 8192, others_mib: 2560, ..quiet.clone() }.is_significant());
-        assert!(OtherGpuUse { total_mib: 4096, others_mib: 1500, ..quiet.clone() }.is_significant());
-        assert!(!OtherGpuUse { total_mib: 2048, others_mib: 1000, ..quiet.clone() }.is_significant());
+        assert!(!OtherGpuUse {
+            others_mib: 3000,
+            ..quiet.clone()
+        }
+        .is_significant());
+        assert!(OtherGpuUse {
+            others_mib: 4600,
+            ..quiet.clone()
+        }
+        .is_significant());
+        assert!(OtherGpuUse {
+            total_mib: 8192,
+            others_mib: 2560,
+            ..quiet.clone()
+        }
+        .is_significant());
+        assert!(OtherGpuUse {
+            total_mib: 4096,
+            others_mib: 1500,
+            ..quiet.clone()
+        }
+        .is_significant());
+        assert!(!OtherGpuUse {
+            total_mib: 2048,
+            others_mib: 1000,
+            ..quiet.clone()
+        }
+        .is_significant());
         // Two GPUs: processes can't be attributed, so none are named.
-        let two = VramUsage { gpus: vec![usage.gpus[0], GpuMemory { index: 1, ..usage.gpus[0] }], processes: usage.processes.clone() };
+        let two = VramUsage {
+            gpus: vec![
+                usage.gpus[0],
+                GpuMemory {
+                    index: 1,
+                    ..usage.gpus[0]
+                },
+            ],
+            processes: usage.processes.clone(),
+        };
         let o = two.others(Some(1), &[1]).unwrap();
         assert!(o.processes.is_empty());
         assert_eq!(o.others_mib, 16000);
@@ -350,7 +541,10 @@ mod tests {
     #[test]
     fn missing_program_is_not_found() {
         let cmd = Command::new("pinhole-definitely-not-a-real-program-xyz");
-        assert!(matches!(run_with_timeout(cmd, Duration::from_secs(1)), RunResult::NotFound));
+        assert!(matches!(
+            run_with_timeout(cmd, Duration::from_secs(1)),
+            RunResult::NotFound
+        ));
     }
 
     #[cfg(unix)]
@@ -364,11 +558,17 @@ mod tests {
         }
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "exit 3"]);
-        assert!(matches!(run_with_timeout(cmd, Duration::from_secs(5)), RunResult::Failed));
+        assert!(matches!(
+            run_with_timeout(cmd, Duration::from_secs(5)),
+            RunResult::Failed
+        ));
         let mut cmd = Command::new("sleep");
         cmd.arg("10");
         let start = Instant::now();
-        assert!(matches!(run_with_timeout(cmd, Duration::from_millis(200)), RunResult::Failed));
+        assert!(matches!(
+            run_with_timeout(cmd, Duration::from_millis(200)),
+            RunResult::Failed
+        ));
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 }

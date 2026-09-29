@@ -82,12 +82,18 @@ impl BuildSpec {
 
     /// `true` when every URL is filled in (not `TODO`).
     pub fn has_urls(&self) -> bool {
-        self.archives().iter().all(|a| a.url.starts_with("https://"))
+        self.archives()
+            .iter()
+            .all(|a| a.url.starts_with("https://"))
     }
 
     /// File names of archives without a real pinned SHA-256 (`TODO` / missing).
     pub fn unverified_archives(&self) -> Vec<String> {
-        self.archives().iter().filter(|a| a.verified_sha256().is_none()).map(|a| a.file_name()).collect()
+        self.archives()
+            .iter()
+            .filter(|a| a.verified_sha256().is_none())
+            .map(|a| a.file_name())
+            .collect()
     }
 }
 
@@ -156,13 +162,19 @@ impl EngineConfig {
     }
 
     pub fn from_yaml(text: &str) -> Result<Self, EngineError> {
-        let cfg: EngineConfig = serde_yaml::from_str(text).map_err(|e| EngineError::Config(e.to_string()))?;
-        for (name, pin) in [("stable_diffusion_cpp", &cfg.stable_diffusion_cpp), ("llama_cpp", &cfg.llama_cpp)] {
+        let cfg: EngineConfig =
+            serde_yaml::from_str(text).map_err(|e| EngineError::Config(e.to_string()))?;
+        for (name, pin) in [
+            ("stable_diffusion_cpp", &cfg.stable_diffusion_cpp),
+            ("llama_cpp", &cfg.llama_cpp),
+        ] {
             if pin.version.trim().is_empty() || pin.version == "TODO" {
                 return Err(EngineError::Config(format!("{name}.version is not pinned")));
             }
             if pin.binary.trim().is_empty() || pin.binary.contains(['/', '\\']) {
-                return Err(EngineError::Config(format!("{name}.binary must be a plain file name")));
+                return Err(EngineError::Config(format!(
+                    "{name}.binary must be a plain file name"
+                )));
             }
         }
         Ok(cfg)
@@ -170,22 +182,38 @@ impl EngineConfig {
 
     /// Backend for a GPU vendor key (`nvidia` | `amd` | `intel` | `none`).
     pub fn backend_for_vendor(&self, vendor: &str) -> String {
-        self.selection
-            .get(vendor)
-            .cloned()
-            .unwrap_or_else(|| if vendor == "nvidia" { "cuda".into() } else if vendor == "none" { "cpu".into() } else { "vulkan".into() })
+        self.selection.get(vendor).cloned().unwrap_or_else(|| {
+            if vendor == "nvidia" {
+                "cuda".into()
+            } else if vendor == "none" {
+                "cpu".into()
+            } else {
+                "vulkan".into()
+            }
+        })
     }
 
     /// Candidate backends in order: `backend` (after the pin's override), then fallbacks, then `cpu`.
     pub fn backend_candidates(&self, pin: &EnginePin, backend: &str) -> Vec<String> {
-        let first = pin.backend_override.get(backend).cloned().unwrap_or_else(|| backend.to_string());
+        let first = pin
+            .backend_override
+            .get(backend)
+            .cloned()
+            .unwrap_or_else(|| backend.to_string());
         let mut out = vec![first.clone()];
-        let fallbacks = self.fallbacks.get(&first).cloned().unwrap_or_else(|| match first.as_str() {
-            "cuda" => vec!["vulkan".into(), "cpu".into()],
-            "vulkan" => vec!["cpu".into()],
-            _ => vec![],
-        });
-        for b in fallbacks.into_iter().chain(std::iter::once("cpu".to_string())) {
+        let fallbacks =
+            self.fallbacks
+                .get(&first)
+                .cloned()
+                .unwrap_or_else(|| match first.as_str() {
+                    "cuda" => vec!["vulkan".into(), "cpu".into()],
+                    "vulkan" => vec!["cpu".into()],
+                    _ => vec![],
+                });
+        for b in fallbacks
+            .into_iter()
+            .chain(std::iter::once("cpu".to_string()))
+        {
             if !out.contains(&b) {
                 out.push(b);
             }
@@ -194,16 +222,28 @@ impl EngineConfig {
     }
 
     /// Pick the build for `(os, backend)`: exact match, else the fallbacks.
-    pub fn select_build(&self, pin: &EnginePin, os: &str, backend: &str) -> Result<SelectedBuild, EngineError> {
+    pub fn select_build(
+        &self,
+        pin: &EnginePin,
+        os: &str,
+        backend: &str,
+    ) -> Result<SelectedBuild, EngineError> {
         for b in self.backend_candidates(pin, backend) {
             let key = format!("{os}_{b}");
             if let Some(build) = pin.builds.get(&key) {
                 if build.has_urls() {
-                    return Ok(SelectedBuild { key, backend: b, build: build.clone() });
+                    return Ok(SelectedBuild {
+                        key,
+                        backend: b,
+                        build: build.clone(),
+                    });
                 }
             }
         }
-        Err(EngineError::NoBuild { os: os.to_string(), backend: backend.to_string() })
+        Err(EngineError::NoBuild {
+            os: os.to_string(),
+            backend: backend.to_string(),
+        })
     }
 }
 
@@ -243,10 +283,17 @@ pub fn glibc_version() -> Option<String> {
 
 /// `true` if `have` (e.g. `2.35`) is at least `need` (e.g. `2.38`).
 pub fn version_at_least(have: &str, need: &str) -> bool {
-    let parse = |s: &str| -> Vec<u64> { s.split('.').map(|p| p.trim().parse::<u64>().unwrap_or(0)).collect() };
+    let parse = |s: &str| -> Vec<u64> {
+        s.split('.')
+            .map(|p| p.trim().parse::<u64>().unwrap_or(0))
+            .collect()
+    };
     let (a, b) = (parse(have), parse(need));
     for i in 0..a.len().max(b.len()) {
-        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        let (x, y) = (
+            a.get(i).copied().unwrap_or(0),
+            b.get(i).copied().unwrap_or(0),
+        );
         if x != y {
             return x > y;
         }
@@ -269,22 +316,57 @@ mod tests {
         assert!(cfg.stable_diffusion_cpp.version.starts_with("master-"));
         assert_eq!(cfg.stable_diffusion_cpp.binary, "sd-server");
         assert_eq!(cfg.llama_cpp.binary, "llama-server");
-        for key in ["windows_cuda", "windows_vulkan", "windows_cpu", "linux_vulkan", "linux_cpu"] {
-            let b = cfg.stable_diffusion_cpp.builds.get(key).unwrap_or_else(|| panic!("sd build {key}"));
-            assert!(b.url.starts_with("https://github.com/leejet/stable-diffusion.cpp/releases/download/"), "{key}");
-            assert!(b.url.contains(&cfg.stable_diffusion_cpp.version), "{key} url matches version");
+        for key in [
+            "windows_cuda",
+            "windows_vulkan",
+            "windows_cpu",
+            "linux_vulkan",
+            "linux_cpu",
+        ] {
+            let b = cfg
+                .stable_diffusion_cpp
+                .builds
+                .get(key)
+                .unwrap_or_else(|| panic!("sd build {key}"));
+            assert!(
+                b.url.starts_with(
+                    "https://github.com/leejet/stable-diffusion.cpp/releases/download/"
+                ),
+                "{key}"
+            );
+            assert!(
+                b.url.contains(&cfg.stable_diffusion_cpp.version),
+                "{key} url matches version"
+            );
             assert!(b.size_bytes.unwrap_or(0) > 1_000_000, "{key} size");
-            let l = cfg.llama_cpp.builds.get(key).unwrap_or_else(|| panic!("llama build {key}"));
-            assert!(l.url.contains(&cfg.llama_cpp.version), "{key} llama url matches version");
+            let l = cfg
+                .llama_cpp
+                .builds
+                .get(key)
+                .unwrap_or_else(|| panic!("llama build {key}"));
+            assert!(
+                l.url.contains(&cfg.llama_cpp.version),
+                "{key} llama url matches version"
+            );
         }
         // Windows CUDA needs the CUDA runtime DLL archive in the same folder.
         let cuda = &cfg.stable_diffusion_cpp.builds["windows_cuda"];
         assert_eq!(cuda.extra.len(), 1);
-        assert!(cuda.extra[0].url.ends_with("cudart-sd-bin-win-cu12-x64.zip"));
+        assert!(cuda.extra[0]
+            .url
+            .ends_with("cudart-sd-bin-win-cu12-x64.zip"));
         assert_eq!(cuda.archives().len(), 2);
         // Launch defaults never bind to anything but loopback.
-        assert!(cfg.stable_diffusion_cpp.launch_defaults.windows(2).any(|w| w == ["--listen-ip", "127.0.0.1"]));
-        assert!(cfg.llama_cpp.launch_defaults.windows(2).any(|w| w == ["--host", "127.0.0.1"]));
+        assert!(cfg
+            .stable_diffusion_cpp
+            .launch_defaults
+            .windows(2)
+            .any(|w| w == ["--listen-ip", "127.0.0.1"]));
+        assert!(cfg
+            .llama_cpp
+            .launch_defaults
+            .windows(2)
+            .any(|w| w == ["--host", "127.0.0.1"]));
     }
 
     #[test]
@@ -293,7 +375,11 @@ mod tests {
         for pin in [&cfg.stable_diffusion_cpp, &cfg.llama_cpp] {
             for (key, b) in &pin.builds {
                 for a in b.archives() {
-                    assert!(a.sha256 == "TODO" || a.verified_sha256().is_some(), "{key}: {}", a.sha256);
+                    assert!(
+                        a.sha256 == "TODO" || a.verified_sha256().is_some(),
+                        "{key}: {}",
+                        a.sha256
+                    );
                 }
             }
         }
@@ -308,10 +394,16 @@ mod tests {
         assert_eq!(cfg.backend_for_vendor("none"), "cpu");
 
         let s = cfg.select_build(sd, "windows", "cuda").unwrap();
-        assert_eq!((s.key.as_str(), s.backend.as_str()), ("windows_cuda", "cuda"));
+        assert_eq!(
+            (s.key.as_str(), s.backend.as_str()),
+            ("windows_cuda", "cuda")
+        );
         // No Linux CUDA upstream → Vulkan.
         let s = cfg.select_build(sd, "linux", "cuda").unwrap();
-        assert_eq!((s.key.as_str(), s.backend.as_str()), ("linux_vulkan", "vulkan"));
+        assert_eq!(
+            (s.key.as_str(), s.backend.as_str()),
+            ("linux_vulkan", "vulkan")
+        );
         let s = cfg.select_build(sd, "linux", "cpu").unwrap();
         assert_eq!(s.key, "linux_cpu");
         assert!(cfg.select_build(sd, "macos", "cpu").is_err());
@@ -337,7 +429,9 @@ llama_cpp:
   binary: llama-server
 "#;
         let cfg = EngineConfig::from_yaml(yaml).unwrap();
-        let s = cfg.select_build(&cfg.stable_diffusion_cpp, "linux", "vulkan").unwrap();
+        let s = cfg
+            .select_build(&cfg.stable_diffusion_cpp, "linux", "vulkan")
+            .unwrap();
         assert_eq!(s.key, "linux_cpu");
         assert_eq!(s.build.archives()[0].verified_sha256(), None);
         assert_eq!(s.build.archives()[0].file_name(), "a.zip");
@@ -352,7 +446,11 @@ llama_cpp:
         let cfg = shipped();
         for pin in [&cfg.stable_diffusion_cpp, &cfg.llama_cpp] {
             for (key, b) in &pin.builds {
-                assert_eq!(check_pinned(b, true), Ok(()), "{key} has a TODO sha256 (release builds would refuse it)");
+                assert_eq!(
+                    check_pinned(b, true),
+                    Ok(()),
+                    "{key} has a TODO sha256 (release builds would refuse it)"
+                );
             }
         }
     }

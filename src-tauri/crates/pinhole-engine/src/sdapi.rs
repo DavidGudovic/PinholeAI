@@ -109,7 +109,14 @@ impl ImgGenRequest {
             init_image: None,
             ref_images: Vec::new(),
             mask_image: None,
-            sample_params: SampleParams { sample_steps: 20, guidance: Guidance { txt_cfg: 7.0, ..Default::default() }, ..Default::default() },
+            sample_params: SampleParams {
+                sample_steps: 20,
+                guidance: Guidance {
+                    txt_cfg: 7.0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             lora: Vec::new(),
             hires: None,
             vae_tiling_params: None,
@@ -153,13 +160,21 @@ pub struct UpscaleRequest {
 
 impl UpscaleRequest {
     pub fn new(image_b64: String, upscaler: Option<String>, repeats: u32) -> Self {
-        Self { image: image_b64, upscaler, repeats: repeats.clamp(1, 4), output_format: "png" }
+        Self {
+            image: image_b64,
+            upscaler,
+            repeats: repeats.clamp(1, 4),
+            output_format: "png",
+        }
     }
 }
 
 impl std::fmt::Debug for UpscaleRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("UpscaleRequest").field("upscaler", &self.upscaler).field("repeats", &self.repeats).finish()
+        f.debug_struct("UpscaleRequest")
+            .field("upscaler", &self.upscaler)
+            .field("repeats", &self.repeats)
+            .finish()
     }
 }
 
@@ -186,7 +201,10 @@ pub struct JobImage {
 
 impl std::fmt::Debug for JobImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JobImage").field("index", &self.index).field("b64_len", &self.b64_json.len()).finish()
+        f.debug_struct("JobImage")
+            .field("index", &self.index)
+            .field("b64_len", &self.b64_json.len())
+            .finish()
     }
 }
 
@@ -326,7 +344,9 @@ pub struct SdClient {
 
 impl std::fmt::Debug for SdClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SdClient").field("base", &self.base).finish()
+        f.debug_struct("SdClient")
+            .field("base", &self.base)
+            .finish()
     }
 }
 
@@ -338,16 +358,28 @@ const T_UPSCALE: Duration = Duration::from_secs(30 * 60);
 impl SdClient {
     /// `base` = `http://127.0.0.1:<port>` (LocalClient refuses anything else).
     pub fn new(local: pinhole_net::LocalClient, base: impl Into<String>) -> Self {
-        Self { http: Http::Local(local), base: base.into().trim_end_matches('/').to_string() }
+        Self {
+            http: Http::Local(local),
+            base: base.into().trim_end_matches('/').to_string(),
+        }
     }
 
     /// Test-only client without the net crate (still loopback-only, no proxy).
     #[cfg(any(test, feature = "test-util"))]
     pub fn new_plain_for_tests(base: impl Into<String>) -> Self {
         let base = base.into().trim_end_matches('/').to_string();
-        assert!(base.starts_with("http://127.0.0.1:"), "test client is loopback-only");
-        let client = reqwest::Client::builder().no_proxy().build().expect("reqwest client");
-        Self { http: Http::Plain(client), base }
+        assert!(
+            base.starts_with("http://127.0.0.1:"),
+            "test client is loopback-only"
+        );
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("reqwest client");
+        Self {
+            http: Http::Plain(client),
+            base,
+        }
     }
 
     pub fn base_url(&self) -> &str {
@@ -356,15 +388,23 @@ impl SdClient {
 
     fn get(&self, path: &str) -> Result<reqwest::RequestBuilder, ApiError> {
         match &self.http {
-            Http::Local(c) => c.get(&self.base, path).map_err(|e| ApiError::Net(e.to_string())),
+            Http::Local(c) => c
+                .get(&self.base, path)
+                .map_err(|e| ApiError::Net(e.to_string())),
             #[cfg(any(test, feature = "test-util"))]
             Http::Plain(c) => Ok(c.get(format!("{}{}", self.base, path))),
         }
     }
 
-    fn post<B: Serialize + ?Sized>(&self, path: &str, body: &B) -> Result<reqwest::RequestBuilder, ApiError> {
+    fn post<B: Serialize + ?Sized>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<reqwest::RequestBuilder, ApiError> {
         match &self.http {
-            Http::Local(c) => c.post_json(&self.base, path, body).map_err(|e| ApiError::Net(e.to_string())),
+            Http::Local(c) => c
+                .post_json(&self.base, path, body)
+                .map_err(|e| ApiError::Net(e.to_string())),
             #[cfg(any(test, feature = "test-util"))]
             Http::Plain(c) => Ok(c.post(format!("{}{}", self.base, path)).json(body)),
         }
@@ -372,12 +412,18 @@ impl SdClient {
 
     /// `true` once `GET /sdcpp/v1/capabilities` answers 200 (model loaded).
     pub async fn is_ready(&self) -> bool {
-        let Ok(rb) = self.get("/sdcpp/v1/capabilities") else { return false };
+        let Ok(rb) = self.get("/sdcpp/v1/capabilities") else {
+            return false;
+        };
         matches!(rb.timeout(T_SHORT).send().await, Ok(r) if r.status().is_success())
     }
 
     pub async fn capabilities(&self) -> Result<Capabilities, ApiError> {
-        let resp = send(self.get("/sdcpp/v1/capabilities")?.timeout(Duration::from_secs(15))).await?;
+        let resp = send(
+            self.get("/sdcpp/v1/capabilities")?
+                .timeout(Duration::from_secs(15)),
+        )
+        .await?;
         decode(resp).await
     }
 
@@ -390,7 +436,12 @@ impl SdClient {
             id: String,
         }
         let s: Submitted = decode(resp).await?;
-        if s.id.is_empty() || !s.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+        if s.id.is_empty()
+            || !s
+                .id
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
             return Err(ApiError::Decode("bad job id".into()));
         }
         Ok(s.id)
@@ -402,7 +453,10 @@ impl SdClient {
     }
 
     pub async fn cancel(&self, id: &str) -> Result<CancelOutcome, ApiError> {
-        let rb = self.post(&format!("/sdcpp/v1/jobs/{id}/cancel"), &serde_json::json!({}))?;
+        let rb = self.post(
+            &format!("/sdcpp/v1/jobs/{id}/cancel"),
+            &serde_json::json!({}),
+        )?;
         let resp = match rb.timeout(Duration::from_secs(10)).send().await {
             Ok(r) => r,
             Err(e) => return Err(map_reqwest(e)),
@@ -412,9 +466,16 @@ impl SdClient {
             404 | 410 => Ok(CancelOutcome::Gone),
             s if (200..300).contains(&s) => {
                 let job: Job = decode(resp).await?;
-                Ok(if job.status == JobStatus::Cancelled { CancelOutcome::Cancelled } else { CancelOutcome::Finished })
+                Ok(if job.status == JobStatus::Cancelled {
+                    CancelOutcome::Cancelled
+                } else {
+                    CancelOutcome::Finished
+                })
             }
-            code => Err(ApiError::Status { code, error: error_field(resp).await }),
+            code => Err(ApiError::Status {
+                code,
+                error: error_field(resp).await,
+            }),
         }
     }
 
@@ -444,7 +505,10 @@ async fn send(rb: reqwest::RequestBuilder) -> Result<reqwest::Response, ApiError
     Err(match status {
         404 | 410 => ApiError::NotFound,
         429 => ApiError::QueueFull,
-        code => ApiError::Status { code, error: error_field(resp).await },
+        code => ApiError::Status {
+            code,
+            error: error_field(resp).await,
+        },
     })
 }
 
@@ -453,12 +517,18 @@ async fn send(rb: reqwest::RequestBuilder) -> Result<reqwest::Response, ApiError
 async fn error_field(resp: reqwest::Response) -> String {
     let bytes = resp.bytes().await.unwrap_or_default();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
-    v.get("error").and_then(|e| e.as_str()).unwrap_or("").chars().take(200).collect()
+    v.get("error")
+        .and_then(|e| e.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect()
 }
 
 async fn decode<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T, ApiError> {
     let bytes = resp.bytes().await.map_err(map_reqwest)?;
-    serde_json::from_slice(&bytes).map_err(|e| ApiError::Decode(e.to_string().chars().take(200).collect()))
+    serde_json::from_slice(&bytes)
+        .map_err(|e| ApiError::Decode(e.to_string().chars().take(200).collect()))
 }
 
 #[cfg(test)]
@@ -469,13 +539,20 @@ mod tests {
     fn img_gen_body_never_embeds_metadata() {
         let mut req = ImgGenRequest::new("a cat", 512, 768, 42);
         req.negative_prompt = "blurry".into();
-        req.lora.push(LoraRef { path: "styles/film.safetensors".into(), multiplier: 0.8 });
+        req.lora.push(LoraRef {
+            path: "styles/film.safetensors".into(),
+            multiplier: 0.8,
+        });
         req.sample_params = SampleParams {
             sample_method: Some("euler".into()),
             scheduler: Some("simple".into()),
             sample_steps: 8,
             flow_shift: None,
-            guidance: Guidance { txt_cfg: 1.0, img_cfg: None, distilled_guidance: Some(3.5) },
+            guidance: Guidance {
+                txt_cfg: 1.0,
+                img_cfg: None,
+                distilled_guidance: Some(3.5),
+            },
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["embed_image_metadata"], serde_json::Value::Bool(false));
@@ -488,7 +565,11 @@ mod tests {
         assert!((v["lora"][0]["multiplier"].as_f64().unwrap() - 0.8).abs() < 1e-6);
         assert_eq!(v["sample_params"]["sample_method"], "euler");
         assert_eq!(v["sample_params"]["guidance"]["distilled_guidance"], 3.5);
-        assert!(v.get("init_image").is_none() && v.get("ref_images").is_none() && v.get("hires").is_none());
+        assert!(
+            v.get("init_image").is_none()
+                && v.get("ref_images").is_none()
+                && v.get("hires").is_none()
+        );
         assert!(!req.embeds_metadata());
     }
 
@@ -498,7 +579,10 @@ mod tests {
         req.negative_prompt = "NEG_SENTINEL".into();
         req.init_image = Some("aGVsbG8=".into());
         let dbg = format!("{req:?}");
-        assert!(!dbg.contains("SENTINEL") && !dbg.contains("aGVsbG8="), "{dbg}");
+        assert!(
+            !dbg.contains("SENTINEL") && !dbg.contains("aGVsbG8="),
+            "{dbg}"
+        );
         let up = UpscaleRequest::new("aGVsbG8=".into(), None, 9);
         assert_eq!(up.repeats, 4);
         assert!(!format!("{up:?}").contains("aGVsbG8="));
@@ -512,8 +596,12 @@ mod tests {
         let failed: Job = serde_json::from_str(r#"{"id":"job_1","kind":"img_gen","status":"failed","created":1,"started":null,"completed":3,"queue_position":0,"result":null,"error":{"code":"generation_failed","message":"generate_image returned empty results"}}"#).unwrap();
         assert_eq!(failed.status, JobStatus::Failed);
         assert_eq!(failed.error.unwrap().code, "generation_failed");
-        let queued: Job = serde_json::from_str(r#"{"id":"j","status":"queued","queue_position":2}"#).unwrap();
-        assert_eq!((queued.status, queued.queue_position), (JobStatus::Queued, 2));
+        let queued: Job =
+            serde_json::from_str(r#"{"id":"j","status":"queued","queue_position":2}"#).unwrap();
+        assert_eq!(
+            (queued.status, queued.queue_position),
+            (JobStatus::Queued, 2)
+        );
         let odd: Job = serde_json::from_str(r#"{"id":"j","status":"paused"}"#).unwrap();
         assert_eq!(odd.status, JobStatus::Unknown);
     }

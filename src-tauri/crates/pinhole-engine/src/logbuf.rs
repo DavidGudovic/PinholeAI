@@ -75,13 +75,20 @@ impl Default for LogBuffer {
 
 impl std::fmt::Debug for LogBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LogBuffer").field("lines", &self.inner.lock().lines.len()).finish()
+        f.debug_struct("LogBuffer")
+            .field("lines", &self.inner.lock().lines.len())
+            .finish()
     }
 }
 
 impl LogBuffer {
     pub fn new(cap: usize) -> Self {
-        Self { inner: Mutex::new(Inner { cap: cap.max(1), ..Default::default() }) }
+        Self {
+            inner: Mutex::new(Inner {
+                cap: cap.max(1),
+                ..Default::default()
+            }),
+        }
     }
 
     /// Texts that must never be stored (current prompt, negative prompt, style).
@@ -120,7 +127,12 @@ impl LogBuffer {
         // sd.cpp starts each progress update with `\r`, so the newest bar is the
         // unterminated tail: read progress from it right away.
         if let Some((kind, step, total)) = parse_progress(strip_control(rest).trim()) {
-            g.progress = Some(StepProgress { kind, step, total, at: Instant::now() });
+            g.progress = Some(StepProgress {
+                kind,
+                step,
+                total,
+                at: Instant::now(),
+            });
         }
         // Cap an unterminated segment so a runaway line can't grow forever.
         let keep: String = rest.chars().take(8 * MAX_LINE_CHARS).collect();
@@ -151,7 +163,12 @@ impl LogBuffer {
             return;
         }
         if let Some((kind, step, total)) = parse_progress(trimmed) {
-            g.progress = Some(StepProgress { kind, step, total, at: Instant::now() });
+            g.progress = Some(StepProgress {
+                kind,
+                step,
+                total,
+                at: Instant::now(),
+            });
             return;
         }
         // One INFO line per unused tensor of a checkpoint (model_loader.cpp):
@@ -176,7 +193,9 @@ impl LogBuffer {
     /// Lines stored after `mark` that are still in the ring (oldest first).
     pub fn since(&self, mark: u64) -> Vec<String> {
         let g = self.inner.lock();
-        let n = usize::try_from(g.pushed.saturating_sub(mark)).unwrap_or(usize::MAX).min(g.lines.len());
+        let n = usize::try_from(g.pushed.saturating_sub(mark))
+            .unwrap_or(usize::MAX)
+            .min(g.lines.len());
         g.lines.iter().skip(g.lines.len() - n).cloned().collect()
     }
 
@@ -256,7 +275,11 @@ pub fn parse_progress(seg: &str) -> Option<(ProgressKind, u32, u32)> {
     if bar.is_empty() || !bar.chars().all(|c| matches!(c, '=' | '>' | '#' | ' ')) {
         return None;
     }
-    let kind = if bar.contains('#') { ProgressKind::Loading } else { ProgressKind::Sampling };
+    let kind = if bar.contains('#') {
+        ProgressKind::Loading
+    } else {
+        ProgressKind::Sampling
+    };
     let after = rest[bar_end + 1..].trim_start();
     let nums = after.split_whitespace().next()?;
     let (a, b) = nums.split_once('/')?;
@@ -306,7 +329,15 @@ pub fn redact_line(line: &str, secrets: &[String]) -> String {
     }
     let mut out = line.to_string();
     // Cut anything following markers that introduce prompt text.
-    let markers = ["json parse failed", "prompt:", "prompt=", "\"prompt\"", "'prompt'", " -p ", "--prompt"];
+    let markers = [
+        "json parse failed",
+        "prompt:",
+        "prompt=",
+        "\"prompt\"",
+        "'prompt'",
+        " -p ",
+        "--prompt",
+    ];
     let lower_out = out.to_lowercase();
     let mut cut: Option<usize> = None;
     for m in markers {
@@ -375,7 +406,11 @@ mod tests {
         assert_eq!(b.since(m), vec!["new 1", "new 2"]);
         b.push_line("new 3");
         b.push_line("new 4");
-        assert_eq!(b.since(m), vec!["new 2", "new 3", "new 4"], "capped by the ring");
+        assert_eq!(
+            b.since(m),
+            vec!["new 2", "new 3", "new 4"],
+            "capped by the ring"
+        );
         b.clear();
         assert!(b.since(m).is_empty(), "cleared on engine restart");
         b.push_line("after restart");
@@ -428,7 +463,11 @@ mod tests {
         // Parts under 8 characters are not secrets on their own.
         b.push_line("[INFO ] short bokeh");
         let tail = b.tail(10);
-        assert_eq!(tail.iter().filter(|l| *l == REDACTED).count(), 5, "{tail:?}");
+        assert_eq!(
+            tail.iter().filter(|l| *l == REDACTED).count(),
+            5,
+            "{tail:?}"
+        );
         assert_eq!(tail.last().map(String::as_str), Some("[INFO ] short bokeh"));
         let expanded = expand_secrets([prompt]);
         assert!(expanded.contains(&"misty harbour, golden hour".to_string()));
@@ -439,13 +478,25 @@ mod tests {
 
     #[test]
     fn cuts_after_prompt_markers_even_without_secrets() {
-        assert_eq!(redact_line("[ERROR] json parse failed {\"prompt\":\"secret\"}", &[]), "[ERROR] json parse failed [redacted]");
+        assert_eq!(
+            redact_line("[ERROR] json parse failed {\"prompt\":\"secret\"}", &[]),
+            "[ERROR] json parse failed [redacted]"
+        );
         assert_eq!(redact_line("prompt: a cat", &[]), "prompt: [redacted]");
-        assert_eq!(redact_line("run sd -p a cat --steps 3", &[]), "run sd -p [redacted]");
-        assert_eq!(redact_line("{\"prompt\": \"x\"}", &[]), "{\"prompt\" [redacted]");
+        assert_eq!(
+            redact_line("run sd -p a cat --steps 3", &[]),
+            "run sd -p [redacted]"
+        );
+        assert_eq!(
+            redact_line("{\"prompt\": \"x\"}", &[]),
+            "{\"prompt\" [redacted]"
+        );
         // Plain mentions of the word are fine.
         assert_eq!(
-            redact_line("IMPORTANT NOTICE: No text encoders provided, cannot process prompts!", &[]),
+            redact_line(
+                "IMPORTANT NOTICE: No text encoders provided, cannot process prompts!",
+                &[]
+            ),
             "IMPORTANT NOTICE: No text encoders provided, cannot process prompts!"
         );
         // Non-ASCII where lowercasing changes byte length → whole-line redaction.
@@ -455,8 +506,12 @@ mod tests {
     #[test]
     fn parses_progress_bars_and_does_not_store_them() {
         let b = LogBuffer::new(50);
-        b.push_bytes(b"\r  |>                                                 | 1/20 - 0.00it/s\x1b[K");
-        b.push_bytes(b"\r  |=====>                                            | 3/20 - 1.23it/s\x1b[K");
+        b.push_bytes(
+            b"\r  |>                                                 | 1/20 - 0.00it/s\x1b[K",
+        );
+        b.push_bytes(
+            b"\r  |=====>                                            | 3/20 - 1.23it/s\x1b[K",
+        );
         let p = b.progress().unwrap();
         assert_eq!((p.kind, p.step, p.total), (ProgressKind::Sampling, 3, 20));
         b.push_bytes(b"\r  |##########                                        | 120/600 - 300.00MB/s\x1b[K\n");
@@ -488,7 +543,10 @@ mod tests {
             b.push_line(&format!("[INFO ] model_loader.cpp:1533 - unknown tensor 'cond_stage_model.x{i}.weight | f16 | 2 [768, 1]' in model file"));
         }
         b.push_line("[INFO ] backend_fit.cpp:210 - auto-fit: params DiT → CUDA0");
-        assert_eq!(b.tail(usize::MAX), vec!["[INFO ] backend_fit.cpp:210 - auto-fit: params DiT → CUDA0".to_string()]);
+        assert_eq!(
+            b.tail(usize::MAX),
+            vec!["[INFO ] backend_fit.cpp:210 - auto-fit: params DiT → CUDA0".to_string()]
+        );
     }
 
     #[test]
@@ -496,7 +554,10 @@ mod tests {
         assert_eq!(parse_progress("| not a bar | 1/2"), None);
         assert_eq!(parse_progress("hello 3/20"), None);
         assert_eq!(parse_progress("|===| 30/20 - x"), None);
-        assert_eq!(parse_progress("|===| 3/20 - 1it/s"), Some((ProgressKind::Sampling, 3, 20)));
+        assert_eq!(
+            parse_progress("|===| 3/20 - 1it/s"),
+            Some((ProgressKind::Sampling, 3, 20))
+        );
     }
 
     #[test]

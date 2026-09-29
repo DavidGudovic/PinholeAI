@@ -67,7 +67,10 @@ fn get_from(entry: &Entry) -> Result<Option<String>, StoreError> {
     get_with(entry, map_err)
 }
 
-fn get_with(entry: &Entry, map: fn(KeyringError) -> StoreError) -> Result<Option<String>, StoreError> {
+fn get_with(
+    entry: &Entry,
+    map: fn(KeyringError) -> StoreError,
+) -> Result<Option<String>, StoreError> {
     match entry.get_password() {
         Ok(key) => {
             let key = key.trim();
@@ -81,7 +84,9 @@ fn get_with(entry: &Entry, map: fn(KeyringError) -> StoreError) -> Result<Option
 fn set_on(entry: &Entry, key: &str) -> Result<(), StoreError> {
     let key = key.trim();
     if key.is_empty() {
-        return Err(StoreError::Invalid("Paste your CivitAI API key first.".into()));
+        return Err(StoreError::Invalid(
+            "Paste your CivitAI API key first.".into(),
+        ));
     }
     if key.len() > MAX_KEY_LEN || key.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(StoreError::Invalid(
@@ -153,7 +158,10 @@ mod tests {
     }
 
     fn mock(entry: &Entry) -> &MockCredential {
-        entry.get_credential().downcast_ref::<MockCredential>().expect("mock credential")
+        entry
+            .get_credential()
+            .downcast_ref::<MockCredential>()
+            .expect("mock credential")
     }
 
     #[test]
@@ -161,7 +169,10 @@ mod tests {
         let entry = mock_entry();
         assert_eq!(get_from(&entry).unwrap(), None);
         set_on(&entry, "  0123456789abcdef0123456789abcdef\n").unwrap();
-        assert_eq!(get_from(&entry).unwrap().as_deref(), Some("0123456789abcdef0123456789abcdef"));
+        assert_eq!(
+            get_from(&entry).unwrap().as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
         set_on(&entry, "fedcba").unwrap();
         assert_eq!(get_from(&entry).unwrap().as_deref(), Some("fedcba"));
         delete_on(&entry).unwrap();
@@ -174,14 +185,28 @@ mod tests {
     fn github_token_round_trip_and_validation() {
         keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
         let entry = Entry::new(SERVICE, GITHUB_ACCOUNT).unwrap();
-        assert!(matches!(set_github_on(&entry, " "), Err(StoreError::Invalid(_))));
-        assert!(matches!(set_github_on(&entry, "ghp_abc def"), Err(StoreError::Invalid(_))));
-        assert!(matches!(set_github_on(&entry, "https://x"), Err(StoreError::Invalid(_))));
+        assert!(matches!(
+            set_github_on(&entry, " "),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            set_github_on(&entry, "ghp_abc def"),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            set_github_on(&entry, "https://x"),
+            Err(StoreError::Invalid(_))
+        ));
         set_github_on(&entry, " github_pat_11ABC_def123\n").unwrap();
-        assert_eq!(get_with(&entry, map_github_err).unwrap().as_deref(), Some("github_pat_11ABC_def123"));
+        assert_eq!(
+            get_with(&entry, map_github_err).unwrap().as_deref(),
+            Some("github_pat_11ABC_def123")
+        );
         mock(&entry).set_error(KeyringError::BadEncoding(vec![0xff]));
         match get_with(&entry, map_github_err).unwrap_err() {
-            StoreError::Keychain(m) => assert!(m.contains("GitHub token") && !m.contains("CivitAI"), "{m}"),
+            StoreError::Keychain(m) => {
+                assert!(m.contains("GitHub token") && !m.contains("CivitAI"), "{m}")
+            }
             other => panic!("unexpected {other:?}"),
         }
     }
@@ -190,8 +215,14 @@ mod tests {
     fn rejects_bad_keys_without_storing() {
         let entry = mock_entry();
         assert!(matches!(set_on(&entry, "   "), Err(StoreError::Invalid(_))));
-        assert!(matches!(set_on(&entry, "abc def"), Err(StoreError::Invalid(_))));
-        assert!(matches!(set_on(&entry, &"a".repeat(600)), Err(StoreError::Invalid(_))));
+        assert!(matches!(
+            set_on(&entry, "abc def"),
+            Err(StoreError::Invalid(_))
+        ));
+        assert!(matches!(
+            set_on(&entry, &"a".repeat(600)),
+            Err(StoreError::Invalid(_))
+        ));
         assert_eq!(get_from(&entry).unwrap(), None);
     }
 
@@ -199,17 +230,27 @@ mod tests {
     fn platform_failure_is_plain_and_secret_free() {
         let entry = mock_entry();
         let secret = "SECRET_KEY_123";
-        mock(&entry).set_error(KeyringError::PlatformFailure("org.freedesktop.DBus.Error.ServiceUnknown".into()));
+        mock(&entry).set_error(KeyringError::PlatformFailure(
+            "org.freedesktop.DBus.Error.ServiceUnknown".into(),
+        ));
         let e = set_on(&entry, secret).unwrap_err();
         match &e {
             StoreError::Keychain(m) => {
-                assert!(m.starts_with("Your system keychain isn't available, so Pinhole can't store the API key"));
+                assert!(m.starts_with(
+                    "Your system keychain isn't available, so Pinhole can't store the API key"
+                ));
                 assert!(!m.contains(secret));
                 assert!(!m.contains("DBus"));
             }
             other => panic!("unexpected {other:?}"),
         }
-        assert_eq!(e.user_message(), match &e { StoreError::Keychain(m) => m.clone(), _ => unreachable!() });
+        assert_eq!(
+            e.user_message(),
+            match &e {
+                StoreError::Keychain(m) => m.clone(),
+                _ => unreachable!(),
+            }
+        );
         // The error was one-shot; storage works again afterwards.
         set_on(&entry, secret).unwrap();
 

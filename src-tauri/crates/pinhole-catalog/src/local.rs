@@ -27,7 +27,13 @@ pub fn sanitize_file_name(name: &str, ext: &str) -> String {
     };
     let mut clean: String = stem
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || "._-()+ ".contains(c) { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || "._-()+ ".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches(|c: char| c == '.' || c == ' ')
         .to_string();
@@ -40,7 +46,9 @@ pub fn sanitize_file_name(name: &str, ext: &str) -> String {
     // Windows reserved device names.
     let upper = clean.to_ascii_uppercase();
     if ["CON", "PRN", "AUX", "NUL"].contains(&upper.as_str())
-        || ((upper.starts_with("COM") || upper.starts_with("LPT")) && upper.len() == 4 && upper.as_bytes()[3].is_ascii_digit())
+        || ((upper.starts_with("COM") || upper.starts_with("LPT"))
+            && upper.len() == 4
+            && upper.as_bytes()[3].is_ascii_digit())
     {
         clean.insert(0, '_');
     }
@@ -55,7 +63,11 @@ pub fn unique_path(dir: &Path, file_name: &str, taken: impl Fn(&Path) -> bool) -
     }
     let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
     for i in 2..10_000 {
-        let candidate = if ext.is_empty() { dir.join(format!("{stem}-{i}")) } else { dir.join(format!("{stem}-{i}.{ext}")) };
+        let candidate = if ext.is_empty() {
+            dir.join(format!("{stem}-{i}"))
+        } else {
+            dir.join(format!("{stem}-{i}.{ext}"))
+        };
         if !taken(&candidate) {
             return candidate;
         }
@@ -89,7 +101,11 @@ pub fn copy_and_hash(src: &Path, dest: &Path) -> io::Result<(String, u64)> {
 }
 
 /// [`copy_and_hash`], calling `on_chunk(bytes)` after each chunk is written.
-pub fn copy_and_hash_with(src: &Path, dest: &Path, mut on_chunk: impl FnMut(u64)) -> io::Result<(String, u64)> {
+pub fn copy_and_hash_with(
+    src: &Path,
+    dest: &Path,
+    mut on_chunk: impl FnMut(u64),
+) -> io::Result<(String, u64)> {
     let part = part_path(dest);
     let result = (|| {
         let mut input = File::open(src)?;
@@ -140,7 +156,12 @@ pub fn free_space(dir: &Path) -> u64 {
 
 /// AutoV2 hash (CivitAI / A1111 "Model hash"): first 10 hex chars of SHA-256.
 pub fn autov2(sha256: &str) -> String {
-    sha256.trim().chars().take(10).collect::<String>().to_ascii_uppercase()
+    sha256
+        .trim()
+        .chars()
+        .take(10)
+        .collect::<String>()
+        .to_ascii_uppercase()
 }
 
 /// Does a pasted hash identify the file with this full SHA-256?
@@ -173,7 +194,10 @@ mod tests {
         assert!(hash_matches(SHA, "6a35a78557"));
         assert!(hash_matches(SHA, &SHA.to_ascii_uppercase()));
         assert!(!hash_matches(SHA, "6A35A78558"));
-        assert!(!hash_matches(SHA, "6A35A7855770"), "12-char LoRA hashes aren't file-hash prefixes");
+        assert!(
+            !hash_matches(SHA, "6A35A7855770"),
+            "12-char LoRA hashes aren't file-hash prefixes"
+        );
         assert!(!hash_matches(SHA, "zz35a78557"));
         assert!(!hash_matches("short", "6A35A78557"));
         assert!(!hash_matches(SHA, ""));
@@ -181,7 +205,10 @@ mod tests {
 
     #[test]
     fn extensions() {
-        assert_eq!(allowed_extension(Path::new("/x/Model.SafeTensors")), Some("safetensors"));
+        assert_eq!(
+            allowed_extension(Path::new("/x/Model.SafeTensors")),
+            Some("safetensors")
+        );
         assert_eq!(allowed_extension(Path::new("m.gguf")), Some("gguf"));
         assert_eq!(allowed_extension(Path::new("m.ckpt")), None);
         assert_eq!(allowed_extension(Path::new("m.pt")), None);
@@ -190,21 +217,36 @@ mod tests {
 
     #[test]
     fn file_names() {
-        assert_eq!(sanitize_file_name("../../etc/passwd.safetensors", "safetensors"), "passwd.safetensors");
-        assert_eq!(sanitize_file_name("C:\\Users\\me\\My Model (v2).SAFETENSORS", "safetensors"), "My Model (v2).safetensors");
+        assert_eq!(
+            sanitize_file_name("../../etc/passwd.safetensors", "safetensors"),
+            "passwd.safetensors"
+        );
+        assert_eq!(
+            sanitize_file_name("C:\\Users\\me\\My Model (v2).SAFETENSORS", "safetensors"),
+            "My Model (v2).safetensors"
+        );
         assert_eq!(sanitize_file_name("..hidden", "gguf"), "hidden.gguf");
         assert_eq!(sanitize_file_name("a:b*c?.gguf", "gguf"), "a_b_c_.gguf");
         assert_eq!(sanitize_file_name("", "gguf"), "model.gguf");
         assert_eq!(sanitize_file_name("CON", "gguf"), "_CON.gguf");
-        assert_eq!(sanitize_file_name("✨ JANKU ✨.safetensors", "safetensors"), "_ JANKU _.safetensors");
+        assert_eq!(
+            sanitize_file_name("✨ JANKU ✨.safetensors", "safetensors"),
+            "_ JANKU _.safetensors"
+        );
     }
 
     #[test]
     fn unique_paths() {
         let dir = Path::new("/d");
         let taken = |p: &Path| p == Path::new("/d/m.gguf") || p == Path::new("/d/m-2.gguf");
-        assert_eq!(unique_path(dir, "m.gguf", taken), PathBuf::from("/d/m-3.gguf"));
-        assert_eq!(unique_path(dir, "n.gguf", taken), PathBuf::from("/d/n.gguf"));
+        assert_eq!(
+            unique_path(dir, "m.gguf", taken),
+            PathBuf::from("/d/m-3.gguf")
+        );
+        assert_eq!(
+            unique_path(dir, "n.gguf", taken),
+            PathBuf::from("/d/n.gguf")
+        );
     }
 
     #[test]
@@ -215,7 +257,10 @@ mod tests {
         let dest = dir.path().join("out").join("dst.safetensors");
         std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
         let (sha, size) = copy_and_hash(&src, &dest).unwrap();
-        assert_eq!(sha, "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9");
+        assert_eq!(
+            sha,
+            "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+        );
         assert_eq!(size, 11);
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello world");
         assert!(src.exists(), "the user's file is never moved");

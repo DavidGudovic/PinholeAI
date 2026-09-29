@@ -2,12 +2,12 @@
 # Local pre-merge check: everything the fast CI tier ran, so merging doesn't depend on
 # GitHub Actions. Run from anywhere; stops at the first failing step.
 #
-#   scripts/check.sh            frontend + privacy lint, Rust tests, clippy
+#   scripts/check.sh            frontend + privacy lint, rustfmt, Rust tests, clippy
 #   scripts/check.sh --smoke    also the engine smoke + app end-to-end tests (needs internet
 #                               for the engine and a tiny model, CPU only; slow, optional)
 #
 # Not covered here (run Actions → CI → "Run workflow" when minutes allow): Windows tests,
-# the WebDriver e2e, and installers. `cargo fmt` is not checked: the repo is not fmt-clean yet.
+# the WebDriver e2e, and installers.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -34,6 +34,10 @@ done_
 # tsc -b && vite build; also produces dist/, which the Tauri crate embeds at compile time.
 step "Typecheck + build frontend"
 npm run build
+done_
+
+step "Rust formatting (cargo fmt --check; fix with: cargo fmt --all)"
+cargo fmt --all --check
 done_
 
 step "Rust tests (cargo test --workspace, includes the privacy + offline tests)"

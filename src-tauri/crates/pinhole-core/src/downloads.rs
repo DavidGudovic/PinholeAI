@@ -25,7 +25,10 @@ pub fn cancel(core: &AppCore, group_id: &str) {
 
 /// Wait for a group; failures become a plain-language `CoreError`.
 pub async fn wait(core: &AppCore, group_id: &str) -> CoreResult<Vec<DownloadedFile>> {
-    core.downloads.wait_detailed(group_id).await.map_err(group_error)
+    core.downloads
+        .wait_detailed(group_id)
+        .await
+        .map_err(group_error)
 }
 
 /// `GroupError` → `CoreError` (same code, same plain-language message).

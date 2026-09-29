@@ -35,7 +35,11 @@ pub struct PageCache {
 impl PageCache {
     /// `capacity == 0` or a zero `ttl` turns the cache off.
     pub fn new(ttl: Duration, capacity: usize) -> Self {
-        Self { entries: Mutex::new(VecDeque::new()), ttl, capacity }
+        Self {
+            entries: Mutex::new(VecDeque::new()),
+            ttl,
+            capacity,
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, VecDeque<Entry>> {
@@ -79,7 +83,8 @@ impl PageCache {
     /// Drop expired entries (called on a timer so idle RAM goes back down).
     pub fn purge_expired(&self) {
         let now = Instant::now();
-        self.lock().retain(|e| now.saturating_duration_since(e.at) < self.ttl);
+        self.lock()
+            .retain(|e| now.saturating_duration_since(e.at) < self.ttl);
     }
 
     pub fn clear(&self) {
@@ -113,7 +118,11 @@ pub fn cache_key(params: &[(String, String)]) -> String {
 
 /// Shrink a page before caching it (see the module docs).
 pub fn compact(page: &mut ModelsPage) {
-    for v in page.items.iter_mut().flat_map(|m| m.model_versions.iter_mut()) {
+    for v in page
+        .items
+        .iter_mut()
+        .flat_map(|m| m.model_versions.iter_mut())
+    {
         let mut pg_kept = 0;
         for (i, img) in v.images.iter_mut().enumerate() {
             let pg = img.nsfw_level == Some(crate::safe::LEVEL_PG);
@@ -164,7 +173,10 @@ mod tests {
     use super::*;
 
     fn page(id: u64) -> Arc<ModelsPage> {
-        Arc::new(serde_json::from_value(serde_json::json!({ "items": [{ "id": id, "name": "m" }] })).unwrap())
+        Arc::new(
+            serde_json::from_value(serde_json::json!({ "items": [{ "id": id, "name": "m" }] }))
+                .unwrap(),
+        )
     }
 
     #[test]
@@ -173,11 +185,18 @@ mod tests {
         let t0 = Instant::now();
         c.put_at("a".into(), page(1), t0);
         c.put_at("b".into(), page(2), t0);
-        assert_eq!(c.get_at("a", t0).unwrap().items[0].id, 1, "a is now the most recent");
+        assert_eq!(
+            c.get_at("a", t0).unwrap().items[0].id,
+            1,
+            "a is now the most recent"
+        );
         c.put_at("c".into(), page(3), t0);
         assert!(c.get_at("b", t0).is_none(), "b was least recently used");
         assert!(c.get_at("a", t0).is_some());
-        assert!(c.get_at("a", t0 + Duration::from_secs(61)).is_none(), "expired");
+        assert!(
+            c.get_at("a", t0 + Duration::from_secs(61)).is_none(),
+            "expired"
+        );
         assert_eq!(c.len(), 0, "expired entries are dropped");
         let off = PageCache::new(Duration::from_secs(60), 0);
         off.put("a".into(), page(1));
@@ -186,15 +205,26 @@ mod tests {
 
     #[test]
     fn keys_keep_order_and_repeats() {
-        let p = |v: &[(&str, &str)]| v.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
-        assert_ne!(cache_key(&p(&[("baseModels", "A"), ("baseModels", "B")])), cache_key(&p(&[("baseModels", "A")])));
+        let p = |v: &[(&str, &str)]| {
+            v.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(
+            cache_key(&p(&[("baseModels", "A"), ("baseModels", "B")])),
+            cache_key(&p(&[("baseModels", "A")]))
+        );
         assert_eq!(cache_key(&p(&[("a", "1")])), "a=1\n");
     }
 
     #[test]
     fn compaction_keeps_ratings_and_preview_candidates() {
         let levels = [8, 16, 4, 2, 8, 1, 4, 1, 1, 16];
-        let images: Vec<_> = levels.iter().enumerate().map(|(i, l)| serde_json::json!({ "url": format!("u{i}"), "nsfwLevel": l })).collect();
+        let images: Vec<_> = levels
+            .iter()
+            .enumerate()
+            .map(|(i, l)| serde_json::json!({ "url": format!("u{i}"), "nsfwLevel": l }))
+            .collect();
         let mut p: ModelsPage = serde_json::from_value(serde_json::json!({ "items": [{ "id": 1, "modelVersions": [{ "id": 2, "images": images,
             "files": [{ "name": "f", "hashes": { "SHA256": "AB", "AutoV2": "CD", "BLAKE3": "EF" } }] }] }] }))
         .unwrap();
@@ -202,16 +232,30 @@ mod tests {
         let v = &p.items[0].model_versions[0];
         let urls: Vec<&str> = v.images.iter().map(|i| i.url.as_str()).collect();
         assert_eq!(urls, ["u0", "u1", "u2", "u3", "", "u5", "", "u7", "", ""]);
-        assert_eq!(v.images.iter().filter_map(|i| i.nsfw_level).collect::<Vec<_>>(), levels, "ratings stay");
+        assert_eq!(
+            v.images
+                .iter()
+                .filter_map(|i| i.nsfw_level)
+                .collect::<Vec<_>>(),
+            levels,
+            "ratings stay"
+        );
         assert_eq!(v.files[0].hashes.len(), 1);
-        assert_eq!(v.files[0].sha256(), None, "not 64 hex chars in this fixture, but the key survives");
+        assert_eq!(
+            v.files[0].sha256(),
+            None,
+            "not 64 hex chars in this fixture, but the key survives"
+        );
         assert!(v.files[0].hash("sha256").is_some());
     }
 
     struct Counting(AtomicUsize);
 
     impl PageSource for Counting {
-        fn fetch(&self, _params: Vec<(String, String)>) -> impl Future<Output = Result<Arc<ModelsPage>, NetError>> + Send {
+        fn fetch(
+            &self,
+            _params: Vec<(String, String)>,
+        ) -> impl Future<Output = Result<Arc<ModelsPage>, NetError>> + Send {
             let n = self.0.fetch_add(1, Ordering::SeqCst) as u64;
             async move { Ok(page(n)) }
         }
@@ -221,10 +265,17 @@ mod tests {
     async fn cached_source_hits() {
         let inner = Counting(AtomicUsize::new(0));
         let cache = PageCache::new(Duration::from_secs(60), 4);
-        let src = CachedSource { inner: &inner, cache: &cache };
+        let src = CachedSource {
+            inner: &inner,
+            cache: &cache,
+        };
         let q = |c: &str| vec![("cursor".to_string(), c.to_string())];
         assert_eq!(src.fetch(q("a")).await.unwrap().items[0].id, 0);
-        assert_eq!(src.fetch(q("a")).await.unwrap().items[0].id, 0, "from the cache");
+        assert_eq!(
+            src.fetch(q("a")).await.unwrap().items[0].id,
+            0,
+            "from the cache"
+        );
         assert_eq!(src.fetch(q("b")).await.unwrap().items[0].id, 1);
         assert_eq!(inner.0.load(Ordering::SeqCst), 2);
     }

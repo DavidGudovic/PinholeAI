@@ -21,10 +21,10 @@
 
 pub mod allow;
 pub mod download;
-#[cfg(any(test, feature = "test-util"))]
-pub mod testutil;
 #[cfg(test)]
 mod tests;
+#[cfg(any(test, feature = "test-util"))]
+pub mod testutil;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -114,7 +114,10 @@ fn scrub_urls(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
     loop {
-        let next = ["https://", "http://"].iter().filter_map(|p| rest.find(p)).min();
+        let next = ["https://", "http://"]
+            .iter()
+            .filter_map(|p| rest.find(p))
+            .min();
         match next {
             None => {
                 out.push_str(rest);
@@ -124,7 +127,9 @@ fn scrub_urls(s: &str) -> String {
                 out.push_str(&rest[..i]);
                 out.push_str("<url>");
                 let tail = &rest[i..];
-                let end = tail.find(|c: char| c.is_whitespace() || c == ')' || c == '"' || c == '\'').unwrap_or(tail.len());
+                let end = tail
+                    .find(|c: char| c.is_whitespace() || c == ')' || c == '"' || c == '\'')
+                    .unwrap_or(tail.len());
                 rest = &tail[end..];
             }
         }
@@ -174,7 +179,8 @@ impl reqwest::dns::Resolve for GuardedResolver {
             if offline {
                 return Err(Box::new(NetError::Offline) as Box<dyn std::error::Error + Send + Sync>);
             }
-            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
+            let addrs: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
             Ok(Box::new(addrs.into_iter()) as reqwest::dns::Addrs)
         })
     }
@@ -198,18 +204,32 @@ impl HttpClient {
     /// redirect-only "CDN" owned by 127.0.0.1 (resolved to 127.0.0.1). Ignores
     /// system proxies. Everything else behaves exactly like [`HttpClient::new`].
     #[cfg(any(test, feature = "test-util"))]
-    pub fn new_for_tests(offline: OfflineFlag, allow_loopback_http: bool) -> Result<Self, NetError> {
-        Self::build(offline, Rules { loopback_http: allow_loopback_http })
+    pub fn new_for_tests(
+        offline: OfflineFlag,
+        allow_loopback_http: bool,
+    ) -> Result<Self, NetError> {
+        Self::build(
+            offline,
+            Rules {
+                loopback_http: allow_loopback_http,
+            },
+        )
     }
 
     fn build(offline: OfflineFlag, rules: Rules) -> Result<Self, NetError> {
         let policy_offline = offline.clone();
-        let redirect = reqwest::redirect::Policy::custom(move |attempt| {
-            match allow::check_redirect(attempt.url(), attempt.previous(), policy_offline.get(), rules) {
-                Ok(()) => attempt.follow(),
-                Err(e) => attempt.error(e),
-            }
-        });
+        let redirect =
+            reqwest::redirect::Policy::custom(move |attempt| {
+                match allow::check_redirect(
+                    attempt.url(),
+                    attempt.previous(),
+                    policy_offline.get(),
+                    rules,
+                ) {
+                    Ok(()) => attempt.follow(),
+                    Err(e) => attempt.error(e),
+                }
+            });
         let mut builder = reqwest::Client::builder()
             .user_agent(USER_AGENT)
             .connect_timeout(CONNECT_TIMEOUT)
@@ -217,16 +237,22 @@ impl HttpClient {
             .redirect(redirect)
             .referer(false)
             .https_only(!rules.loopback_http)
-            .dns_resolver(Arc::new(GuardedResolver { offline: offline.clone() }));
+            .dns_resolver(Arc::new(GuardedResolver {
+                offline: offline.clone(),
+            }));
         if rules.loopback_http {
             builder = builder
                 .no_proxy()
                 .resolve("localhost", std::net::SocketAddr::from(([127, 0, 0, 1], 0)));
         }
-        let inner = builder
-            .build()
-            .map_err(|e| NetError::Transport(scrub_urls(&format!("could not start the HTTP client: {e}"))))?;
-        Ok(Self { offline, inner, rules })
+        let inner = builder.build().map_err(|e| {
+            NetError::Transport(scrub_urls(&format!("could not start the HTTP client: {e}")))
+        })?;
+        Ok(Self {
+            offline,
+            inner,
+            rules,
+        })
     }
 
     pub fn offline_flag(&self) -> &OfflineFlag {
@@ -250,7 +276,9 @@ impl HttpClient {
         }
         match allow::classify(url, self.rules)? {
             HostKind::Primary => Ok(()),
-            HostKind::Cdn => Err(NetError::HostNotAllowed(url.host_str().unwrap_or_default().to_string())),
+            HostKind::Cdn => Err(NetError::HostNotAllowed(
+                url.host_str().unwrap_or_default().to_string(),
+            )),
         }
     }
 
@@ -258,12 +286,22 @@ impl HttpClient {
     /// decompression, [`REQUEST_TIMEOUT`]). Asks for gzip: CivitAI's model lists
     /// are several MB of JSON that compress about 8×. `headers` values are never
     /// logged (may hold an API key).
-    pub async fn get_json<T: DeserializeOwned>(&self, url: &str, headers: &[(&str, &str)]) -> Result<T, NetError> {
+    pub async fn get_json<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<T, NetError> {
         let mut all: Vec<(&str, &str)> = Vec::with_capacity(headers.len() + 2);
-        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept")) {
+        if !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("accept"))
+        {
             all.push(("accept", "application/json"));
         }
-        if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding")) {
+        if !headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("accept-encoding"))
+        {
             all.push(("accept-encoding", "gzip"));
         }
         all.extend_from_slice(headers);
@@ -285,7 +323,12 @@ impl HttpClient {
     }
 
     /// GET raw bytes, capped at `max_bytes` while streaming (preview images etc.).
-    pub async fn get_bytes(&self, url: &str, headers: &[(&str, &str)], max_bytes: usize) -> Result<Vec<u8>, NetError> {
+    pub async fn get_bytes(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, NetError> {
         let rb = with_headers(self.get(url)?, headers)?.timeout(REQUEST_TIMEOUT);
         let resp = self.send(rb).await?;
         self.read_body(resp, max_bytes).await
@@ -293,13 +336,21 @@ impl HttpClient {
 
     /// Read a response body, capped at `max_bytes` while streaming; Offline mode
     /// stops it between chunks.
-    async fn read_body(&self, resp: reqwest::Response, max_bytes: usize) -> Result<Vec<u8>, NetError> {
+    async fn read_body(
+        &self,
+        resp: reqwest::Response,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, NetError> {
         if let Some(len) = resp.content_length() {
             if len > max_bytes as u64 {
                 return Err(NetError::TooLarge);
             }
         }
-        let cap = resp.content_length().map(|l| l as usize).unwrap_or(64 * 1024).min(max_bytes);
+        let cap = resp
+            .content_length()
+            .map(|l| l as usize)
+            .unwrap_or(64 * 1024)
+            .min(max_bytes);
         let mut out = Vec::with_capacity(cap);
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -332,7 +383,10 @@ impl HttpClient {
 
     /// Like [`HttpClient::send`] but returns any HTTP status (e.g. 206/416 for
     /// resumable downloads).
-    pub(crate) async fn send_unchecked_status(&self, rb: reqwest::RequestBuilder) -> Result<reqwest::Response, NetError> {
+    pub(crate) async fn send_unchecked_status(
+        &self,
+        rb: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, NetError> {
         let (_, req) = rb.build_split();
         let req = req.map_err(NetError::from)?;
         self.check_parsed(req.url())?;
@@ -362,8 +416,8 @@ pub(crate) fn with_headers(
     for (k, v) in headers {
         let name = HeaderName::from_bytes(k.as_ref().as_bytes())
             .map_err(|_| NetError::Transport("invalid request header name".into()))?;
-        let mut value =
-            HeaderValue::from_str(v.as_ref()).map_err(|_| NetError::Transport("invalid request header value".into()))?;
+        let mut value = HeaderValue::from_str(v.as_ref())
+            .map_err(|_| NetError::Transport("invalid request header value".into()))?;
         value.set_sensitive(true);
         rb = rb.header(name, value);
     }
@@ -392,7 +446,11 @@ impl LocalClient {
             .connect_timeout(Duration::from_secs(5))
             .timeout(LOCAL_TIMEOUT)
             .build()
-            .map_err(|e| NetError::Transport(scrub_urls(&format!("could not start the local HTTP client: {e}"))))?;
+            .map_err(|e| {
+                NetError::Transport(scrub_urls(&format!(
+                    "could not start the local HTTP client: {e}"
+                )))
+            })?;
         Ok(Self { inner })
     }
 
@@ -400,13 +458,20 @@ impl LocalClient {
     pub fn url(&self, base: &str, path: &str) -> Result<url::Url, NetError> {
         let base = url::Url::parse(base).map_err(|e| NetError::BadUrl(e.to_string()))?;
         check_loopback(&base)?;
-        let joined = base.join(path).map_err(|e| NetError::BadUrl(e.to_string()))?;
+        let joined = base
+            .join(path)
+            .map_err(|e| NetError::BadUrl(e.to_string()))?;
         check_loopback(&joined)?;
         Ok(joined)
     }
 
     /// `base` must be `http://127.0.0.1:<port>`.
-    pub fn post_json<B: serde::Serialize + ?Sized>(&self, base: &str, path: &str, body: &B) -> Result<reqwest::RequestBuilder, NetError> {
+    pub fn post_json<B: serde::Serialize + ?Sized>(
+        &self,
+        base: &str,
+        path: &str,
+        body: &B,
+    ) -> Result<reqwest::RequestBuilder, NetError> {
         let url = self.url(base, path)?;
         Ok(self.inner.post(url).json(body))
     }
@@ -430,6 +495,8 @@ fn check_loopback(url: &url::Url) -> Result<(), NetError> {
     if loopback {
         Ok(())
     } else {
-        Err(NetError::HostNotAllowed(url.host_str().unwrap_or_default().to_string()))
+        Err(NetError::HostNotAllowed(
+            url.host_str().unwrap_or_default().to_string(),
+        ))
     }
 }

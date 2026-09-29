@@ -32,23 +32,41 @@ pub fn filters(core: &AppCore) -> CoreResult<Arc<CatalogFilters>> {
         return Ok(f.clone());
     }
     let loaded = CatalogFilters::load(&core.shipped.config_dir.join("catalog-filters.yaml"))
-        .map_err(|e| CoreError::invalid("Pinhole's catalog settings couldn't be loaded. Reinstall Pinhole.").with_details(e.to_string()))?;
+        .map_err(|e| {
+            CoreError::invalid("Pinhole's catalog settings couldn't be loaded. Reinstall Pinhole.")
+                .with_details(e.to_string())
+        })?;
     Ok(core.models.filters.get_or_init(|| Arc::new(loaded)).clone())
 }
 
 /// CivitAI errors in plain words.
 pub fn net_error(e: NetError) -> CoreError {
     match e {
-        NetError::Status(429) => CoreError::new("network", "CivitAI is busy right now. Wait a minute and try again."),
-        NetError::Status(404) => CoreError::not_found("CivitAI couldn't find that model. It may have been removed."),
-        NetError::Status(s) if s >= 500 => CoreError::new("network", "CivitAI is having problems right now. Try again later."),
-        NetError::Timeout => CoreError::new("network", "CivitAI took too long to answer. Check your connection and try again."),
+        NetError::Status(429) => CoreError::new(
+            "network",
+            "CivitAI is busy right now. Wait a minute and try again.",
+        ),
+        NetError::Status(404) => {
+            CoreError::not_found("CivitAI couldn't find that model. It may have been removed.")
+        }
+        NetError::Status(s) if s >= 500 => CoreError::new(
+            "network",
+            "CivitAI is having problems right now. Try again later.",
+        ),
+        NetError::Timeout => CoreError::new(
+            "network",
+            "CivitAI took too long to answer. Check your connection and try again.",
+        ),
         other => other.into(),
     }
 }
 
-pub(crate) async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> CoreResult<T> {
-    tokio::task::spawn_blocking(f).await.map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> T + Send + 'static,
+) -> CoreResult<T> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))
 }
 
 // ------------------------------------------------------------------ API key
@@ -99,7 +117,10 @@ pub fn catalog_filters(core: &AppCore) -> CoreResult<CatalogFilterOptions> {
 
 /// The RAM cache of CivitAI answers (sized by `catalog-filters.yaml`).
 fn page_cache(core: &AppCore, filters: &CatalogFilters) -> Arc<PageCache> {
-    core.models.page_cache.get_or_init(|| Arc::new(PageCache::new(filters.cache_ttl, filters.cache_pages))).clone()
+    core.models
+        .page_cache
+        .get_or_init(|| Arc::new(PageCache::new(filters.cache_ttl, filters.cache_pages)))
+        .clone()
 }
 
 /// Drop expired cache entries once they are stale, so idle RAM goes back down.
@@ -108,7 +129,9 @@ fn schedule_cache_purge(core: &AppCore, cache: &Arc<PageCache>) {
         return;
     }
     let Ok(rt) = tokio::runtime::Handle::try_current() else {
-        core.models.cache_purge_pending.store(false, Ordering::SeqCst);
+        core.models
+            .cache_purge_pending
+            .store(false, Ordering::SeqCst);
         return;
     };
     let cache = cache.clone();
@@ -143,10 +166,22 @@ pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage
     // Browsing is anonymous: no API key.
     let client = CivitaiClient::new(core.http.clone(), None);
     let cache = page_cache(core, &filters);
-    let source = CachedSource { inner: &client, cache: &cache };
+    let source = CachedSource {
+        inner: &client,
+        cache: &cache,
+    };
     let base_models = registry.all_civitai_base_models();
     let current = || core.models.browse_gen.load(Ordering::SeqCst) == generation;
-    let out = browse_mod::browse(&source, &filters, &query, &base_models, &env, chrono::Utc::now(), current).await;
+    let out = browse_mod::browse(
+        &source,
+        &filters,
+        &query,
+        &base_models,
+        &env,
+        chrono::Utc::now(),
+        current,
+    )
+    .await;
     schedule_cache_purge(core, &cache);
     out.map_err(|e| match e {
         BrowseError::Net(e) => net_error(e),
@@ -162,27 +197,46 @@ const PREVIEW_ACCEPT: &str = "image/webp,image/jpeg,image/png;q=0.9,*/*;q=0.5";
 /// CivitAI image hosts; at most 15 MB.
 pub async fn fetch_preview(core: &AppCore, url: &str) -> CoreResult<Vec<u8>> {
     if !is_preview_url(url) {
-        return Err(CoreError::invalid("Only CivitAI preview images can be loaded."));
+        return Err(CoreError::invalid(
+            "Only CivitAI preview images can be loaded.",
+        ));
     }
-    core.http.get_bytes(url, &[("accept", PREVIEW_ACCEPT)], MAX_PREVIEW_BYTES).await.map_err(|e| match e {
-        NetError::TooLarge => CoreError::invalid("This preview is too large to show."),
-        other => net_error(other),
-    })
+    core.http
+        .get_bytes(url, &[("accept", PREVIEW_ACCEPT)], MAX_PREVIEW_BYTES)
+        .await
+        .map_err(|e| match e {
+            NetError::TooLarge => CoreError::invalid("This preview is too large to show."),
+            other => net_error(other),
+        })
 }
 
 pub use pinhole_catalog::api::is_preview_url;
 
 // ------------------------------------------------------------------ install
 
-async fn fetch_version(client: &CivitaiClient, version_id: u64) -> CoreResult<(pinhole_catalog::api::ModelVersion, Option<pinhole_catalog::api::Model>)> {
+async fn fetch_version(
+    client: &CivitaiClient,
+    version_id: u64,
+) -> CoreResult<(
+    pinhole_catalog::api::ModelVersion,
+    Option<pinhole_catalog::api::Model>,
+)> {
     let version = client.model_version(version_id).await.map_err(net_error)?;
     // Best effort: license / commercial use / type live on the model.
-    let model = if version.model_id > 0 { client.model(version.model_id).await.ok() } else { None };
+    let model = if version.model_id > 0 {
+        client.model(version.model_id).await.ok()
+    } else {
+        None
+    };
     Ok((version, model))
 }
 
 /// Everything the Install dialog shows before downloading (SPEC §5.4).
-pub async fn plan_civitai_install(core: &AppCore, version_id: u64, file_id: Option<u64>) -> CoreResult<InstallPlan> {
+pub async fn plan_civitai_install(
+    core: &AppCore,
+    version_id: u64,
+    file_id: Option<u64>,
+) -> CoreResult<InstallPlan> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
     let (version, model) = fetch_version(&client, version_id).await?;
@@ -191,23 +245,45 @@ pub async fn plan_civitai_install(core: &AppCore, version_id: u64, file_id: Opti
     let index = core.installed.lock().clone();
 
     let free = local::free_space(&core.data.models_root());
-    let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
+    let env = PlanEnv {
+        registry: &registry,
+        index: &index,
+        hw: &hw,
+        filters: &filters,
+    };
     let plan = plan::build_plan(&env, &version, model.as_ref(), free, false, file_id);
     // Does the download need a key (401/403)? Only asked when there is
     // something to download.
-    let picked = plan.file_options.iter().find(|o| o.selected).and_then(|o| version.files.iter().find(|f| f.id == o.file_id && f.name == o.name));
-    let already = picked.and_then(|f| f.sha256()).is_some_and(|h| index.find_by_sha(&h).is_some());
+    let picked = plan.file_options.iter().find(|o| o.selected).and_then(|o| {
+        version
+            .files
+            .iter()
+            .find(|f| f.id == o.file_id && f.name == o.name)
+    });
+    let already = picked
+        .and_then(|f| f.sha256())
+        .is_some_and(|h| index.find_by_sha(&h).is_some());
     let needs_api_key = match picked.filter(|_| !already) {
-        Some(f) if !f.download_url.is_empty() => matches!(client.probe_download(&f.download_url).await, Ok(401 | 403)),
+        Some(f) if !f.download_url.is_empty() => {
+            matches!(client.probe_download(&f.download_url).await, Ok(401 | 403))
+        }
         _ => false,
     };
-    Ok(InstallPlan { needs_api_key, ..plan })
+    Ok(InstallPlan {
+        needs_api_key,
+        ..plan
+    })
 }
 
 /// Download a CivitAI version (safe file + missing components) as one group;
 /// files are registered when it finishes. `family_id` = the user's pick when
 /// the plan listed several candidates.
-pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Option<String>, file_id: Option<u64>) -> CoreResult<InstallStarted> {
+pub async fn install_civitai(
+    core: &Arc<AppCore>,
+    version_id: u64,
+    family_id: Option<String>,
+    file_id: Option<u64>,
+) -> CoreResult<InstallStarted> {
     let filters = filters(core)?;
     let client = civitai_client(core).await;
     let (version, model) = fetch_version(&client, version_id).await?;
@@ -217,19 +293,44 @@ pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Op
 
     let kind = plan::version_kind(&version, model.as_ref());
     let is_lora = filters.is_lora_type(&kind);
-    let file = select::select_file(&version.files, &filters.allowed_file_formats).map_err(CoreError::invalid)?;
+    let file = select::select_file(&version.files, &filters.allowed_file_formats)
+        .map_err(CoreError::invalid)?;
     let family = match family_id.filter(|f| !f.is_empty()) {
         Some(f) if registry.family(&f).is_some() => Some(f),
-        Some(_) => return Err(CoreError::invalid("That model type isn't known to Pinhole. Pick one from the list.")),
-        None => match families::resolve_family(&registry, file.sha256().as_deref(), Some(&version.base_model), None) {
+        Some(_) => {
+            return Err(CoreError::invalid(
+                "That model type isn't known to Pinhole. Pick one from the list.",
+            ))
+        }
+        None => match families::resolve_family(
+            &registry,
+            file.sha256().as_deref(),
+            Some(&version.base_model),
+            None,
+        ) {
             FamilyResolution::Resolved(f) => Some(f),
             FamilyResolution::Ambiguous(_) if is_lora => None,
-            FamilyResolution::Ambiguous(_) => return Err(CoreError::invalid("Pick which kind of model this is first.")),
-            FamilyResolution::Unsupported(base) => return Err(CoreError::invalid(families::unsupported_message(base.as_deref()))),
+            FamilyResolution::Ambiguous(_) => {
+                return Err(CoreError::invalid(
+                    "Pick which kind of model this is first.",
+                ))
+            }
+            FamilyResolution::Unsupported(base) => {
+                return Err(CoreError::invalid(families::unsupported_message(
+                    base.as_deref(),
+                )))
+            }
         },
     };
-    let env = PlanEnv { registry: &registry, index: &index, hw: &hw, filters: &filters };
-    let install = plan::civitai_install_files(&env, &version, model.as_ref(), family.as_deref(), file_id).map_err(CoreError::invalid)?;
+    let env = PlanEnv {
+        registry: &registry,
+        index: &index,
+        hw: &hw,
+        filters: &filters,
+    };
+    let install =
+        plan::civitai_install_files(&env, &version, model.as_ref(), family.as_deref(), file_id)
+            .map_err(CoreError::invalid)?;
     if install.files.is_empty() {
         return Err(CoreError::invalid("This model is already installed."));
     }
@@ -242,7 +343,13 @@ pub async fn install_civitai(core: &Arc<AppCore>, version_id: u64, family_id: Op
             (f, r)
         })
         .collect();
-    crate::models::start_install(core, install.label, items, client.api_key().map(str::to_string)).await
+    crate::models::start_install(
+        core,
+        install.label,
+        items,
+        client.api_key().map(str::to_string),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -258,11 +365,38 @@ mod tests {
         core.offline.set(true);
         let page = browse(&core, BrowseQuery::default()).await.unwrap();
         assert!(page.offline && page.items.is_empty());
-        assert_eq!(fetch_preview(&core, "https://evil.example/x.jpeg").await.unwrap_err().code, "invalid");
-        assert_eq!(fetch_preview(&core, "http://image.civitai.com/x.jpeg").await.unwrap_err().code, "invalid");
-        assert_eq!(fetch_preview(&core, "https://image.civitai.com/x/width=450/1.jpeg").await.unwrap_err().code, "offline");
-        assert_eq!(plan_civitai_install(&core, 1, None).await.unwrap_err().code, "offline");
-        assert_eq!(install_civitai(&core, 1, None, None).await.unwrap_err().code, "offline");
+        assert_eq!(
+            fetch_preview(&core, "https://evil.example/x.jpeg")
+                .await
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        assert_eq!(
+            fetch_preview(&core, "http://image.civitai.com/x.jpeg")
+                .await
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        assert_eq!(
+            fetch_preview(&core, "https://image.civitai.com/x/width=450/1.jpeg")
+                .await
+                .unwrap_err()
+                .code,
+            "offline"
+        );
+        assert_eq!(
+            plan_civitai_install(&core, 1, None).await.unwrap_err().code,
+            "offline"
+        );
+        assert_eq!(
+            install_civitai(&core, 1, None, None)
+                .await
+                .unwrap_err()
+                .code,
+            "offline"
+        );
     }
 
     #[test]

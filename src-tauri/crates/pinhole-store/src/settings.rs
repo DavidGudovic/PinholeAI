@@ -67,7 +67,11 @@ impl Settings {
     pub fn normalized(mut self) -> Self {
         let d = Settings::default();
         let gpu = self.gpu.trim().to_ascii_lowercase();
-        self.gpu = if gpu == "auto" || gpu == "cpu" || gpu_index(&gpu).is_some() { gpu } else { d.gpu };
+        self.gpu = if gpu == "auto" || gpu == "cpu" || gpu_index(&gpu).is_some() {
+            gpu
+        } else {
+            d.gpu
+        };
         self.vram_override_gb = self
             .vram_override_gb
             .filter(|v| v.is_finite() && *v > 0.0)
@@ -84,13 +88,19 @@ impl Settings {
         if !matches!(self.theme.as_str(), "system" | "light" | "dark") {
             self.theme = d.theme;
         }
-        if !matches!(self.engine_backend.as_str(), "auto" | "cuda" | "vulkan" | "cpu") {
+        if !matches!(
+            self.engine_backend.as_str(),
+            "auto" | "cuda" | "vulkan" | "cpu"
+        ) {
             self.engine_backend = d.engine_backend;
         }
         if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
             self.text_encoder_on_cpu = d.text_encoder_on_cpu;
         }
-        self.models_folder = self.models_folder.filter(|p| std::path::Path::new(p.trim()).is_absolute()).map(|p| p.trim().to_string());
+        self.models_folder = self
+            .models_folder
+            .filter(|p| std::path::Path::new(p.trim()).is_absolute())
+            .map(|p| p.trim().to_string());
         self
     }
 
@@ -128,7 +138,8 @@ pub fn load(dir: &DataDir) -> Result<Settings, StoreError> {
 
 pub fn save(dir: &DataDir, settings: &Settings) -> Result<(), StoreError> {
     let normalized = settings.clone().normalized();
-    let body = serde_yaml::to_string(&normalized).map_err(|e| StoreError::Invalid(format!("could not encode settings: {e}")))?;
+    let body = serde_yaml::to_string(&normalized)
+        .map_err(|e| StoreError::Invalid(format!("could not encode settings: {e}")))?;
     write_atomic(&dir.settings_file(), format!("{HEADER}{body}").as_bytes())
 }
 
@@ -149,7 +160,9 @@ fn parse_lenient(text: &str) -> Settings {
             merged.insert(key, value);
         }
     }
-    serde_yaml::from_value::<Settings>(Value::Mapping(merged)).unwrap_or_default().normalized()
+    serde_yaml::from_value::<Settings>(Value::Mapping(merged))
+        .unwrap_or_default()
+        .normalized()
 }
 
 #[cfg(test)]
@@ -183,7 +196,14 @@ mod tests {
             first_run_done: true,
             engine_backend: "vulkan".into(),
             text_encoder_on_cpu: "on".into(),
-            models_folder: Some(if cfg!(windows) { r"D:\Shared\Pinhole Models" } else { "/mnt/shared/Pinhole Models" }.into()),
+            models_folder: Some(
+                if cfg!(windows) {
+                    r"D:\Shared\Pinhole Models"
+                } else {
+                    "/mnt/shared/Pinhole Models"
+                }
+                .into(),
+            ),
         };
         save(&d, &s).unwrap();
         assert_eq!(load(&d).unwrap(), s);
@@ -249,21 +269,49 @@ mod tests {
         assert_eq!(s.text_encoder_on_cpu, "auto");
         assert_eq!(s.vram_override_gb, None);
         for old in ["include_18plus", "only_18plus"] {
-            let s = Settings { content_mode: old.into(), ..Settings::default() }.normalized();
+            let s = Settings {
+                content_mode: old.into(),
+                ..Settings::default()
+            }
+            .normalized();
             assert_eq!(s.content_mode, "all", "{old} → Safe mode off");
         }
         for bad in ["gpu:", "gpu:x", "gpu:-1", "banana"] {
-            let s = Settings { gpu: bad.into(), ..Settings::default() }.normalized();
+            let s = Settings {
+                gpu: bad.into(),
+                ..Settings::default()
+            }
+            .normalized();
             assert_eq!(s.gpu, "auto", "{bad}");
         }
-        assert!(Settings { gpu: "cpu".into(), ..Settings::default() }.normalized().force_cpu());
-        assert_eq!(Settings { vram_override_gb: Some(5000.0), ..Settings::default() }.normalized().vram_override_gb, Some(1024.0));
+        assert!(Settings {
+            gpu: "cpu".into(),
+            ..Settings::default()
+        }
+        .normalized()
+        .force_cpu());
+        assert_eq!(
+            Settings {
+                vram_override_gb: Some(5000.0),
+                ..Settings::default()
+            }
+            .normalized()
+            .vram_override_gb,
+            Some(1024.0)
+        );
     }
 
     #[test]
     fn save_normalizes() {
         let (_t, d) = data();
-        save(&d, &Settings { saved_metadata: "everything".into(), ..Settings::default() }).unwrap();
+        save(
+            &d,
+            &Settings {
+                saved_metadata: "everything".into(),
+                ..Settings::default()
+            },
+        )
+        .unwrap();
         assert_eq!(load(&d).unwrap().saved_metadata, "none");
     }
 
@@ -271,8 +319,16 @@ mod tests {
     fn camel_case_json_shape() {
         let v = serde_json::to_value(Settings::default()).unwrap();
         for key in [
-            "offline", "gpu", "vramOverrideGb", "contentMode", "showPaid", "savedMetadata", "theme",
-            "addTriggerWords", "firstRunDone", "engineBackend",
+            "offline",
+            "gpu",
+            "vramOverrideGb",
+            "contentMode",
+            "showPaid",
+            "savedMetadata",
+            "theme",
+            "addTriggerWords",
+            "firstRunDone",
+            "engineBackend",
         ] {
             assert!(v.get(key).is_some(), "{key}");
         }

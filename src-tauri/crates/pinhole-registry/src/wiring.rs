@@ -366,7 +366,11 @@ fn installed_alternative(
         .iter()
         .filter_map(|(key, id)| match key.as_str() {
             "else" | "default" => Some((0.0, id)),
-            k => k.strip_prefix("vram_gte_")?.parse::<f32>().ok().map(|t| (t, id)),
+            k => k
+                .strip_prefix("vram_gte_")?
+                .parse::<f32>()
+                .ok()
+                .map(|t| (t, id)),
         })
         .collect();
     options.sort_by(|a, b| a.0.total_cmp(&b.0));

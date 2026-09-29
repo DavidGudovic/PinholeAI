@@ -43,12 +43,13 @@ scripts/          check.sh (pre-merge check), privacy lint, pin verification, pa
   stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference). It runs in the background, so
   a build or test right after the session starts can fail on missing deps: wait and try again.
 - **Required pre-merge check: `scripts/check.sh`** (~2 min warm). It runs the privacy lint
-  (+ self-test), `npm test`, `npm run build` (includes `tsc`), `cargo test --workspace --locked`
+  (+ self-test), `npm test`, `npm run build` (includes `tsc`), `cargo fmt --all --check`,
+  `cargo test --workspace --locked`
   and `cargo clippy --workspace --all-targets -- -D warnings`, and stops at the first failure.
   Run it on the branch (rebased/merged on current `main`) and merge only when it passes; say so in
   the PR. `scripts/check.sh --smoke` adds the CPU engine smoke + app e2e (needs internet for the
   engine and a tiny model, so not from the cloud container). A bug fix comes with a regression test.
-  `cargo fmt` isn't enforced yet (the repo isn't fmt-clean).
+  Run `cargo fmt --all` before committing Rust changes.
 - **Flow:** work on your session branch → `scripts/check.sh` → PR to `main` (use
   `.github/pull_request_template.md`) → merge → the branch is deleted. One PR per issue or milestone.
 - **GitHub Actions are manual only.** Pushes and PRs run nothing (no minutes spent). Actions → CI →

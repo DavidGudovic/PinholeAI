@@ -380,7 +380,15 @@ fn base_model_lookups() {
         assert_eq!(ids(base), want, "{base}");
     }
     // Not runnable by the pinned engine (video-only, API-only or no architecture).
-    for base in ["MiniMax H3", "Qwen 2", "Qwen 3", "HiDream", "Lumina", "AuraFlow", "PixArt E"] {
+    for base in [
+        "MiniMax H3",
+        "Qwen 2",
+        "Qwen 3",
+        "HiDream",
+        "Lumina",
+        "AuraFlow",
+        "PixArt E",
+    ] {
         assert!(ids(base).is_empty(), "{base}");
     }
 
@@ -427,8 +435,14 @@ fn known_files_and_hardware_profiles() {
     assert_eq!(reg.hardware_profile(16.0).name, "high");
     assert_eq!(reg.hardware_profile(24.0).name, "ultra");
     // 13–20 GB prefers Q8 (bf16 Z-Image + encoder did not fit a 16 GB card).
-    assert_eq!(reg.hardware_profile(16.0).prefer_quant.as_deref(), Some("q8_0"));
-    assert_eq!(reg.hardware_profile(24.0).prefer_quant.as_deref(), Some("bf16"));
+    assert_eq!(
+        reg.hardware_profile(16.0).prefer_quant.as_deref(),
+        Some("q8_0")
+    );
+    assert_eq!(
+        reg.hardware_profile(24.0).prefer_quant.as_deref(),
+        Some("bf16")
+    );
     assert_eq!(reg.hardware_profile(5000.0).name, "ultra");
     for p in reg.hardware_profiles() {
         assert!(
@@ -464,11 +478,20 @@ families:
     let p = reg.validate().join("\n");
     let whole = "style_templates: { tags: \"{prompt}, {style}\" }\nfamilies:\n  w: { label: W, style_template: tags, layout: diffusion_only, detect: { any_tensor: [x], whole_checkpoint: true }, dials: { shape: { square: [64, 64] }, quality: { fast: 1, balanced: 1, best: 1 }, cfg_fixed: 1.0 } }\n";
     let reg_w = Registry::from_yaml(whole, None).unwrap();
-    assert!(reg_w.validate().join("\n").contains("whole_checkpoint"), "{:?}", reg_w.validate());
+    assert!(
+        reg_w.validate().join("\n").contains("whole_checkpoint"),
+        "{:?}",
+        reg_w.validate()
+    );
     // A registry recommendation needs the family's own download.
-    let rec = format!("{whole}recommended:\n  realistic:\n    - {{ family: w, source: registry }}\n");
+    let rec =
+        format!("{whole}recommended:\n  realistic:\n    - {{ family: w, source: registry }}\n");
     let reg_r = Registry::from_yaml(&rec, None).unwrap();
-    assert!(reg_r.validate().join("\n").contains("no `download`"), "{:?}", reg_r.validate());
+    assert!(
+        reg_r.validate().join("\n").contains("no `download`"),
+        "{:?}",
+        reg_r.validate()
+    );
     for needle in [
         "missing",
         "nope",
@@ -495,9 +518,16 @@ fn krea2_turbo_is_the_second_realistic_download() {
     assert_eq!(k.family.as_deref(), Some("krea2_turbo"));
     assert_eq!(k.source.as_deref(), Some("registry"));
     // Ungated GGUF mirror named by docs/krea2.md (krea/Krea-2-* are gated).
-    let d = reg.family("krea2_turbo").unwrap().download.as_ref().unwrap();
+    let d = reg
+        .family("krea2_turbo")
+        .unwrap()
+        .download
+        .as_ref()
+        .unwrap();
     assert_eq!(d.file, "Krea-2-Turbo-Q8_0.gguf");
-    assert!(d.url.starts_with("https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"));
+    assert!(d
+        .url
+        .starts_with("https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"));
     assert_eq!(d.vram_gb.unwrap().min, 20.0, "Q8_0 only from 20 GB");
     let q5 = &d.alt_quants["q5_k"];
     assert_eq!(q5.file.as_deref(), Some("Krea-2-Turbo-Q5_K_S.gguf"));
@@ -506,5 +536,8 @@ fn krea2_turbo_is_the_second_realistic_download() {
     for sha in [&d.sha256, &q5.sha256] {
         assert_eq!(reg.known_file(sha).unwrap().family, "krea2_turbo");
     }
-    assert!(reg.family("krea2_raw").unwrap().download.is_none(), "`download` is not inherited");
+    assert!(
+        reg.family("krea2_raw").unwrap().download.is_none(),
+        "`download` is not inherited"
+    );
 }

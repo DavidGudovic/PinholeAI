@@ -71,7 +71,8 @@ const MAX_NAME_CHARS: usize = 120;
 const SHAPES: &[&str] = &["square", "portrait", "landscape", "wide"];
 const QUALITIES: &[&str] = &["fast", "balanced", "best"];
 
-const HEADER: &str = "# Pinhole preset: model, style and settings. Never contains a prompt. Edit freely.\n";
+const HEADER: &str =
+    "# Pinhole preset: model, style and settings. Never contains a prompt. Edit freely.\n";
 
 /// Built-ins (sorted by name) followed by user presets (sorted by name).
 /// Files that can't be read are skipped.
@@ -92,14 +93,18 @@ pub fn save(dir: &DataDir, preset: Preset) -> Result<Preset, StoreError> {
     let id = preset.id.trim().to_string();
     if builtin_stem(&id).is_some() {
         return Err(StoreError::Invalid(
-            "Built-in presets can't be changed. Save it under a new name to make your own copy.".into(),
+            "Built-in presets can't be changed. Save it under a new name to make your own copy."
+                .into(),
         ));
     }
     let mut preset = sanitize(preset)?;
     let presets_dir = dir.presets();
 
     let (id, fresh) = if id.is_empty() {
-        (files::reserve_unique(&presets_dir, &slugify(&preset.name))?, true)
+        (
+            files::reserve_unique(&presets_dir, &slugify(&preset.name))?,
+            true,
+        )
     } else {
         if !files::is_safe_stem(&id) || !presets_dir.join(format!("{id}.yaml")).is_file() {
             return Err(StoreError::NotFound("Preset".into()));
@@ -110,7 +115,8 @@ pub fn save(dir: &DataDir, preset: Preset) -> Result<Preset, StoreError> {
     preset.builtin = false;
 
     let path = presets_dir.join(format!("{}.yaml", preset.id));
-    let written = files::to_library_yaml(&preset, HEADER).and_then(|yaml| write_atomic(&path, yaml.as_bytes()));
+    let written = files::to_library_yaml(&preset, HEADER)
+        .and_then(|yaml| write_atomic(&path, yaml.as_bytes()));
     if let Err(e) = written {
         if fresh {
             let _ = std::fs::remove_file(&path);
@@ -122,14 +128,18 @@ pub fn save(dir: &DataDir, preset: Preset) -> Result<Preset, StoreError> {
 
 pub fn delete(dir: &DataDir, id: &str) -> Result<(), StoreError> {
     if builtin_stem(id).is_some() {
-        return Err(StoreError::Invalid("Built-in presets can't be deleted.".into()));
+        return Err(StoreError::Invalid(
+            "Built-in presets can't be deleted.".into(),
+        ));
     }
     if !files::is_safe_stem(id) {
         return Err(StoreError::NotFound("Preset".into()));
     }
     match std::fs::remove_file(dir.presets().join(format!("{id}.yaml"))) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(StoreError::NotFound("Preset".into())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(StoreError::NotFound("Preset".into()))
+        }
         Err(e) => Err(e.into()),
     }
 }
@@ -155,8 +165,13 @@ fn read_all(folder: &Path, builtin: bool) -> Result<Vec<Preset>, StoreError> {
 
 fn read_one(path: &Path, stem: &str, builtin: bool) -> Result<Preset, StoreError> {
     let text = files::read_text_or_not_found(path, "Preset")?;
-    let mut preset: Preset = serde_yaml::from_str(&text).map_err(|e| files::parse_error(path, e))?;
-    preset.id = if builtin { format!("{BUILTIN_PREFIX}{stem}") } else { stem.to_string() };
+    let mut preset: Preset =
+        serde_yaml::from_str(&text).map_err(|e| files::parse_error(path, e))?;
+    preset.id = if builtin {
+        format!("{BUILTIN_PREFIX}{stem}")
+    } else {
+        stem.to_string()
+    };
     preset.builtin = builtin;
     Ok(preset)
 }
@@ -171,7 +186,9 @@ fn sanitize(p: Preset) -> Result<Preset, StoreError> {
         return Err(StoreError::Invalid("Give the preset a name.".into()));
     }
     if name.chars().count() > MAX_NAME_CHARS {
-        return Err(StoreError::Invalid(format!("The preset name is too long (max {MAX_NAME_CHARS} characters).")));
+        return Err(StoreError::Invalid(format!(
+            "The preset name is too long (max {MAX_NAME_CHARS} characters)."
+        )));
     }
     let ft = p.fine_tune;
     let fine_tune = PresetFineTune {
@@ -198,8 +215,17 @@ fn sanitize(p: Preset) -> Result<Preset, StoreError> {
             if name.is_empty() && lora_id.is_none() && l.civitai_version_id.is_none() {
                 return None;
             }
-            let weight = if l.weight.is_finite() { l.weight.clamp(-10.0, 10.0) } else { 1.0 };
-            Some(PresetLora { lora_id, civitai_version_id: l.civitai_version_id, name, weight })
+            let weight = if l.weight.is_finite() {
+                l.weight.clamp(-10.0, 10.0)
+            } else {
+                1.0
+            };
+            Some(PresetLora {
+                lora_id,
+                civitai_version_id: l.civitai_version_id,
+                name,
+                weight,
+            })
         })
         .collect();
     Ok(Preset {
@@ -248,8 +274,18 @@ mod tests {
             quality: Some("best".into()),
             stick: Some(0.7),
             count: Some(2),
-            fine_tune: PresetFineTune { steps: Some(30), cfg: Some(6.0), seed: Some(-1), ..Default::default() },
-            loras: vec![PresetLora { lora_id: Some("l1".into()), civitai_version_id: None, name: "Detail".into(), weight: 0.8 }],
+            fine_tune: PresetFineTune {
+                steps: Some(30),
+                cfg: Some(6.0),
+                seed: Some(-1),
+                ..Default::default()
+            },
+            loras: vec![PresetLora {
+                lora_id: Some("l1".into()),
+                civitai_version_id: None,
+                name: "Detail".into(),
+                weight: 0.8,
+            }],
             builtin: false,
         }
     }
@@ -260,15 +296,26 @@ mod tests {
         let data = DataDir::at(PathBuf::from("/nonexistent-pinhole-test"), false);
         let presets = list(&config.join("presets"), &data).unwrap();
         let ids: Vec<_> = presets.iter().map(|p| p.id.as_str()).collect();
-        for id in ["builtin:photo-portrait", "builtin:anime-illustration", "builtin:product-white"] {
+        for id in [
+            "builtin:photo-portrait",
+            "builtin:anime-illustration",
+            "builtin:product-white",
+        ] {
             assert!(ids.contains(&id), "{id} missing from {ids:?}");
         }
         let styles = crate::styles::list(&config.join("styles"), &data).unwrap();
         for p in &presets {
             assert!(p.builtin);
             assert!(p.family.is_some(), "{}", p.id);
-            let style_id = p.style_id.as_deref().expect("built-in presets reference a style");
-            assert!(styles.iter().any(|s| s.id == style_id), "{} references unknown style {style_id}", p.id);
+            let style_id = p
+                .style_id
+                .as_deref()
+                .expect("built-in presets reference a style");
+            assert!(
+                styles.iter().any(|s| s.id == style_id),
+                "{} references unknown style {style_id}",
+                p.id
+            );
             // Values survive sanitizing unchanged (they're valid).
             let mut clean = sanitize(p.clone()).unwrap();
             clean.id = p.id.clone();
@@ -319,7 +366,8 @@ mod tests {
         });
         let p: Preset = serde_json::from_value(json).unwrap();
         let saved = save(&data, p).unwrap();
-        let text = std::fs::read_to_string(data.presets().join(format!("{}.yaml", saved.id))).unwrap();
+        let text =
+            std::fs::read_to_string(data.presets().join(format!("{}.yaml", saved.id))).unwrap();
         assert!(!text.contains(SENTINEL));
         assert!(!text.to_lowercase().contains("prompt:"));
         assert!(text.contains("steps: 20"));
@@ -338,8 +386,18 @@ mod tests {
         p.fine_tune.cfg = Some(f32::NAN);
         p.fine_tune.steps = Some(0);
         p.fine_tune.width = Some(10);
-        p.loras.push(PresetLora { lora_id: None, civitai_version_id: None, name: "  ".into(), weight: 1.0 });
-        p.loras.push(PresetLora { lora_id: None, civitai_version_id: Some(7), name: "x".into(), weight: f32::INFINITY });
+        p.loras.push(PresetLora {
+            lora_id: None,
+            civitai_version_id: None,
+            name: "  ".into(),
+            weight: 1.0,
+        });
+        p.loras.push(PresetLora {
+            lora_id: None,
+            civitai_version_id: Some(7),
+            name: "x".into(),
+            weight: f32::INFINITY,
+        });
         let s = save(&data, p).unwrap();
         assert_eq!(s.name, "Odd values");
         assert_eq!(s.shape, None);
@@ -352,7 +410,10 @@ mod tests {
         assert_eq!(s.fine_tune.width, None);
         assert_eq!(s.loras.len(), 2);
         assert_eq!(s.loras[1].weight, 1.0);
-        assert!(matches!(save(&data, preset("", " ")), Err(StoreError::Invalid(_))));
+        assert!(matches!(
+            save(&data, preset("", " ")),
+            Err(StoreError::Invalid(_))
+        ));
     }
 
     #[test]
@@ -361,12 +422,20 @@ mod tests {
         let b = get(&builtin, &data, "builtin:photo-portrait").unwrap();
         assert!(b.builtin);
         assert!(matches!(save(&data, b), Err(StoreError::Invalid(_))));
-        assert!(matches!(delete(&data, "builtin:photo-portrait"), Err(StoreError::Invalid(ref m)) if m == "Built-in presets can't be deleted."));
+        assert!(
+            matches!(delete(&data, "builtin:photo-portrait"), Err(StoreError::Invalid(ref m)) if m == "Built-in presets can't be deleted.")
+        );
         let s = save(&data, preset("", "Mine")).unwrap();
         delete(&data, &s.id).unwrap();
         assert!(matches!(delete(&data, &s.id), Err(StoreError::NotFound(_))));
-        assert!(matches!(delete(&data, "../x"), Err(StoreError::NotFound(_))));
-        assert!(matches!(save(&data, preset("gone", "Mine")), Err(StoreError::NotFound(_))));
+        assert!(matches!(
+            delete(&data, "../x"),
+            Err(StoreError::NotFound(_))
+        ));
+        assert!(matches!(
+            save(&data, preset("gone", "Mine")),
+            Err(StoreError::NotFound(_))
+        ));
     }
 
     #[test]

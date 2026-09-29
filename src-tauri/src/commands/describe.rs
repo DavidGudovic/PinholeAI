@@ -19,7 +19,11 @@ pub async fn install_captioner(core: Core<'_>) -> Result<InstallStarted, CoreErr
 }
 
 #[tauri::command]
-pub async fn describe_image(core: Core<'_>, image_id: String, style: DescribeStyle) -> Result<String, CoreError> {
+pub async fn describe_image(
+    core: Core<'_>,
+    image_id: String,
+    style: DescribeStyle,
+) -> Result<String, CoreError> {
     describe::describe_image(core.inner(), &image_id, style).await
 }
 

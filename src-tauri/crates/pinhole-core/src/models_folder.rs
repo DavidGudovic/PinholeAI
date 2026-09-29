@@ -75,7 +75,9 @@ fn target_dir(core: &AppCore, folder: Option<&str>) -> CoreResult<DataDir> {
         return Err(CoreError::invalid("Pick a folder with the folder chooser."));
     }
     if !path.is_dir() {
-        return Err(CoreError::invalid("That folder doesn't exist. Pick an existing folder."));
+        return Err(CoreError::invalid(
+            "That folder doesn't exist. Pick an existing folder.",
+        ));
     }
     // Compare canonical forms, but keep the path as picked (on Windows
     // `canonicalize` gives `\\?\` paths, which file managers don't open).
@@ -86,7 +88,8 @@ fn target_dir(core: &AppCore, folder: Option<&str>) -> CoreResult<DataDir> {
     }
     // Inside the Data folder (but not Data/models itself) would mix models
     // with engines, outputs and settings.
-    if canon.starts_with(canon_or(&core.data.root)) || canon_or(&core.data.root).starts_with(&canon) {
+    if canon.starts_with(canon_or(&core.data.root)) || canon_or(&core.data.root).starts_with(&canon)
+    {
         return Err(CoreError::invalid(
             "Pick a folder outside Pinhole's Data folder, for example a new folder on your shared drive.",
         ));
@@ -99,12 +102,19 @@ fn canon_or(p: &Path) -> PathBuf {
 }
 
 fn check_target(core: &AppCore, to: &DataDir) -> CoreResult<()> {
-    let (from_root, to_root) = (canon_or(&core.data.models_root()), canon_or(&to.models_root()));
+    let (from_root, to_root) = (
+        canon_or(&core.data.models_root()),
+        canon_or(&to.models_root()),
+    );
     if from_root == to_root {
-        return Err(CoreError::invalid("Your models are already in that folder."));
+        return Err(CoreError::invalid(
+            "Your models are already in that folder.",
+        ));
     }
     if from_root.starts_with(&to_root) || to_root.starts_with(&from_root) {
-        return Err(CoreError::invalid("Pick a folder that isn't inside the current Models folder (or the other way round)."));
+        return Err(CoreError::invalid(
+            "Pick a folder that isn't inside the current Models folder (or the other way round).",
+        ));
     }
     if to.models_home.is_some() && !is_writable_dir(&to.models_root()) {
         return Err(CoreError::invalid(
@@ -133,7 +143,8 @@ fn check_versions(core: &AppCore, to: &DataDir) -> CoreResult<InstalledIndex> {
             ));
         }
     }
-    let to_index = InstalledIndex::read_from(&to.installed_file())?.unwrap_or_else(InstalledIndex::new);
+    let to_index =
+        InstalledIndex::read_from(&to.installed_file())?.unwrap_or_else(InstalledIndex::new);
     if to_index.is_newer() {
         return Err(CoreError::invalid(
             "The models list in that folder was saved by a newer version of Pinhole. Update Pinhole, then pick that folder again.",
@@ -152,7 +163,11 @@ pub fn preview(core: &AppCore, folder: Option<&str>) -> CoreResult<ModelsFolderP
         path: to.models_root().display().to_string(),
         is_default: to.models_home.is_none(),
         files: from_index.files.len() as u32,
-        bytes: plan.iter().filter(|s| s.action == Action::Move).map(|s| s.entry.size_bytes).sum(),
+        bytes: plan
+            .iter()
+            .filter(|s| s.action == Action::Move)
+            .map(|s| s.entry.size_bytes)
+            .sum(),
         existing_models: to_index.models().count() as u32,
         same_drive: same_drive(&core.data.models_root(), &to.models_root()),
     })
@@ -166,11 +181,20 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
     let to = target_dir(core, folder.as_deref())?;
     check_target(core, &to)?;
     check_versions(core, &to)?;
-    if core.downloads.status().iter().any(|g| !g.state.is_finished()) {
-        return Err(CoreError::invalid("Wait for your downloads to finish (or cancel them), then change the Models folder."));
+    if core
+        .downloads
+        .status()
+        .iter()
+        .any(|g| !g.state.is_finished())
+    {
+        return Err(CoreError::invalid(
+            "Wait for your downloads to finish (or cancel them), then change the Models folder.",
+        ));
     }
     if core.gen.active.lock().is_some() || core.describe.is_busy() {
-        return Err(CoreError::invalid("Wait for the current pictures to finish, then change the Models folder."));
+        return Err(CoreError::invalid(
+            "Wait for the current pictures to finish, then change the Models folder.",
+        ));
     }
     let _folder = core
         .models
@@ -218,17 +242,29 @@ struct Step {
 }
 
 /// Pure planning: what happens to each entry of `from_index`.
-fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &InstalledIndex) -> Vec<Step> {
+fn plan(
+    from: &DataDir,
+    from_index: &InstalledIndex,
+    to: &DataDir,
+    to_index: &InstalledIndex,
+) -> Vec<Step> {
     let mut taken: HashSet<PathBuf> = to_index.rel_paths().map(|p| to.resolve_rel(p)).collect();
     let mut steps = Vec::new();
     for f in &from_index.files {
         let src = from.resolve_rel(&f.rel_path);
         let dup = to_index.find_by_sha(&f.sha256).filter(|t| {
             !f.sha256.is_empty()
-                && std::fs::metadata(to.resolve_rel(&t.rel_path)).is_ok_and(|m| m.is_file() && m.len() == f.size_bytes)
+                && std::fs::metadata(to.resolve_rel(&t.rel_path))
+                    .is_ok_and(|m| m.is_file() && m.len() == f.size_bytes)
         });
         if let Some(t) = dup {
-            steps.push(Step { action: Action::Duplicate, entry: t.clone(), old_id: f.id.clone(), src, dest: to.resolve_rel(&t.rel_path) });
+            steps.push(Step {
+                action: Action::Duplicate,
+                entry: t.clone(),
+                old_id: f.id.clone(),
+                src,
+                dest: to.resolve_rel(&t.rel_path),
+            });
             continue;
         }
         // `models/<sub>/<name>` → same sub-folder in the target, name made
@@ -239,13 +275,26 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
         let wanted = if in_models {
             to.resolve_rel(&f.rel_path)
         } else {
-            to.models(f.kind).join(src.file_name().unwrap_or_else(|| std::ffi::OsStr::new("model")))
+            to.models(f.kind).join(
+                src.file_name()
+                    .unwrap_or_else(|| std::ffi::OsStr::new("model")),
+            )
         };
         let dest = free_dest(&wanted, to, &mut taken);
         let mut entry = f.clone();
         entry.rel_path = to.relative(&dest).unwrap_or_else(|| f.rel_path.clone());
-        let action = if src.is_file() { Action::Move } else { Action::Missing };
-        steps.push(Step { action, entry, old_id: f.id.clone(), src, dest });
+        let action = if src.is_file() {
+            Action::Move
+        } else {
+            Action::Missing
+        };
+        steps.push(Step {
+            action,
+            entry,
+            old_id: f.id.clone(),
+            src,
+            dest,
+        });
     }
     steps
 }
@@ -253,9 +302,18 @@ fn plan(from: &DataDir, from_index: &InstalledIndex, to: &DataDir, to_index: &In
 /// `wanted`, or a free name next to it in the target (not used by an entry,
 /// a file or a `.part`); marks it taken.
 fn free_dest(wanted: &Path, to: &DataDir, taken: &mut HashSet<PathBuf>) -> PathBuf {
-    let dir = wanted.parent().map(Path::to_path_buf).unwrap_or_else(|| to.models_root());
-    let name = wanted.file_name().and_then(|n| n.to_str()).unwrap_or("model").to_string();
-    let dest = local::unique_path(&dir, &name, |p| taken.contains(p) || p.exists() || local::part_path(p).exists());
+    let dir = wanted
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| to.models_root());
+    let name = wanted
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("model")
+        .to_string();
+    let dest = local::unique_path(&dir, &name, |p| {
+        taken.contains(p) || p.exists() || local::part_path(p).exists()
+    });
     taken.insert(dest.clone());
     dest
 }
@@ -273,7 +331,12 @@ fn same_drive(a: &Path, b: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
-        let prefix = |p: &Path| canon_or(p).components().next().map(|c| c.as_os_str().to_ascii_lowercase());
+        let prefix = |p: &Path| {
+            canon_or(p)
+                .components()
+                .next()
+                .map(|c| c.as_os_str().to_ascii_lowercase())
+        };
         prefix(&a) == prefix(&b)
     }
 }
@@ -327,8 +390,10 @@ fn after_rollback(e: CoreError, clean: bool, from: &Path, to: &Path) -> CoreErro
 
 /// Plain message for a failed move (the OS error goes to details).
 fn move_error(e: &std::io::Error) -> CoreError {
-    let too_big = matches!(e.raw_os_error(), Some(27)) && cfg!(unix) || matches!(e.raw_os_error(), Some(223)) && cfg!(windows);
-    let read_only = e.kind() == std::io::ErrorKind::ReadOnlyFilesystem || matches!(e.raw_os_error(), Some(30)) && cfg!(unix);
+    let too_big = matches!(e.raw_os_error(), Some(27)) && cfg!(unix)
+        || matches!(e.raw_os_error(), Some(223)) && cfg!(windows);
+    let read_only = e.kind() == std::io::ErrorKind::ReadOnlyFilesystem
+        || matches!(e.raw_os_error(), Some(30)) && cfg!(unix);
     let message = if too_big {
         "That drive can't hold files bigger than 4 GB (it's formatted as FAT32). Use a folder on an NTFS or exFAT drive. Your models weren't moved."
     } else if read_only {
@@ -375,19 +440,30 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
     let mut emit = |done: u64, name: &str, force: bool| {
         if force || last_emit.elapsed() >= Duration::from_millis(200) {
             last_emit = Instant::now();
-            core.emit(CoreEvent::ModelsMove(ModelsMoveProgress { done_bytes: done, total_bytes: total, file_name: name.to_string() }));
+            core.emit(CoreEvent::ModelsMove(ModelsMoveProgress {
+                done_bytes: done,
+                total_bytes: total,
+                file_name: name.to_string(),
+            }));
         }
     };
     let mut done: Vec<Done> = Vec::new();
     for s in &moving {
-        let name = s.dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = s
+            .dest
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
         emit(done_bytes, &name, true);
         let res = (|| -> Result<Done, CoreError> {
             if let Some(dir) = s.dest.parent() {
                 std::fs::create_dir_all(dir).map_err(|e| move_error(&e))?;
             }
             if !copy_needed && std::fs::rename(&s.src, &s.dest).is_ok() {
-                return Ok(Done::Renamed { src: s.src.clone(), dest: s.dest.clone() });
+                return Ok(Done::Renamed {
+                    src: s.src.clone(),
+                    dest: s.dest.clone(),
+                });
             }
             if !copy_needed {
                 // Same drive but the rename failed (e.g. a bind mount): copy instead.
@@ -411,7 +487,11 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
             // what was read: re-read the copy. No recorded hash: compare with
             // the hash computed while copying.
             let recorded = s.entry.sha256.trim().to_ascii_lowercase();
-            let expected = if recorded.len() == 64 { recorded } else { sha.clone() };
+            let expected = if recorded.len() == 64 {
+                recorded
+            } else {
+                sha.clone()
+            };
             let written = local::hash_file(&s.dest).map(|(h, _)| h);
             if sha != expected || written.as_ref().ok() != Some(&expected) {
                 let _ = std::fs::remove_file(&s.dest);
@@ -423,13 +503,20 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
                     format!("A copied file didn't match the original ({name}). Your models weren't moved. Check the drive and try again."),
                 ));
             }
-            Ok(Done::Copied { dest: s.dest.clone() })
+            Ok(Done::Copied {
+                dest: s.dest.clone(),
+            })
         })();
         match res {
             Ok(d) => done.push(d),
             Err(e) => {
                 let clean = rollback(&done);
-                return Err(after_rollback(e, clean, &from.models_root(), &to.models_root()));
+                return Err(after_rollback(
+                    e,
+                    clean,
+                    &from.models_root(),
+                    &to.models_root(),
+                ));
             }
         }
         done_bytes += s.entry.size_bytes;
@@ -455,7 +542,12 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
     };
     if let Err(e) = merged.save_to(&to, &target_file) {
         let clean = rollback(&done);
-        return Err(after_rollback(e.into(), clean, &from.models_root(), &to.models_root()));
+        return Err(after_rollback(
+            e.into(),
+            clean,
+            &from.models_root(),
+            &to.models_root(),
+        ));
     }
 
     // 3. Settings (this is what makes the next start use the new folder).
@@ -466,19 +558,28 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
         if let Err(e) = pinhole_store::settings::save(&core.data, &next) {
             restore_target();
             let clean = rollback(&done);
-            return Err(after_rollback(e.into(), clean, &from.models_root(), &to.models_root()));
+            return Err(after_rollback(
+                e.into(),
+                clean,
+                &from.models_root(),
+                &to.models_root(),
+            ));
         }
         *settings = next;
     }
 
     // 4. Point this install's presets at the target's ids for duplicates.
-    let remap: HashMap<&str, &str> =
-        steps.iter().filter(|s| s.action == Action::Duplicate && s.old_id != s.entry.id).map(|s| (s.old_id.as_str(), s.entry.id.as_str())).collect();
+    let remap: HashMap<&str, &str> = steps
+        .iter()
+        .filter(|s| s.action == Action::Duplicate && s.old_id != s.entry.id)
+        .map(|s| (s.old_id.as_str(), s.entry.id.as_str()))
+        .collect();
     if !remap.is_empty() {
         if let Ok(presets) = pinhole_store::presets::list(&core.shipped.presets(), &core.data) {
             for mut p in presets.into_iter().filter(|p| !p.builtin) {
                 let mut changed = false;
-                let ids = std::iter::once(&mut p.model_id).chain(p.loras.iter_mut().map(|l| &mut l.lora_id));
+                let ids = std::iter::once(&mut p.model_id)
+                    .chain(p.loras.iter_mut().map(|l| &mut l.lora_id));
                 for id in ids {
                     if let Some(new_id) = id.as_deref().and_then(|old| remap.get(old)) {
                         *id = Some((*new_id).to_string());
@@ -511,7 +612,10 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
         if from_index.unknown.is_empty() {
             let _ = std::fs::remove_file(&old_index);
         } else {
-            let left = InstalledIndex { files: Vec::new(), ..from_index.clone() };
+            let left = InstalledIndex {
+                files: Vec::new(),
+                ..from_index.clone()
+            };
             let _ = left.save_to(from, &old_index);
         }
     }
@@ -558,10 +662,20 @@ mod tests {
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
         // The other install already put `b` and the same bytes as `a` there.
-        let other = DataDir::at(PathBuf::from("/unused"), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
-        std::fs::create_dir_all(other.models(pinhole_store::datadir::ModelKind::Checkpoint)).unwrap();
-        std::fs::write(other.resolve_rel("models/checkpoints/b.safetensors"), b"bbbbbb").unwrap();
-        std::fs::write(other.resolve_rel("models/checkpoints/a-other.safetensors"), b"aaaa").unwrap();
+        let other = DataDir::at(PathBuf::from("/unused"), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
+        std::fs::create_dir_all(other.models(pinhole_store::datadir::ModelKind::Checkpoint))
+            .unwrap();
+        std::fs::write(
+            other.resolve_rel("models/checkpoints/b.safetensors"),
+            b"bbbbbb",
+        )
+        .unwrap();
+        std::fs::write(
+            other.resolve_rel("models/checkpoints/a-other.safetensors"),
+            b"aaaa",
+        )
+        .unwrap();
         let mut theirs = InstalledIndex::new();
         let mut b = a.clone();
         b.id = "b".into();
@@ -590,26 +704,40 @@ mod tests {
                 stick: None,
                 count: None,
                 fine_tune: Default::default(),
-                loras: vec![pinhole_store::presets::PresetLora { lora_id: Some(a.id.clone()), civitai_version_id: None, name: "x".into(), weight: 1.0 }],
+                loras: vec![pinhole_store::presets::PresetLora {
+                    lora_id: Some(a.id.clone()),
+                    civitai_version_id: None,
+                    name: "x".into(),
+                    weight: 1.0,
+                }],
                 builtin: false,
             },
         )
         .unwrap();
 
         let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
-        assert_eq!((p.files, p.bytes, p.existing_models, p.is_default), (1, 0, 2, false));
+        assert_eq!(
+            (p.files, p.bytes, p.existing_models, p.is_default),
+            (1, 0, 2, false)
+        );
 
-        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
+        change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap();
         // Duplicate: ours removed, theirs kept; settings point at the folder.
         assert!(!core.data.resolve_rel(&a.rel_path).exists());
         assert!(!core.data.default_installed_file().exists());
         let merged = InstalledIndex::load_from(&other.installed_file()).unwrap();
         assert_eq!(merged.files.len(), 2);
-        assert_eq!(core.settings.read().models_folder.as_deref(), Some(shared.path().to_str().unwrap()));
+        assert_eq!(
+            core.settings.read().models_folder.as_deref(),
+            Some(shared.path().to_str().unwrap())
+        );
         let saved = pinhole_store::settings::load(&core.data).unwrap();
         assert!(saved.models_folder.is_some());
         // The preset now points at the shared folder's entry for the same file.
-        let p = pinhole_store::presets::get(&core.shipped.presets(), &core.data, &preset.id).unwrap();
+        let p =
+            pinhole_store::presets::get(&core.shipped.presets(), &core.data, &preset.id).unwrap();
         assert_eq!(p.model_id.as_deref(), Some("a-other"));
         assert_eq!(p.loras[0].lora_id.as_deref(), Some("a-other"));
     }
@@ -621,14 +749,27 @@ mod tests {
         let shared = tempfile::tempdir().unwrap();
         // A foreign file with the same name must not be overwritten.
         std::fs::create_dir_all(shared.path().join("checkpoints")).unwrap();
-        std::fs::write(shared.path().join("checkpoints").join("a.safetensors"), b"not ours").unwrap();
-        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        std::fs::write(
+            shared.path().join("checkpoints").join("a.safetensors"),
+            b"not ours",
+        )
+        .unwrap();
+        change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         let idx = InstalledIndex::load(&to).unwrap();
         let moved = idx.get(&a.id).unwrap();
         assert_eq!(moved.rel_path, "models/checkpoints/a-2.safetensors");
-        assert_eq!(std::fs::read(to.resolve_rel(&moved.rel_path)).unwrap(), b"aaaa");
-        assert_eq!(std::fs::read(shared.path().join("checkpoints").join("a.safetensors")).unwrap(), b"not ours");
+        assert_eq!(
+            std::fs::read(to.resolve_rel(&moved.rel_path)).unwrap(),
+            b"aaaa"
+        );
+        assert_eq!(
+            std::fs::read(shared.path().join("checkpoints").join("a.safetensors")).unwrap(),
+            b"not ours"
+        );
         assert!(!core.data.resolve_rel(&a.rel_path).exists());
     }
 
@@ -638,7 +779,8 @@ mod tests {
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let mut bad = add(&core, "models/vae/b.safetensors", b"bbbb");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
 
         // A wrong recorded hash: the copy is rejected and everything is put back.
         bad.sha256 = "0".repeat(64);
@@ -663,17 +805,24 @@ mod tests {
         let (_tmp, core) = test_core();
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         let newer = serde_json::json!({"id": "n", "relPath": "models/checkpoints/a.safetensors", "kind": "video"});
         let json = serde_json::json!({"schema_version": 1, "files": [newer.clone()]});
         std::fs::write(to.installed_file(), serde_json::to_vec(&json).unwrap()).unwrap();
 
-        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
-        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(to.installed_file()).unwrap()).unwrap();
+        change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(to.installed_file()).unwrap()).unwrap();
         assert!(saved["files"].as_array().unwrap().contains(&newer));
         // Its path counts as taken: ours got another name.
         let merged = InstalledIndex::load(&to).unwrap();
-        assert_eq!(merged.get(&a.id).unwrap().rel_path, "models/checkpoints/a-2.safetensors");
+        assert_eq!(
+            merged.get(&a.id).unwrap().rel_path,
+            "models/checkpoints/a-2.safetensors"
+        );
     }
 
     #[test]
@@ -686,7 +835,8 @@ mod tests {
         let newer = serde_json::json!({"id": "v", "relPath": "models/video/v.safetensors", "kind": "video", "extra": 7});
         core.installed.lock().unknown.push(newer.clone());
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
 
         let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
         assert_eq!(p.files, 1, "only the models this version can move");
@@ -694,7 +844,8 @@ mod tests {
         assert_eq!(std::fs::read(to.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
         // Its file and entry stay where they were: the old index keeps only it.
         assert_eq!(std::fs::read(&v).unwrap(), b"video");
-        let old: serde_json::Value = serde_json::from_slice(&std::fs::read(core.data.installed_file()).unwrap()).unwrap();
+        let old: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(core.data.installed_file()).unwrap()).unwrap();
         assert_eq!(old["files"], serde_json::json!([newer]));
         let moved = InstalledIndex::load(&to).unwrap();
         assert!(moved.unknown.is_empty() && moved.get(&a.id).is_some());
@@ -706,11 +857,19 @@ mod tests {
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         core.installed.lock().unknown.push(serde_json::json!({"id": "n", "relPath": "models/checkpoints/a.safetensors", "kind": "video"}));
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         let e = preview(&core, Some(shared.path().to_str().unwrap())).unwrap_err();
-        assert!(e.message.contains("also listed by a newer version"), "{}", e.message);
+        assert!(
+            e.message.contains("also listed by a newer version"),
+            "{}",
+            e.message
+        );
         assert!(move_all_with(&core, to, true).is_err());
-        assert_eq!(std::fs::read(core.data.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
+        assert_eq!(
+            std::fs::read(core.data.resolve_rel(&a.rel_path)).unwrap(),
+            b"aaaa"
+        );
     }
 
     #[tokio::test]
@@ -718,20 +877,37 @@ mod tests {
         let (_tmp, core) = test_core();
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         let json = serde_json::json!({"schema_version": 99, "files": []});
         std::fs::write(to.installed_file(), serde_json::to_vec(&json).unwrap()).unwrap();
         let folder = shared.path().to_string_lossy().into_owned();
-        for e in [preview(&core, Some(&folder)).unwrap_err(), change(&core, Some(folder.clone())).await.unwrap_err()] {
-            assert!(e.message.contains("in that folder was saved by a newer version"), "{}", e.message);
+        for e in [
+            preview(&core, Some(&folder)).unwrap_err(),
+            change(&core, Some(folder.clone())).await.unwrap_err(),
+        ] {
+            assert!(
+                e.message
+                    .contains("in that folder was saved by a newer version"),
+                "{}",
+                e.message
+            );
         }
-        assert_eq!(std::fs::read(to.installed_file()).unwrap(), serde_json::to_vec(&json).unwrap());
+        assert_eq!(
+            std::fs::read(to.installed_file()).unwrap(),
+            serde_json::to_vec(&json).unwrap()
+        );
         assert!(core.data.resolve_rel(&a.rel_path).is_file());
 
         std::fs::remove_file(to.installed_file()).unwrap();
         core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION + 1;
         let e = change(&core, Some(folder)).await.unwrap_err();
-        assert!(e.message.starts_with("Your models list was saved by a newer version"), "{}", e.message);
+        assert!(
+            e.message
+                .starts_with("Your models list was saved by a newer version"),
+            "{}",
+            e.message
+        );
         assert!(core.data.resolve_rel(&a.rel_path).is_file());
     }
 
@@ -740,13 +916,17 @@ mod tests {
         let (_tmp, core) = test_core();
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         // The bytes read from the source hash fine, but the written copy differs.
         AFTER_COPY.set(Some(|p: &Path| std::fs::write(p, b"aaab").unwrap()));
         let e = move_all_with(&core, to.clone(), true).unwrap_err();
         AFTER_COPY.set(None);
         assert!(e.message.contains("didn't match"), "{}", e.message);
-        assert_eq!(std::fs::read(core.data.resolve_rel(&a.rel_path)).unwrap(), b"aaaa");
+        assert_eq!(
+            std::fs::read(core.data.resolve_rel(&a.rel_path)).unwrap(),
+            b"aaaa"
+        );
         assert!(!to.resolve_rel(&a.rel_path).exists());
         assert!(core.settings.read().models_folder.is_none());
     }
@@ -767,12 +947,17 @@ mod tests {
         let (_tmp, core) = test_core();
         add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().to_path_buf()));
         std::fs::write(to.installed_file(), b"{ damaged").unwrap();
         let p = preview(&core, Some(shared.path().to_str().unwrap())).unwrap();
         assert_eq!(p.existing_models, 0);
         assert_eq!(std::fs::read(to.installed_file()).unwrap(), b"{ damaged");
-        assert_eq!(std::fs::read_dir(shared.path()).unwrap().count(), 1, "no backup file made");
+        assert_eq!(
+            std::fs::read_dir(shared.path()).unwrap().count(),
+            1,
+            "no backup file made"
+        );
     }
 
     #[test]
@@ -780,10 +965,22 @@ mod tests {
         let (_tmp, core) = test_core();
         let a = add(&core, "outputs/odd.safetensors", b"aaaa");
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
-        let steps = plan(&core.data, &core.installed.lock().clone(), &to, &InstalledIndex::new());
-        assert_eq!(steps[0].dest, shared.path().join("checkpoints").join("odd.safetensors"));
-        assert_eq!(steps[0].entry.rel_path, "models/checkpoints/odd.safetensors");
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().to_path_buf()));
+        let steps = plan(
+            &core.data,
+            &core.installed.lock().clone(),
+            &to,
+            &InstalledIndex::new(),
+        );
+        assert_eq!(
+            steps[0].dest,
+            shared.path().join("checkpoints").join("odd.safetensors")
+        );
+        assert_eq!(
+            steps[0].entry.rel_path,
+            "models/checkpoints/odd.safetensors"
+        );
         assert_eq!(steps[0].old_id, a.id);
     }
 
@@ -792,7 +989,9 @@ mod tests {
         let (_tmp, core) = test_core();
         let shared = tempfile::tempdir().unwrap();
         let guard = core.models.folder_lock.try_read().unwrap();
-        let e = change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap_err();
+        let e = change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap_err();
         assert!(e.message.contains("adding or deleting"), "{}", e.message);
         drop(guard);
     }
@@ -804,8 +1003,12 @@ mod tests {
         let req = crate::generate::GenerateRequest::txt2img("m", "a lighthouse");
         let errors = [
             crate::generate::generate(&core, req).await.unwrap_err(),
-            crate::generate::upscale_image(&core, "img", 2).await.unwrap_err(),
-            crate::describe::describe_image(&core, "img", crate::describe::DescribeStyle::Sentence).await.unwrap_err(),
+            crate::generate::upscale_image(&core, "img", 2)
+                .await
+                .unwrap_err(),
+            crate::describe::describe_image(&core, "img", crate::describe::DescribeStyle::Sentence)
+                .await
+                .unwrap_err(),
             crate::update::ensure_idle(&core, None).unwrap_err(),
         ];
         for e in errors {
@@ -821,8 +1024,14 @@ mod tests {
         let a = add(&core, "models/checkpoints/a.safetensors", b"aaaa");
         std::fs::remove_file(core.data.resolve_rel(&a.rel_path)).unwrap();
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().to_path_buf()));
-        let steps = plan(&core.data, &core.installed.lock().clone(), &to, &InstalledIndex::new());
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().to_path_buf()));
+        let steps = plan(
+            &core.data,
+            &core.installed.lock().clone(),
+            &to,
+            &InstalledIndex::new(),
+        );
         assert_eq!(steps[0].action, Action::Missing);
     }
 
@@ -833,9 +1042,14 @@ mod tests {
         std::fs::remove_file(core.data.resolve_rel(&lost.rel_path)).unwrap();
         // The shared folder already has another install's `a.safetensors`.
         let shared = tempfile::tempdir().unwrap();
-        let to = DataDir::at(core.data.root.clone(), false).with_models_home(Some(shared.path().canonicalize().unwrap()));
+        let to = DataDir::at(core.data.root.clone(), false)
+            .with_models_home(Some(shared.path().canonicalize().unwrap()));
         std::fs::create_dir_all(to.models(pinhole_store::datadir::ModelKind::Checkpoint)).unwrap();
-        std::fs::write(to.resolve_rel("models/checkpoints/a.safetensors"), b"theirs").unwrap();
+        std::fs::write(
+            to.resolve_rel("models/checkpoints/a.safetensors"),
+            b"theirs",
+        )
+        .unwrap();
         let mut theirs = InstalledIndex::new();
         let mut t = lost.clone();
         t.id = "theirs".into();
@@ -844,10 +1058,18 @@ mod tests {
         theirs.upsert(t);
         theirs.save(&to).unwrap();
 
-        change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap();
+        change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap();
         let merged = InstalledIndex::load(&to).unwrap();
         assert_eq!(merged.files.len(), 2);
-        assert_eq!(merged.get(&lost.id).unwrap().rel_path, "models/checkpoints/a-2.safetensors");
-        assert_eq!(merged.get("theirs").unwrap().rel_path, "models/checkpoints/a.safetensors");
+        assert_eq!(
+            merged.get(&lost.id).unwrap().rel_path,
+            "models/checkpoints/a-2.safetensors"
+        );
+        assert_eq!(
+            merged.get("theirs").unwrap().rel_path,
+            "models/checkpoints/a.safetensors"
+        );
     }
 }

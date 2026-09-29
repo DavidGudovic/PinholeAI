@@ -13,7 +13,8 @@ pub const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n
 
 /// Chunks kept by [`scrub`]. Everything else is dropped.
 const KEEP: &[&[u8; 4]] = &[
-    b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"iCCP", b"sBIT", b"bKGD", b"pHYs", b"cICP",
+    b"IHDR", b"PLTE", b"IDAT", b"IEND", b"tRNS", b"gAMA", b"cHRM", b"sRGB", b"iCCP", b"sBIT",
+    b"bKGD", b"pHYs", b"cICP",
 ];
 
 /// Maximum accepted chunk length (PNG spec: 2^31 - 1).
@@ -68,12 +69,17 @@ pub fn chunks(bytes: &[u8]) -> Result<Vec<Chunk<'_>>, PngError> {
             return Err(PngError::Malformed);
         }
         let data_start = pos + 8;
-        let data_end = data_start.checked_add(len as usize).ok_or(PngError::Malformed)?;
+        let data_end = data_start
+            .checked_add(len as usize)
+            .ok_or(PngError::Malformed)?;
         let crc_end = data_end.checked_add(4).ok_or(PngError::Malformed)?;
         if crc_end > bytes.len() {
             return Err(PngError::Malformed);
         }
-        out.push(Chunk { kind, data: &bytes[data_start..data_end] });
+        out.push(Chunk {
+            kind,
+            data: &bytes[data_start..data_end],
+        });
         pos = crc_end;
         if &kind == b"IEND" {
             seen_iend = true;
@@ -112,12 +118,21 @@ pub fn scrub(bytes: &[u8]) -> Result<Vec<u8>, PngError> {
 /// Insert one `tEXt` chunk (`keyword\0text`, Latin-1) before the first IDAT.
 /// Non-Latin-1 characters in `text` are replaced by `?`.
 pub fn add_text_chunk(bytes: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>, PngError> {
-    if keyword.is_empty() || keyword.chars().count() > 79 || keyword.chars().any(|c| (c as u32) < 32 || (c as u32) > 255) {
+    if keyword.is_empty()
+        || keyword.chars().count() > 79
+        || keyword.chars().any(|c| (c as u32) < 32 || (c as u32) > 255)
+    {
         return Err(PngError::BadKeyword);
     }
     let mut data: Vec<u8> = keyword.chars().map(|c| c as u32 as u8).collect();
     data.push(0);
-    data.extend(text.chars().map(|c| if (c as u32) <= 255 && c != '\0' { c as u32 as u8 } else { b'?' }));
+    data.extend(text.chars().map(|c| {
+        if (c as u32) <= 255 && c != '\0' {
+            c as u32 as u8
+        } else {
+            b'?'
+        }
+    }));
     insert_chunk(bytes, b"tEXt", &data)
 }
 
@@ -171,9 +186,21 @@ mod tests {
         let mut out = SIGNATURE.to_vec();
         for c in &cs {
             if &c.kind == b"IDAT" {
-                write_chunk(&mut out, b"tEXt", format!("parameters\0{prompt}").as_bytes());
-                write_chunk(&mut out, b"iTXt", format!("prompt\0\0\0\0\0{prompt}").as_bytes());
-                write_chunk(&mut out, b"zTXt", b"comment\0\0x\x9c\x03\x00\x00\x00\x00\x01");
+                write_chunk(
+                    &mut out,
+                    b"tEXt",
+                    format!("parameters\0{prompt}").as_bytes(),
+                );
+                write_chunk(
+                    &mut out,
+                    b"iTXt",
+                    format!("prompt\0\0\0\0\0{prompt}").as_bytes(),
+                );
+                write_chunk(
+                    &mut out,
+                    b"zTXt",
+                    b"comment\0\0x\x9c\x03\x00\x00\x00\x00\x01",
+                );
                 write_chunk(&mut out, b"tIME", &[7, 234, 9, 28, 12, 0, 0]);
                 write_chunk(&mut out, b"prVt", prompt.as_bytes());
             }
@@ -195,9 +222,16 @@ mod tests {
         assert_eq!(text_chunks(&dirty).len(), 5);
 
         let clean = scrub(&dirty).unwrap();
-        assert!(!clean.windows(prompt.len()).any(|w| w == prompt.as_bytes()), "prompt bytes gone");
+        assert!(
+            !clean.windows(prompt.len()).any(|w| w == prompt.as_bytes()),
+            "prompt bytes gone"
+        );
         assert!(text_chunks(&clean).is_empty());
-        let kinds: Vec<String> = chunks(&clean).unwrap().iter().map(|c| c.kind_str()).collect();
+        let kinds: Vec<String> = chunks(&clean)
+            .unwrap()
+            .iter()
+            .map(|c| c.kind_str())
+            .collect();
         assert_eq!(kinds.first().map(String::as_str), Some("IHDR"));
         assert_eq!(kinds.last().map(String::as_str), Some("IEND"));
         assert!(!kinds.iter().any(|k| k == "prVt" || k == "tIME"));
@@ -217,7 +251,11 @@ mod tests {
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].0, "tEXt");
         assert_eq!(t[0].1, b"pinhole\0{\"seed\":42}");
-        let kinds: Vec<String> = chunks(&with).unwrap().iter().map(|c| c.kind_str()).collect();
+        let kinds: Vec<String> = chunks(&with)
+            .unwrap()
+            .iter()
+            .map(|c| c.kind_str())
+            .collect();
         let text_pos = kinds.iter().position(|k| k == "tEXt").unwrap();
         let idat_pos = kinds.iter().position(|k| k == "IDAT").unwrap();
         assert!(text_pos < idat_pos);
