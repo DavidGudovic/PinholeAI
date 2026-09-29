@@ -315,6 +315,8 @@ pub struct GenState {
     pub(crate) offloaded: parking_lot::Mutex<Option<(String, Vec<String>)>>,
     /// Tests: the launch args each run asked an external engine for.
     pub(crate) external_launches: parking_lot::Mutex<Vec<Vec<String>>>,
+    /// Model id + launch args while an engine loads (it holds `slot` meanwhile).
+    pub(crate) loading: parking_lot::Mutex<Option<(String, Vec<String>)>>,
 }
 
 impl Default for GenState {
@@ -337,6 +339,7 @@ impl Default for GenState {
             memory_plan: parking_lot::Mutex::new(None),
             offloaded: parking_lot::Mutex::new(None),
             external_launches: parking_lot::Mutex::new(Vec::new()),
+            loading: parking_lot::Mutex::new(None),
         }
     }
 }
@@ -369,6 +372,7 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
             *off = None;
         }
     }
+    cancel_load_of(core, model_id, files);
     let mut slot = core.gen.slot.lock().await;
     // Also when the running engine has one of the files open (a shared
     // component): Windows can't delete a mapped file (`--mmap`).
@@ -384,6 +388,18 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
         f.loaded_model_id = None;
         drop(f);
         engine_setup::emit_status(core);
+    }
+}
+
+/// A load of `model_id` (or of an engine that opens one of `files`) keeps the
+/// engine slot for up to [`LOAD_TIMEOUT`]: cancel that job so a delete doesn't
+/// wait for it.
+fn cancel_load_of(core: &AppCore, model_id: &str, files: &[PathBuf]) {
+    let loading_it = core.gen.loading.lock().as_ref().is_some_and(|(id, args)| id == model_id || files.iter().any(|f| args.iter().any(|a| Path::new(a) == f.as_path())));
+    if loading_it {
+        if let Some(tok) = core.gen.active.lock().as_ref() {
+            tok.cancel();
+        }
     }
 }
 
@@ -987,7 +1003,7 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
 }
 
 /// Remove `flag` (and its value) from an argument list.
-fn strip_flag(args: &mut Vec<String>, flags: &[&str]) {
+pub(crate) fn strip_flag(args: &mut Vec<String>, flags: &[&str]) {
     let mut out = Vec::with_capacity(args.len());
     let mut i = 0;
     while i < args.len() {
@@ -1003,6 +1019,25 @@ fn strip_flag(args: &mut Vec<String>, flags: &[&str]) {
         i += 1;
     }
     *args = out;
+}
+
+/// Append the pinned launch `defaults` whose flag `args` doesn't set yet. A
+/// skipped flag's value is skipped with it (a token that doesn't start with
+/// `-`, or a number like `-1`), so no stray value token is left behind.
+fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
+    let name = |t: &str| t.split('=').next().unwrap_or(t).to_string();
+    let is_value = |t: &str| !t.starts_with('-') || t.parse::<f64>().is_ok();
+    let mut i = 0;
+    while i < defaults.len() {
+        let d = &defaults[i];
+        let takes_value = d.starts_with("--") && !d.contains('=') && defaults.get(i + 1).is_some_and(|v| is_value(v));
+        let end = if takes_value { i + 2 } else { i + 1 };
+        let set = d.starts_with("--") && args.iter().any(|a| a.starts_with("--") && name(a) == name(d));
+        if !set {
+            args.extend_from_slice(&defaults[i..end]);
+        }
+        i = end;
+    }
 }
 
 /// Full sd-server argv (without the port): wiring args + pinned defaults, forced
@@ -1022,12 +1057,7 @@ pub(crate) fn full_sd_args(core: &AppCore, wiring_args: &[String], cfg: &EngineC
         .filter(|l| matches!(l.as_str(), "info" | "warn" | "error"))
         .unwrap_or_else(|| "info".into());
     strip_flag(&mut defaults, &["--log-level"]);
-    for d in defaults {
-        if d.starts_with("--") && !d.contains('=') && args.contains(&d) {
-            continue;
-        }
-        args.push(d);
-    }
+    add_defaults(&mut args, &defaults);
     args.retain(|a| a != "--verbose" && a != "-v");
     args.extend(["--log-level".into(), level]);
     // Privacy safeguard #2 (besides `embed_image_metadata: false` per request):
@@ -1064,6 +1094,15 @@ fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
     *core.gen.offloaded.lock() = wiring_args.iter().any(|a| a == "--offload-to-cpu").then(|| (model_id.to_string(), wiring_args.to_vec()));
 }
 
+/// Clears `GenState::loading` when [`ensure_engine`] returns, on every path.
+struct LoadingMark<'a>(&'a AppCore);
+
+impl Drop for LoadingMark<'_> {
+    fn drop(&mut self) {
+        *self.0.gen.loading.lock() = None;
+    }
+}
+
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
@@ -1078,6 +1117,10 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     let args = full_sd_args(core, wiring_args, &cfg);
     let installed = engine_setup::installed_engine(core, EngineKind::Sd);
     let mut slot = core.gen.slot.lock().await;
+    // From here until return this job holds the slot: a delete of this model
+    // cancels it (`cancel_load_of`) instead of waiting for the slot.
+    *core.gen.loading.lock() = Some((model_id.to_string(), args.clone()));
+    let _loading = LoadingMark(core);
     {
         let s = &mut *slot;
         if let Some(p) = s.proc.as_mut() {
@@ -1100,6 +1143,8 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         f.running = false;
         f.loaded_model_id = None;
     }
+    // The old engine is gone even if this load is cancelled or fails before the spawn.
+    engine_setup::emit_status(core);
 
     let installed = installed.ok_or_else(|| {
         CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
@@ -1117,6 +1162,9 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     set_others_note(core, others.as_ref().filter(|o| o.is_significant()).map(others_note));
     *core.gen.gpu_others.lock() = others;
 
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
@@ -1294,16 +1342,20 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
+    // Read before waiting for another job: results of a job that outlives a
+    // Reset are dropped (see `Session::insert_generated_since`).
+    let session_epoch = core.session.epoch();
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
-    let result = generate_inner(core, &req, &cancel, t0).await;
+    // The model that actually runs (Edit may pick another one than `req.model_id`).
+    let mut label = core.installed.lock().get(&req.model_id).map(|m| m.friendly_name.clone()).unwrap_or_default();
+    let result = generate_inner(core, &req, &cancel, t0, session_epoch, &mut label).await;
     *core.gen.active.lock() = None;
     core.gen.logs.clear_secrets();
-    let label = core.installed.lock().get(&req.model_id).map(|m| m.friendly_name.clone()).unwrap_or_default();
     match &result {
         Ok(_) => emit_progress(core, GenPhase::Done, &label, None, None, t0),
         Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
@@ -1313,7 +1365,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     result
 }
 
-async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant) -> CoreResult<GenerateResult> {
+async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant, session_epoch: u64, final_label: &mut String) -> CoreResult<GenerateResult> {
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
@@ -1321,6 +1373,7 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
+    final_label.clone_from(&label);
 
     // Source images (checked before any engine work).
     let mut init_image = None;
@@ -1453,6 +1506,9 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
         }
     };
     drop(body);
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
 
     // Decode + scrub + keep in RAM.
     let mut images = job.result.map(|r| r.images).unwrap_or_default();
@@ -1484,7 +1540,10 @@ async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &Can
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
         };
-        core.session.insert_generated(png, meta.clone());
+        if !core.session.insert_generated_since(session_epoch, png, meta.clone()) {
+            // Reset while the job ran: its images go with the session.
+            return Err(CoreError::new("cancelled", "Cancelled."));
+        }
         out.push(meta);
     }
     touch_last_used(core, &prep.model.id);
@@ -1525,7 +1584,7 @@ async fn run_job(
     emit_progress(core, GenPhase::Queued, label, None, None, t0);
     let job_id = match client.submit(body).await {
         Ok(id) => id,
-        Err(e) => return Err(job_failure(core, api_failure(core, e), mark)),
+        Err(e) => return Err(job_failure(core, api_failure(core, e, secrets), mark)),
     };
     // From now on the engine may hold this job's images (IDLE_STOP_AFTER).
     core.gen.slot.lock().await.results_cached = true;
@@ -1574,8 +1633,7 @@ async fn run_job(
                         // reason is in the engine output. Let the readers catch up with it.
                         tokio::time::sleep(Duration::from_millis(250)).await;
                         let msg = job.error.map(|e| e.message).unwrap_or_default();
-                        let hidden = lowered(secrets);
-                        let msg = msg.lines().map(|l| pinhole_engine::logbuf::redact_line(l, &hidden)).collect::<Vec<_>>().join("\n");
+                        let msg = redact_text(&msg, secrets);
                         let own = format!("{msg}\n{}", core.gen.logs.since_text(mark));
                         let details = format!("{msg}\n{}", core.gen.logs.tail_text(40)).trim().to_string();
                         if let Some(stage) = memory_failure(&own) {
@@ -1597,7 +1655,7 @@ async fn run_job(
             Err(e) => {
                 errors += 1;
                 if errors >= 5 {
-                    return Err(job_failure(core, api_failure(core, e), mark));
+                    return Err(job_failure(core, api_failure(core, e, secrets), mark));
                 }
             }
         }
@@ -1628,15 +1686,27 @@ async fn cancel_job(core: &AppCore, client: &SdClient, job_id: &str) -> CoreErro
     CoreError::new("cancelled", "Cancelled.")
 }
 
-fn api_failure(core: &AppCore, e: ApiError) -> CoreError {
-    match e {
+/// `text` with every line that holds prompt text (`secrets`) redacted.
+fn redact_text(text: &str, secrets: &[String]) -> String {
+    let hidden = lowered(secrets);
+    text.lines().map(|l| pinhole_engine::logbuf::redact_line(l, &hidden)).collect::<Vec<_>>().join("\n")
+}
+
+/// Plain error for an API failure. The engine's answer goes into the details
+/// with prompt text (`secrets`) redacted: it may echo the request.
+pub(crate) fn api_failure(core: &AppCore, e: ApiError, secrets: &[String]) -> CoreError {
+    let mut err = match e {
         ApiError::QueueFull => CoreError::new("engine_failed", "The engine is busy. Wait for the current images to finish and try again."),
         ApiError::Connect | ApiError::Timeout => engine_failure(&core.gen.logs, None),
         ApiError::Status { code: 400, error } => {
             CoreError::new("invalid", "The engine didn't accept these settings. Try resetting Fine-tune to the defaults.").with_details(format!("HTTP 400: {error}"))
         }
         other => CoreError::new("engine_failed", "The engine stopped unexpectedly. Try again.").with_details(other.to_string()),
+    };
+    if let Some(d) = err.details.take() {
+        err.details = Some(redact_text(&d, secrets));
     }
+    err
 }
 
 fn now_secs() -> i64 {
@@ -1660,6 +1730,8 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     if factor != 2 && factor != 4 {
         return Err(CoreError::invalid("Upscale works at 2× or 4×."));
     }
+    // The result is dropped when Reset happens meanwhile (see `Session::insert_generated_since`).
+    let session_epoch = core.session.epoch();
     let src = core.session.get(id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore."))?;
     if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
         return Err(CoreError::invalid("This image is already too large to upscale (max 8192 pixels per side after upscaling)."));
@@ -1671,21 +1743,48 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     core.gen.job_note.lock().clear();
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
-    let res = upscale_inner(core, &src, &upscaler, factor, &cancel).await;
+    let t0 = Instant::now();
+    let mut label = String::new();
+    let res = upscale_inner(core, &src, &upscaler, factor, &cancel, t0, session_epoch, &mut label).await;
     *core.gen.active.lock() = None;
+    // The final event comes after the upscale itself (not after the model load).
+    match &res {
+        Ok(_) => emit_progress(core, GenPhase::Done, &label, None, None, t0),
+        Err(e) if e.code == "cancelled" => emit_progress(core, GenPhase::Cancelled, &label, None, None, t0),
+        Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
+    }
     after_job(core, epoch).await;
     res
 }
 
-async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &str, factor: u32, cancel: &CancellationToken) -> CoreResult<ResultImage> {
-    let t0 = Instant::now();
+/// Friendly name of the model the engine has loaded ("" when none).
+async fn loaded_model_label(core: &AppCore) -> String {
+    let id = core.gen.slot.lock().await.model_id.clone();
+    id.and_then(|id| core.installed.lock().get(&id).map(|m| m.friendly_name.clone())).unwrap_or_default()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn upscale_inner(
+    core: &Arc<AppCore>,
+    src: &SessionImage,
+    upscaler_stem: &str,
+    factor: u32,
+    cancel: &CancellationToken,
+    t0: Instant,
+    session_epoch: u64,
+    label: &mut String,
+) -> CoreResult<ResultImage> {
     let base = match running_engine_url(core).await {
-        Some(u) => u,
+        Some(u) => {
+            *label = loaded_model_label(core).await;
+            u
+        }
         None => {
             // sd-server needs a model loaded to run at all: start it with the image's
             // model, or the most recently used one.
             let model_id = pick_model_for_upscale(core, src).ok_or_else(|| CoreError::not_found("Install a model first — the upscaler runs inside the image engine."))?;
             let prep_model = model_and_family(core, &model_id)?;
+            label.clone_from(&prep_model.0.friendly_name);
             let hw = crate::app::hw_context(core);
             let files = model_files(core, &prep_model.0, &prep_model.1, &hw)?;
             let extras = LaunchExtras {
@@ -1701,20 +1800,32 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
             let fb = with_remembered_offload(core, &model_id, &args, memory_choices(core, &model_id, gpu_backend), gpu_backend);
             let args = with_memory_choices(&args, fb);
             let r = ensure_engine(core, &args, &model_id, &prep_model.0.friendly_name, cancel, t0).await;
-            emit_progress(core, if r.is_ok() { GenPhase::Done } else { GenPhase::Failed }, &prep_model.0.friendly_name, None, None, t0);
             r?
         }
     };
+    // A Cancel before the request goes out leaves the (maybe just loaded) engine alone.
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
+    emit_progress(core, GenPhase::Generating, label, None, None, t0);
     let client = SdClient::new(core.local.clone(), base);
     let b64 = base64::engine::general_purpose::STANDARD.encode(src.bytes.as_slice());
     let req = UpscaleRequest::new(b64, Some(upscaler_stem.to_string()), 1);
     let resp = tokio::select! {
         r = client.upscale(&req) => r,
-        _ = cancel.cancelled() => return Err(CoreError::new("cancelled", "Cancelled.")),
+        _ = cancel.cancelled() => {
+            // sd-server upscales synchronously and can't be interrupted: without
+            // a stop it keeps working (up to the request timeout) and blocks the next job.
+            if core.gen.external.lock().is_none() {
+                drop_engine(core).await;
+            }
+            return Err(CoreError::new("cancelled", "Cancelled."));
+        }
     };
     let resp = resp.map_err(|e| match e {
-        ApiError::Status { code: 400, error } => CoreError::new("invalid", "The upscaler couldn't process this image.").with_details(error),
-        other => api_failure(core, other),
+        // The upscale request carries no prompt; `redact_text` still cuts prompt-like fields.
+        ApiError::Status { code: 400, error } => CoreError::new("invalid", "The upscaler couldn't process this image.").with_details(redact_text(&error, &[])),
+        other => api_failure(core, other, &[]),
     })?;
     let img = resp.images.into_iter().next().ok_or_else(|| CoreError::new("engine_failed", "The upscaler returned no image. Try again."))?;
     let raw = base64::engine::general_purpose::STANDARD
@@ -1753,7 +1864,9 @@ async fn upscale_inner(core: &Arc<AppCore>, src: &SessionImage, upscaler_stem: &
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
-    core.session.insert_generated(png, meta.clone());
+    if cancel.is_cancelled() || !core.session.insert_generated_since(session_epoch, png, meta.clone()) {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     Ok(meta)
 }
 
@@ -1873,6 +1986,17 @@ mod tests {
         assert!(same_file_path("/unresolvable/elsewhere/MODEL.safetensors", &fs), "re-encoded path: same name");
         assert!(!same_file_path("/mock/mock.safetensors", &fs));
         assert!(!same_file_path("", &fs) && !same_file_path(&fs, ""));
+    }
+
+    #[test]
+    fn launch_defaults_skip_a_set_flag_with_its_value() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+        let mut args = v(&["--model", "m", "--threads", "4", "--mmap"]);
+        add_defaults(&mut args, &v(&["--threads", "8", "--mmap", "--seed", "-1", "--rng=cuda", "--disable-image-metadata"]));
+        assert_eq!(args, v(&["--model", "m", "--threads", "4", "--mmap", "--seed", "-1", "--rng=cuda", "--disable-image-metadata"]));
+        let mut args = v(&["--rng", "cpu"]);
+        add_defaults(&mut args, &v(&["--rng=cuda", "--offload-to-cpu", "--vae-tiling"]));
+        assert_eq!(args, v(&["--rng", "cpu", "--offload-to-cpu", "--vae-tiling"]));
     }
 
     #[test]

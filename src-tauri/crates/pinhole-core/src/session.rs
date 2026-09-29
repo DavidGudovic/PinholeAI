@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -41,13 +42,27 @@ impl SessionImage {
 #[derive(Default)]
 pub struct Session {
     images: RwLock<HashMap<String, SessionImage>>,
+    /// Bumped by every [`Session::clear`] (Reset), under the write lock.
+    epoch: AtomicU64,
 }
 
 impl Session {
-    /// Store a (scrubbed) generated PNG under `meta.id`.
-    pub fn insert_generated(&self, png: Vec<u8>, meta: ResultImage) {
+    /// Result intake: store a (scrubbed) generated PNG under `meta.id`, but
+    /// only while no Reset happened since [`Session::epoch`] returned `epoch` (a job that finishes after
+    /// Reset must not bring its images back). Returns whether it was stored.
+    pub fn insert_generated_since(&self, epoch: u64, png: Vec<u8>, meta: ResultImage) -> bool {
+        let mut images = self.images.write();
+        if self.epoch.load(Ordering::SeqCst) != epoch {
+            return false;
+        }
         let img = SessionImage { id: meta.id.clone(), bytes: Arc::new(png), kind: Kind::Png, width: meta.width, height: meta.height, meta: Some(meta) };
-        self.images.write().insert(img.id.clone(), img);
+        images.insert(img.id.clone(), img);
+        true
+    }
+
+    /// Changes whenever the session is cleared (Reset).
+    pub fn epoch(&self) -> u64 {
+        self.epoch.load(Ordering::SeqCst)
     }
 
     pub fn insert(&self, img: SessionImage) {
@@ -63,7 +78,9 @@ impl Session {
     }
 
     pub fn clear(&self) {
-        self.images.write().clear();
+        let mut images = self.images.write();
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        images.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -265,16 +282,28 @@ mod tests {
     fn store_roundtrip_and_clear() {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
-        s.insert_generated(png.clone(), meta("a"));
+        assert!(s.insert_generated_since(s.epoch(), png.clone(), meta("a")));
         let got = s.get("a").unwrap();
         assert_eq!(got.bytes.as_slice(), png.as_slice());
         assert_eq!(got.parent_id(), Some("p"));
         assert_eq!(s.len(), 1);
         assert!(s.remove("a"));
         assert!(s.get("a").is_none());
-        s.insert_generated(png, meta("b"));
+        assert!(s.insert_generated_since(s.epoch(), png, meta("b")));
         s.clear();
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn results_from_before_a_reset_are_dropped() {
+        let s = Session::default();
+        let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
+        let epoch = s.epoch();
+        assert!(s.insert_generated_since(epoch, png.clone(), meta("a")));
+        s.clear();
+        assert!(!s.insert_generated_since(epoch, png.clone(), meta("b")), "Reset happened since the job started");
+        assert!(s.is_empty());
+        assert!(s.insert_generated_since(s.epoch(), png, meta("c")));
     }
 
     #[test]

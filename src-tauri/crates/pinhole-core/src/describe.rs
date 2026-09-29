@@ -8,7 +8,7 @@
 //! The only text sent is the fixed registry instruction (`captioner.prompts`).
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -76,12 +76,40 @@ pub struct DescribeState {
     pub(crate) slot: tokio::sync::Mutex<Option<LlamaSlot>>,
     pub(crate) install_lock: tokio::sync::Mutex<()>,
     pub(crate) last_used: parking_lot::Mutex<Instant>,
-    pub(crate) busy: AtomicBool,
+    /// Describes in flight (they can overlap): llama-server is only stopped at 0.
+    pub(crate) busy: AtomicUsize,
+    /// Cancelled by [`shutdown`] so a model load (which holds `slot`) ends
+    /// right away; replaced by a fresh token once `shutdown` has the slot.
+    pub(crate) stopping: parking_lot::Mutex<tokio_util::sync::CancellationToken>,
     pub(crate) logs: Arc<LogBuffer>,
     /// Last background install failure (unpack), shown on the next describe.
     pub(crate) last_error: parking_lot::Mutex<Option<String>>,
     /// Tests: an already-running (mock) llama-server.
     pub(crate) external: parking_lot::Mutex<Option<String>>,
+}
+
+impl DescribeState {
+    /// Whether a describe is running right now.
+    pub(crate) fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) > 0
+    }
+}
+
+/// Counts one describe as in flight while it lives (also when its future is dropped).
+struct BusyGuard<'a>(&'a DescribeState);
+
+impl<'a> BusyGuard<'a> {
+    fn new(state: &'a DescribeState) -> Self {
+        state.busy.fetch_add(1, Ordering::SeqCst);
+        Self(state)
+    }
+}
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        *self.0.last_used.lock() = Instant::now();
+        self.0.busy.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Default for DescribeState {
@@ -90,7 +118,8 @@ impl Default for DescribeState {
             slot: tokio::sync::Mutex::new(None),
             install_lock: tokio::sync::Mutex::new(()),
             last_used: parking_lot::Mutex::new(Instant::now()),
-            busy: AtomicBool::new(false),
+            busy: AtomicUsize::new(0),
+            stopping: parking_lot::Mutex::new(tokio_util::sync::CancellationToken::new()),
             logs: Arc::new(LogBuffer::default()),
             last_error: parking_lot::Mutex::new(None),
             external: parking_lot::Mutex::new(None),
@@ -292,11 +321,8 @@ pub async fn describe_image(core: &Arc<AppCore>, image_id: &str, style: Describe
         (img.bytes.as_ref().clone(), img.kind.mime())
     };
 
-    core.describe.busy.store(true, Ordering::SeqCst);
-    let res = describe_inner(core, &instruction, mime, &bytes, style).await;
-    *core.describe.last_used.lock() = Instant::now();
-    core.describe.busy.store(false, Ordering::SeqCst);
-    res
+    let _busy = BusyGuard::new(&core.describe);
+    describe_inner(core, &instruction, mime, &bytes, style).await
 }
 
 async fn describe_inner(core: &Arc<AppCore>, instruction: &str, mime: &str, bytes: &[u8], style: DescribeStyle) -> CoreResult<String> {
@@ -357,21 +383,31 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
             return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
         }
     }
+    // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
+    let cancel = core.describe.stopping.lock().clone();
+    let cancelled = || CoreError::new("cancelled", "Cancelled.");
     if let Some(old) = slot.take() {
         old.proc.stop().await;
     }
+    if cancel.is_cancelled() {
+        return Err(cancelled());
+    }
     engine_setup::ensure_runtime(core, &engine)?;
     engine_setup::sweep_orphans(core).await;
+    if cancel.is_cancelled() {
+        return Err(cancelled());
+    }
     let cfg = engine_setup::engine_config(core)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
-    let mut args: Vec<String> = cfg.llama_cpp.launch_defaults.iter().filter(|a| *a != "--host" && *a != "127.0.0.1").cloned().collect();
+    // `launch_args` sets the host and port (loopback only).
+    let mut args = cfg.llama_cpp.launch_defaults.clone();
+    crate::generate::strip_flag(&mut args, &["--host", "--port"]);
     args.extend(llama::launch_args(&model, &mmproj, port, &engine.backend, CTX_SIZE));
     core.describe.logs.clear();
     let api_key = new_api_key();
     let mut proc = EngineProcess::spawn_with_env(&engine.exe, &args, &[(llama::API_KEY_ENV, api_key.as_str())], port, core.describe.logs.clone())
         .map_err(|e| CoreError::new("engine_failed", "The describe engine couldn't be started.").with_details(e.to_string()))?;
     let client = LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
-    let cancel = tokio_util::sync::CancellationToken::new();
     match proc.wait_ready(|| client.is_ready(), LOAD_TIMEOUT, &cancel, |_| {}).await {
         Ok(()) => {
             if let Err(e) = verify_llama_identity(&mut proc, &client, &model).await {
@@ -386,7 +422,9 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
             let code = proc.exit_code();
             proc.stop().await;
             let tail = core.describe.logs.tail_text(30);
+            // A cancelled load (its log tail may look like a failure) is just cancelled.
             Err(match (e, classify(&tail, code)) {
+                (ReadyError::Cancelled, _) => cancelled(),
                 (_, Failure::OutOfMemory) => CoreError::new("vram", "Not enough memory to load the describe model. Close other apps and try again.").with_details(tail),
                 (_, Failure::ModelLoad) => CoreError::new("engine_failed", "The describe model couldn't be loaded — the file may be damaged. Download it again.").with_details(tail),
                 (ReadyError::Timeout, _) => CoreError::new("engine_failed", "The describe model took too long to load. Try again.").with_details(tail),
@@ -409,7 +447,7 @@ pub fn start_idle_watchdog(core: &Arc<AppCore>) {
                 0 => 60,
                 s => s,
             };
-            if core.describe.busy.load(Ordering::SeqCst) || core.describe.last_used.lock().elapsed() < Duration::from_secs(idle) {
+            if core.describe.is_busy() || core.describe.last_used.lock().elapsed() < Duration::from_secs(idle) {
                 continue;
             }
             let Ok(mut slot) = core.describe.slot.try_lock() else { continue };
@@ -423,7 +461,7 @@ pub fn start_idle_watchdog(core: &Arc<AppCore>) {
 /// Stop llama-server unless it is describing right now (it holds graphics
 /// memory the image engine is about to need). Returns whether it was stopped.
 pub(crate) async fn stop_if_idle(core: &AppCore) -> bool {
-    if core.describe.busy.load(Ordering::SeqCst) {
+    if core.describe.is_busy() {
         return false;
     }
     let Ok(mut slot) = core.describe.slot.try_lock() else { return false };
@@ -436,16 +474,32 @@ pub(crate) async fn stop_if_idle(core: &AppCore) -> bool {
     }
 }
 
+/// Stop llama-server. A model load in progress is cancelled first (it holds
+/// the slot for up to [`LOAD_TIMEOUT`]), so app exit or an update never waits for it.
 pub async fn shutdown(core: &AppCore) {
+    core.describe.stopping.lock().cancel();
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.take() {
         s.proc.stop().await;
     }
+    // Describe works again afterwards (Models folder change, helper delete).
+    *core.describe.stopping.lock() = tokio_util::sync::CancellationToken::new();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlapping_describes_keep_the_engine_busy() {
+        let st = DescribeState::default();
+        let a = BusyGuard::new(&st);
+        let b = BusyGuard::new(&st);
+        drop(a);
+        assert!(st.is_busy(), "the other describe still runs");
+        drop(b);
+        assert!(!st.is_busy());
+    }
 
     #[test]
     fn api_keys_are_random_per_launch() {

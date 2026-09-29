@@ -317,7 +317,7 @@ mod tests {
 
     #[tokio::test]
     async fn restyle_and_instruction_edit_send_images() {
-        let (_tmp, core, _rec) = new_core();
+        let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
@@ -345,6 +345,8 @@ mod tests {
         req.dials.quality = Quality::Fast;
         let edited = generate::generate(&core, req).await.unwrap();
         assert_eq!(edited.images[0].family_id, "qwen_image_edit_2511");
+        let last = last_generation_event(&rec).unwrap();
+        assert_eq!((last.phase, last.model_label.as_deref()), (GenPhase::Done, Some(edited.images[0].model_label.as_str())), "the final event names the edit model that ran");
         assert_eq!(edited.images[0].parent_id.as_deref(), Some(res.images[0].id.as_str()));
         let body = &mock.requests()[1];
         assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
@@ -810,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn upscale_uses_installed_esrgan() {
-        let (_tmp, core, _rec) = new_core();
+        let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
@@ -839,7 +841,11 @@ mod tests {
         req.fine_tune.height = Some(48);
         let res = generate::generate(&core, req).await.unwrap();
         let src = &res.images[0];
+        let before = rec.0.lock().len();
         let up4 = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+        let phases: Vec<GenPhase> = rec.0.lock()[before..].iter().filter_map(|e| if let CoreEvent::Generation(p) = e { Some(p.phase) } else { None }).collect();
+        assert_eq!(phases, vec![GenPhase::Generating, GenPhase::Done], "one Done, after the upscale");
+        assert_eq!(last_generation_event(&rec).unwrap().model_label.as_deref(), Some(src.model_label.as_str()));
         assert_eq!((up4.width, up4.height), (src.width * 4, src.height * 4));
         assert_eq!(up4.parent_id.as_deref(), Some(src.id.as_str()));
         let up2 = generate::upscale_image(&core, &src.id, 2).await.unwrap();
@@ -1180,6 +1186,239 @@ mod tests {
         assert!(saved.path.ends_with("_import.png"), "{}", saved.path);
         assert!(!has(&std::fs::read(&saved.path).unwrap(), "PINHOLE_EXIF_SECRET"));
         assert_eq!(session::import_image(&core, b"not an image".to_vec()).unwrap_err().code, "invalid");
+    }
+
+    fn last_generation_event(rec: &Recorder) -> Option<crate::events::GenerationProgress> {
+        rec.0.lock().iter().rev().find_map(|e| if let CoreEvent::Generation(p) = e { Some(p.clone()) } else { None })
+    }
+
+    /// Reset while a job runs: the job's images must not land in the session afterwards.
+    #[tokio::test]
+    async fn reset_during_a_job_drops_its_images() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start_with(MockOptions { polls_before_done: 4, ..Default::default() }).await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let c2 = core.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(model, "a lighthouse")).await });
+        for _ in 0..200 {
+            if !mock.requests().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!mock.requests().is_empty());
+        session::clear(&core).await;
+        let err = task.await.unwrap().unwrap_err();
+        assert_eq!(err.code, "cancelled");
+        assert!(core.session.is_empty(), "Reset drops every in-memory image, also one that finished later");
+    }
+
+    /// An engine answer that echoes the request must not put prompt text in the error details.
+    #[tokio::test]
+    async fn engine_400_details_are_redacted() {
+        let (_tmp, core, _rec) = new_core();
+        let secrets = vec![format!("{SENTINEL} a red boat")];
+        let e = pinhole_engine::sdapi::ApiError::Status { code: 400, error: format!("bad field near \"{SENTINEL} a red boat\"") };
+        let err = generate::api_failure(&core, e, &secrets);
+        assert_eq!(err.code, "invalid");
+        assert!(!err.details.unwrap_or_default().contains(SENTINEL));
+        let e = pinhole_engine::sdapi::ApiError::Status { code: 500, error: format!("{SENTINEL} a red boat") };
+        assert!(!generate::api_failure(&core, e, &secrets).details.unwrap_or_default().contains(SENTINEL));
+    }
+
+    #[cfg(unix)]
+    fn install_component(core: &AppCore, kind: ModelKind, file: &str, component_id: &str) {
+        let (rel, size) = write_dummy(core, kind, file);
+        let mut idx = core.installed.lock();
+        idx.upsert(InstalledFile {
+            id: uuid::Uuid::new_v4().to_string(),
+            rel_path: rel,
+            kind,
+            sha256: "0".repeat(64),
+            size_bytes: size,
+            family: None,
+            component_id: Some(component_id.into()),
+            friendly_name: component_id.into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+        });
+    }
+
+    /// Install a shell script as the CPU build of `kind` (it never answers HTTP).
+    #[cfg(unix)]
+    fn install_fake_engine(core: &AppCore, kind: pinhole_engine::install::EngineKind, binary: &str, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        use pinhole_engine::install::{self, InstallMarker};
+        core.settings.write().engine_backend = "cpu".into();
+        let (cfg, sel) = crate::engine_setup::selected_build(core, kind).unwrap();
+        let version = kind.pin(&cfg).version.clone();
+        let dir = install::install_dir(&core.data.engine(), kind, &version, &sel.backend);
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join(binary);
+        std::fs::write(&exe, format!("#!/bin/sh\n{script}\n")).unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let marker = InstallMarker { engine: kind, version, backend: sel.backend.clone(), build: sel.key.clone(), binary: binary.into(), archives: vec![], installed_at: 0 };
+        std::fs::write(dir.join(install::MARKER_FILE), serde_json::to_string(&marker).unwrap()).unwrap();
+    }
+
+    /// Deleting the model that is loading cancels the load instead of waiting
+    /// up to the load timeout for the engine slot.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deleting_the_loading_model_cancels_the_load() {
+        let (_tmp, core, _rec) = new_core();
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Sd, "sd-server", "exec sleep 30");
+        let model = register_fake_model(&core, "sd15");
+        let c2 = core.clone();
+        let m2 = model.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(m2, "x")).await });
+        for _ in 0..500 {
+            if core.gen.loading.lock().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(core.gen.loading.lock().is_some(), "the engine is loading");
+        tokio::time::timeout(Duration::from_secs(10), generate::unload_model(&core, &model, &[])).await.expect("unload doesn't wait for the load");
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(core.gen.slot.lock().await.proc.is_none());
+    }
+
+    /// A delete while the job still stops the previous engine (before the new
+    /// one is spawned) cancels the job too: no new engine starts.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deleting_the_model_while_the_old_engine_stops_cancels_the_load() {
+        let (tmp, core, _rec) = new_core();
+        let spawned = tmp.path().join("spawned");
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Sd, "sd-server", &format!("touch '{}'\nexec sleep 30", spawned.display()));
+        // The running engine ignores SIGTERM, so stopping it takes a few seconds.
+        let old = tmp.path().join("old-sd.sh");
+        std::fs::write(&old, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let proc = pinhole_engine::EngineProcess::spawn(&old, &[], 1, Arc::new(pinhole_engine::LogBuffer::default())).unwrap();
+        put_engine(&core, proc, false).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let model = register_fake_model(&core, "sd15");
+        let c2 = core.clone();
+        let m2 = model.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(m2, "x")).await });
+        for _ in 0..200 {
+            if core.gen.loading.lock().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(core.gen.loading.lock().is_some(), "marked as loading while the old engine stops");
+        generate::unload_model(&core, &model, &[]).await;
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(!spawned.exists(), "no engine started after the cancel");
+        assert!(core.gen.loading.lock().is_none());
+    }
+
+    /// Reset while a generate waits for the previous job: its images are dropped too.
+    #[tokio::test]
+    async fn reset_while_a_job_waits_drops_its_images() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let busy = core.gen.run_lock.lock().await;
+        let c2 = core.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(model, "a lighthouse")).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        core.session.clear();
+        drop(busy);
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(core.session.is_empty());
+    }
+
+    /// Cancelling an upscale stops a Pinhole-started engine: sd-server upscales
+    /// synchronously and would keep working otherwise.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancelled_upscale_stops_the_engine() {
+        let (tmp, core, rec) = new_core();
+        install_component(&core, ModelKind::Upscaler, "RealESRGAN_x4plus.pth", generate::UPSCALER_COMPONENT);
+        // An "engine" whose port accepts the request but never answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let script = tmp.path().join("fake-sd.sh");
+        std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let proc = pinhole_engine::EngineProcess::spawn(&script, &[], port, Arc::new(pinhole_engine::LogBuffer::default())).unwrap();
+        put_engine(&core, proc, false).await;
+        let img = session::import_image(&core, pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255])).unwrap();
+        let c2 = core.clone();
+        let task = tokio::spawn(async move { generate::upscale_image(&c2, &img.id, 4).await });
+        let (_conn, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await.expect("upscale request sent").unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        generate::cancel(&core);
+        let err = tokio::time::timeout(Duration::from_secs(10), task).await.expect("cancel ends the upscale").unwrap().unwrap_err();
+        assert_eq!(err.code, "cancelled");
+        assert!(!engine_running(&core).await, "the busy engine was stopped");
+        assert_eq!(last_generation_event(&rec).map(|p| p.phase), Some(GenPhase::Cancelled));
+        assert_eq!(core.session.len(), 1, "only the source image");
+    }
+
+    /// App exit / update while the describe engine loads: `shutdown` doesn't
+    /// wait for the load timeout, and describe works again afterwards.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn describe_shutdown_cancels_a_loading_engine() {
+        let (_tmp, core, _rec) = new_core();
+        // Its log reads like an out-of-memory failure: a cancelled load is still "cancelled".
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Llama, "llama-server", "echo 'ggml: out of memory'\nexec sleep 30");
+        install_component(&core, ModelKind::Captioner, "cap.gguf", describe::DEFAULT_MODEL_ID);
+        install_component(&core, ModelKind::Captioner, "cap-mmproj.gguf", describe::DEFAULT_MMPROJ_ID);
+        let img = session::import_image(&core, pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255])).unwrap();
+        let c2 = core.clone();
+        let id = img.id.clone();
+        let task = tokio::spawn(async move { describe::describe_image(&c2, &id, describe::DescribeStyle::Sentence).await });
+        for _ in 0..500 {
+            if core.describe.slot.try_lock().is_err() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(core.describe.is_busy());
+        tokio::time::timeout(Duration::from_secs(10), describe::shutdown(&core)).await.expect("shutdown doesn't wait for the load");
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(!core.describe.is_busy());
+        assert!(!core.describe.stopping.lock().is_cancelled(), "a fresh token for the next describe");
+    }
+
+    /// A describe that gets the engine slot while a shutdown is pending
+    /// doesn't start llama-server at all.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn describe_during_shutdown_starts_no_engine() {
+        let (tmp, core, _rec) = new_core();
+        let spawned = tmp.path().join("spawned");
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Llama, "llama-server", &format!("touch '{}'\nexec sleep 30", spawned.display()));
+        install_component(&core, ModelKind::Captioner, "cap.gguf", describe::DEFAULT_MODEL_ID);
+        install_component(&core, ModelKind::Captioner, "cap-mmproj.gguf", describe::DEFAULT_MMPROJ_ID);
+        let img = session::import_image(&core, pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255])).unwrap();
+        // A launch clears the log buffer: this line stays only when nothing launched.
+        core.describe.logs.push_bytes(b"before\n");
+        // What `shutdown` does first, before it gets the slot.
+        core.describe.stopping.lock().cancel();
+        let err = describe::describe_image(&core, &img.id, describe::DescribeStyle::Sentence).await.unwrap_err();
+        assert_eq!(err.code, "cancelled");
+        assert!(core.describe.logs.tail_text(5).contains("before"), "llama-server wasn't started");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!spawned.exists(), "llama-server wasn't started");
     }
 
     #[tokio::test]

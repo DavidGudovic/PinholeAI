@@ -89,7 +89,9 @@ export function DescribeTab() {
         dispatch({ type: "patchDescribe", patch: { text: text.trim() } });
       }
     } catch (e) {
-      if (id === runId.current) setError(api.asCoreError(e));
+      const err = api.asCoreError(e);
+      // Cancelled when Pinhole stops the describer (closing, updating): nothing to show.
+      if (id === runId.current && err.code !== "cancelled") setError(err);
     } finally {
       if (id === runId.current) setBusy(null);
     }
