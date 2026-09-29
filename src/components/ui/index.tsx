@@ -341,7 +341,7 @@ export function Dialog({
   }, [open]);
   if (!open) return null;
   return createPortal(
-    <div className="pinhole-fade fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/55 p-4" onMouseDown={onClose}>
+    <div className="pinhole-fade fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/50 p-4 backdrop-blur-[2px]" onMouseDown={onClose}>
       <div
         ref={panel}
         role="dialog"
@@ -386,7 +386,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
         className="pinhole-slide h-full w-full max-w-md overflow-auto border-l border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 bg-white px-5 py-3 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95">
           <span className="text-base font-semibold">{title}</span>
           <IconButton label="Close" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />

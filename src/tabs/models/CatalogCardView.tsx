@@ -12,11 +12,11 @@ import { isActive, ratioPercent } from "./lib/words";
 
 function Overlay({ tone = "dark", children }: { tone?: "dark" | "amber" | "green"; children: ReactNode }) {
   const tones = {
-    dark: "bg-black/65 text-white",
+    dark: "bg-black/55 text-white",
     amber: "bg-amber-400 text-neutral-950",
     green: "bg-emerald-500 text-white",
   };
-  return <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium ${tones[tone]}`}>{children}</span>;
+  return <span className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium backdrop-blur-sm ${tones[tone]}`}>{children}</span>;
 }
 
 function Placeholder({ icon, text }: { icon: ReactNode; text: string }) {
@@ -88,7 +88,7 @@ export const CatalogCardView = memo(function CatalogCardView({
 
   return (
     // content-visibility: the browser skips layout/paint for cards far off screen.
-    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
       <button
         ref={ref}
         type="button"
