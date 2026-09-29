@@ -89,6 +89,7 @@ pub fn installed_model_view(
         civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
         base_model: file.civitai.as_ref().and_then(|c| c.base_model.clone()),
+        low_bit: file.dtype.as_deref().and_then(families::low_bit_quant),
     }
 }
 
@@ -278,6 +279,30 @@ mod tests {
         ]);
         assert_eq!(delete_preview(&reg, &idx, "l").unwrap().files.len(), 1);
         assert!(delete_preview(&reg, &idx, "missing").is_none());
+    }
+
+    #[test]
+    fn installed_view_flags_a_4_bit_file() {
+        let reg = registry();
+        let mut zit = model(
+            "zit",
+            "z_image_turbo",
+            ModelKind::Diffusion,
+            "beast_k2t.gguf",
+        );
+        zit.dtype = Some("q4_k".into());
+        let idx = index(vec![zit.clone()]);
+        assert_eq!(
+            installed_model_view(&reg, &idx, &zit, &hw(16.0))
+                .low_bit
+                .as_deref(),
+            Some("Q4")
+        );
+        zit.dtype = Some("f8_e4m3".into());
+        assert_eq!(
+            installed_model_view(&reg, &idx, &zit, &hw(16.0)).low_bit,
+            None
+        );
     }
 
     #[test]

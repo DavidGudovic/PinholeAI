@@ -210,6 +210,9 @@ pub struct InstalledModel {
     pub civitai_model_id: Option<u64>,
     pub civitai_version_id: Option<u64>,
     pub base_model: Option<String>,
+    /// `Q4`, `Q3`… when the file's weights are 4-bit or smaller (from its header).
+    #[serde(default)]
+    pub low_bit: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

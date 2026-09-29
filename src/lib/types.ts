@@ -155,6 +155,8 @@ export interface InstalledModel {
   civitaiModelId: number | null;
   civitaiVersionId: number | null;
   baseModel: string | null;
+  /** "Q4", "Q3"… when the file is 4-bit or smaller (read from its header). */
+  lowBit?: string | null;
 }
 
 export interface InstalledLora {

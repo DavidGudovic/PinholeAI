@@ -234,6 +234,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                     </div>
                     <div className="mt-0.5 text-xs text-neutral-500 lg:hidden">{m.familyLabel ?? "Unknown kind"}</div>
                     {m.licenseNote && <div className="mt-0.5 text-[11px] text-neutral-500">License: {m.licenseNote}</div>}
+                    {m.lowBit && (
+                      <div className="mt-0.5 text-[11px] text-neutral-500">
+                        Compact {m.lowBit} file: pictures can look grainy. An FP8 or Q8 version of this model looks cleaner.
+                      </div>
+                    )}
                     {m.missingComponents.length > 0 && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-800 dark:text-amber-300">
                         <span className="inline-flex items-start gap-1">
