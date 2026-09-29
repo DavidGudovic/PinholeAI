@@ -2600,13 +2600,15 @@ fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> 
 }
 
 /// Wait for a download group; `cancel` cancels the group (its `.part` stays for
-/// a later resume) and returns `cancelled`.
+/// a later resume) and returns `cancelled`. Biased to the wait: a group that
+/// finished just as Cancel came still returns its files, so they get registered.
 async fn wait_download_or_cancel(
     downloads: &pinhole_net::download::DownloadManager,
     group: &str,
     cancel: &CancellationToken,
 ) -> CoreResult<Vec<pinhole_net::download::DownloadedFile>> {
     tokio::select! {
+        biased;
         r = downloads.wait_detailed(group) => r.map_err(|e| CoreError::new(&e.code, e.message)),
         _ = cancel.cancelled() => {
             downloads.cancel(group);
@@ -2729,6 +2731,51 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(state, Some(DownloadState::Cancelled));
+    }
+
+    /// Cancel that comes as the upscaler download finishes still hands back the
+    /// finished files (so they are registered, not downloaded again).
+    #[tokio::test]
+    async fn finished_upscaler_download_wins_over_cancel() {
+        use pinhole_net::download::{DownloadManager, DownloadSpec, DownloadState};
+        use pinhole_net::testutil::{MockResponse, MockServer};
+        let srv = MockServer::start(|_| MockResponse::ok(vec![7u8; 16])).await;
+        let dir = tempfile::tempdir().unwrap();
+        let m = DownloadManager::new(
+            pinhole_net::HttpClient::new_for_tests(pinhole_net::OfflineFlag::new(false), true)
+                .unwrap(),
+        );
+        let group = m.enqueue(
+            "Upscaler".into(),
+            vec![DownloadSpec {
+                url: srv.url("/up.pth"),
+                dest: dir.path().join("up.pth"),
+                label: "Upscaler".into(),
+                ..Default::default()
+            }],
+        );
+        let mut state = None;
+        for _ in 0..500 {
+            state = m
+                .status()
+                .into_iter()
+                .find(|s| s.group_id == group)
+                .map(|s| s.state);
+            if state == Some(DownloadState::Done) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(state, Some(DownloadState::Done));
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        // Both branches are ready; repeat so an unbiased pick would show up.
+        for _ in 0..32 {
+            let files = wait_download_or_cancel(&m, &group, &cancel)
+                .await
+                .expect("finished download is kept");
+            assert_eq!(files.len(), 1);
+        }
     }
 
     #[test]
