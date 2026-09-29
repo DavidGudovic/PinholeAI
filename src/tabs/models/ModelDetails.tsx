@@ -245,6 +245,8 @@ function Header({
   const group = useTaggedGroup(`civitai:${card.versionId}`);
   const downloading = !!group && isActive(group);
   const ratio = ratioPercent(card.thumbsUpRatio);
+  // Opened from Installed: only what the local file knows, so leave out what would read as 0 or "OK" by default.
+  const sparse = card.downloadCount === 0 && card.creator === null;
 
   let action: ReactNode;
   if (card.blockedReason)
@@ -274,7 +276,7 @@ function Header({
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{card.name}</h1>
           <p className="text-sm text-neutral-500">
-            {card.versionName} · {card.baseModel}
+            {[card.versionName, card.baseModel].filter(Boolean).join(" · ")}
             {card.creator ? ` · by ${card.creator}` : ""}
           </p>
         </div>
@@ -284,13 +286,15 @@ function Header({
               <ThumbsUp className="h-4 w-4" /> {ratio}
             </span>
           )}
-          <span className="inline-flex items-center gap-1" title="Downloads">
-            <Download className="h-4 w-4" /> {formatCount(card.downloadCount)}
-          </span>
+          {!sparse && (
+            <span className="inline-flex items-center gap-1" title="Downloads">
+              <Download className="h-4 w-4" /> {formatCount(card.downloadCount)}
+            </span>
+          )}
           {card.downloadBytes != null && <span title="Download size">{formatBytes(card.downloadBytes)}</span>}
           {card.styleBadge && <Badge>{card.styleBadge}</Badge>}
           {isLora && <Badge>Style add-on</Badge>}
-          {card.commercialOk ? <Badge tone="green">OK for client work</Badge> : <Badge>Not for client work</Badge>}
+          {sparse ? null : card.commercialOk ? <Badge tone="green">OK for client work</Badge> : <Badge>Not for client work</Badge>}
         </div>
         {card.vram ? <VramLine vram={card.vram} fit={card.fit} /> : isLora ? <p className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</p> : null}
         {card.licenseNote && <p className="text-xs text-neutral-500">License: {card.licenseNote}</p>}

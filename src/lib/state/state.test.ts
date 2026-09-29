@@ -33,6 +33,7 @@ const lora = (id: string, familyId: string | null, civitaiVersionId: number | nu
   baseModel: null,
   trainedWords: [],
   sizeBytes: 1,
+  civitaiModelId: null,
   civitaiVersionId,
 });
 

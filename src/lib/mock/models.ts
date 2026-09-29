@@ -202,6 +202,7 @@ const seedLoras: LoraRow[] = [
     baseModel: "SDXL 1.0",
     trainedWords: ["film photo", "kodak portra 400"],
     sizeBytes: 228 * MB,
+    civitaiModelId: 991000,
     civitaiVersionId: 991001,
     relPath: "models/loras/film_photography_xl.safetensors",
   },
@@ -212,6 +213,7 @@ const seedLoras: LoraRow[] = [
     baseModel: "SDXL 1.0",
     trainedWords: [],
     sizeBytes: 218 * MB,
+    civitaiModelId: 135867,
     civitaiVersionId: 135867,
     relPath: "models/loras/add-detail-xl.safetensors",
   },
@@ -671,6 +673,7 @@ async function addLocalModel(path: string): Promise<AddFileResult> {
       baseModel: null,
       trainedWords: [],
       sizeBytes: 170 * MB,
+      civitaiModelId: null,
       civitaiVersionId: null,
       relPath: `models/loras/${fileName}`,
     });

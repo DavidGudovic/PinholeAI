@@ -164,6 +164,7 @@ export interface InstalledLora {
   baseModel: string | null;
   trainedWords: string[];
   sizeBytes: number;
+  civitaiModelId: number | null;
   civitaiVersionId: number | null;
 }
 
