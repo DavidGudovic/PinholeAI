@@ -540,7 +540,7 @@ export interface GalleryItem {
 
 export interface ModelGallery {
   items: GalleryItem[];
-  /** Images made for adults, left out because Safe mode is on. */
+  /** Images left out because Safe mode is on (not rated PG, or not flagged safe). */
   hiddenNsfw: number;
   /** LoRA trigger words. */
   trainedWords: string[];

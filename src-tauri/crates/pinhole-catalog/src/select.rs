@@ -249,12 +249,18 @@ pub fn installable_files<'a>(files: &'a [ModelFile], allowed_formats: &[String])
 }
 
 /// The files of a version the user can choose between (Install "Size" choice).
-/// `any_format` = false keeps the usual file's format: a GGUF of an all-in-one
-/// family (SD 1.5, SDXL) holds only the diffusion model, not its VAE and text
-/// encoders, so it can't stand in for the full checkpoint.
+/// `any_format` = false keeps the usual file's format and kind: a GGUF or a
+/// `Diffusion Model` / `UNet` file of an all-in-one family (SD 1.5, SDXL) holds
+/// only the diffusion model, not its VAE and text encoders, so it can't stand in
+/// for the full checkpoint.
 pub fn size_choices<'a>(files: &'a [ModelFile], allowed_formats: &[String], any_format: bool) -> Vec<&'a ModelFile> {
-    let format = select_file(files, allowed_formats).ok().map(file_format);
-    installable(files, allowed_formats).filter(|f| any_format || format.as_deref().is_none_or(|x| file_format(f) == x)).collect()
+    let default = select_file(files, allowed_formats).ok();
+    let format = default.map(file_format);
+    let diffusion_only = default.map(is_diffusion_only);
+    installable(files, allowed_formats)
+        .filter(|f| any_format || format.as_deref().is_none_or(|x| file_format(f) == x))
+        .filter(|f| any_format || diffusion_only.is_none_or(|d| is_diffusion_only(f) == d))
+        .collect()
 }
 
 #[cfg(test)]
@@ -279,6 +285,26 @@ mod tests {
             download_url: format!("https://civitai.com/api/download/models/1?f={name}"),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn unet_only_file_is_no_size_choice_for_a_full_checkpoint() {
+        let full = file("full.safetensors", Some("SafeTensor"), Some("fp32"), Some("full"), true, 13e6);
+        let mut unet = file("unet.safetensors", Some("SafeTensor"), Some("fp16"), Some("pruned"), false, 5e6);
+        unet.kind = "UNet".into();
+        let mut full = full;
+        full.hashes.insert("SHA256".into(), "a".repeat(64));
+        unet.hashes.insert("SHA256".into(), "b".repeat(64));
+        let files = vec![full, unet];
+        let choices: Vec<_> = size_choices(&files, &allowed(), false).into_iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(choices, ["full.safetensors"]);
+        let (pick, smaller) = select_file_for_machine(&files, &allowed(), false, None, |f| {
+            Some(if f.size_bytes() > 8_000_000_000 { Fit::TooBig } else { Fit::Fits })
+        })
+        .unwrap();
+        assert_eq!((pick.name.as_str(), smaller), ("full.safetensors", false));
+        // Split families (any_format) still see every file.
+        assert_eq!(size_choices(&files, &allowed(), true).len(), 2);
     }
 
     #[test]

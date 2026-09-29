@@ -25,13 +25,16 @@ const MAX_PARALLEL = 4;
 let running = 0;
 const waiting: (() => void)[] = [];
 async function limited<T>(job: () => Promise<T>): Promise<T> {
+  // A finishing job hands its slot straight to the next waiter (running stays
+  // the same), so a new call in the same tick can't slip in past the cap.
   if (running >= MAX_PARALLEL) await new Promise<void>((r) => waiting.push(r));
-  running++;
+  else running++;
   try {
     return await job();
   } finally {
-    running--;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next) next();
+    else running--;
   }
 }
 
@@ -202,7 +205,7 @@ export function ModelDetails({
             <p className="text-sm text-neutral-500">Offline mode is on, so Pinhole doesn't contact CivitAI. Turn it off in Settings to see example images.</p>
           ) : gallery.items.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              {gallery.hiddenNsfw > 0 ? "Every example image for this model is made for adults, and Safe mode is on." : "This model has no example images."}
+              {gallery.hiddenNsfw > 0 ? "Safe mode is on and hides every example image for this model." : "This model has no example images."}
             </p>
           ) : (
             <>
