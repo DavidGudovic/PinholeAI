@@ -100,6 +100,17 @@ export function MaskCanvas({
     }
   };
 
+  // Erasing everything leaves nothing painted (else "Only change here" would send an all-black mask).
+  const endStroke = () => {
+    const c = canvas.current;
+    if (!erase || !painted.current || !c) return;
+    const px = c.getContext("2d")?.getImageData(0, 0, c.width, c.height).data;
+    if (!px) return;
+    for (let i = 3; i < px.length; i += 4) if (px[i] !== 0) return;
+    painted.current = false;
+    onPaintedChange(false);
+  };
+
   return (
     <>
       <canvas
@@ -123,10 +134,12 @@ export function MaskCanvas({
           last.current = p;
         }}
         onPointerUp={() => {
+          if (last.current) endStroke();
           last.current = null;
         }}
         onPointerLeave={() => {
           setCursor(null);
+          if (last.current) endStroke();
           last.current = null;
         }}
       />

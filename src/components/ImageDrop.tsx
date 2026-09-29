@@ -39,6 +39,12 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
   useEffect(() => {
     if (!active) return;
     const onPaste = (e: ClipboardEvent) => {
+      // A dialog over the tab owns the paste.
+      if (document.querySelector("[role=dialog]")) return;
+      // Text copied from Word or a browser often carries a picture too: pasting it into a text field stays a text paste.
+      const t = e.target as HTMLElement | null;
+      const editable = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
+      if (editable && Array.from(e.clipboardData?.types ?? []).includes("text/plain")) return;
       const f = imageFromTransfer(e.clipboardData);
       if (!f) return;
       e.preventDefault();

@@ -26,7 +26,7 @@ export function Results() {
   return (
     <section aria-label="Results" className="flex min-h-0 min-w-0 flex-1 flex-col">
       {selected && images[selected.id] ? (
-        <Preview result={selected} img={images[selected.id]} />
+        <Preview key={selected.id} result={selected} img={images[selected.id]} />
       ) : generating ? (
         <div className="flex min-h-0 flex-1 items-center justify-center p-6">
           <div className="pinhole-shimmer aspect-square w-full max-w-md rounded-2xl bg-neutral-200 dark:bg-neutral-900" />

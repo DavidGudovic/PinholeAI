@@ -71,6 +71,8 @@ export function EditTab() {
   const myJob = job?.kind === "edit" ? job : null;
 
   const load = async (f: File) => {
+    // Loading another image mid-edit would attach the result to the wrong history.
+    if (store.getState().job?.kind === "edit") return;
     setError(null);
     setImporting(true);
     try {
@@ -115,6 +117,7 @@ export function EditTab() {
       const t = ev.target as HTMLElement | null;
       if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
       ev.preventDefault();
+      if (store.getState().job?.kind === "edit") return;
       const s = store.getState().edit;
       dispatch({ type: "editGoto", index: s.index + (ev.shiftKey ? 1 : -1) });
     };
@@ -356,10 +359,10 @@ export function EditTab() {
         ) : (
           <>
             <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-              <IconButton label="Undo" disabled={e.index === 0} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
+              <IconButton label="Undo" disabled={e.index === 0 || !!myJob} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
                 <Undo2 className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Redo" disabled={e.index >= e.chain.length - 1} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
+              <IconButton label="Redo" disabled={e.index >= e.chain.length - 1 || !!myJob} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
                 <Redo2 className="h-4 w-4" />
               </IconButton>
               <IconButton label="Delete this edit" disabled={e.index === 0 || !!job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
@@ -373,7 +376,7 @@ export function EditTab() {
                 <Segmented size="sm" ariaLabel="Compare with" value={compareWith} onChange={setCompareWith} options={[{ value: "previous", label: "Previous" }, { value: "original", label: "Original" }]} />
               )}
               <div className="ml-auto flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" onClick={picker.open} title="Edit a different image" aria-label="New image">
+                <Button size="sm" variant="ghost" disabled={!!myJob} onClick={picker.open} title="Edit a different image" aria-label="New image">
                   <ImagePlus className="h-3.5 w-3.5" /> <span className="hidden xl:inline">New image</span>
                 </Button>
                 <Button size="sm" onClick={() => void actions.save(current.id).catch((err) => setError(api.asCoreError(err)))}>
@@ -411,8 +414,9 @@ export function EditTab() {
                       <button
                         type="button"
                         aria-current={i === e.index ? "step" : undefined}
+                        disabled={!!myJob && i !== e.index}
                         onClick={() => dispatch({ type: "editGoto", index: i })}
-                        className={cx("group flex flex-col items-center gap-1 rounded-lg p-1", focusRing, i === e.index ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-neutral-100 dark:hover:bg-neutral-800")}
+                        className={cx("group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50", focusRing, i === e.index ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-neutral-100 dark:hover:bg-neutral-800")}
                       >
                         {img && <img src={img.url} alt="" className={cx("h-14 w-14 rounded-md object-cover ring-2", i === e.index ? "ring-amber-500" : "ring-transparent")} draggable={false} />}
                         <span className={cx("text-[11px]", i === e.index ? "font-medium text-amber-900 dark:text-amber-200" : "text-neutral-500")}>{n.label}</span>

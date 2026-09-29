@@ -88,7 +88,8 @@ export async function applyParsed(
   store.dispatch({
     type: "patchCreate",
     patch: {
-      ...(opts.setPrompt ? { prompt: plan.prompt } : {}),
+      // Settings pasted without a prompt keep the one already typed.
+      ...(opts.setPrompt && plan.prompt.trim() ? { prompt: plan.prompt } : {}),
       modelId,
       presetId: null,
       fineTune: plan.fineTune,

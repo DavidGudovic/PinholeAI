@@ -278,18 +278,31 @@ export function Slider({
   );
 }
 
+/** Open overlays, most recently opened last: Escape closes only that one. */
+const escapeStack: { close: () => void }[] = [];
+
+function onEscapeKey(e: KeyboardEvent) {
+  const top = escapeStack[escapeStack.length - 1];
+  if (e.key !== "Escape" || !top) return;
+  e.stopPropagation();
+  top.close();
+}
+
 function useEscape(open: boolean, onClose: () => void) {
+  const close = useRef(onClose);
+  useEffect(() => {
+    close.current = onClose;
+  });
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
+    const entry = { close: () => close.current() };
+    escapeStack.push(entry);
+    if (escapeStack.length === 1) window.addEventListener("keydown", onEscapeKey);
+    return () => {
+      escapeStack.splice(escapeStack.indexOf(entry), 1);
+      if (!escapeStack.length) window.removeEventListener("keydown", onEscapeKey);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open]);
 }
 
 /** Centered modal. */
