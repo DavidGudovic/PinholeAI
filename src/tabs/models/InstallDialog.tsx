@@ -290,6 +290,7 @@ function SizeChoice({ options, smaller, onPick, disabled }: { options: PlanFileO
               <span className="block text-neutral-800 dark:text-neutral-200">{o.label}</span>
               <span className="block truncate text-[11px] text-neutral-500" title={o.name}>
                 {formatBytes(o.sizeBytes)}
+                {o.note ? ` · ${o.note}` : ""}
               </span>
             </span>
             <VramBadge vram={o.vram} fit={o.fit} compact />

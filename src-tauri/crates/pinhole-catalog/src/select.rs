@@ -299,6 +299,69 @@ pub fn select_file_for_machine<'a>(
     Ok((default, false))
 }
 
+/// [`precision_label`] for each of a version's `files` (Install dialog size
+/// choice), plus whether that file is 4-bit or smaller. A label that names no
+/// format ("Standard", "Compact (GGUF)": CivitAI renames files and often has no
+/// `fp`) is sized against a "Full quality" file of the same version: 16 bits ×
+/// size ÷ that file's size, e.g. 13 of 26 GB → "Compact (8-bit)", 7.2 of 26 GB
+/// → "Compact (4-bit)".
+pub fn size_labels(files: &[&ModelFile]) -> Vec<(String, bool)> {
+    // Reference: a 16-bit, non-"full" (no EMA copy) file. fp32 and "full"
+    // files carry extra weights, so no estimate is made against them.
+    let reference = |f: &&&ModelFile| {
+        matches!(fp_of(f).as_str(), "fp16" | "bf16")
+            && !f
+                .metadata
+                .size
+                .as_deref()
+                .is_some_and(|s| s.trim().eq_ignore_ascii_case("full"))
+    };
+    let full = files
+        .iter()
+        .filter(reference)
+        .map(|f| (f.size_bytes(), is_diffusion_only(f)))
+        .filter(|(b, _)| *b > 0)
+        .max_by_key(|(b, _)| *b);
+    files
+        .iter()
+        .map(|f| {
+            let label = precision_label(f);
+            let named = crate::families::quant_suffix(&f.name)
+                .or_else(|| crate::families::quant_suffix(&fp_of(f)));
+            if let Some(q) = named {
+                let low = crate::families::low_bit_quant(&q.to_ascii_lowercase()).is_some();
+                return (label, low);
+            }
+            if label != "Standard" && label != "Compact (GGUF)" {
+                return (label, false);
+            }
+            let Some((full, full_diffusion_only)) = full else {
+                return (label, false);
+            };
+            if f.size_bytes() == 0 || is_diffusion_only(f) != full_diffusion_only {
+                return (label, false);
+            }
+            let bits = 16.0 * f.size_bytes() as f64 / full as f64;
+            match bits {
+                b if b >= 12.0 => ("Full quality".into(), false),
+                b if b >= 7.0 => ("Compact (8-bit)".into(), false),
+                b if b >= 5.6 => ("Compact (6-bit)".into(), false),
+                b if b >= 4.9 => ("Compact (5-bit)".into(), false),
+                b if b >= 3.6 => ("Compact (4-bit)".into(), true),
+                _ => ("Compact (3-bit or less)".into(), true),
+            }
+        })
+        .collect()
+}
+
+fn fp_of(f: &ModelFile) -> String {
+    f.metadata
+        .fp
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
 /// Plain words for a file's precision / size class (Install dialog choices).
 pub fn precision_label(f: &ModelFile) -> String {
     let fp = f
@@ -330,7 +393,12 @@ pub fn precision_label(f: &ModelFile) -> String {
             }
             None => "Compact (GGUF)".into(),
         },
-        _ => "Standard".into(),
+        // No `fp` from CivitAI: the file name may still say.
+        _ => match crate::families::quant_of_file(&f.name).as_str() {
+            "fp16" | "bf16" | "fp32" => "Full quality".into(),
+            "fp8" => "Compact (FP8)".into(),
+            _ => "Standard".into(),
+        },
     }
 }
 
@@ -865,6 +933,55 @@ mod tests {
             "primary GGUF"
         );
         assert!(pick(777001).unwrap_err().contains("scan"));
+    }
+
+    #[test]
+    fn unnamed_sizes_are_estimated_from_the_full_file() {
+        // The Krea 2 "Dark Beast" install dialog: formats CivitAI didn't name.
+        let full = file(
+            "k_full.safetensors",
+            Some("SafeTensor"),
+            Some("bf16"),
+            None,
+            true,
+            26e6,
+        );
+        let int8 = file(
+            "k_int8.safetensors",
+            Some("SafeTensor"),
+            Some("int8"),
+            None,
+            false,
+            13e6,
+        );
+        let plain = file(
+            "k_plain.safetensors",
+            Some("SafeTensor"),
+            None,
+            None,
+            false,
+            13e6,
+        );
+        let gguf = file("k_k2t.gguf", Some("GGUF"), None, None, false, 7.2e6);
+        let q5 = file("k-Q5_K_S.gguf", Some("GGUF"), None, None, false, 9e6);
+        let q4 = file("k-Q4_K_M.gguf", Some("GGUF"), None, None, false, 7.5e6);
+        let got = size_labels(&[&full, &int8, &plain, &gguf, &q5, &q4]);
+        let want = [
+            ("Full quality", false),
+            ("Compact (INT8)", false),
+            ("Compact (8-bit)", false),
+            ("Compact (4-bit)", true),
+            ("Compact (Q5)", false),
+            ("Compact (Q4)", true),
+        ];
+        for (g, w) in got.iter().zip(want) {
+            assert_eq!((g.0.as_str(), g.1), w);
+        }
+        // No full-precision file to compare with: the plain label stays.
+        assert_eq!(
+            size_labels(&[&gguf, &plain])[0],
+            ("Compact (GGUF)".to_string(), false)
+        );
     }
 
     #[test]
