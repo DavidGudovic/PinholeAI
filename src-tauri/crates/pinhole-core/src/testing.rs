@@ -580,6 +580,13 @@ mod tests {
             .any(|w| w[0] == "--backend" && w[1].split(',').any(|p| p == "te=cpu"))
     }
 
+    /// The `--max-vram` budget a launch asked for.
+    fn max_vram(args: &[String]) -> Option<&str> {
+        args.windows(2)
+            .rfind(|w| w[0] == "--max-vram")
+            .map(|w| w[1].as_str())
+    }
+
     #[tokio::test]
     async fn text_encoder_out_of_memory_retries_on_the_processor_and_is_remembered() {
         let (_tmp, core, rec) = gpu_core();
@@ -673,8 +680,9 @@ mod tests {
         use_external_engine(&core, &always.base_url());
         let model = register_fake_model(&core, "z_image_turbo");
 
-        // Off: the text encoder stays on the card; the one retry keeps the
-        // weights in system memory, then the message says where to change it.
+        // Off: the text encoder stays on the card; the retries keep more of
+        // the card free, then the weights in system memory, then the message
+        // says where to change it.
         core.settings.write().text_encoder_on_cpu = "off".into();
         let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL))
             .await
@@ -682,9 +690,13 @@ mod tests {
         assert_eq!(err.code, "vram");
         assert_eq!(err.message, generate::TE_ON_GPU_MESSAGE);
         let launches = core.gen.external_launches.lock().clone();
-        assert_eq!(launches.len(), 2, "{launches:?}");
+        assert_eq!(launches.len(), 3, "{launches:?}");
         assert!(
-            !te_on_cpu(&launches[1]) && launches[1].iter().any(|a| a == "--offload-to-cpu"),
+            launches.iter().all(|a| !te_on_cpu(a))
+                && max_vram(&launches[0]) == Some("-2")
+                && max_vram(&launches[1]) == Some("-4")
+                && !launches[1].iter().any(|a| a == "--offload-to-cpu")
+                && launches[2].iter().any(|a| a == "--offload-to-cpu"),
             "{launches:?}"
         );
         let details = err.details.unwrap_or_default();
@@ -704,7 +716,7 @@ mod tests {
         assert_eq!(err.message, generate::RAM_MESSAGE);
         assert_eq!(
             core.gen.external_launches.lock().len(),
-            3,
+            4,
             "one launch, no retry"
         );
     }
@@ -756,16 +768,25 @@ mod tests {
             "Your graphics card ran out of memory. Other programs are using 9 GB of your graphics memory: python.exe (8.9 GB). Close them and try again, or pick the smaller version of this model in Models."
         );
         assert_ne!(err.message, generate::UNKNOWN_JOB_MESSAGE);
-        // Denoising ran out: one retry with the weights in system memory
-        // (VAE tiling wouldn't help that step).
+        // Denoising ran out: one retry with more of the card kept free, one
+        // with the weights in system memory (VAE tiling wouldn't help that step).
         let launches = core.gen.external_launches.lock().clone();
-        assert_eq!(launches.len(), 2);
+        assert_eq!(launches.len(), 3);
         let has = |a: &[String], f: &str| a.iter().any(|x| x == f);
+        assert_eq!(
+            launches.iter().map(|a| max_vram(a)).collect::<Vec<_>>(),
+            [Some("-2"), Some("-4"), Some("-4")]
+        );
         assert!(
-            !has(&launches[0], "--offload-to-cpu") && has(&launches[1], "--offload-to-cpu"),
+            !has(&launches[0], "--offload-to-cpu")
+                && !has(&launches[1], "--offload-to-cpu")
+                && has(&launches[2], "--offload-to-cpu"),
             "{launches:?}"
         );
-        assert!(!has(&launches[1], "--vae-tiling"), "{launches:?}");
+        assert!(
+            launches.iter().all(|a| !has(a, "--vae-tiling")),
+            "{launches:?}"
+        );
 
         // A failure that isn't about memory keeps the generic message.
         let (_tmp2, core2, _) = gpu_core();
@@ -809,7 +830,7 @@ mod tests {
              [ERROR  ] image.cpp:904  - sampling for image 1/1 failed after 2.10s";
         let mock = MockSdServer::start_with(MockOptions {
             polls_before_done: 0,
-            fail_outputs: vec![te_oom, diffusion_oom.into()],
+            fail_outputs: vec![te_oom, diffusion_oom.into(), diffusion_oom.into()],
             engine_log: Some(engine_log(&core)),
             ..Default::default()
         })
@@ -824,13 +845,21 @@ mod tests {
         .await
         .expect("recovered");
         assert_eq!(res.images.len(), 1);
-        assert_eq!(mock.requests().len(), 3);
+        assert_eq!(mock.requests().len(), 4);
         let launches = core.gen.external_launches.lock().clone();
-        assert_eq!(launches.len(), 3, "{launches:?}");
+        assert_eq!(launches.len(), 4, "{launches:?}");
         let offloaded = |a: &[String]| a.iter().any(|x| x == "--offload-to-cpu");
         assert!(!te_on_cpu(&launches[0]) && !offloaded(&launches[0]));
         assert!(te_on_cpu(&launches[1]) && !offloaded(&launches[1]));
-        assert!(te_on_cpu(&launches[2]) && offloaded(&launches[2]));
+        assert!(te_on_cpu(&launches[2]) && !offloaded(&launches[2]));
+        assert_eq!(max_vram(&launches[1]), Some("-2"));
+        assert_eq!(
+            max_vram(&launches[2]),
+            Some("-4"),
+            "more of the card kept free"
+        );
+        assert!(te_on_cpu(&launches[3]) && offloaded(&launches[3]));
+        assert_eq!(max_vram(&launches[3]), Some("-4"));
 
         // Each retry shows its own note while the engine reloads (the later one replaces the earlier).
         let loading_notes: Vec<String> = rec
@@ -846,11 +875,18 @@ mod tests {
             .iter()
             .position(|n| n == generate::TE_RETRY_NOTE)
             .expect("text encoder retry note");
+        let room_note = loading_notes
+            .iter()
+            .position(|n| n == generate::MORE_ROOM_RETRY_NOTE)
+            .expect("more room retry note");
         let offload_note = loading_notes
             .iter()
             .position(|n| n == generate::OFFLOAD_RETRY_NOTE)
             .expect("offload retry note");
-        assert!(te_note < offload_note, "{loading_notes:?}");
+        assert!(
+            te_note < room_note && room_note < offload_note,
+            "{loading_notes:?}"
+        );
         // The text encoder choice is kept for the session; system memory only
         // while that engine stays loaded (and the engine status says so).
         let next = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
@@ -1108,7 +1144,12 @@ mod tests {
                              [ERROR  ] image.cpp:904  - sampling for image 1/1 failed after 0.40s";
         let mock = MockSdServer::start_with(MockOptions {
             polls_before_done: 0,
-            fail_outputs: vec![te_oom, diffusion_oom.into(), diffusion_oom.into()],
+            fail_outputs: vec![
+                te_oom,
+                diffusion_oom.into(),
+                diffusion_oom.into(),
+                diffusion_oom.into(),
+            ],
             engine_log: Some(engine_log(&core)),
             ..Default::default()
         })
@@ -1128,8 +1169,8 @@ mod tests {
         );
         assert_eq!(
             mock.requests().len(),
-            3,
-            "text encoder retry + system memory retry, then stop"
+            4,
+            "text encoder, more room and system memory retries, then stop"
         );
         let details = err.details.unwrap_or_default();
         assert!(

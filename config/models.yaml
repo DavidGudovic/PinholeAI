@@ -1126,10 +1126,13 @@ captioner:
 # resident on the GPU as fits. `--offload-to-cpu` prepends `*=cpu` to
 # --params-backend (common.cpp prepare_backend_assignments), which DISABLES
 # auto-fit (diffusion_engine.cpp: auto_fit_enabled = auto_fit && params_backend
-# empty) and forces every weight into RAM — worse on low-RAM PCs. `--max-vram`
-# only lowers auto-fit's budget; the default (free VRAM − 512 MiB) is fine.
-# Pinhole adds --offload-to-cpu only as an out-of-memory retry, when every weight fits in RAM
-# (generate.rs next_memory_fallback): then the card caches weights and gives them up for work.
+# empty) and forces every weight into RAM — worse on low-RAM PCs.
+# `--max-vram`: Pinhole passes `-2` on 12 GB+ cards (keep 2 GiB free; auto-fit's own
+# default, free VRAM − 512 MiB, ran out on Windows/CUDA when a model only just fit), `-1` on
+# 8–12 GB, and a bigger reserve as an out-of-memory retry (generate.rs vram_reserves). A
+# --max-vram here wins over both.
+# Pinhole adds --offload-to-cpu only as a later out-of-memory retry, when every weight fits in RAM
+# (generate.rs next_memory_fallback).
 # VAE tiling stays for small cards: decode retries with tiles on OOM by itself,
 # but img2img/edit *encoding* does not (docs/performance.md).
 hardware_profiles:
