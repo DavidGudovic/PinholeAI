@@ -8,7 +8,7 @@
 //! PRIVACY: nothing here sees prompt text. Pasted resources carry ids/hashes
 //! and model names only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
@@ -38,6 +38,9 @@ pub struct ModelsState {
     pending: Mutex<HashMap<String, PendingAdd>>,
     /// Files currently queued or downloading: key (`url:<url>` / `component:<id>`) → group id.
     inflight: Mutex<HashMap<String, String>>,
+    /// Destination paths of files queued or downloading (until registered), so
+    /// two installs never pick the same file name.
+    inflight_dests: Mutex<HashSet<PathBuf>>,
     /// CivitAI API key cache: `None` = not read yet. Never written anywhere.
     pub(crate) api_key: Mutex<Option<Option<String>>>,
     /// `catalog-filters.yaml`, loaded once.
@@ -410,11 +413,14 @@ pub(crate) async fn start_install(
 
         let mut specs = Vec::new();
         let mut planned: Vec<(PathBuf, String, Registration)> = Vec::new();
+        let mut dests = core.models.inflight_dests.lock();
         for (f, civitai) in items {
             let dir = models_dir_for_write(core, f.kind)?;
-            // Never overwrite a registered file (or one planned in this group).
+            // Never overwrite a registered file, one planned in this group or one
+            // another running install is downloading to.
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
+                    || dests.contains(p)
                     || (p.exists() && core.data.relative(p).is_some_and(|rel| index.files.iter().any(|x| x.rel_path == rel)))
             });
             let headers: Vec<(String, String)> =
@@ -444,8 +450,9 @@ pub(crate) async fn start_install(
             planned.push((dest, inflight_key(&f), reg));
         }
         let group_id = core.downloads.enqueue_kind(label, pinhole_net::download::DownloadKind::Model, specs);
-        for (_, key, _) in &planned {
+        for (dest, key, _) in &planned {
             inflight.insert(key.clone(), group_id.clone());
+            dests.insert(dest.clone());
         }
         (group_id, planned)
     };
@@ -463,6 +470,7 @@ pub(crate) async fn start_install(
             }
         }
         // Failures are reported through the group's `download-progress` status.
+        let planned_dests: Vec<PathBuf> = planned.iter().map(|(d, _, _)| d.clone()).collect();
         if let Ok(files) = result {
             let same_len = files.len() == planned.len();
             for (i, (dest, _, reg)) in planned.into_iter().enumerate() {
@@ -477,6 +485,11 @@ pub(crate) async fn start_install(
                     let _ = register_download(&task_core, &file, reg);
                 }
             }
+        }
+        // Only now (registered, or failed) may another install pick these names.
+        let mut dests = task_core.models.inflight_dests.lock();
+        for d in &planned_dests {
+            dests.remove(d);
         }
     });
     Ok(InstallStarted { group_id })
@@ -1070,6 +1083,44 @@ mod tests {
         let _ = core.downloads.wait(&started.group_id).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(core.installed.lock().files.is_empty());
+    }
+
+    fn lora_file(url: &str, name: &str) -> FileToGet {
+        FileToGet {
+            url: url.into(),
+            file_name: name.into(),
+            sha256: None,
+            size_bytes: 1,
+            kind: ModelKind::Lora,
+            friendly_name: name.into(),
+            family: None,
+            component_id: None,
+            dtype: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn queued_installs_with_the_same_file_name_get_different_paths() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true); // downloads fail fast, nothing leaves the machine
+        let a = lora_file("https://civitai.com/api/download/models/1", "style.safetensors");
+        let b = lora_file("https://civitai.com/api/download/models/2", "style.safetensors");
+        let ga = start_install(&core, "A".into(), vec![(a, None)], None).await.unwrap();
+        let gb = start_install(&core, "B".into(), vec![(b, None)], None).await.unwrap();
+        assert_ne!(ga.group_id, gb.group_id);
+        let dir = core.data.models(ModelKind::Lora);
+        let dests = core.models.inflight_dests.lock().clone();
+        assert_eq!(dests, HashSet::from([dir.join("style.safetensors"), dir.join("style-2.safetensors")]));
+        // Once the groups end (offline: failed), the names are free again.
+        let _ = core.downloads.wait(&ga.group_id).await;
+        let _ = core.downloads.wait(&gb.group_id).await;
+        for _ in 0..50 {
+            if core.models.inflight_dests.lock().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(core.models.inflight_dests.lock().is_empty());
     }
 
     #[tokio::test]
