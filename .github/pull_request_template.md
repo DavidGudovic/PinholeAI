@@ -5,9 +5,9 @@
 <!-- Which docs/SPEC.md sections this touches. If it deviates from the spec, update SPEC.md in this PR and say why. -->
 
 ## Test plan
-<!-- Commands run locally (cargo test --workspace, npm test, npm run build, node scripts/privacy-lint.mjs),
-     new/updated tests, and whether the full CI tier was run (Actions → CI → Run workflow, "full") for
-     engine / generation / packaging changes. -->
+<!-- `scripts/check.sh` result (required before merging; Actions no longer run on push), new/updated
+     tests, and whether a manual full CI run (Actions → CI → Run workflow, "full") was done for
+     Windows-specific / engine / packaging changes. -->
 
 ## Screenshots
 <!-- Required for UI changes (light + dark). Safe for work, fictional subjects. -->

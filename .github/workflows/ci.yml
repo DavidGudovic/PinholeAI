@@ -1,20 +1,12 @@
-# Pinhole CI, tiered to keep Actions minutes low (private repo; Windows minutes bill 2x):
-#   every push ............. frontend + privacy lint, Rust tests on Linux        (~4 min)
-#   branch push touching Windows-specific code, the workflows, or with "[windows]"
-#                            in a commit message: + Rust tests on Windows
-#   push to main ........... + Rust tests on Windows, engine smoke (Linux +
-#                              Windows), real-app e2e                           (~40 billed min)
-#   Run workflow (manual) .. choose "full" checks and/or "installers"
-#   installers ............. only on demand here, via Actions → Bundle, or a release
-# Docs-only changes don't run CI at all.
+# Pinhole CI: manual only (Actions → CI → Run workflow). Pushes and PRs no longer run anything,
+# so Actions minutes aren't needed to merge: the required pre-merge check is `scripts/check.sh`
+# (see CLAUDE.md). Use this workflow for what can't run locally:
+#   full ......... Windows tests, engine smoke (Linux + Windows), real-app e2e
+#   installers ... also build the installers (Windows NSIS + portable zip, Linux AppImage + deb)
+# Without "full" it runs the fast tier only (frontend + privacy lint, Rust tests on Linux).
 name: CI
 
 on:
-  push:
-    branches: ["**"]
-    paths-ignore: ["**.md", "docs/**", "assets/**", "LICENSE", "THIRD_PARTY_LICENSES"]
-  # No pull_request trigger: every branch push is already tested, and a PR's head commit
-  # carries those results. Having both ran every check twice on each PR push.
   workflow_dispatch:
     inputs:
       full:
