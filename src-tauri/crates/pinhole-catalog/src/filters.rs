@@ -78,6 +78,8 @@ pub struct BrowseQuery {
     pub period: String,
     pub commercial_only: bool,
     pub compatible_only: bool,
+    /// "Runs on my card": hide models that are Too big for this machine (SPEC §5.4).
+    pub runs_on_my_card: bool,
     pub query: String,
     pub cursor: Option<String>,
 }
@@ -94,6 +96,7 @@ impl Default for BrowseQuery {
             period: "AllTime".into(),
             commercial_only: false,
             compatible_only: true,
+            runs_on_my_card: false,
             query: String::new(),
             cursor: None,
         }
@@ -252,6 +255,8 @@ pub enum Hidden {
     Content,
     /// Kind, Look, commercial use, price, compatibility or archived.
     Other,
+    /// "Runs on my card": too big for this graphics card / computer.
+    TooBig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

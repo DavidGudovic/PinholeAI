@@ -79,6 +79,7 @@ describe("toBrowseQuery", () => {
       period: "AllTime",
       commercialOnly: false,
       compatibleOnly: true,
+      runsOnMyCard: false,
       query: "pixel art",
       cursor: "abc",
     });
@@ -101,14 +102,21 @@ describe("filtersKey / changedFilterCount", () => {
   it("changes when a filter changes", () => {
     expect(filtersKey({ ...base, commercialOnly: true })).not.toBe(filtersKey(base));
     expect(filtersKey({ ...base, tags: ["edit"] })).not.toBe(filtersKey(base));
+    expect(filtersKey({ ...base, runsOnMyCard: true })).not.toBe(filtersKey(base));
   });
   it("ignores the order tags were picked in", () => {
     expect(filtersKey({ ...base, tags: ["edit", "animals"] })).toBe(filtersKey({ ...base, tags: ["animals", "edit"] }));
+  });
+  it("sends “Runs on my card” for models only", () => {
+    expect(toBrowseQuery({ ...base, runsOnMyCard: true }).runsOnMyCard).toBe(true);
+    expect(toBrowseQuery({ ...base, kind: "styleAddons", runsOnMyCard: true }).runsOnMyCard).toBe(false);
   });
   it("counts changed filters", () => {
     expect(changedFilterCount(base, base)).toBe(0);
     expect(changedFilterCount({ ...base, look: "anime", query: "x", compatibleOnly: false }, base)).toBe(3);
     expect(changedFilterCount({ ...base, tags: ["edit", "animals"] }, base)).toBe(1);
+    expect(changedFilterCount({ ...base, runsOnMyCard: true }, base)).toBe(1);
+    expect(changedFilterCount({ ...base, kind: "styleAddons", runsOnMyCard: true }, { ...base, kind: "styleAddons" })).toBe(0);
   });
 });
 
@@ -151,9 +159,15 @@ describe("mergePage", () => {
 });
 
 describe("totals and the line above the grid", () => {
-  const page = (checked: number, hiddenByContent: number, hiddenByFilters: number) => ({ checked, hiddenByContent, hiddenByFilters });
+  const page = (checked: number, hiddenByContent: number, hiddenByFilters: number, hiddenBySize = 0) => ({ checked, hiddenByContent, hiddenByFilters, hiddenBySize });
   it("adds page counts", () => {
-    expect(addTotals(addTotals(NO_TOTALS, page(50, 20, 6)), page(50, 10, 4))).toEqual({ checked: 100, hiddenByContent: 30, hiddenByFilters: 10 });
+    expect(addTotals(addTotals(NO_TOTALS, page(50, 20, 6, 2)), page(50, 10, 4))).toEqual({ checked: 100, hiddenByContent: 30, hiddenByFilters: 10, hiddenBySize: 2 });
+  });
+  it("says how many “Runs on my card” hid, for models only", () => {
+    expect(resultsSummary({ kind: "models", content: "all", compatibleOnly: false, runsOnMyCard: true }, 5, page(50, 0, 0, 7)).hints).toEqual([
+      "“Runs on my card” hid 7 too big for your graphics card.",
+    ]);
+    expect(resultsSummary({ kind: "models", content: "all", compatibleOnly: false, runsOnMyCard: false }, 5, page(50, 0, 0, 7)).hints).toEqual([]);
   });
   it("says why models are missing and what to change", () => {
     const s = resultsSummary({ kind: "models", content: "safe", compatibleOnly: true }, 24, page(50, 20, 6));

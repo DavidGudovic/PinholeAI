@@ -321,6 +321,9 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             />
           </FilterGroup>
           <Toggle checked={filters.compatibleOnly} onChange={(v) => update({ compatibleOnly: v })} label={<span className="text-sm">Works with Pinhole</span>} />
+          {filters.kind === "models" && (
+            <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm">Runs on my card</span>} />
+          )}
           {changed > 0 && (
             <button type="button" onClick={clearFilters} className="ml-auto inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100">
               <X className="h-3.5 w-3.5" /> Clear filters

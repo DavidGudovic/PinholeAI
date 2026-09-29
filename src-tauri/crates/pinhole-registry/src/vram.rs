@@ -84,32 +84,48 @@ fn ceil_tenth(v: f32) -> f32 {
     ((v * 10.0 - 1e-4).ceil() / 10.0).max(0.0)
 }
 
-/// Estimate for unknown files: weights + GPU-resident components + `activation_gb`.
+/// Compute memory for reading the prompt (text encoder activations and the
+/// engine's graph for them), on top of the encoder weights.
+pub const TEXT_ENCODER_COMPUTE_GB: f32 = 1.0;
+
+/// Estimate for unknown files, from the two stages of a generation.
 ///
 /// ```text
-/// gb     = main + components_on_gpu + activation_gb + 0.5          (everything resident)
-/// min_gb = MIN_RESIDENT_SHARE·main + activation_gb + 0.5           (auto-fit streams the rest)
+/// diffusion stage = main + other_components + activation_gb + 0.5
+/// prompt stage    = text_encoders + TEXT_ENCODER_COMPUTE_GB + 0.5
+/// gb              = max(diffusion stage, prompt stage)
+/// min_gb          = MIN_RESIDENT_SHARE·main + activation_gb + 0.5   (auto-fit streams the rest)
 /// ```
-/// * `main` = diffusion / checkpoint file size, `components_on_gpu` = VAE and
-///   text encoders that stay on the GPU (see [`crate::wiring::gpu_resident_components`]);
+/// * `main` = diffusion / checkpoint file size;
+/// * `other_components` = GPU-resident components that are not text encoders
+///   (the VAE), `text_encoders` = GPU text encoders (see
+///   [`crate::wiring::gpu_resident_components`]);
 /// * `activation_gb` = the family's compute buffers at its default resolution;
-/// * 0.5 GB = the engine's device scratch reserve;
-/// * at the minimum, text encoders / VAE are parked in RAM and staged on
-///   demand (sd.cpp auto-fit), and at least half of the main weights must stay
-///   resident — streaming more than that is "will not run acceptably".
+/// * 0.5 GB = the engine's device scratch reserve.
+///
+/// Text encoders are not added to the diffusion stage: they run once per
+/// image, before sampling. sd-server's auto-fit (on by default, pinned engine
+/// docs/backend.md "Automatic placement") keeps the diffusion weights on the
+/// GPU first and parks the text encoders in RAM when they don't fit next to
+/// them, releasing their GPU copy after the prompt is read; Pinhole moves them
+/// to the processor if reading the prompt still runs out of memory
+/// (`--backend te=cpu`, docs/ARCHITECTURE.md). Adding them made every Qwen
+/// model read ~8 GB too big.
 ///
 /// Both values are rounded up to 0.1 GB and `min_gb ≤ gb`.
 pub fn estimate(
     registry: &Registry,
     family: &Family,
     main_file_bytes: u64,
-    component_bytes_on_gpu: u64,
+    other_component_bytes: u64,
+    text_encoder_bytes: u64,
 ) -> VramNeed {
     let _ = registry;
     let main = gib(main_file_bytes);
-    let comps = gib(component_bytes_on_gpu);
     let act = family.activation_gb.max(0.0);
-    let gb = ceil_tenth(main + comps + act + ENGINE_RESERVE_GB);
+    let diffusion = main + gib(other_component_bytes) + act + ENGINE_RESERVE_GB;
+    let prompt = if text_encoder_bytes > 0 { gib(text_encoder_bytes) + TEXT_ENCODER_COMPUTE_GB + ENGINE_RESERVE_GB } else { 0.0 };
+    let gb = ceil_tenth(diffusion.max(prompt));
     let min_gb = ceil_tenth(MIN_RESIDENT_SHARE * main + act + ENGINE_RESERVE_GB).min(gb);
     VramNeed {
         gb,

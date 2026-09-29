@@ -236,7 +236,7 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
             let items = files.into_iter().map(|f| (f, None)).collect();
             start_install(core, label, items, None).await
         }
-        PickAction::Civitai { version_id, family_id } => crate::catalog::install_civitai(core, version_id, Some(family_id)).await,
+        PickAction::Civitai { version_id, family_id } => crate::catalog::install_civitai(core, version_id, Some(family_id), None).await,
         PickAction::Captioner => crate::describe::install_captioner(core).await,
         PickAction::Nothing => Err(CoreError::internal("Nothing to install.")),
     }
@@ -921,7 +921,8 @@ mod tests {
         // Tiny sizes so the free-disk check passes on small CI disks.
         let yaml = std::fs::read_to_string(core.shipped.config_dir.join("models.yaml"))
             .unwrap()
-            .replace("size_mb: 6577", "size_mb: 1")
+            // 8 GB → Z-Image Q4_K (the Q8 is Tight there, Q4 closer to fitting).
+            .replace("size_mb: 3864", "size_mb: 1")
             .replace("size_mb: 335", "size_mb: 1")
             // 8 GB → the Qwen3-4B Q4_K_M GGUF text encoder (bf16 only from 20 GB).
             .replace("size_mb: 2497", "size_mb: 1");
