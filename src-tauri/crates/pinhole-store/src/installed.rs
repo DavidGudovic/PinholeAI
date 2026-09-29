@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::datadir::ModelKind;
+use crate::datadir::{normalize_rel, ModelKind};
 use crate::{write_atomic, DataDir, StoreError};
 
 /// Current `installed.json` schema version.
@@ -62,25 +62,61 @@ pub struct InstalledFile {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InstalledIndex {
+    /// Version of the file as loaded (a newer Pinhole may have written it).
     pub schema_version: u32,
     pub files: Vec<InstalledFile>,
+    /// Entries this version can't read (e.g. written by a newer Pinhole on the
+    /// other OS sharing the Models folder). Kept as they are and saved back.
+    #[serde(skip)]
+    pub unknown: Vec<serde_json::Value>,
 }
 
 /// Borrowed view used for saving (always writes the current schema version).
 #[derive(Serialize)]
 struct IndexOut<'a> {
     schema_version: u32,
-    files: &'a [InstalledFile],
+    files: Vec<FileOut<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FileOut<'a> {
+    Known(&'a InstalledFile),
+    Unknown(&'a serde_json::Value),
 }
 
 impl InstalledIndex {
     /// Empty index at the current schema version.
     pub fn new() -> Self {
-        Self { schema_version: SCHEMA_VERSION, files: Vec::new() }
+        Self { schema_version: SCHEMA_VERSION, files: Vec::new(), unknown: Vec::new() }
+    }
+
+    /// Is `rel_path` used by an entry (readable or not)?
+    /// Paths are compared as [`DataDir::resolve_rel`] reads them (backslashes,
+    /// `.` and empty parts don't matter).
+    pub fn has_rel_path(&self, rel_path: &str) -> bool {
+        let want = normalize_rel(rel_path);
+        self.rel_paths().any(|p| normalize_rel(p) == want)
+    }
+
+    /// Does an entry this version can't read use `rel_path` (compared as
+    /// [`DataDir::resolve_rel`] reads it)?
+    pub fn unknown_uses(&self, rel_path: &str) -> bool {
+        let want = normalize_rel(rel_path);
+        self.unknown.iter().filter_map(unknown_rel_path).any(|p| normalize_rel(p) == want)
+    }
+
+    /// Paths of every entry, including the ones this version can't read.
+    pub fn rel_paths(&self) -> impl Iterator<Item = &str> {
+        self.files
+            .iter()
+            .map(|f| f.rel_path.as_str())
+            .chain(self.unknown.iter().filter_map(unknown_rel_path))
     }
 
     /// Load `installed.json`. Missing → empty index. Entries that can't be read
-    /// are skipped. If the whole file is damaged it is kept aside as
+    /// are kept as they are (in `unknown`) and saved back; a file from a newer
+    /// schema can't be saved. If the whole file is damaged it is kept aside as
     /// `installed.json.corrupt-<timestamp>` and an empty index is returned, so
     /// the app still starts (the model files themselves stay on disk and can be
     /// re-added with "Add a file I already have").
@@ -88,23 +124,30 @@ impl InstalledIndex {
         Self::load_from(&dir.installed_file())
     }
 
-    /// [`InstalledIndex::load`] from an explicit index file.
+    /// [`InstalledIndex::load`] from an explicit index file. A damaged file is
+    /// kept aside as `<file name>.corrupt-<timestamp>`.
     pub fn load_from(path: &Path) -> Result<Self, StoreError> {
-        let path = path.to_path_buf();
-        let bytes = match std::fs::read(&path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::new()),
-            Err(e) => return Err(e.into()),
-        };
-        match parse_lenient(&bytes) {
+        match Self::read_from(path)? {
             Some(index) => Ok(index),
             None => {
                 let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
-                let backup = path.with_file_name(format!("installed.json.corrupt-{stamp}"));
-                let _ = std::fs::rename(&path, &backup);
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "installed.json".into());
+                let backup = path.with_file_name(format!("{name}.corrupt-{stamp}"));
+                let _ = std::fs::rename(path, &backup);
                 Ok(Self::new())
             }
         }
+    }
+
+    /// Read an index file without changing anything on disk (previews).
+    /// Missing → empty index; damaged → `None`.
+    pub fn read_from(path: &Path) -> Result<Option<Self>, StoreError> {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Some(Self::new())),
+            Err(e) => return Err(e.into()),
+        };
+        Ok(parse_lenient(&bytes))
     }
 
     /// Atomic, pretty-printed JSON at schema version 1.
@@ -115,16 +158,48 @@ impl InstalledIndex {
     /// Save to an explicit index file (moving the Models folder). Never creates
     /// a missing user-picked Models folder (an unmounted drive).
     pub fn save_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
+        self.check_savable_to(dir, path)?;
+        let files = self.files.iter().map(FileOut::Known).chain(self.unknown.iter().map(FileOut::Unknown)).collect();
+        let out = IndexOut { schema_version: SCHEMA_VERSION, files };
+        let mut json = serde_json::to_vec_pretty(&out)
+            .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
+        json.push(b'\n');
+        write_atomic(path, &json)
+    }
+
+    /// Would [`InstalledIndex::save`] be refused (newer schema, Models folder
+    /// not mounted)? Check before changing files on disk.
+    pub fn check_savable(&self, dir: &DataDir) -> Result<(), StoreError> {
+        self.check_savable_to(dir, &dir.installed_file())
+    }
+
+    fn check_savable_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
         if dir.models_home.as_ref().is_some_and(|home| path.starts_with(home) && !home.is_dir()) {
             return Err(StoreError::Invalid(
                 "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
             ));
         }
-        let out = IndexOut { schema_version: SCHEMA_VERSION, files: &self.files };
-        let mut json = serde_json::to_vec_pretty(&out)
-            .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
-        json.push(b'\n');
-        write_atomic(path, &json)
+        if self.is_newer() {
+            return Err(StoreError::Invalid(
+                "Your models list was saved by a newer version of Pinhole. Update Pinhole to add, move or delete models.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Written by a newer Pinhole (a schema this version can't save).
+    pub fn is_newer(&self) -> bool {
+        self.schema_version > SCHEMA_VERSION
+    }
+
+    /// Drop the unreadable entries at `rel_path` (the file there was replaced)
+    /// and return them (to put back if saving fails).
+    pub fn remove_unknown_at(&mut self, rel_path: &str) -> Vec<serde_json::Value> {
+        let want = normalize_rel(rel_path);
+        let (gone, keep) =
+            std::mem::take(&mut self.unknown).into_iter().partition(|v| unknown_rel_path(v).is_some_and(|p| normalize_rel(p) == want));
+        self.unknown = keep;
+        gone
     }
 
     pub fn get(&self, id: &str) -> Option<&InstalledFile> {
@@ -166,18 +241,29 @@ impl InstalledIndex {
     }
 }
 
+/// `relPath` of an entry this version can't read, if it has one.
+pub fn unknown_rel_path(entry: &serde_json::Value) -> Option<&str> {
+    entry.get("relPath").and_then(|p| p.as_str())
+}
+
 fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let obj = value.as_object()?;
-    let files = match obj.get("files") {
-        None | Some(serde_json::Value::Null) => Vec::new(),
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .filter_map(|item| serde_json::from_value::<InstalledFile>(item.clone()).ok())
-            .collect(),
+    let (mut files, mut unknown) = (Vec::new(), Vec::new());
+    match obj.get("files") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::Array(items)) => {
+            for item in items {
+                match serde_json::from_value::<InstalledFile>(item.clone()) {
+                    Ok(f) => files.push(f),
+                    Err(_) => unknown.push(item.clone()),
+                }
+            }
+        }
         Some(_) => return None,
-    };
-    Some(InstalledIndex { schema_version: SCHEMA_VERSION, files })
+    }
+    let version = obj.get("schema_version").and_then(|v| v.as_u64()).map_or(SCHEMA_VERSION, |v| u32::try_from(v).unwrap_or(u32::MAX));
+    Some(InstalledIndex { schema_version: version.max(SCHEMA_VERSION), files, unknown })
 }
 
 #[cfg(test)]
@@ -304,6 +390,42 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_entries_survive_a_save() {
+        let (_t, d) = data();
+        std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
+        let good = serde_json::to_value(file("a", "models/checkpoints/a", ModelKind::Checkpoint)).unwrap();
+        // E.g. a kind a newer Pinhole on the other OS knows about.
+        let newer = serde_json::json!({"id": "k", "relPath": "models/video/k.safetensors", "kind": "video"});
+        let json = serde_json::json!({ "schema_version": 1, "files": [good, newer.clone()] });
+        std::fs::write(d.installed_file(), serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let mut idx = InstalledIndex::load(&d).unwrap();
+        assert_eq!(idx.files.len(), 1);
+        assert!(idx.has_rel_path("models/video/k.safetensors"), "its path counts as taken");
+        idx.upsert(file("b", "models/loras/b", ModelKind::Lora));
+        idx.save(&d).unwrap();
+        let text: serde_json::Value = serde_json::from_slice(&std::fs::read(d.installed_file()).unwrap()).unwrap();
+        let files = text["files"].as_array().unwrap();
+        assert_eq!(files.len(), 3);
+        assert!(files.contains(&newer), "{files:?}");
+        assert_eq!(InstalledIndex::load(&d).unwrap().files.len(), 2);
+    }
+
+    #[test]
+    fn a_newer_schema_is_not_overwritten() {
+        let (_t, d) = data();
+        std::fs::create_dir_all(d.installed_file().parent().unwrap()).unwrap();
+        let json = serde_json::json!({ "schema_version": SCHEMA_VERSION + 1, "files": [] });
+        let bytes = serde_json::to_vec(&json).unwrap();
+        std::fs::write(d.installed_file(), &bytes).unwrap();
+        let mut idx = InstalledIndex::load(&d).unwrap();
+        idx.upsert(file("a", "models/checkpoints/a", ModelKind::Checkpoint));
+        let e = idx.save(&d).unwrap_err();
+        assert!(e.to_string().contains("newer version of Pinhole"), "{e}");
+        assert_eq!(std::fs::read(d.installed_file()).unwrap(), bytes);
+    }
+
+    #[test]
     fn corrupt_file_is_kept_aside() {
         let (_t, d) = data();
         let dir = d.installed_file().parent().unwrap().to_path_buf();
@@ -318,5 +440,22 @@ mod tests {
             .filter(|n| n.starts_with("installed.json.corrupt-"))
             .collect();
         assert_eq!(backups.len(), 1);
+    }
+
+    #[test]
+    fn read_from_changes_nothing_and_backups_keep_the_file_name() {
+        let (_t, d) = data();
+        let dir = d.installed_file().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        let shared = dir.join("pinhole-models.json");
+        std::fs::write(&shared, b"{ damaged").unwrap();
+        assert!(InstalledIndex::read_from(&shared).unwrap().is_none());
+        assert!(shared.exists(), "a preview read leaves the file alone");
+        assert!(InstalledIndex::read_from(&dir.join("absent.json")).unwrap().unwrap().files.is_empty());
+
+        assert!(InstalledIndex::load_from(&shared).unwrap().files.is_empty());
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.iter().any(|n| n.starts_with("pinhole-models.json.corrupt-")), "{names:?}");
+        assert!(!names.iter().any(|n| n.starts_with("installed.json")), "{names:?}");
     }
 }
