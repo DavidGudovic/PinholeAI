@@ -68,8 +68,25 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
     Ok(())
 }
 
+/// WebKitGTK's DMA-BUF renderer is slow and glitchy with NVIDIA's proprietary driver
+/// (laggy scrolling, gray boxes over images). The widely used fix is to switch it off
+/// before GTK starts. Only for that driver, and never over the user's own setting.
+fn webkit_env_fixes(nvidia_driver: bool, user_set: bool) -> Option<(&'static str, &'static str)> {
+    (cfg!(target_os = "linux") && nvidia_driver && !user_set).then_some(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"))
+}
+
+fn apply_webkit_env_fixes() {
+    let nvidia = std::path::Path::new("/proc/driver/nvidia/version").exists();
+    let user_set = std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some();
+    if let Some((key, value)) = webkit_env_fixes(nvidia, user_set) {
+        // Runs first thing in `run`, before any other thread exists.
+        std::env::set_var(key, value);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    apply_webkit_env_fixes();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -101,4 +118,17 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::webkit_env_fixes;
+
+    #[test]
+    fn dmabuf_renderer_off_only_for_nvidia_on_linux_unless_user_set() {
+        let fix = Some(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
+        assert_eq!(webkit_env_fixes(true, false), if cfg!(target_os = "linux") { fix } else { None });
+        assert_eq!(webkit_env_fixes(true, true), None);
+        assert_eq!(webkit_env_fixes(false, false), None);
+    }
 }
