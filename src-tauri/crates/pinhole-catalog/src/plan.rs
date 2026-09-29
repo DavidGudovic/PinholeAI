@@ -94,8 +94,9 @@ const STREAM_RAM_SHARE: f64 = 0.75;
 /// system need the rest, so it is Too big (a 26 GB Krea 2 bf16 file showed
 /// Tight on a 16 GB card with 32 GB RAM).
 fn ram_check(hw: &HwContext, need_gb: f32, bytes: u64, fit: Fit) -> Fit {
-    let file_gb = bytes as f64 / 1e9;
+    let file_gb = bytes as f64 / (1u64 << 30) as f64; // GiB, like ram_gb and need_gb
     if fit == Fit::Tight
+        && !hw.cpu_only()
         && need_gb > hw.vram_gb
         && hw.ram_gb > 0.0
         && file_gb > f64::from(hw.ram_gb) * STREAM_RAM_SHARE
@@ -114,7 +115,7 @@ fn size_note(low_bit: bool, nf: Option<&(VramNeed, Fit)>, hw: &HwContext) -> Opt
         parts.push("Pictures can look grainy");
     }
     if let Some((need, fit)) = nf {
-        if *fit == Fit::Tight && need.gb > hw.vram_gb {
+        if *fit == Fit::Tight && !hw.cpu_only() && !need.on_cpu && need.gb > hw.vram_gb {
             parts.push("Slower: part of it runs from system memory");
         }
     }
@@ -468,6 +469,20 @@ mod tests {
             Some("Pictures can look grainy. Slower: part of it runs from system memory")
         );
         assert_eq!(size_note(false, Some(&(need(11.0), Fit::Fits)), &pc), None);
+        // Flux dev fp8 (11.9e9 bytes = 11.1 GiB) with 15.6 GiB RAM stays Tight.
+        let small = HwContext {
+            ram_gb: 15.6,
+            ..hw(12.0)
+        };
+        assert_eq!(
+            ram_check(&small, 14.0, 11_900_000_000, Fit::Tight),
+            Fit::Tight
+        );
+        // No GPU: the whole model runs on the processor, no system-memory note.
+        assert_eq!(
+            size_note(false, Some(&(need(12.0), Fit::Tight)), &hw(0.0)),
+            None
+        );
     }
 
     fn jugg() -> (ModelVersion, Model) {

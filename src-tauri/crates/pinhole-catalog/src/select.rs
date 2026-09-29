@@ -306,18 +306,28 @@ pub fn select_file_for_machine<'a>(
 /// size ÷ that file's size, e.g. 13 of 26 GB → "Compact (8-bit)", 7.2 of 26 GB
 /// → "Compact (4-bit)".
 pub fn size_labels(files: &[&ModelFile]) -> Vec<(String, bool)> {
+    // Reference: a 16-bit, non-"full" (no EMA copy) file. fp32 and "full"
+    // files carry extra weights, so no estimate is made against them.
+    let reference = |f: &&&ModelFile| {
+        matches!(fp_of(f).as_str(), "fp16" | "bf16")
+            && !f
+                .metadata
+                .size
+                .as_deref()
+                .is_some_and(|s| s.trim().eq_ignore_ascii_case("full"))
+    };
     let full = files
         .iter()
-        .filter(|f| precision_label(f) == "Full quality")
-        .map(|f| f.size_bytes())
-        .max()
-        .filter(|b| *b > 0);
+        .filter(reference)
+        .map(|f| (f.size_bytes(), is_diffusion_only(f)))
+        .filter(|(b, _)| *b > 0)
+        .max_by_key(|(b, _)| *b);
     files
         .iter()
         .map(|f| {
             let label = precision_label(f);
             let named = crate::families::quant_suffix(&f.name)
-                .or_else(|| crate::families::quant_suffix(f.metadata.fp.as_deref().unwrap_or("")));
+                .or_else(|| crate::families::quant_suffix(&fp_of(f)));
             if let Some(q) = named {
                 let low = crate::families::low_bit_quant(&q.to_ascii_lowercase()).is_some();
                 return (label, low);
@@ -325,9 +335,12 @@ pub fn size_labels(files: &[&ModelFile]) -> Vec<(String, bool)> {
             if label != "Standard" && label != "Compact (GGUF)" {
                 return (label, false);
             }
-            let Some(full) = full else {
+            let Some((full, full_diffusion_only)) = full else {
                 return (label, false);
             };
+            if f.size_bytes() == 0 || is_diffusion_only(f) != full_diffusion_only {
+                return (label, false);
+            }
             let bits = 16.0 * f.size_bytes() as f64 / full as f64;
             match bits {
                 b if b >= 12.0 => ("Full quality".into(), false),
@@ -339,6 +352,14 @@ pub fn size_labels(files: &[&ModelFile]) -> Vec<(String, bool)> {
             }
         })
         .collect()
+}
+
+fn fp_of(f: &ModelFile) -> String {
+    f.metadata
+        .fp
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// Plain words for a file's precision / size class (Install dialog choices).
@@ -372,7 +393,12 @@ pub fn precision_label(f: &ModelFile) -> String {
             }
             None => "Compact (GGUF)".into(),
         },
-        _ => "Standard".into(),
+        // No `fp` from CivitAI: the file name may still say.
+        _ => match crate::families::quant_of_file(&f.name).as_str() {
+            "fp16" | "bf16" | "fp32" => "Full quality".into(),
+            "fp8" => "Compact (FP8)".into(),
+            _ => "Standard".into(),
+        },
     }
 }
 
