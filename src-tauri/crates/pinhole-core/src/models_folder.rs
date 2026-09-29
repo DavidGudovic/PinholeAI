@@ -140,7 +140,7 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
     if core.downloads.status().iter().any(|g| !g.state.is_finished()) {
         return Err(CoreError::invalid("Wait for your downloads to finish (or cancel them), then change the Models folder."));
     }
-    if core.gen.active.lock().is_some() || core.describe.busy.load(std::sync::atomic::Ordering::SeqCst) {
+    if core.gen.active.lock().is_some() || core.describe.is_busy() {
         return Err(CoreError::invalid("Wait for the current pictures to finish, then change the Models folder."));
     }
     let _folder = core

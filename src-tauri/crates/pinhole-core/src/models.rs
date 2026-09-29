@@ -276,7 +276,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
         return Err(CoreError::not_found("That helper isn't installed any more."));
     }
     if helper_id == DESCRIBE_HELPER_ID {
-        if core.describe.busy.load(std::sync::atomic::Ordering::SeqCst) {
+        if core.describe.is_busy() {
             return Err(CoreError::invalid("Wait for the picture description to finish, then delete the Describe model."));
         }
         crate::describe::shutdown(core).await;
