@@ -542,7 +542,11 @@ impl CatalogFilters {
             }
         }
         if let Some(c) = cursor.map(str::trim).filter(|c| !c.is_empty()) {
-            push("cursor", c);
+            // A text search is paged by number (see `ModelsPage::next_cursor`).
+            match c.strip_prefix(crate::api::PAGE_CURSOR_PREFIX) {
+                Some(n) => push("page", n),
+                None => push("cursor", c),
+            }
         }
         p
     }
@@ -721,7 +725,7 @@ pub(crate) mod tests {
         assert!(get(&p, "query").is_empty());
         assert!(get(&p, "cursor").is_empty());
         assert!(get(&p, "allowCommercialUse").is_empty());
-        assert!(get(&p, "page").is_empty(), "never page-based paging");
+        assert!(get(&p, "page").is_empty(), "browsing pages by cursor; only text searches use `page`");
     }
 
     #[test]
@@ -767,6 +771,9 @@ pub(crate) mod tests {
         q.query = "  neon cat  ".into();
         assert_eq!(get(&f.query_params(&q, &bases, Some("2|17")), "query"), ["neon cat"]);
         assert_eq!(get(&f.query_params(&q, &bases, Some("2|17")), "cursor"), ["2|17"]);
+        let p = f.query_params(&q, &bases, Some("page:3"));
+        assert_eq!(get(&p, "page"), ["3"], "search results are paged by number");
+        assert!(get(&p, "cursor").is_empty());
     }
 
     #[test]
