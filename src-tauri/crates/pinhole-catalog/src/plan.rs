@@ -236,7 +236,7 @@ pub fn build_plan(
             .as_deref()
             .and_then(|id| env.registry.family(id))
         {
-            for rc in families::wanted_components(env.registry, fam, env.hw, true) {
+            for rc in families::wanted_components(env.registry, fam, env.hw, env.index, true) {
                 if let Some(c) = env.registry.component(&rc.component_id) {
                     components.push(PlanComponent {
                         component_id: rc.component_id.clone(),
@@ -589,6 +589,26 @@ mod tests {
         let inst = civitai_install_files(&env, &v, Some(&m), Some("sdxl"), None).unwrap();
         assert!(inst.main_installed);
         assert!(inst.files.is_empty());
+    }
+
+    #[test]
+    fn installed_text_encoder_of_another_quant_is_reused() {
+        // Regression: a family whose pick for this VRAM (Q8 at 16 GB) is missing
+        // but another quant of the same encoder is installed must not download it.
+        let reg = registry();
+        let h = hw(16.0);
+        let idx = index(vec![
+            component(&reg, "flux_ae"),
+            component(&reg, "qwen3_4b"),
+        ]);
+        let fam = reg.family("z_image_turbo").unwrap();
+        let ids: Vec<String> = families::wanted_components(&reg, fam, &h, &idx, true)
+            .into_iter()
+            .map(|c| c.component_id)
+            .collect();
+        assert!(ids.contains(&"qwen3_4b".to_string()), "{ids:?}");
+        assert!(!ids.contains(&"qwen3_4b_q8".to_string()), "{ids:?}");
+        assert!(families::missing_components(&reg, fam, &h, &idx, false).is_empty());
     }
 
     #[test]
