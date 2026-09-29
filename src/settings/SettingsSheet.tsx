@@ -22,6 +22,7 @@ import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
 import { emitSettingsChanged } from "./events";
+import { ModelsFolderSection } from "./ModelsFolderSection";
 import { UpdateSection } from "./UpdateSection";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
@@ -237,6 +238,10 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         <Button size="sm" onClick={() => void openDataFolder().catch((e) => setError(asCoreError(e)))}>
           <FolderOpen className="h-4 w-4" /> Open Data folder
         </Button>
+      </Section>
+
+      <Section title="Models folder">
+        <ModelsFolderSection />
       </Section>
 
       <Section title="Graphics card">

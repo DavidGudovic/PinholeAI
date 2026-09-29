@@ -1791,7 +1791,7 @@ async fn ensure_upscaler(core: &Arc<AppCore>) -> CoreResult<String> {
         .cloned()
         .ok_or_else(|| CoreError::not_found("The upscaler isn't in Pinhole's model list. Update Pinhole."))?;
     let dest = core.data.models(ModelKind::Upscaler).join(&comp.file);
-    std::fs::create_dir_all(core.data.models(ModelKind::Upscaler))?;
+    crate::models::models_dir_for_write(core, ModelKind::Upscaler)?;
     let sha = comp.sha256.trim().to_ascii_lowercase();
     let spec = pinhole_net::download::DownloadSpec {
         url: comp.url.clone(),

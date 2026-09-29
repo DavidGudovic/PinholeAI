@@ -63,10 +63,12 @@ pub fn get_settings(core: &AppCore) -> Settings {
 /// Offline flag takes effect immediately for every network call; GPU / VRAM /
 /// backend overrides are read live by [`hw_context`]. Returns what was stored.
 pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> {
-    let settings = settings.normalized();
+    let mut settings = settings.normalized();
     // Hold the write lock across save + apply so concurrent calls can't leave
     // memory and settings.yaml disagreeing.
     let mut current = core.settings.write();
+    // The Models folder only changes by moving the models (models_folder.rs).
+    settings.models_folder = current.models_folder.clone();
     pinhole_store::settings::save(&core.data, &settings).map_err(crate::library::store_err)?;
     core.offline.set(settings.offline);
     *current = settings.clone();

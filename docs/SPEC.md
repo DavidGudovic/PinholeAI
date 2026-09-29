@@ -116,6 +116,20 @@ Data/
 **Forbidden in Data/**: prompts, negative prompts, generation history, thumbnails of
 unsaved images, logs.
 
+**Models folder (optional).** Settings → **Models folder** lets the user keep `models/` somewhere
+else, e.g. a partition shared by Windows and Linux on a dual-boot PC, so both installs use one set
+of files. The picked folder holds the model sub-folders directly (`checkpoints/`, `vae/`, …) plus
+its own index `pinhole-models.json` (same format as `installed.json`; paths stay
+`models/<sub>/<file>`, so they read the same wherever the folder is mounted). Engines, settings,
+presets and styles stay in each install's `Data/`. Changing the folder moves every installed model
+(rename on the same drive; otherwise copy, check SHA-256, then remove the original; any failure
+puts everything back), merges with models already there (same SHA-256 → not copied twice), then
+restarts Pinhole. It is refused while downloads or generation run. A picked folder that is missing
+(drive not mounted) is never created; installs and downloads say so instead. A read-only folder
+(e.g. NTFS mounted read-only after Windows Fast Startup) and FAT32 (no files over 4 GB) get plain
+error messages. The folder is not locked: two Pinhole installs running **at the same time** on one
+folder can overwrite each other's index (dual boot never does that).
+
 ---
 
 ## 4. Privacy rules (hard requirements — tests must enforce them)
@@ -324,7 +338,8 @@ grid where it was):
 
 #### Installed
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
-after confirmation), and **Add a file I already have** (pick a .safetensors/.gguf in the file
+after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
+Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file
 chooser → detected). Dropping files onto the window is not supported: the native drop handler
 is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
@@ -467,6 +482,8 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 
 - Offline mode
 - Data folder location (portable / installed) + Open folder
+- Models folder: where models live (default `Data/models`), **Change…** / **Use the Data folder
+  again** (moves the models, then restarts; see §3) + Open
 - GPU override (auto / pick device / force CPU) and a VRAM tier override
 - Engine backend (auto / CUDA / Vulkan / CPU) and **Read the prompt on the processor**
   (Automatic / On / Off; shown with a graphics card) — Automatic keeps the text encoder on the

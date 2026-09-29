@@ -13,6 +13,11 @@ export function sendGenerationToCreate(text: string): void {
   else pending = text;
 }
 
+/** Reset: forget text that Create hasn't taken yet. */
+export function clearGenerationHandoff(): void {
+  pending = null;
+}
+
 /** Create tab: receive handed-over text. Returns an unsubscribe function. */
 export function onGenerationHandoff(cb: Listener): () => void {
   listener = cb;
