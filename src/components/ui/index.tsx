@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type Ref,
+  type RefObject,
   type TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
@@ -25,7 +27,7 @@ export const focusRing =
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 const variants: Record<Variant, string> = {
-  primary: "bg-amber-500 text-neutral-950 shadow-sm hover:bg-amber-400 active:bg-amber-500 disabled:bg-amber-500/50",
+  primary: "bg-amber-500 text-neutral-950 shadow-sm hover:bg-amber-400 active:bg-amber-500",
   secondary:
     "border border-neutral-200 bg-white text-neutral-800 shadow-xs hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700",
   ghost: "text-neutral-700 hover:bg-neutral-200/70 dark:text-neutral-300 dark:hover:bg-neutral-800",
@@ -306,6 +308,25 @@ function useEscape(open: boolean, onClose: () => void) {
   }, [open]);
 }
 
+/**
+ * Modal focus: on open, remember the focused element and move focus into the
+ * panel (the first match of `first`, else the panel itself); on close, put it back.
+ */
+function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, first?: string) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.activeElement as HTMLElement | null;
+    const t = setTimeout(() => {
+      const el = first ? panel.current?.querySelector<HTMLElement>(first) : null;
+      (el ?? panel.current)?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      prev?.focus?.();
+    };
+  }, [open, panel, first]);
+}
+
 /** Centered modal. */
 export function Dialog({
   open,
@@ -326,19 +347,9 @@ export function Dialog({
 }) {
   useEscape(open, onClose);
   const panel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const prev = document.activeElement as HTMLElement | null;
-    // Focus the first field (or the panel) for keyboard users.
-    const t = setTimeout(() => {
-      const el = panel.current?.querySelector<HTMLElement>("[data-autofocus], textarea, input:not([type=hidden]), select");
-      (el ?? panel.current)?.focus();
-    }, 0);
-    return () => {
-      clearTimeout(t);
-      prev?.focus?.();
-    };
-  }, [open]);
+  const titleId = useId();
+  // Focus the first field (or the panel) for keyboard users.
+  useModalFocus(open, panel, "[data-autofocus], textarea, input:not([type=hidden]), select");
   if (!open) return null;
   return createPortal(
     <div className="pinhole-fade fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/50 p-4 backdrop-blur-[2px]" onMouseDown={onClose}>
@@ -346,6 +357,7 @@ export function Dialog({
         ref={panel}
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
         tabIndex={-1}
         className={cx(
           "pinhole-pop flex max-h-[90vh] w-full flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl outline-none dark:border-neutral-800 dark:bg-neutral-900",
@@ -355,7 +367,9 @@ export function Dialog({
       >
         <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3">
           <div className="min-w-0">
-            <div className="text-base font-semibold">{title}</div>
+            <div id={titleId} className="text-base font-semibold">
+              {title}
+            </div>
             {description && <div className="mt-0.5 text-sm text-neutral-500">{description}</div>}
           </div>
           <IconButton label="Close" size="sm" onClick={onClose} className="-mr-1.5">
@@ -377,17 +391,26 @@ export function Dialog({
 /** Right-side panel (Settings, Fine-tune on narrow screens). */
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: ReactNode; children: ReactNode }) {
   useEscape(open, onClose);
+  const panel = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Focus the panel itself (not the first field), so Settings doesn't jump into an input.
+  useModalFocus(open, panel);
   if (!open) return null;
   return createPortal(
     <div className="pinhole-fade fixed inset-0 z-40 flex justify-end bg-neutral-950/40" onMouseDown={onClose}>
       <div
+        ref={panel}
         role="dialog"
         aria-modal="true"
-        className="pinhole-slide h-full w-full max-w-md overflow-auto border-l border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-900"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="pinhole-slide h-full w-full max-w-md overflow-auto border-l border-neutral-200 bg-white shadow-2xl outline-none dark:border-neutral-800 dark:bg-neutral-900"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-neutral-200 bg-white/95 px-5 py-3 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95">
-          <span className="text-base font-semibold">{title}</span>
+          <span id={titleId} className="text-base font-semibold">
+            {title}
+          </span>
           <IconButton label="Close" size="sm" onClick={onClose}>
             <X className="h-4 w-4" />
           </IconButton>
@@ -609,11 +632,38 @@ export function Popover({
       setStyle(s);
     };
     place();
+    // Follow the trigger when a scroll container (e.g. the sidebar) scrolls; the
+    // capture phase catches scrolls of any ancestor. The menu's own scroll is ignored.
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && panel.current?.contains(e.target)) return;
+      place();
+    };
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [open, width, align]);
 
   useEscape(open, close);
+  // Keyboard: move focus into the menu on open (the selected item, else the first
+  // control), and back to the trigger on close, unless the user clicked elsewhere.
+  useEffect(() => {
+    if (!open) return;
+    const el = panel.current;
+    const t = setTimeout(() => {
+      const target =
+        el?.querySelector<HTMLElement>('[aria-current="true"]:not(:disabled)') ??
+        el?.querySelector<HTMLElement>("input:not([type=hidden]), textarea, [role=menuitem]:not(:disabled), button:not(:disabled)");
+      (target ?? el)?.focus();
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      const active = document.activeElement;
+      if (!active || active === document.body || el?.contains(active)) anchor.current?.focus();
+    };
+  }, [open]);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
@@ -640,8 +690,9 @@ export function Popover({
           <div
             ref={panel}
             style={style}
+            tabIndex={-1}
             className={cx(
-              "pinhole-pop overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900",
+              "pinhole-pop overflow-auto outline-none rounded-xl border border-neutral-200 bg-white p-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900",
               className,
             )}
           >
