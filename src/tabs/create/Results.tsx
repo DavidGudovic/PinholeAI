@@ -1,7 +1,7 @@
 // Results: big preview of the selected image, its actions and settings summary,
 // and a strip of every image made this session (in memory until Save).
 import { memo, useState } from "react";
-import { ChevronDown, Copy, FolderOpen, ImageUp, Save, ScanText, Shuffle, Trash, WandSparkles } from "lucide-react";
+import { ChevronDown, Copy, ImageUp, Save, ScanText, Shuffle, Trash, WandSparkles } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { Logo } from "../../components/Logo";
 import { Button, IconButton, Kbd, MenuItem, Popover, cx, focusRing } from "../../components/ui";
@@ -17,11 +17,12 @@ export function Results() {
   const results = useAppState((s) => s.results);
   const selectedId = useAppState((s) => s.selectedResultId);
   const images = useAppState((s) => s.images);
-  const job = useAppState((s) => s.job);
-  const count = useAppState((s) => s.create.count);
+  // Only the job's kind and image count: progress ticks must not re-render the results.
+  const jobKind = useAppState((s) => s.job?.kind ?? null);
+  const jobCount = useAppState((s) => s.job?.count ?? 1);
   const selected = results.find((r) => r.id === selectedId) ?? null;
-  const generating = job?.kind === "create" || job?.kind === "upscale";
-  const pending = generating ? (job?.kind === "upscale" ? 1 : count) : 0;
+  const generating = jobKind === "create" || jobKind === "upscale";
+  const pending = generating ? jobCount : 0;
 
   return (
     <section aria-label="Results" className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -56,13 +57,17 @@ function EmptyResults() {
   );
 }
 
+/** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
+const UPSCALE_MAX_SIDE = 8192;
+
 function Preview({ result, img }: { result: ResultImage; img: ImgRef }) {
   const actions = useActions();
-  const job = useAppState((s) => s.job);
+  const busy = useAppState((s) => !!s.job);
   const hasBatch = useAppState((s) => !!s.resultBatch[result.id]);
   const [error, setError] = useState<CoreError | null>(null);
-  const [saved, setSaved] = useState<Record<string, string>>({});
-  const busy = !!job;
+  const [saving, setSaving] = useState(false);
+  // The upscaler always runs at 4× first (2× is 4× halved), up to 8192 px per side.
+  const tooBigToUpscale = result.width * 4 > UPSCALE_MAX_SIDE || result.height * 4 > UPSCALE_MAX_SIDE;
 
   const run = async (f: () => Promise<unknown>) => {
     setError(null);
@@ -89,12 +94,13 @@ function Preview({ result, img }: { result: ResultImage; img: ImgRef }) {
           <Button
             variant="secondary"
             className={cx(canSaveAs() && "rounded-r-none")}
-            onClick={() =>
-              void run(async () => {
-                const s = await actions.save(result.id);
-                setSaved((m) => ({ ...m, [result.id]: s.path }));
-              })
-            }
+            disabled={saving}
+            onClick={() => {
+              // The toast from actions.save confirms it; a double-click must not write two files.
+              if (saving) return;
+              setSaving(true);
+              void run(() => actions.save(result.id)).finally(() => setSaving(false));
+            }}
           >
             <Save className="h-4 w-4" /> Save
           </Button>
@@ -143,7 +149,8 @@ function Preview({ result, img }: { result: ResultImage; img: ImgRef }) {
               {([2, 4] as const).map((f) => (
                 <MenuItem
                   key={f}
-                  hint={`${result.width * f}×${result.height * f}`}
+                  disabled={tooBigToUpscale}
+                  hint={tooBigToUpscale ? `Too large to upscale (max ${UPSCALE_MAX_SIDE / 4} px per side)` : `${result.width * f}×${result.height * f}`}
                   onClick={() => {
                     close();
                     void run(() => actions.upscale(result.id, f));
@@ -164,14 +171,6 @@ function Preview({ result, img }: { result: ResultImage; img: ImgRef }) {
       </div>
 
       <p className="text-center text-xs text-neutral-500 tabular-nums">{settingsSummary(result)}</p>
-      {saved[result.id] && (
-        <p className="flex items-center justify-center gap-2 text-xs text-emerald-700 dark:text-emerald-400">
-          Saved to <span className="max-w-md truncate font-mono">{saved[result.id]}</span>
-          <button type="button" onClick={() => void api.openOutputsFolder()} className={cx("inline-flex items-center gap-1 rounded font-medium underline-offset-2 hover:underline", focusRing)}>
-            <FolderOpen className="h-3.5 w-3.5" /> Show folder
-          </button>
-        </p>
-      )}
       {error && (
         <div className="mx-auto w-full max-w-xl">
           <ErrorWithFix error={error} onDismiss={() => setError(null)} />
@@ -209,7 +208,7 @@ const Strip = memo(function Strip({
               type="button"
               role="option"
               aria-selected={active}
-              aria-label={`Image ${r.width}×${r.height}, seed ${r.seed}`}
+              aria-label={`Image ${r.width}×${r.height}, seed ${r.seed}${r.parentId ? ", upscaled" : ""}`}
               onClick={() => dispatch({ type: "selectResult", id: r.id })}
               className={cx(
                 "relative h-18 w-18 shrink-0 overflow-hidden rounded-lg ring-2 transition-all",
@@ -218,7 +217,11 @@ const Strip = memo(function Strip({
               )}
             >
               <img src={img.url} alt="" className="h-full w-full object-cover" draggable={false} />
-              {r.parentId && <span className="absolute right-1 bottom-1 rounded bg-black/60 px-1 text-[9px] font-medium text-white">UP</span>}
+              {r.parentId && (
+                <span className="absolute right-1 bottom-1 rounded bg-black/60 p-0.5 text-white" title="Upscaled" aria-hidden>
+                  <ImageUp className="h-3 w-3" />
+                </span>
+              )}
             </button>
           );
         })}
