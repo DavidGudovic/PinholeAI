@@ -160,8 +160,11 @@ pub fn register_download(core: &AppCore, file: &DownloadedFile, reg: Registratio
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
+        // An unreadable entry at this path described the file that was there.
+        let replaced = index.remove_unknown_at(&entry.rel_path);
         if let Err(e) = index.save(&core.data) {
             index.files = before;
+            index.unknown.extend(replaced);
             return Err(e.into());
         }
         entry
@@ -275,8 +278,13 @@ pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
 /// open is stopped first (Windows can't delete an open file).
 pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
-    if helper_files(&snapshot(core), helper_id).is_empty() {
-        return Err(CoreError::not_found("That helper isn't installed any more."));
+    {
+        let index = core.installed.lock();
+        if helper_files(&index, helper_id).is_empty() {
+            return Err(CoreError::not_found("That helper isn't installed any more."));
+        }
+        // Files are deleted before the index is saved: make sure it can be.
+        index.check_savable(&core.data)?;
     }
     if helper_id == DESCRIBE_HELPER_ID {
         if core.describe.busy.load(std::sync::atomic::Ordering::SeqCst) {
@@ -293,6 +301,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     {
         let mut index = core.installed.lock();
         let ids: Vec<String> = helper_files(&index, helper_id).into_iter().map(|f| f.id.clone()).collect();
+        index.check_savable(&core.data)?;
         failed = remove_entries(core, &mut index, &ids);
         index.save(&core.data)?;
     }
@@ -402,7 +411,6 @@ pub(crate) async fn start_install(
     items: Vec<(FileToGet, Option<CivitaiRef>)>,
     api_key: Option<String>,
 ) -> CoreResult<InstallStarted> {
-    let index = snapshot(core);
     let (group_id, planned) = {
         let mut inflight = core.models.inflight.lock();
         if let Some((main, _)) = items.iter().find(|(f, _)| f.component_id.is_none()) {
@@ -422,14 +430,20 @@ pub(crate) async fn start_install(
         let mut specs = Vec::new();
         let mut planned: Vec<(PathBuf, String, Registration)> = Vec::new();
         let mut dests = core.models.inflight_dests.lock();
+        // Read the index while holding `dests`: a finishing install registers its
+        // file before releasing its name, so every name is in one or the other.
+        let index = snapshot(core);
         for (f, civitai) in items {
             let dir = models_dir_for_write(core, f.kind)?;
             // Never overwrite a registered file, one planned in this group or one
-            // another running install is downloading to.
+            // another running install is downloading to. A file with no pinned
+            // hash also skips names with a leftover `.part`: nothing could tell
+            // that it resumed someone else's bytes.
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
                     || dests.contains(p)
                     || (p.exists() && core.data.relative(p).is_some_and(|rel| index.has_rel_path(&rel)))
+                    || (f.sha256.is_none() && local::part_path(p).exists())
             });
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url).into_iter().collect();
@@ -705,6 +719,8 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     let paths: Vec<PathBuf> = {
         let index = core.installed.lock();
         let ids = delete_ids(&registry, &index, model_id)?;
+        // Files are deleted before the index is saved: make sure it can be.
+        index.check_savable(&core.data)?;
         ids.iter().filter_map(|id| index.get(id)).map(|f| index.abs_path(&core.data, f)).collect()
     };
     crate::generate::unload_model(core, model_id, &paths).await;
@@ -712,6 +728,7 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     {
         let mut index = core.installed.lock();
         let ids = delete_ids(&registry, &index, model_id)?;
+        index.check_savable(&core.data)?;
         failed = remove_entries(core, &mut index, &ids);
         index.save(&core.data)?;
     }
@@ -743,7 +760,8 @@ fn remove_entries(core: &AppCore, index: &mut pinhole_store::InstalledIndex, ids
     let mut failed = Vec::new();
     for id in ids {
         let Some(f) = index.get(id).cloned() else { continue };
-        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && o.rel_path == f.rel_path);
+        let shared = index.files.iter().any(|o| o.id != f.id && !ids.contains(&o.id) && o.rel_path == f.rel_path)
+            || index.unknown.iter().any(|v| pinhole_store::installed::unknown_rel_path(v) == Some(f.rel_path.as_str()));
         if inventory::is_safe_rel_path(&f.rel_path) && !shared {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
@@ -1002,6 +1020,35 @@ mod tests {
         assert_eq!(std::fs::read(&p).unwrap(), b"theirs", "and so does its file");
     }
 
+    #[tokio::test]
+    async fn delete_keeps_files_when_the_index_cant_be_saved_or_is_shared() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let dir = core.data.models(ModelKind::Checkpoint);
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.safetensors");
+        std::fs::write(&p, b"model").unwrap();
+        let reg = Registration { kind: ModelKind::Checkpoint, friendly_name: "a".into(), family: Some("sd15".into()), component_id: None, civitai: None, dtype: None };
+        let a = register_download(&core, &DownloadedFile { path: p.clone(), sha256: "ab".repeat(32), size_bytes: 5 }, reg).unwrap();
+
+        // Index from a newer Pinhole: refused before any file is touched.
+        core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION + 1;
+        let e = delete_model(&core, &a.id).await.unwrap_err();
+        assert!(e.message.contains("newer version"), "{}", e.message);
+        assert!(p.exists() && core.installed.lock().get(&a.id).is_some());
+        core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION;
+
+        // An entry this version can't read uses the same file: the file stays.
+        core.installed.lock().unknown.push(serde_json::json!({ "relPath": a.rel_path, "kind": "future" }));
+        delete_model(&core, &a.id).await.unwrap();
+        assert!(core.installed.lock().get(&a.id).is_none());
+        assert!(p.exists());
+
+        // Registering a new file at that path replaces the unreadable entry.
+        let reg = Registration { kind: ModelKind::Checkpoint, friendly_name: "b".into(), family: Some("sd15".into()), component_id: None, civitai: None, dtype: None };
+        register_download(&core, &DownloadedFile { path: p.clone(), sha256: "cd".repeat(32), size_bytes: 5 }, reg).unwrap();
+        assert!(core.installed.lock().unknown.is_empty());
+    }
+
     #[test]
     fn downloaded_model_files_must_parse() {
         let (tmp, _core) = test_core(Arc::new(Recorder::default()));
@@ -1162,6 +1209,25 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(core.models.inflight_dests.lock().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unpinned_installs_skip_names_with_a_leftover_part() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        let dir = core.data.models(ModelKind::Lora);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(local::part_path(&dir.join("style.safetensors")), b"someone else's bytes").unwrap();
+        // No pinned hash: nothing could tell a resumed foreign `.part` apart.
+        let a = lora_file("https://civitai.com/api/download/models/1", "style.safetensors");
+        let ga = start_install(&core, "A".into(), vec![(a, None)], None).await.unwrap();
+        assert!(core.models.inflight_dests.lock().contains(&dir.join("style-2.safetensors")));
+        // Pinned hash: the downloader restarts from byte 0 if the leftover doesn't match.
+        let b = FileToGet { sha256: Some("ab".repeat(32)), ..lora_file("https://civitai.com/api/download/models/2", "style.safetensors") };
+        let gb = start_install(&core, "B".into(), vec![(b, None)], None).await.unwrap();
+        assert!(core.models.inflight_dests.lock().contains(&dir.join("style.safetensors")));
+        let _ = core.downloads.wait(&ga.group_id).await;
+        let _ = core.downloads.wait(&gb.group_id).await;
     }
 
     #[tokio::test]

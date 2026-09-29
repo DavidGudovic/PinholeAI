@@ -101,7 +101,7 @@ impl InstalledIndex {
         self.files
             .iter()
             .map(|f| f.rel_path.as_str())
-            .chain(self.unknown.iter().filter_map(|v| v.get("relPath").and_then(|p| p.as_str())))
+            .chain(self.unknown.iter().filter_map(unknown_rel_path))
     }
 
     /// Load `installed.json`. Missing → empty index. Entries that can't be read
@@ -148,22 +148,46 @@ impl InstalledIndex {
     /// Save to an explicit index file (moving the Models folder). Never creates
     /// a missing user-picked Models folder (an unmounted drive).
     pub fn save_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
-        if dir.models_home.as_ref().is_some_and(|home| path.starts_with(home) && !home.is_dir()) {
-            return Err(StoreError::Invalid(
-                "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
-            ));
-        }
-        if self.schema_version > SCHEMA_VERSION {
-            return Err(StoreError::Invalid(
-                "Your models list was saved by a newer version of Pinhole. Update Pinhole to add, move or delete models.".into(),
-            ));
-        }
+        self.check_savable_to(dir, path)?;
         let files = self.files.iter().map(FileOut::Known).chain(self.unknown.iter().map(FileOut::Unknown)).collect();
         let out = IndexOut { schema_version: SCHEMA_VERSION, files };
         let mut json = serde_json::to_vec_pretty(&out)
             .map_err(|e| StoreError::Invalid(format!("could not encode the installed-files index: {e}")))?;
         json.push(b'\n');
         write_atomic(path, &json)
+    }
+
+    /// Would [`InstalledIndex::save`] be refused (newer schema, Models folder
+    /// not mounted)? Check before changing files on disk.
+    pub fn check_savable(&self, dir: &DataDir) -> Result<(), StoreError> {
+        self.check_savable_to(dir, &dir.installed_file())
+    }
+
+    fn check_savable_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
+        if dir.models_home.as_ref().is_some_and(|home| path.starts_with(home) && !home.is_dir()) {
+            return Err(StoreError::Invalid(
+                "Your Models folder isn't available. Connect or mount the drive it's on and restart Pinhole.".into(),
+            ));
+        }
+        if self.is_newer() {
+            return Err(StoreError::Invalid(
+                "Your models list was saved by a newer version of Pinhole. Update Pinhole to add, move or delete models.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Written by a newer Pinhole (a schema this version can't save).
+    pub fn is_newer(&self) -> bool {
+        self.schema_version > SCHEMA_VERSION
+    }
+
+    /// Drop the unreadable entries at `rel_path` (the file there was replaced)
+    /// and return them (to put back if saving fails).
+    pub fn remove_unknown_at(&mut self, rel_path: &str) -> Vec<serde_json::Value> {
+        let (gone, keep) = std::mem::take(&mut self.unknown).into_iter().partition(|v| unknown_rel_path(v) == Some(rel_path));
+        self.unknown = keep;
+        gone
     }
 
     pub fn get(&self, id: &str) -> Option<&InstalledFile> {
@@ -203,6 +227,11 @@ impl InstalledIndex {
     pub fn loras(&self) -> impl Iterator<Item = &InstalledFile> {
         self.files.iter().filter(|f| f.kind == ModelKind::Lora)
     }
+}
+
+/// `relPath` of an entry this version can't read, if it has one.
+pub fn unknown_rel_path(entry: &serde_json::Value) -> Option<&str> {
+    entry.get("relPath").and_then(|p| p.as_str())
 }
 
 fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
