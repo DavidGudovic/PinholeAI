@@ -1,14 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { Download, Layers, RotateCcw, ScanText, Settings, Sparkles, WandSparkles, X } from "lucide-react";
 import * as api from "../lib/api";
-import { formatBytes } from "../lib/format";
-import type { GroupStatus } from "../lib/types";
+import type { CoreError, GroupStatus } from "../lib/types";
+import { clearFinishedEverywhere } from "../tabs/models/lib/downloads";
+import { progressText, stateLabel } from "../tabs/models/lib/words";
 import { useActions } from "../lib/state/AppProvider";
 import { isActiveDownload, type TabId } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { Logo } from "./Logo";
 import { ErrorWithFix } from "./ErrorWithFix";
-import { Button, IconButton, Popover, ProgressBar, Spinner, cx, focusRing } from "./ui";
+import { Button, ErrorNotice, IconButton, Popover, ProgressBar, Spinner, cx, focusRing } from "./ui";
 
 const TABS: { id: TabId; label: string; icon: ReactNode }[] = [
   { id: "create", label: "Create", icon: <Sparkles className="h-4 w-4" /> },
@@ -87,6 +88,7 @@ function EngineChip() {
   const jobPhase = useAppState((s) => s.job?.progress?.phase ?? null);
   const jobModel = useAppState((s) => s.job?.progress?.modelLabel ?? null);
   const [installing, setInstalling] = useState(false);
+  const [installError, setInstallError] = useState<CoreError | null>(null);
   const actions = useActions();
   if (!engine) return null;
   const modelName = (id: string | null) => (models ?? []).find((m) => m.id === id)?.friendlyName ?? null;
@@ -109,25 +111,34 @@ function EngineChip() {
     );
   }
   if (!engine.installed) {
+    const install = async () => {
+      setInstalling(true);
+      setInstallError(null);
+      try {
+        actions.onEngine(await api.installEngine());
+      } catch (e) {
+        const ce = api.asCoreError(e);
+        if (ce.code !== "cancelled") setInstallError(ce);
+      } finally {
+        setInstalling(false);
+      }
+    };
+    // A failure stays on screen with its Details (like Settings → Engine), under the button.
     return (
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled={installing}
-        onClick={async () => {
-          setInstalling(true);
-          try {
-            actions.onEngine(await api.installEngine());
-          } catch (e) {
-            actions.toast(api.asCoreError(e).message, { tone: "error" });
-          } finally {
-            setInstalling(false);
-          }
-        }}
+      <Popover
+        align="end"
+        width={360}
+        open={!!installError}
+        onOpenChange={(o) => !o && setInstallError(null)}
+        trigger={(p) => (
+          <Button ref={p.ref} aria-expanded={p["aria-expanded"]} size="sm" variant="secondary" disabled={installing} onClick={() => void install()}>
+            {installing ? <Spinner className="h-3 w-3" /> : <Download className="h-3.5 w-3.5" />}
+            Get the engine
+          </Button>
+        )}
       >
-        {installing ? <Spinner className="h-3 w-3" /> : <Download className="h-3.5 w-3.5" />}
-        Get the engine
-      </Button>
+        <div className="p-2">{installError && <ErrorNotice error={installError} onDismiss={() => setInstallError(null)} />}</div>
+      </Popover>
     );
   }
   if (engine.error) {
@@ -195,7 +206,7 @@ function DownloadsButton() {
         <div className="flex items-center justify-between px-1.5 pt-1 pb-2">
           <span className="text-sm font-semibold">Downloads</span>
           {downloads.length > active.length && (
-            <button type="button" className={cx("rounded text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white", focusRing)} onClick={() => actions.clearFinishedDownloads()}>
+            <button type="button" className={cx("rounded text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white", focusRing)} onClick={() => clearFinishedEverywhere(actions)}>
               Clear finished
             </button>
           )}
@@ -213,18 +224,8 @@ function DownloadsButton() {
 function DownloadRow({ d }: { d: GroupStatus }) {
   const active = isActiveDownload(d);
   const [cancelling, setCancelling] = useState(false);
-  const state =
-    d.state === "queued"
-      ? "Waiting…"
-      : d.state === "verifying"
-        ? "Checking the file…"
-        : d.state === "done"
-          ? "Done"
-          : d.state === "failed"
-            ? "Failed"
-            : d.state === "cancelled"
-              ? "Cancelled"
-              : `${formatBytes(d.downloadedBytes)} of ${formatBytes(d.totalBytes)}`;
+  // Same words as the Models tab downloads list.
+  const state = d.state === "downloading" ? progressText(d) : stateLabel(d.state);
   return (
     <li className="rounded-lg px-2 py-2 hover:bg-neutral-50 dark:hover:bg-neutral-800/50">
       <div className="flex items-start gap-2">
