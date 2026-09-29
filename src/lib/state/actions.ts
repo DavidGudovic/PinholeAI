@@ -77,9 +77,13 @@ export function makeActions(store: Store) {
 
   const cancelledError = (): CoreError => ({ code: "cancelled", message: "Cancelled.", details: null });
 
+  /** Cancel (or Reset) was pressed during the current job, maybe before the engine had it. */
+  let cancelRequested = false;
+
   /** Mark a job as running for the whole of `work` (only one at a time). */
   async function withJob<T>(kind: JobKind, work: () => Promise<T>): Promise<T> {
     if (get().job) throw busyError();
+    cancelRequested = false;
     dispatch({ type: "jobStart", kind, at: Date.now() });
     try {
       return await work();
@@ -105,8 +109,9 @@ export function makeActions(store: Store) {
     throw cancelledError();
   }
 
-  async function generateNow(req: GenerateRequest): Promise<{ images: ResultImage[]; refs: ImgRef[] }> {
-    const nonce = get().sessionNonce;
+  /** `nonce`: the session when the job started (steps before this one may have awaited). */
+  async function generateNow(req: GenerateRequest, nonce = get().sessionNonce): Promise<{ images: ResultImage[]; refs: ImgRef[] }> {
+    if (cancelRequested || get().sessionNonce !== nonce) throw cancelledError();
     const res = await api.generate(req);
     return { images: res.images, refs: await jobRefs(res.images, nonce) };
   }
@@ -177,6 +182,7 @@ export function makeActions(store: Store) {
   }
 
   async function cancel() {
+    if (get().job) cancelRequested = true;
     await api.cancelGeneration().catch(() => undefined);
   }
 
@@ -277,10 +283,11 @@ export function makeActions(store: Store) {
     try {
       // The job (and with it the history lock) starts before the first await.
       await withJob("edit", async () => {
+        const nonce = get().sessionNonce;
         const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
         if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
         const req = buildEditRequest(get().edit, { mode: opts.mode, source, model: opts.model, ui, maskImageId: maskId, size: opts.size });
-        const { images, refs } = await generateNow(req);
+        const { images, refs } = await generateNow(req, nonce);
         // The history is locked while an edit runs; if the image on screen changed anyway,
         // don't attach the result to another image's history.
         const now = get().edit;

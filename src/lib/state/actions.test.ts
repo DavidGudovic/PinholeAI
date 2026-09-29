@@ -110,6 +110,18 @@ describe("async results after the screen moved on", () => {
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
   });
 
+  it("doesn't send an edit cancelled before it reached the engine", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const run = actions.runEdit({ mode: "restyle", model, mask: new Blob([new Uint8Array(4)]), size: [64, 64] });
+    await actions.cancel();
+    await run;
+    const api = await import("../api");
+    expect(api.generate).not.toHaveBeenCalled();
+    expect(store.getState().job).toBeNull();
+  });
+
   it("drops an upscale that finishes after Reset", async () => {
     const { store, actions } = setup();
     const run = actions.upscale("x", 2);
