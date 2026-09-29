@@ -585,6 +585,7 @@ async function install(versionId: number, familyId: string | null, fileId: numbe
           baseModel: e.baseModel,
           trainedWords: e.trainedWords,
           sizeBytes: p.mainFile.sizeBytes,
+          civitaiModelId: e.modelId,
           civitaiVersionId: versionId,
           relPath: `models/loras/${p.mainFile.name}`,
         });

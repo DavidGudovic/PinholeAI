@@ -104,6 +104,7 @@ pub fn installed_lora_view(file: &InstalledFile) -> InstalledLora {
             .map(|c| c.trained_words.clone())
             .unwrap_or_default(),
         size_bytes: file.size_bytes,
+        civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
     }
 }
