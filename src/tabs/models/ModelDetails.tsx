@@ -314,11 +314,11 @@ const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: (
       type="button"
       onClick={onOpen}
       aria-label={item.generation ? "Open image (settings available)" : "Open image"}
-      className="relative mb-4 block w-full break-inside-avoid overflow-hidden rounded-xl bg-neutral-100 hover:ring-2 hover:ring-neutral-300 dark:hover:ring-neutral-600 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none dark:bg-neutral-800"
+      className="group relative mb-4 block w-full break-inside-avoid overflow-hidden rounded-xl bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none dark:bg-neutral-800"
       style={{ aspectRatio: ratio }}
     >
       {preview.src ? (
-        <img src={preview.src} alt="" draggable={false} decoding="async" className="h-full w-full object-cover" />
+        <img src={preview.src} alt="" draggable={false} decoding="async" className="pinhole-hover-zoom h-full w-full object-cover transition-transform group-hover:scale-[1.02]" />
       ) : preview.failed ? (
         <span className="absolute inset-0 flex items-center justify-center text-neutral-400">
           <ImageOff className="h-6 w-6" />
@@ -327,7 +327,7 @@ const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: (
         <span className="absolute inset-0 animate-pulse bg-neutral-200 dark:bg-neutral-800" />
       )}
       {item.generation && (
-        <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/65 px-1.5 py-0.5 text-[11px] font-medium text-white">
+        <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white backdrop-blur-sm">
           <SlidersHorizontal className="h-3 w-3" /> Settings
         </span>
       )}
