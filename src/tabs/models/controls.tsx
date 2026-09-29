@@ -41,15 +41,30 @@ export function Select<T extends string | number>({
   );
 }
 
-export function Chip({ active, onClick, children, title }: { active: boolean; onClick: () => void; children: ReactNode; title?: string }) {
+export function Chip({
+  active,
+  onClick,
+  children,
+  title,
+  disabled = false,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  title?: string;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       aria-pressed={active}
       title={title}
+      disabled={disabled}
       onClick={onClick}
       className={`inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors ${focusRing} ${
-        active
+        disabled
+          ? "cursor-not-allowed border-neutral-200 bg-white text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-600"
+          : active
           ? "border-amber-500 bg-amber-500 text-neutral-950"
           : "border-neutral-300 bg-white text-neutral-700 hover:border-neutral-400 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:border-neutral-500 dark:hover:text-white"
       }`}
@@ -135,13 +150,13 @@ export function FamilyPicker({ candidates, value, onChange }: { candidates: Fami
   );
 }
 
-/** "Show 18+ content?" — once per session (the answer lives in RAM only). */
-export function AdultConfirmDialog({ open, onCancel, onConfirm }: { open: boolean; onCancel: () => void; onConfirm: () => void }) {
+/** "Turn off Safe mode?" — once per session (the answer lives in RAM only). */
+export function SafeModeOffDialog({ open, onCancel, onConfirm }: { open: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <Dialog
       open={open}
       onClose={onCancel}
-      title="Show 18+ content?"
+      title="Turn off Safe mode?"
       footer={
         <>
           <Button variant="ghost" onClick={onCancel}>
@@ -154,8 +169,8 @@ export function AdultConfirmDialog({ open, onCancel, onConfirm }: { open: boolea
       }
     >
       <div className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
-        <p>Some models and preview images on CivitAI are made for adults. Confirm you're 18 or older to include them.</p>
-        <p className="text-neutral-500">Pinhole asks once and forgets your answer when you close the app.</p>
+        <p>With Safe mode off, Browse also shows models and preview images on CivitAI that are made for adults. Confirm you're 18 or older to turn it off.</p>
+        <p className="text-neutral-500">Pinhole asks once each time the app is opened. Your answer is not saved.</p>
       </div>
     </Dialog>
   );

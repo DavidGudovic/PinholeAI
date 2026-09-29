@@ -133,7 +133,7 @@ pub struct GalleryItem {
 #[serde(rename_all = "camelCase")]
 pub struct ModelGallery {
     pub items: Vec<GalleryItem>,
-    /// Images hidden because they are 18+ and 18+ content is off.
+    /// Images hidden because they are made for adults and Safe mode is on.
     pub hidden_nsfw: usize,
     /// LoRA trigger words.
     pub trained_words: Vec<String>,
@@ -141,7 +141,7 @@ pub struct ModelGallery {
 }
 
 /// Gallery for a version. Videos are skipped (they can't be edited), and so
-/// are 18+ images in Safe mode.
+/// are images made for adults, with Safe mode on.
 pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, thumb_width: u32) -> ModelGallery {
     let mut hidden_nsfw = 0;
     let items = version
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(g.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 4]);
         assert_eq!(g.hidden_nsfw, 1);
         assert_eq!(g.trained_words, vec!["analog style"]);
-        let all = gallery(&version(), ContentMode::Include18Plus, false, 450);
+        let all = gallery(&version(), ContentMode::All, false, 450);
         assert_eq!(all.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 1, 4]);
         assert!(all.items[1].nsfw && all.hidden_nsfw == 0);
     }

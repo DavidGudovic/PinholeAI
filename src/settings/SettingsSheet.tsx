@@ -365,13 +365,13 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
       </Section>
 
       <Section title="Browsing CivitAI">
-        <Labeled label="Default content" hint="18+ options still ask you to confirm once per session.">
+        <Labeled label="Safe mode" hint="On hides models made for adults. Turning it off still asks you to confirm once per session.">
           <Segmented<ContentMode>
             size="sm"
+            ariaLabel="Safe mode"
             options={[
-              { value: "safe", label: "Safe only" },
-              { value: "include_18plus", label: "Include 18+" },
-              { value: "only_18plus", label: "18+ only" },
+              { value: "safe", label: "On" },
+              { value: "all", label: "Off" },
             ]}
             value={settings.contentMode}
             onChange={(contentMode) => update({ contentMode })}

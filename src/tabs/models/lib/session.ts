@@ -1,5 +1,5 @@
 // Per-session UI state for the Models tab, kept in RAM only (never in storage):
-// the one-time 18+ confirmation (SPEC §5.4) and the last Browse filters / sub-view so
+// the one-time confirmation for turning Safe mode off (SPEC §5.4) and the last Browse filters / sub-view so
 // switching tabs doesn't reset them. Everything is gone when the app closes.
 import type { BrowseFilters } from "./query";
 

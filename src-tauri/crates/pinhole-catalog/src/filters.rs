@@ -1,7 +1,7 @@
 //! Plain-language Browse filters (SPEC §5.4) from `config/catalog-filters.yaml`:
 //! the query parameters sent to `GET /api/v1/models` and the client-side rules
-//! (Safe only / 18+ only via [`crate::safe`], free / early access, Look tags,
-//! brand commercial use).
+//! (Safe mode via [`crate::safe`], free / early access, Look tags, the Tags
+//! multi-select, brand commercial use).
 
 use std::path::Path;
 
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{Model, ModelVersion};
 use crate::safe::SafeFilter;
-use crate::view::{CatalogFilterOptions, KeyLabel, KeyedLabel};
+use crate::view::{CatalogFilterOptions, KeyLabel, KeyedLabel, TagOption};
 
 // ------------------------------------------------------------------ query from the UI
 
@@ -22,23 +22,22 @@ pub enum CatalogKind {
     StyleAddons,
 }
 
+/// Safe mode: `safe` = On (hides models made for adults), `all` = Off.
+/// The old keys (`include_18plus`, `only_18plus`) still read as Off.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ContentMode {
     #[default]
     #[serde(rename = "safe")]
     Safe,
-    #[serde(rename = "include_18plus")]
-    Include18Plus,
-    #[serde(rename = "only_18plus")]
-    Only18Plus,
+    #[serde(rename = "all", alias = "include_18plus", alias = "only_18plus")]
+    All,
 }
 
 impl ContentMode {
     pub fn key(self) -> &'static str {
         match self {
             ContentMode::Safe => "safe",
-            ContentMode::Include18Plus => "include_18plus",
-            ContentMode::Only18Plus => "only_18plus",
+            ContentMode::All => "all",
         }
     }
 }
@@ -69,6 +68,8 @@ pub struct BrowseQuery {
     pub kind: CatalogKind,
     /// Look key (`realistic` | `anime` | `illustration` | `three_d` | `brand`) or null.
     pub look: Option<String>,
+    /// Tag keys (`catalog-filters.yaml → tags`); a model must match every one.
+    pub tags: Vec<String>,
     pub content: ContentMode,
     pub price: PriceMode,
     /// `Highest Rated` | `Most Downloaded` | `Newest`
@@ -88,6 +89,7 @@ impl Default for BrowseQuery {
         Self {
             kind: CatalogKind::Models,
             look: None,
+            tags: Vec::new(),
             content: ContentMode::Safe,
             price: PriceMode::Free,
             sort: "Most Downloaded".into(),
@@ -165,6 +167,58 @@ impl Look {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TagRule {
+    /// Tags, name words and base models below.
+    #[default]
+    Match,
+    /// The models Safe mode hides (see [`crate::safe`]). Only useful with Safe mode off.
+    MadeForAdults,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TagYaml {
+    label: String,
+    #[serde(default)]
+    rule: TagRule,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    name_words: Vec<String>,
+    #[serde(default)]
+    base_models: Vec<String>,
+}
+
+/// One entry of the Tags multi-select.
+#[derive(Debug, Clone)]
+pub struct TagFilter {
+    pub key: String,
+    pub label: String,
+    pub rule: TagRule,
+    /// Lowercased.
+    pub tags: Vec<String>,
+    /// Lowercased words (phrases split into words), see [`crate::safe::name_words`].
+    pub name_words: Vec<Vec<String>>,
+    pub base_models: Vec<String>,
+}
+
+impl TagFilter {
+    fn matches(&self, m: &Model, safe: &SafeFilter) -> bool {
+        match self.rule {
+            TagRule::MadeForAdults => safe.adult_reason(m).is_some(),
+            TagRule::Match => {
+                m.tags.iter().any(|t| self.tags.contains(&t.trim().to_ascii_lowercase()))
+                    || {
+                        let words = crate::safe::name_words(&m.name);
+                        self.name_words.iter().any(|needle| words.windows(needle.len()).any(|w| w == needle.as_slice()))
+                    }
+                    || m.model_versions.iter().any(|v| self.base_models.iter().any(|b| b.eq_ignore_ascii_case(v.base_model.trim())))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct StyleBadge {
     pub look: String,
@@ -197,7 +251,7 @@ pub struct ContentOption {
 /// Why a `/models` item has no card (Browse shows the counts).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hidden {
-    /// "Safe only" hid a model made for adults (or "18+ only" hid a safe one).
+    /// Safe mode hid a model made for adults.
     Content,
     /// Kind, Look, commercial use, price, compatibility or archived.
     Other,
@@ -208,8 +262,7 @@ pub enum Hidden {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ContentSection {
     pub safe: ContentOption,
-    pub include_18plus: ContentOption,
-    pub only_18plus: ContentOption,
+    pub all: ContentOption,
     #[serde(default)]
     pub default: ContentMode,
     #[serde(default)]
@@ -222,8 +275,7 @@ impl ContentSection {
     pub fn option(&self, mode: ContentMode) -> &ContentOption {
         match mode {
             ContentMode::Safe => &self.safe,
-            ContentMode::Include18Plus => &self.include_18plus,
-            ContentMode::Only18Plus => &self.only_18plus,
+            ContentMode::All => &self.all,
         }
     }
 }
@@ -244,6 +296,8 @@ struct FiltersYaml {
     looks: serde_yaml::Mapping,
     #[serde(default)]
     style_badges: Vec<StyleBadge>,
+    #[serde(default)]
+    tags: serde_yaml::Mapping,
     price: PriceSection,
     content: ContentSection,
     sort: Vec<ApiOption>,
@@ -300,9 +354,11 @@ pub struct CatalogFilters {
     /// In YAML order.
     pub looks: Vec<Look>,
     pub style_badges: Vec<StyleBadge>,
+    /// Tags multi-select, in YAML order.
+    pub tags: Vec<TagFilter>,
     pub price: PriceSection,
     pub content: ContentSection,
-    /// "Safe only" rules (normalized, see [`SafeFilter::normalized`]).
+    /// Safe mode rules (normalized, see [`SafeFilter::normalized`]).
     pub safe: SafeFilter,
     pub sort: Vec<ApiOption>,
     pub period: Vec<ApiOption>,
@@ -341,6 +397,19 @@ impl CatalogFilters {
                 also_require: l.also_require.unwrap_or_default(),
             });
         }
+        let mut tags = Vec::new();
+        for (k, v) in raw.tags {
+            let key = k.as_str().ok_or_else(|| FiltersError::Yaml("tag keys must be strings".into()))?.to_string();
+            let t: TagYaml = serde_yaml::from_value(v).map_err(|e| FiltersError::Yaml(format!("tag `{key}`: {e}")))?;
+            tags.push(TagFilter {
+                key,
+                label: t.label,
+                rule: t.rule,
+                tags: t.tags.iter().map(|t| t.trim().to_ascii_lowercase()).collect(),
+                name_words: t.name_words.iter().map(|w| crate::safe::name_words(w)).filter(|w| !w.is_empty()).collect(),
+                base_models: t.base_models.iter().map(|b| b.trim().to_string()).collect(),
+            });
+        }
         if raw.sort.is_empty() || raw.period.is_empty() {
             return Err(FiltersError::Yaml("sort and period need at least one entry".into()));
         }
@@ -366,6 +435,7 @@ impl CatalogFilters {
             lora_types: raw.lora_types,
             looks,
             style_badges: raw.style_badges,
+            tags,
             price: raw.price,
             content: raw.content,
             safe: raw.safe_filter.normalized(),
@@ -396,6 +466,10 @@ impl CatalogFilters {
             .map(|b| b.badge.clone())
     }
 
+    pub fn tag(&self, key: &str) -> Option<&TagFilter> {
+        self.tags.iter().find(|t| t.key == key)
+    }
+
     pub fn is_lora_type(&self, civitai_type: &str) -> bool {
         self.lora_types.iter().any(|t| t.eq_ignore_ascii_case(civitai_type))
     }
@@ -413,7 +487,12 @@ impl CatalogFilters {
             looks: self.looks.iter().map(|l| KeyLabel { key: l.key.clone(), label: l.label.clone() }).collect(),
             sorts: self.sort.iter().map(|s| KeyedLabel { label: s.label.clone(), api: s.api.clone() }).collect(),
             periods: self.period.iter().map(|s| KeyedLabel { label: s.label.clone(), api: s.api.clone() }).collect(),
-            content: [ContentMode::Safe, ContentMode::Include18Plus, ContentMode::Only18Plus]
+            tags: self
+                .tags
+                .iter()
+                .map(|t| TagOption { key: t.key.clone(), label: t.label.clone(), needs_safe_mode_off: t.rule == TagRule::MadeForAdults })
+                .collect(),
+            content: [ContentMode::Safe, ContentMode::All]
                 .into_iter()
                 .map(|m| KeyLabel { key: m.key().into(), label: self.content.option(m).label.clone() })
                 .collect(),
@@ -478,9 +557,9 @@ impl CatalogFilters {
         look.also_require.allow_commercial_use_includes.clone()
     }
 
-    /// Model-level client-side rules: kind, content (Safe only / 18+ only, see
-    /// [`crate::safe`]), Look tags (+ brand `also_require`), commercial use,
-    /// archived models.
+    /// Model-level client-side rules: kind, Safe mode (see [`crate::safe`]),
+    /// Look tags (+ brand `also_require`), the Tags multi-select, commercial
+    /// use, archived models.
     pub fn keep_model(&self, q: &BrowseQuery, m: &Model) -> bool {
         self.hidden_by(q, m).is_none()
     }
@@ -494,19 +573,21 @@ impl CatalogFilters {
         if !m.kind.is_empty() && !kind.api_types.iter().any(|t| t.eq_ignore_ascii_case(&m.kind)) {
             return Some(Hidden::Other);
         }
-        let adult = match q.content {
-            ContentMode::Include18Plus => None,
-            ContentMode::Safe | ContentMode::Only18Plus => Some(self.safe.adult_reason(m).is_some()),
-        };
-        match (q.content, adult) {
-            (ContentMode::Safe, Some(true)) | (ContentMode::Only18Plus, Some(false)) => return Some(Hidden::Content),
-            _ => {}
+        if q.content == ContentMode::Safe && self.safe.adult_reason(m).is_some() {
+            return Some(Hidden::Content);
         }
         if let Some(key) = q.look.as_deref() {
             match self.look(key) {
                 Some(look) if look.matches_tags(&m.tags) => {}
                 Some(_) => return Some(Hidden::Other),
                 None => {} // unknown look key: ignore the filter
+            }
+        }
+        for key in &q.tags {
+            match self.tag(key) {
+                Some(tag) if tag.matches(m, &self.safe) => {}
+                Some(_) => return Some(Hidden::Other),
+                None => {} // unknown tag key: ignore it
             }
         }
         if let Some(what) = self.commercial_required(q) {
@@ -573,7 +654,11 @@ pub(crate) mod tests {
         let o = f.options();
         assert_eq!(o.default_content, ContentMode::Safe);
         assert_eq!(o.default_price, PriceMode::Free);
-        assert_eq!(o.content[2].key, "only_18plus");
+        assert_eq!(o.content.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), ["safe", "all"]);
+        assert_eq!(o.tags.first().map(|t| t.key.as_str()), Some("edit"));
+        let nsfw = o.tags.iter().find(|t| t.key == "nsfw").unwrap();
+        assert!(nsfw.needs_safe_mode_off);
+        assert_eq!(o.tags.iter().filter(|t| t.needs_safe_mode_off).count(), 1);
         assert_eq!(o.price[2].key, "paid_only");
         assert_eq!(o.sorts[0].api, "Highest Rated");
         let json = serde_json::to_value(&o).unwrap();
@@ -605,15 +690,20 @@ pub(crate) mod tests {
     #[test]
     fn browse_query_json_matches_types_ts() {
         let q: BrowseQuery = serde_json::from_str(
-            r#"{"kind":"styleAddons","look":"anime","content":"only_18plus","price":"paid_only","sort":"Newest","period":"Week","commercialOnly":true,"compatibleOnly":false,"query":"neon","cursor":"2|5"}"#,
+            r#"{"kind":"styleAddons","look":"anime","tags":["edit","nsfw"],"content":"all","price":"paid_only","sort":"Newest","period":"Week","commercialOnly":true,"compatibleOnly":false,"query":"neon","cursor":"2|5"}"#,
         )
         .unwrap();
         assert_eq!(q.kind, CatalogKind::StyleAddons);
-        assert_eq!(q.content, ContentMode::Only18Plus);
+        assert_eq!(q.content, ContentMode::All);
+        assert_eq!(q.tags, ["edit", "nsfw"]);
         assert_eq!(q.price, PriceMode::PaidOnly);
         assert!(q.commercial_only && !q.compatible_only);
-        let q: BrowseQuery = serde_json::from_str(r#"{"content":"include_18plus"}"#).unwrap();
-        assert_eq!(q.content, ContentMode::Include18Plus);
+        for old in ["include_18plus", "only_18plus"] {
+            let q: BrowseQuery = serde_json::from_str(&format!(r#"{{"content":"{old}"}}"#)).unwrap();
+            assert_eq!(q.content, ContentMode::All, "old 18+ keys read as Safe mode off");
+        }
+        let q: BrowseQuery = serde_json::from_str("{}").unwrap();
+        assert!(q.tags.is_empty());
         assert!(q.compatible_only, "defaults to Works with Pinhole");
     }
 
@@ -626,7 +716,7 @@ pub(crate) mod tests {
         assert_eq!(get(&p, "types"), ["Checkpoint"]);
         assert_eq!(get(&p, "sort"), ["Most Downloaded"]);
         assert_eq!(get(&p, "period"), ["AllTime"]);
-        assert_eq!(get(&p, "nsfw"), ["true"], "Safe only needs every image rating (filtered client-side)");
+        assert_eq!(get(&p, "nsfw"), ["true"], "Safe mode needs every image rating (filtered client-side)");
         assert_eq!(get(&p, "baseModels"), ["SDXL 1.0", "Pony"]);
         assert!(get(&p, "query").is_empty());
         assert!(get(&p, "cursor").is_empty());
@@ -641,10 +731,12 @@ pub(crate) mod tests {
         let mut q = BrowseQuery { kind: CatalogKind::StyleAddons, ..Default::default() };
         assert_eq!(get(&f.query_params(&q, &bases, None), "types"), ["LORA"]);
 
-        q.content = ContentMode::Include18Plus;
+        q.content = ContentMode::All;
         assert_eq!(get(&f.query_params(&q, &bases, None), "nsfw"), ["true"]);
-        q.content = ContentMode::Only18Plus;
+        q.tags = vec!["edit".into(), "nsfw".into()];
         assert_eq!(get(&f.query_params(&q, &bases, None), "nsfw"), ["true"]);
+        assert!(get(&f.query_params(&q, &bases, None), "tag").is_empty(), "tags filter client-side");
+        q.tags.clear();
 
         for (sort, period) in [("Most Downloaded", "Week"), ("Newest", "Month"), ("Highest Rated", "Year")] {
             q.sort = sort.into();
@@ -683,27 +775,34 @@ pub(crate) mod tests {
         let page = page();
         let nsfw_lora = &page.items[1];
         let sfw_ckpt = &page.items[0];
-        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Only18Plus, ..Default::default() };
+        let nsfw_tag = vec!["nsfw".to_string()];
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::All, tags: nsfw_tag.clone(), ..Default::default() };
         assert!(f.keep_model(&q, nsfw_lora));
-        let q = BrowseQuery { content: ContentMode::Only18Plus, ..Default::default() };
-        assert!(!f.keep_model(&q, sfw_ckpt), "18+ only keeps only what Safe only hides");
+        let q = BrowseQuery { content: ContentMode::All, tags: nsfw_tag.clone(), ..Default::default() };
+        assert!(!f.keep_model(&q, sfw_ckpt), "the NSFW tag finds only what Safe mode hides");
+        assert_eq!(f.hidden_by(&q, sfw_ckpt), Some(Hidden::Other));
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Safe, tags: nsfw_tag, ..Default::default() };
+        assert_eq!(f.hidden_by(&q, nsfw_lora), Some(Hidden::Content), "Safe mode on: the NSFW tag finds nothing");
         let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Safe, ..Default::default() };
         assert!(!f.keep_model(&q, nsfw_lora), "safe mode drops nsfw models");
         assert_eq!(f.hidden_by(&q, nsfw_lora), Some(Hidden::Content));
         let q = BrowseQuery { content: ContentMode::Safe, ..Default::default() };
         assert!(f.keep_model(&q, sfw_ckpt), "RealVisXL: one suggestive tag, mostly PG images");
-        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::Include18Plus, ..Default::default() };
+        let q = BrowseQuery { kind: CatalogKind::StyleAddons, content: ContentMode::All, ..Default::default() };
         assert!(f.keep_model(&q, nsfw_lora));
-        let q = BrowseQuery { content: ContentMode::Include18Plus, ..Default::default() };
+        let q = BrowseQuery { content: ContentMode::All, ..Default::default() };
         assert!(f.keep_model(&q, sfw_ckpt));
     }
 
     #[test]
-    fn safe_and_adult_only_split_the_live_sample() {
+    fn safe_mode_and_nsfw_tag_split_the_live_sample() {
         let f = filters();
         let page = crate::safe::tests::live("month");
-        let count = |content| page.items.iter().filter(|m| f.keep_model(&BrowseQuery { content, ..Default::default() }, m)).count();
-        let (safe, adult, all) = (count(ContentMode::Safe), count(ContentMode::Only18Plus), count(ContentMode::Include18Plus));
+        let count = |content, tags: &[&str]| {
+            let q = BrowseQuery { content, tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+            page.items.iter().filter(|m| f.keep_model(&q, m)).count()
+        };
+        let (safe, adult, all) = (count(ContentMode::Safe, &[]), count(ContentMode::All, &["nsfw"]), count(ContentMode::All, &[]));
         assert_eq!(safe + adult, all);
         assert_eq!(all, page.items.len());
         assert!(safe < all / 2, "most of this month's top-rated checkpoints are made for adults ({safe}/{all})");
@@ -773,6 +872,39 @@ pub(crate) mod tests {
         assert!(f.keep_model(&q, &page.items[0]));
         assert!(!f.keep_model(&q, page.items.iter().find(|m| m.id == 5000).unwrap()), "\"None\"");
         assert!(!f.keep_model(&q, page.items.iter().find(|m| m.id == 618692).unwrap()), "[]");
+    }
+
+    fn model(name: &str, tags: &[&str], base_model: &str) -> Model {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "name": name, "type": "Checkpoint", "tags": tags,
+            "modelVersions": [{ "id": 2, "name": "v1", "baseModel": base_model, "files": [], "images": [] }],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn edit_tag_matches_tags_name_words_and_base_models() {
+        // Names and tags from live /api/v1/models answers (2026-09-28).
+        let f = filters();
+        let edit = |m: &Model| f.keep_model(&BrowseQuery { tags: vec!["edit".into()], compatible_only: false, ..Default::default() }, m);
+        assert!(edit(&model("Qwen Image Edit 2511 GGUF", &["base model"], "Qwen")), "name word");
+        assert!(edit(&model("Qwen-Image-Edit-MeiTu", &["base model"], "Qwen")), "hyphenated name");
+        assert!(edit(&model("God Save The Qwen", &["base model", "qwen", "image edit"], "Qwen")), "tag");
+        assert!(edit(&model("Flux Kontext NF4", &["base model"], "Flux.1 Kontext")), "base model");
+        assert!(edit(&model("Nunchaku Flux 4-Bit", &["base model"], "Flux.1 Kontext")), "base model only");
+        assert!(!edit(&model("Moonmix - Anime Edition", &["style"], "SD 1.5")), "Edition is not Edit");
+        assert!(!edit(&model("Qwen-Image", &["base model", "qwen", "qwen-image"], "Qwen")));
+    }
+
+    #[test]
+    fn picked_tags_must_all_match_and_unknown_tags_are_ignored() {
+        let f = filters();
+        let m = model("Colossus Project KONTEXT", &["fantasy", "portrait", "landscape"], "Flux.1 Kontext");
+        let q = |tags: &[&str]| BrowseQuery { tags: tags.iter().map(|t| t.to_string()).collect(), compatible_only: false, ..Default::default() };
+        assert!(f.keep_model(&q(&["edit", "fantasy", "portraits", "landscapes"]), &m));
+        assert!(!f.keep_model(&q(&["edit", "scifi"]), &m));
+        assert_eq!(f.hidden_by(&q(&["scifi"]), &m), Some(Hidden::Other));
+        assert!(f.keep_model(&q(&["nope"]), &m), "unknown tag keys don't hide everything");
     }
 
     #[test]

@@ -600,10 +600,10 @@ try {
     await waitSetting("theme", "light");
     await driver.wait(async () => !(await isDark()), 5000, "dark class still applied");
 
-    // Content mode, paid, trigger words, saved metadata
-    await click(`//div[@role='radiogroup']//button[normalize-space(.)='Include 18+']`);
-    await waitSetting("contentMode", "include_18plus");
-    await click(`//div[@role='radiogroup']//button[normalize-space(.)='Safe only']`);
+    // Safe mode, paid, trigger words, saved metadata
+    await click(`//div[@role='radiogroup'][@aria-label='Safe mode']//button[normalize-space(.)='Off']`);
+    await waitSetting("contentMode", "all");
+    await click(`//div[@role='radiogroup'][@aria-label='Safe mode']//button[normalize-space(.)='On']`);
     await waitSetting("contentMode", "safe");
     const paid0 = yamlValue(readSettingsYaml(), "showPaid");
     await toggleByLabel("Show paid (early access) models");

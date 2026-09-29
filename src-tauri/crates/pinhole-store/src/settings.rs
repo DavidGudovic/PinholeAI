@@ -13,7 +13,7 @@ pub struct Settings {
     pub gpu: String,
     /// Manual VRAM override in GB (None = detected).
     pub vram_override_gb: Option<f32>,
-    /// `safe` | `include_18plus` | `only_18plus`
+    /// Safe mode default for Browse: `safe` (On) | `all` (Off).
     pub content_mode: String,
     pub show_paid: bool,
     /// `none` | `settings` ("Include generation settings (no prompt)")
@@ -66,8 +66,11 @@ impl Settings {
             .vram_override_gb
             .filter(|v| v.is_finite() && *v > 0.0)
             .map(|v| v.min(MAX_VRAM_OVERRIDE_GB));
-        if !matches!(self.content_mode.as_str(), "safe" | "include_18plus" | "only_18plus") {
-            self.content_mode = d.content_mode;
+        match self.content_mode.as_str() {
+            "safe" | "all" => {}
+            // Older builds had two 18+ modes; both meant Safe mode off.
+            "include_18plus" | "only_18plus" => self.content_mode = "all".into(),
+            _ => self.content_mode = d.content_mode,
         }
         if !matches!(self.saved_metadata.as_str(), "none" | "settings") {
             self.saved_metadata = d.saved_metadata;
@@ -165,7 +168,7 @@ mod tests {
             offline: true,
             gpu: "gpu:1".into(),
             vram_override_gb: Some(12.0),
-            content_mode: "include_18plus".into(),
+            content_mode: "all".into(),
             show_paid: true,
             saved_metadata: "settings".into(),
             theme: "dark".into(),
@@ -237,6 +240,10 @@ mod tests {
         assert_eq!(s.engine_backend, "auto");
         assert_eq!(s.text_encoder_on_cpu, "auto");
         assert_eq!(s.vram_override_gb, None);
+        for old in ["include_18plus", "only_18plus"] {
+            let s = Settings { content_mode: old.into(), ..Settings::default() }.normalized();
+            assert_eq!(s.content_mode, "all", "{old} → Safe mode off");
+        }
         for bad in ["gpu:", "gpu:x", "gpu:-1", "banana"] {
             let s = Settings { gpu: bad.into(), ..Settings::default() }.normalized();
             assert_eq!(s.gpu, "auto", "{bad}");
