@@ -450,7 +450,7 @@ export interface BrowseQuery {
   tags: string[];
   content: ContentMode;
   price: PriceMode;
-  /** "Highest Rated" | "Most Downloaded" | "Newest" */
+  /** "Most Liked" | "Most Downloaded" | "Newest" */
   sort: string;
   /** Week | Month | Year | AllTime */
   period: string;

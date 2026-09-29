@@ -72,7 +72,7 @@ pub struct BrowseQuery {
     pub tags: Vec<String>,
     pub content: ContentMode,
     pub price: PriceMode,
-    /// `Highest Rated` | `Most Downloaded` | `Newest`
+    /// `Most Liked` | `Most Downloaded` | `Newest`
     pub sort: String,
     /// `Week` | `Month` | `Year` | `AllTime`
     pub period: String,
@@ -778,7 +778,7 @@ pub(crate) mod tests {
         assert!(nsfw.needs_safe_mode_off);
         assert_eq!(o.tags.iter().filter(|t| t.needs_safe_mode_off).count(), 1);
         assert_eq!(o.price[2].key, "paid_only");
-        assert_eq!(o.sorts[0].api, "Highest Rated");
+        assert_eq!(o.sorts[0].api, "Most Liked");
         let json = serde_json::to_value(&o).unwrap();
         assert_eq!(json["defaultContent"], "safe");
         assert_eq!(json["defaultPrice"], "free");
@@ -824,7 +824,7 @@ pub(crate) mod tests {
                 f.default_period.as_str(),
                 f.api_limit
             ),
-            ("Highest Rated", "AllTime", 100)
+            ("Most Liked", "AllTime", 100)
         );
         let y = shipped.replace("api_limit: 50", "api_limit: 3");
         assert_eq!(
@@ -906,7 +906,7 @@ pub(crate) mod tests {
         for (sort, period) in [
             ("Most Downloaded", "Week"),
             ("Newest", "Month"),
-            ("Highest Rated", "Year"),
+            ("Most Liked", "Year"),
         ] {
             q.sort = sort.into();
             q.period = period.into();

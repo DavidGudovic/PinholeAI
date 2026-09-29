@@ -258,7 +258,7 @@ Two sub-views: **Browse** and **Installed**.
 | Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
-| Sort | Top rated · Most downloaded (default) · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
+| Sort | Most liked · Most downloaded (default) · Newest | `sort=Most Liked / Most Downloaded / Newest` |
 | Time | This week · This month · This year · All time (default) | `period` |
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |

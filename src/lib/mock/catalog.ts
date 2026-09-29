@@ -298,7 +298,7 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
     if (text && !`${e.name} ${e.creator} ${e.baseModel}`.toLowerCase().includes(text)) return false;
     return true;
   });
-  if (q.sort === "Highest Rated") server = server.slice().sort((a, b) => b.thumbsUpRatio * Math.log10(b.downloadCount + 10) - a.thumbsUpRatio * Math.log10(a.downloadCount + 10));
+  if (q.sort === "Most Liked") server = server.slice().sort((a, b) => b.thumbsUpRatio * b.downloadCount - a.thumbsUpRatio * a.downloadCount);
   else if (q.sort === "Newest") server = server.slice().sort((a, b) => a.createdDaysAgo - b.createdDaysAgo);
   else server = server.slice().sort((a, b) => b.downloadCount - a.downloadCount);
 
@@ -631,7 +631,7 @@ const FILTERS: CatalogFilterOptions = {
     { key: "nsfw", label: "NSFW", needsSafeModeOff: true },
   ],
   sorts: [
-    { label: "Top rated", api: "Highest Rated" },
+    { label: "Most liked", api: "Most Liked" },
     { label: "Most downloaded", api: "Most Downloaded" },
     { label: "Newest", api: "Newest" },
   ],
