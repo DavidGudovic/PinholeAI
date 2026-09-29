@@ -24,7 +24,7 @@ interface Entry {
   previewIsVideo: boolean;
   previewNsfw: boolean;
   modelNsfw: boolean;
-  /** Not flagged by CivitAI but made for adults (suggestive tags / mostly R+ samples): Safe only hides it. */
+  /** Not flagged by CivitAI but made for adults (suggestive tags / mostly R+ samples): Safe mode hides it. */
   suggestive: boolean;
   thumbsUpRatio: number;
   downloadCount: number;
@@ -80,8 +80,8 @@ const SEEDS: Seed[] = [
   { name: "Fresh Upload XL", versionName: "v0.9", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["illustration"], creator: "newbie_42", thumbsUpRatio: 0.84, downloadCount: 310, mainMb: 6617, blockedReason: "CivitAI hasn't finished its safety scan for this file yet. Try again later.", createdDaysAgo: 1 },
   { name: "Hyper Realism Pro", versionName: "v7 Early Access", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "prolens", thumbsUpRatio: 0.97, downloadCount: 9_800, mainMb: 6617, earlyAccess: true, needsKey: true, createdDaysAgo: 3 },
   { name: "Cinematic Frames XL", versionName: "v2 Early Access", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "reelmaker", thumbsUpRatio: 0.94, downloadCount: 5_300, mainMb: 6617, earlyAccess: true, needsKey: true, createdDaysAgo: 6 },
-  { name: "After Dark XL", versionName: "v3", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "noctis", thumbsUpRatio: 0.93, downloadCount: 250_000, mainMb: 6617, modelNsfw: true, previewNsfw: true },
-  { name: "Anime After Dark", versionName: "v5", type: "Checkpoint", baseModel: "Illustrious", looks: ["anime"], creator: "noctis", thumbsUpRatio: 0.92, downloadCount: 180_000, mainMb: 6938, modelNsfw: true, previewNsfw: true },
+  { name: "Noir Portrait XL", versionName: "v3", type: "Checkpoint", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "noctis", thumbsUpRatio: 0.93, downloadCount: 250_000, mainMb: 6617, modelNsfw: true, previewNsfw: true },
+  { name: "Anime Noir", versionName: "v5", type: "Checkpoint", baseModel: "Illustrious", looks: ["anime"], creator: "noctis", thumbsUpRatio: 0.92, downloadCount: 180_000, mainMb: 6938, modelNsfw: true, previewNsfw: true },
   { name: "Stable Diffusion 3.5 Large", versionName: "Large", type: "Checkpoint", baseModel: "SD 3.5 Large", looks: ["realistic", "illustration"], creator: "Stability AI", thumbsUpRatio: 0.82, downloadCount: 95_000, mainMb: 16_000, blockedReason: "Pinhole can't run this kind of model yet (SD 3.5).", licenseNote: "Stability Community License" },
   { name: "HiDream I1 Full", versionName: "fp8", type: "Checkpoint", baseModel: "HiDream", looks: ["realistic"], creator: "HiDream.ai", thumbsUpRatio: 0.86, downloadCount: 41_000, mainMb: 17_000, blockedReason: "Pinhole can't run this kind of model yet (HiDream)." },
   // Style add-ons (LoRAs)
@@ -95,7 +95,7 @@ const SEEDS: Seed[] = [
   { name: "Retro Poster Art", versionName: "v1", type: "LORA", baseModel: "SDXL 1.0", looks: ["illustration"], creator: "poster_press", thumbsUpRatio: 0.92, downloadCount: 19_500, mainMb: 218, trainedWords: ["retro poster"] },
   { name: "Z-Image Portrait Boost", versionName: "v1", type: "LORA", baseModel: "ZImageTurbo", looks: ["realistic"], creator: "lumen_lab", thumbsUpRatio: 0.9, downloadCount: 6_200, mainMb: 162, trainedWords: [], createdDaysAgo: 5 },
   { name: "Relight (Qwen Edit)", versionName: "v1", type: "LORA", baseModel: "Qwen", looks: ["realistic", "brand"], creator: "studio_q", thumbsUpRatio: 0.91, downloadCount: 8_800, mainMb: 295, trainedWords: ["relight"], createdDaysAgo: 12 },
-  { name: "Figure Study", versionName: "v2", type: "LORA", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "atelier", thumbsUpRatio: 0.9, downloadCount: 60_000, mainMb: 218, modelNsfw: true, previewNsfw: true, trainedWords: ["figure study"] },
+  { name: "Pose Study", versionName: "v2", type: "LORA", baseModel: "SDXL 1.0", looks: ["realistic"], creator: "atelier", thumbsUpRatio: 0.9, downloadCount: 60_000, mainMb: 218, modelNsfw: true, previewNsfw: true, trainedWords: ["pose study"] },
   { name: "Neon Cyberpunk", versionName: "v4", type: "LORA", baseModel: "SDXL 1.0", looks: ["illustration", "three_d"], creator: "neonrain", thumbsUpRatio: 0.93, downloadCount: 73_000, mainMb: 218, trainedWords: ["neon cyberpunk"], previewIsVideo: true },
 ];
 
@@ -240,7 +240,7 @@ function toCard(e: Entry, content?: BrowseQuery["content"]): CatalogCard {
     // Rust asks the CDN for CivitAI's own card rendition; videos come back as a still frame.
     previewUrl: `https://image.civitai.com/mock/${e.versionId}/${e.previewIsVideo ? "anim=false,transcode=true," : ""}width=450,optimized=true/${e.looks[0]}.jpeg`,
     previewIsVideo: e.previewIsVideo,
-    // "Safe only" previews are PG images (Rust: safe_filter.max_preview_level).
+    // Safe mode previews are PG images (Rust: safe_filter.max_preview_level).
     previewNsfw: content === "safe" ? false : e.previewNsfw,
     modelNsfw: e.modelNsfw,
     thumbsUpRatio: e.thumbsUpRatio,
@@ -271,13 +271,16 @@ const API_LIMIT = 50;
 const MAX_EXTRA = 5;
 const PERIOD_DAYS: Record<string, number> = { Week: 7, Month: 30, Year: 365 };
 
-/** "Safe only" hides these; "18+ only" shows only these (Rust: model.nsfw or safe_filter rules). */
+/** Safe mode hides these; the NSFW tag finds only these (Rust: model.nsfw or safe_filter rules). */
 const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
+/** Tags multi-select (Rust: catalog-filters.yaml → tags). Subject tags are faked per entry. */
+const mockTagMatches = (e: Entry, tag: string) =>
+  tag === "nsfw" ? isAdultEntry(e) : tag === "edit" ? /\bedit\b|kontext/i.test(e.name) || e.baseModel === "Flux.1 Kontext" : (e.versionId + tag.length) % 3 === 0;
 
 async function browse(q: BrowseQuery): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
   // Rust: no request; the cursor is handed back unchanged.
-  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+  if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
   if (q.query.toLowerCase() === "fail")
     throw err(
       "network",
@@ -299,21 +302,26 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
   else if (q.sort === "Newest") server = server.slice().sort((a, b) => a.createdDaysAgo - b.createdDaysAgo);
   else server = server.slice().sort((a, b) => b.downloadCount - a.downloadCount);
 
-  const out: BrowsePage = { items: [], nextCursor: null, offline: false, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+  const out: BrowsePage = { items: [], nextCursor: null, offline: false, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
   let offset = q.cursor ? Number(q.cursor) || 0 : 0;
   for (let requests = 1; ; requests++) {
     const batch = server.slice(offset, offset + API_LIMIT);
     offset += batch.length;
     for (const e of batch) {
       out.checked += 1;
-      if (q.content === "safe" ? isAdultEntry(e) : q.content === "only_18plus" ? !isAdultEntry(e) : false) out.hiddenByContent += 1;
+      if (q.content === "safe" && isAdultEntry(e)) out.hiddenByContent += 1;
       else if (
         (q.look && !e.looks.includes(q.look)) ||
+        !(q.tags ?? []).every((t) => mockTagMatches(e, t)) ||
         (q.price === "free" && e.earlyAccess) ||
         (q.price === "paid_only" && !e.earlyAccess)
       )
         out.hiddenByFilters += 1;
-      else out.items.push(toCard(e, q.content));
+      else {
+        const c = toCard(e, q.content);
+        if (q.runsOnMyCard && c.fit === "tooBig") out.hiddenBySize! += 1;
+        else out.items.push(c);
+      }
     }
     out.nextCursor = offset < server.length ? String(offset) : null;
     if (out.items.length >= PAGE || !out.nextCursor) return out;
@@ -502,23 +510,39 @@ async function fetchPreview(url: string): Promise<ArrayBuffer> {
 // ---------------------------------------------------------------- install plan / install
 let hasKey = false;
 
-function plan(versionId: number): InstallPlan {
+/**
+ * Big safetensors checkpoints also come as a compact FP8 file (like many CivitAI versions):
+ * Rust picks the best one that fits unless the user chose one (SPEC §5.4 "Install").
+ */
+function fileChoices(e: ReturnType<typeof allEntries>[number], slug: string) {
+  const full = { fileId: e.versionId * 10, name: `${slug}_${e.versionName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9._-]/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, mb: e.mainMb, label: "Full quality" };
+  if (e.type === "LORA" || e.gguf || e.mainMb < 10000) return [full];
+  const vram = vramFor(e);
+  const fp8 = { fileId: e.versionId * 10 + 1, name: full.name.replace(/\.safetensors$/, "_fp8.safetensors"), mb: Math.round(e.mainMb / 2), label: "Compact (FP8)" };
+  return [{ ...full, vram }, { ...fp8, vram: vram && { ...vram, gb: Math.round((vram.gb - e.mainMb / 2048) * 10) / 10, minGb: Math.max(1, vram.minGb - e.mainMb / 4096) } }];
+}
+
+function plan(versionId: number, chosenFile: number | null = null): InstallPlan {
   const e = allEntries().find((x) => x.versionId === versionId);
   if (!e) throw err("not_found", "This model is no longer on CivitAI.");
   const isLora = e.type === "LORA";
   const fam = e.familyId ? FAMILIES[e.familyId] : null;
   const have = installedComponents();
   const components = isLora || !fam ? [] : fam.components.map((c) => ({ componentId: c, label: COMPONENTS[c].label, sizeBytes: COMPONENTS[c].mb * MB, installed: have.has(c) }));
-  const mainBytes = e.mainMb * MB;
+  const slug = e.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const choices = fileChoices(e, slug).map((c) => ({ ...c, ...sizeFor("vram" in c ? (c.vram ?? null) : vramFor(e), e.familyId, c.mb * MB) }));
+  const picked = choices.find((c) => c.fileId === chosenFile) ?? (choices[0].fit === "fits" ? choices[0] : (choices.find((c) => c.fit === "fits") ?? choices[0]));
+  const mainBytes = picked.mb * MB;
   const total = mainBytes + components.filter((c) => !c.installed).reduce((a, c) => a + c.sizeBytes, 0);
   const free = (mockFlags().lowDisk ? 9.2 : 214.6) * 1024 * MB;
-  const { vram, fit } = sizeFor(vramFor(e), e.familyId, mainBytes);
-  const slug = e.name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const { vram, fit } = picked;
   return {
+    fileOptions: choices.map((c) => ({ fileId: c.fileId, name: c.name, sizeBytes: c.mb * MB, label: c.label, vram: c.vram, fit: c.fit, selected: c === picked })),
+    smallerFile: chosenFile == null && picked !== choices[0] ? picked.label : null,
     versionId,
     modelName: e.name,
     versionName: e.versionName,
-    mainFile: { name: `${slug}_${e.versionName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9._-]/g, "")}.${e.gguf ? "gguf" : "safetensors"}`, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
+    mainFile: { name: picked.name, sizeBytes: mainBytes, format: e.gguf ? "GGUF" : "SafeTensor" },
     family: e.familyId ? { familyId: e.familyId, label: FAMILIES[e.familyId]?.label ?? e.familyId } : null,
     familyCandidates: e.ambiguous
       ? [
@@ -540,10 +564,10 @@ function plan(versionId: number): InstallPlan {
   };
 }
 
-async function install(versionId: number, familyId: string | null) {
+async function install(versionId: number, familyId: string | null, fileId: number | null = null) {
   await sleep(350);
   if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to download models.");
-  const p = plan(versionId);
+  const p = plan(versionId, fileId);
   const e = allEntries().find((x) => x.versionId === versionId)!;
   if (p.blockedReason) throw err("invalid", p.blockedReason);
   if (!p.enoughDisk) throw err("disk_space", "Not enough free disk space. Delete a model you don't use, then try again.");
@@ -595,6 +619,17 @@ const FILTERS: CatalogFilterOptions = {
     { key: "three_d", label: "3D" },
     { key: "brand", label: "Brand & product" },
   ],
+  tags: [
+    { key: "edit", label: "Edit model", needsSafeModeOff: false },
+    { key: "portraits", label: "Portraits", needsSafeModeOff: false },
+    { key: "characters", label: "Characters", needsSafeModeOff: false },
+    { key: "landscapes", label: "Landscapes", needsSafeModeOff: false },
+    { key: "architecture", label: "Architecture", needsSafeModeOff: false },
+    { key: "animals", label: "Animals", needsSafeModeOff: false },
+    { key: "fantasy", label: "Fantasy", needsSafeModeOff: false },
+    { key: "scifi", label: "Sci-fi", needsSafeModeOff: false },
+    { key: "nsfw", label: "NSFW", needsSafeModeOff: true },
+  ],
   sorts: [
     { label: "Top rated", api: "Highest Rated" },
     { label: "Most downloaded", api: "Most Downloaded" },
@@ -607,9 +642,8 @@ const FILTERS: CatalogFilterOptions = {
     { label: "All time", api: "AllTime" },
   ],
   content: [
-    { key: "safe", label: "Safe only" },
-    { key: "include_18plus", label: "Include 18+" },
-    { key: "only_18plus", label: "18+ only" },
+    { key: "safe", label: "On" },
+    { key: "all", label: "Off" },
   ],
   price: [
     { key: "free", label: "Free" },
@@ -629,9 +663,9 @@ const table: MockTable = {
   plan_civitai_install: async (a) => {
     await sleep(500);
     if (mockSettings().offline) throw err("offline", "Offline mode is on. Turn it off in Settings to download models.");
-    return plan(Number(a.versionId));
+    return plan(Number(a.versionId), a.fileId == null ? null : Number(a.fileId));
   },
-  install_civitai: (a) => install(Number(a.versionId), (a.familyId as string | null) ?? null),
+  install_civitai: (a) => install(Number(a.versionId), (a.familyId as string | null) ?? null, a.fileId == null ? null : Number(a.fileId)),
   has_civitai_key: async () => hasKey,
   set_civitai_key: async (a) => {
     await sleep(250);

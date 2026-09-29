@@ -1,6 +1,6 @@
 // Mock handlers for Settings → Updates. See ./index.ts.
 //
-// URL flag: ?update=none | installer (default) | portable | appImage | manual
+// URL flag: ?update=none | installer (default) | portable | appImage | manual | private (GitHub 404)
 import type { MockTable } from "./index";
 import type { CoreError, UpdateCheck, UpdateInstallMode } from "../types";
 import { mockSettings } from "./app";
@@ -14,10 +14,14 @@ function mode(): UpdateInstallMode | "none" {
   return v === "none" || v === "portable" || v === "appImage" || v === "manual" ? v : "installer";
 }
 
+let githubToken = false;
+
 const table: MockTable = {
   check_for_updates: async (): Promise<UpdateCheck> => {
     await sleep(700);
     if (mockSettings().offline) throw offlineError;
+    if (new URLSearchParams(location.search).get("update") === "private" && !githubToken)
+      throw { code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub, because the project isn't public yet. Add a GitHub token below, or download new versions from the release page.", details: "HTTP 404" };
     const m = mode();
     if (m === "none") return { currentVersion: "0.1.0", update: null };
     return {
@@ -36,6 +40,13 @@ const table: MockTable = {
       });
     }),
   open_release_page: async () => undefined,
+  has_github_token: async () => githubToken,
+  set_github_token: async () => {
+    githubToken = true;
+  },
+  clear_github_token: async () => {
+    githubToken = false;
+  },
 };
 
 export default table;

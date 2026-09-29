@@ -22,6 +22,10 @@ export const checkForUpdates = () => invoke<T.UpdateCheck>("check_for_updates");
 export const installUpdate = (version: string) => invoke<void>("install_update", { version });
 /** Opens the GitHub release page (or the releases list) in the system browser. */
 export const openReleasePage = (version: string | null) => invoke<void>("open_release_page", { version });
+/** Optional GitHub token (OS keychain only) so updates work while the repository is private. */
+export const hasGithubToken = () => invoke<boolean>("has_github_token");
+export const setGithubToken = (token: string) => invoke<void>("set_github_token", { token });
+export const clearGithubToken = () => invoke<void>("clear_github_token");
 
 // ---------------------------------------------------------------- engine (engine agent)
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
@@ -52,9 +56,15 @@ export const catalogFilters = () => invoke<T.CatalogFilterOptions>("catalog_filt
 export const browseCatalog = (query: T.BrowseQuery) => invoke<T.BrowsePage>("browse_catalog", { query });
 /** Preview image bytes fetched by Rust (the WebView makes no network calls). */
 export const fetchPreview = (url: string) => invoke<ArrayBuffer>("fetch_preview", { url });
-export const planCivitaiInstall = (versionId: number) => invoke<T.InstallPlan>("plan_civitai_install", { versionId });
-export const installCivitai = (versionId: number, familyId: string | null) =>
-  invoke<T.InstallStarted>("install_civitai", { versionId, familyId });
+/** Model details page: preview images + their generation data (kept in memory only). */
+export const modelGallery = (versionId: number, content: T.ContentMode, modelNsfw: boolean) =>
+  invoke<T.ModelGallery>("model_gallery", { versionId, content, modelNsfw });
+/** Opens the model's CivitAI page (civitai.red for NSFW models) in the system browser. */
+export const openCivitaiPage = (modelId: number, versionId: number | null, nsfw: boolean) =>
+  invoke<void>("open_civitai_page", { modelId, versionId, nsfw });
+export const planCivitaiInstall = (versionId: number, fileId: number | null = null) => invoke<T.InstallPlan>("plan_civitai_install", { versionId, fileId });
+export const installCivitai = (versionId: number, familyId: string | null, fileId: number | null = null) =>
+  invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId });
 export const hasCivitaiKey = () => invoke<boolean>("has_civitai_key");
 export const setCivitaiKey = (key: string) => invoke<void>("set_civitai_key", { key });
 export const clearCivitaiKey = () => invoke<void>("clear_civitai_key");

@@ -59,7 +59,7 @@ pub async fn browse<S: PageSource>(
     let want = filters.page_size as usize;
     let max_requests = 1 + filters.max_extra_requests as usize;
     let mut cursor = query.cursor.clone();
-    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0 };
+    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0, hidden_by_size: 0 };
     let mut seen = HashSet::new();
     let mut requests = 0usize;
     loop {
@@ -78,6 +78,7 @@ pub async fn browse<S: PageSource>(
                 Ok(card) => out.items.push(card),
                 Err(Hidden::Content) => out.hidden_by_content += 1,
                 Err(Hidden::Other) => out.hidden_by_filters += 1,
+                Err(Hidden::TooBig) => out.hidden_by_size += 1,
             }
         }
         let next = page.next_cursor();
@@ -165,11 +166,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn only_18plus_fetches_more_pages_until_full() {
+    async fn nsfw_tag_fetches_more_pages_until_full() {
         // 1 in 4 models is NSFW → 6 per page → 4 pages for 24 cards.
         let pages = (0..6).map(|p| page(p * 24 + 1..p * 24 + 25, 4, Some(&format!("c{}", p + 1)))).collect();
         let src = FakeSource { pages, calls: Mutex::new(vec![]) };
-        let q = BrowseQuery { content: ContentMode::Only18Plus, ..Default::default() };
+        let q = BrowseQuery { content: ContentMode::All, tags: vec!["nsfw".into()], ..Default::default() };
         let out = browse(&src, &filters(), &q, &[], &env(), now(), go).await.unwrap();
         assert_eq!(out.items.len(), 24);
         assert!(out.items.iter().all(|c| c.model_nsfw));
@@ -187,7 +188,7 @@ mod tests {
         // 1 in 24 is NSFW → 1 per page; after 1 + 5 requests: 6 cards, partial.
         let pages = (0..10).map(|p| page(p * 24 + 1..p * 24 + 25, 24, Some(&format!("c{}", p + 1)))).collect();
         let src = FakeSource { pages, calls: Mutex::new(vec![]) };
-        let q = BrowseQuery { content: ContentMode::Only18Plus, cursor: Some("start".into()), ..Default::default() };
+        let q = BrowseQuery { content: ContentMode::All, tags: vec!["nsfw".into()], cursor: Some("start".into()), ..Default::default() };
         let out = browse(&src, &filters(), &q, &[], &env(), now(), go).await.unwrap();
         assert_eq!(src.calls.lock().unwrap().len(), 6);
         assert_eq!(cursor_of(&src.calls.lock().unwrap()[0]), Some("start"));
@@ -227,7 +228,7 @@ mod tests {
 
     #[tokio::test]
     async fn counts_what_it_hides() {
-        // 1 in 4 is NSFW (hidden by Safe only); ids 5.. are LoRAs in the Models view.
+        // 1 in 4 is NSFW (hidden by Safe mode); ids 5.. are LoRAs in the Models view.
         let mut p = page(1..9, 4, None);
         for m in p.items.iter_mut().filter(|m| m.id >= 5) {
             m.kind = "LORA".into();
@@ -241,7 +242,7 @@ mod tests {
     async fn stops_when_superseded() {
         let pages = (0..6).map(|p| page(p * 24 + 1..p * 24 + 25, 4, Some(&format!("c{}", p + 1)))).collect();
         let src = FakeSource { pages, calls: Mutex::new(vec![]) };
-        let q = BrowseQuery { content: ContentMode::Only18Plus, ..Default::default() };
+        let q = BrowseQuery { content: ContentMode::All, tags: vec!["nsfw".into()], ..Default::default() };
         let err = browse(&src, &filters(), &q, &[], &env(), now(), || false).await.unwrap_err();
         assert!(matches!(err, BrowseError::Superseded));
         assert_eq!(src.calls.lock().unwrap().len(), 1, "no extra CivitAI requests for a stale query");
@@ -275,7 +276,7 @@ mod tests {
 
     impl CatalogEnv for AllCompatible {
         fn family_for(&self, base: &str, _sha: Option<&str>) -> Option<crate::cards::FamilyInfo> {
-            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None })
+            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None, diffusion_only: false })
         }
         fn vram_for(&self, _family: &str, _bytes: u64) -> Option<(pinhole_registry::vram::VramNeed, pinhole_registry::vram::Fit)> {
             None
@@ -285,7 +286,7 @@ mod tests {
         }
     }
 
-    /// The opening Browse page (Models · Safe only · Free · Works with Pinhole · Most
+    /// The opening Browse page (Models · Safe mode on · Free · Works with Pinhole · Most
     /// downloaded · All time) on live data: mainstream models, normal previews.
     #[tokio::test]
     async fn live_default_safe_page() {

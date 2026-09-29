@@ -3,7 +3,7 @@
 // PRIVACY: this state holds prompt text (create.prompt, fineTune.negativePrompt,
 // edit.instruction, edit.restylePrompt, describe.text, batch requests). It lives
 // in memory only — never persist it (no localStorage/sessionStorage/IndexedDB),
-// never log it, never put it in URLs. "Clear session" resets it.
+// never log it, never put it in URLs. "Reset" (top bar) clears it.
 
 import type {
   DescribeStyle,
@@ -34,9 +34,21 @@ export interface ImgRef {
   height: number;
 }
 
+/** Create fields a preset can override (and that choosing None can restore). */
+export const PRESET_KEYS = ["modelId", "styleId", "shape", "quality", "stick", "count", "loras", "fineTune"] as const;
+export type PresetKey = (typeof PRESET_KEYS)[number];
+export type PresetSettings = Partial<Pick<CreateParams, PresetKey>>;
+/** What the active preset changed: values before it (`before`) and the values it set (`applied`). */
+export interface PresetBase {
+  before: PresetSettings;
+  applied: PresetSettings;
+}
+
 export interface CreateParams {
   modelId: string | null;
   presetId: string | null;
+  /** What the active preset overrode, so choosing None can put it back. Null when no preset is active. */
+  presetBase: PresetBase | null;
   /** prompt-bearing */
   prompt: string;
   styleId: string | null;
@@ -135,13 +147,14 @@ export interface AppState {
   describe: DescribeParams;
   job: Job | null;
   toasts: Toast[];
-  /** Bumped by Clear session; tab roots are keyed on it so local state resets too. */
+  /** Bumped by Reset; tab roots are keyed on it so local state resets too. */
   sessionNonce: number;
 }
 
 export const initialCreate = (): CreateParams => ({
   modelId: null,
   presetId: null,
+  presetBase: null,
   prompt: "",
   styleId: null,
   shape: "square",
@@ -361,7 +374,7 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         presets: a.presets,
-        create: !s.create.presetId || a.presets.some((p) => p.id === s.create.presetId) ? s.create : { ...s.create, presetId: null },
+        create: !s.create.presetId || a.presets.some((p) => p.id === s.create.presetId) ? s.create : { ...s.create, presetId: null, presetBase: null },
       };
     case "setFamilyUi":
       return { ...s, familyUi: { ...s.familyUi, [a.ui.familyId]: a.ui } };
@@ -382,7 +395,7 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, downloads: s.downloads.filter(isActiveDownload) };
 
     case "patchCreate":
-      return { ...s, create: { ...s.create, ...a.patch } };
+      return { ...s, create: { ...s.create, ...a.patch, ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}) } };
     case "setFineTune": {
       const ft = compactFineTune({ ...s.create.fineTune, ...a.patch });
       return { ...s, create: { ...s.create, fineTune: ft } };
@@ -413,7 +426,7 @@ function inner(s: AppState, a: Action): AppState {
       const models = s.models ?? [];
       const prev = models.find((m) => m.id === s.create.modelId);
       const nextModel = models.find((m) => m.id === a.modelId);
-      let c: CreateParams = { ...s.create, modelId: a.modelId, presetId: null };
+      let c: CreateParams = { ...s.create, modelId: a.modelId, presetId: null, presetBase: null };
       if (prev?.familyId !== nextModel?.familyId) {
         // Family-specific overrides don't carry over; the user's own text and seed do.
         const { negativePrompt, seed, vaeTiling } = c.fineTune;

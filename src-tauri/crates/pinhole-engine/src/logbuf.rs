@@ -154,6 +154,11 @@ impl LogBuffer {
             g.progress = Some(StepProgress { kind, step, total, at: Instant::now() });
             return;
         }
+        // One INFO line per unused tensor of a checkpoint (model_loader.cpp):
+        // hundreds of them would push the useful lines out of the ring.
+        if trimmed.contains("unknown tensor '") && trimmed.ends_with("in model file") {
+            return;
+        }
         let line = redact_line(trimmed, &g.secrets);
         if g.lines.len() >= g.cap {
             g.lines.pop_front();
@@ -207,7 +212,7 @@ impl LogBuffer {
         self.len() == 0
     }
 
-    /// Drop everything (Clear session / engine restart).
+    /// Drop everything (Reset / engine restart).
     pub fn clear(&self) {
         let mut g = self.inner.lock();
         g.lines.clear();
@@ -474,6 +479,16 @@ mod tests {
         b.flush();
         assert_eq!(b.tail(5), vec!["[ERROR] new_sd_ctx_t failed"]);
         assert_eq!(b.progress().map(|p| (p.step, p.total)), Some((2, 8)));
+    }
+
+    #[test]
+    fn unknown_tensor_lines_are_not_kept() {
+        let b = LogBuffer::default();
+        for i in 0..500 {
+            b.push_line(&format!("[INFO ] model_loader.cpp:1533 - unknown tensor 'cond_stage_model.x{i}.weight | f16 | 2 [768, 1]' in model file"));
+        }
+        b.push_line("[INFO ] backend_fit.cpp:210 - auto-fit: params DiT → CUDA0");
+        assert_eq!(b.tail(usize::MAX), vec!["[INFO ] backend_fit.cpp:210 - auto-fit: params DiT → CUDA0".to_string()]);
     }
 
     #[test]

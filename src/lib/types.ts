@@ -27,7 +27,8 @@ export interface AppInfo {
   os: "windows" | "linux" | "macos" | string;
 }
 
-export type ContentMode = "safe" | "include_18plus" | "only_18plus";
+/** Safe mode: "safe" = On (hides models made for adults), "all" = Off. */
+export type ContentMode = "safe" | "all";
 
 export interface Settings {
   offline: boolean;
@@ -184,7 +185,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | describe */
+  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | edit_alt (optional lighter edit model) | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */
@@ -200,6 +201,10 @@ export interface RecommendedPick {
   quant: string | null;
   licenseNote: string | null;
   unavailableReason: string | null;
+  /** Plain words when this is a smaller version picked so it fits (or replaces a tight installed one). */
+  note: string | null;
+  /** An installed version of this model is a tight fit, and this smaller one fits. */
+  replacesInstalled?: boolean;
 }
 
 export interface InstallStarted {
@@ -404,6 +409,8 @@ export interface BrowseQuery {
   kind: CatalogKind;
   /** Look key from catalog-filters.yaml (realistic | anime | illustration | three_d | brand) or null. */
   look: string | null;
+  /** Tag keys from catalog-filters.yaml → tags; a model must match every one. */
+  tags: string[];
   content: ContentMode;
   price: PriceMode;
   /** "Highest Rated" | "Most Downloaded" | "Newest" */
@@ -412,12 +419,16 @@ export interface BrowseQuery {
   period: string;
   commercialOnly: boolean;
   compatibleOnly: boolean;
+  /** Hide models that are Too big for this machine. */
+  runsOnMyCard?: boolean;
   query: string;
   cursor: string | null;
 }
 
 export interface CatalogFilterOptions {
   looks: { key: string; label: string }[];
+  /** Tags multi-select. `needsSafeModeOff`: the NSFW tag (finds only what Safe mode hides). */
+  tags: { key: string; label: string; needsSafeModeOff: boolean }[];
   sorts: { label: string; api: string }[];
   periods: { label: string; api: string }[];
   content: { key: ContentMode; label: string }[];
@@ -457,6 +468,8 @@ export interface CatalogCard {
   installed: boolean;
   /** Why it can't be installed (pickle only, scans failed…), or null. */
   blockedReason: string | null;
+  /** "Compact (FP8)"… when a smaller file of this version was picked so it fits the card. */
+  smallerFile?: string | null;
 }
 
 export interface BrowsePage {
@@ -467,10 +480,35 @@ export interface BrowsePage {
   partial: boolean;
   /** CivitAI models looked at for this page. */
   checked: number;
-  /** …hidden by the Content mode ("Safe only" hides models made for adults). */
+  /** …hidden by Safe mode (models made for adults). */
   hiddenByContent: number;
   /** …hidden by Look, price, commercial use, kind or "Works with Pinhole". */
   hiddenByFilters: number;
+  /** …hidden by "Runs on my card" (too big for this machine). */
+  hiddenBySize?: number;
+}
+
+/** One preview image on a model's details page. */
+export interface GalleryItem {
+  index: number;
+  /** Small rendition for the grid — fetch via fetchPreview(). */
+  thumbUrl: string;
+  /** Full-size image for "Edit this" — fetch via fetchPreview(). */
+  fullUrl: string;
+  width: number | null;
+  height: number | null;
+  nsfw: boolean;
+  /** CivitAI generation data (prompt, settings, resources). prompt-bearing: memory only, never log or store. */
+  generation: Record<string, unknown> | null;
+}
+
+export interface ModelGallery {
+  items: GalleryItem[];
+  /** Images made for adults, left out because Safe mode is on. */
+  hiddenNsfw: number;
+  /** LoRA trigger words. */
+  trainedWords: string[];
+  offline: boolean;
 }
 
 export interface InstallPlan {
@@ -493,6 +531,22 @@ export interface InstallPlan {
   /** Non-null → install is refused (unsafe format, failed scans…). */
   blockedReason: string | null;
   needsApiKey: boolean;
+  /** Every installable file of the version; more than one = a size choice. */
+  fileOptions?: PlanFileOption[];
+  /** Label of the main file when a smaller one was picked so it fits the card. */
+  smallerFile?: string | null;
+}
+
+export interface PlanFileOption {
+  /** CivitAI file id: pass back to planCivitaiInstall / installCivitai. */
+  fileId: number;
+  name: string;
+  sizeBytes: number;
+  /** "Full quality" | "Compact (FP8)" | "Compact (Q4)" … */
+  label: string;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  selected: boolean;
 }
 
 // ---------------------------------------------------------------- paste from CivitAI

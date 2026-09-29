@@ -119,14 +119,17 @@ Linux NVIDIA uses Vulkan).
 4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
    engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
    sd-server has no auth and keeps finished jobs (images included) for 600 s, so an engine that
-   ran a job is stopped on Clear session and `IDLE_STOP_AFTER` (5 min) after the last
+   ran a job is stopped on Reset and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
    Out of memory (the engine output of the job shows it; `pinhole_engine::failure::memory_failure`):
    each fallback at most once — prompt encoding → restart with `--backend te=cpu` (merged into any
    `--backend` list the wiring emits; remembered per model for the app session in RAM; Settings
-   `textEncoderOnCpu: auto|on|off`), any other stage → `--vae-tiling`; then `CoreError{code:"vram"}`
-   (message names other programs using the card, engine output in `details`).
+   `textEncoderOnCpu: auto|on|off`), VAE / unknown stage → `--vae-tiling`, then (denoising: right
+   away) `--offload-to-cpu` when every weight fits in RAM + 2 GB (else denoising gets tiling; kept while the
+   same model runs with the same wiring args, `GenState::offloaded` → engine note); then `CoreError{code:"vram"}`
+   (message names other programs using the card, engine output in `details`, after the auto-fit
+   memory plan kept from this model's last launch, `pinhole_engine::failure::memory_plan`).
    Before every launch (sd-server and llama-server): previous engine fully exited, leftover engines
    under `Data/engine/` killed (`pinhole_engine::orphans`; also at app start; never other programs
    or engines this app runs), an idle Describe engine stopped and NVIDIA memory used by other
@@ -149,7 +152,7 @@ sampler, scheduler, size — never prompt/negative/style text.
 `GET /api/v1/models` (`limit=50`, always `nsfw=true`, repeated `baseModels`/`types` keys, cursor
 paging; JSON requested gzip-compressed) through `cache::CachedSource` (RAM-only, 12 answers / 5 min,
 compacted), turns each model into a card or a hidden count (`filters::hidden_by` → `safe::SafeFilter`
-for Safe only / 18+ only, then Look, commercial use, price, compatibility) and keeps fetching until
+for Safe mode, then Look, Tags, commercial use, price, compatibility) and keeps fetching until
 24 cards or 1 + 5 requests (`partial` → "Load more"). A newer Browse request stops an older one's
 extra requests (`cancelled`). Card previews are `width=450,optimized=true` CDN URLs (video → still
 frame); `fetch_preview` returns their bytes. UI (`src/tabs/models/lib/`): `pageStore.ts` (RAM page
@@ -157,9 +160,10 @@ cache + shared in-flight requests, next page prefetched), `previewQueue.ts` / `p
 fetches at a time, on-screen first, queued fetches dropped when a card scrolls away, 48 MB RAM LRU).
 
 ### Install from CivitAI / registry (catalog agent)
-`plan_civitai_install(versionId)` → pick file (SafeTensor/GGUF, primary preferred, both scans
-`Success`, else `blockedReason`), family via `baseModel` (→ hash/known file → ask), components
-missing (matched by component id / SHA-256), sizes, free disk, VRAM fit. `install_civitai` enqueues
+`plan_civitai_install(versionId, fileId?)` → pick file (SafeTensor/GGUF, primary preferred, both
+scans `Success`, else `blockedReason`; a smaller file that Fits when the usual one doesn't, or the
+user's `fileId` from the Size choice, `select::select_file_for_machine`), family via `baseModel` (→ hash/known file → ask), components
+missing (matched by component id / SHA-256), sizes, free disk, VRAM fit, `fileOptions`. `install_civitai(versionId, familyId, fileId?)` enqueues
 one download group (model + missing components); on success registers every file in
 `installed.json` and emits `models-changed`. 401/403 → `CoreError{code:"unauthorized"}` and the UI
 asks for an API key (keychain). LoRAs store `trainedWords`.

@@ -122,7 +122,7 @@ unsaved images, logs.
 
 1. No prompt text is ever written to disk, logs, crash dumps, presets, file names, or PNG metadata.
 2. Generated images live in RAM until the user clicks **Save**. Closing the app discards them.
-3. **Clear session** button: drops all in-memory images and prompt fields immediately.
+3. **Reset** button: drops all in-memory images and prompt fields immediately.
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
@@ -130,7 +130,8 @@ unsaved images, logs.
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
-7. The CivitAI API key (optional) is stored in the OS keychain (`keyring` crate), never in `Data/`.
+7. The CivitAI API key (optional) and the GitHub token (optional, Settings → Updates) are stored in
+   the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
 9. Saved-image metadata: **none** by default. Optional setting "Include generation settings
    (no prompt)" writes model name, seed, steps, dials into a PNG text chunk.
@@ -240,32 +241,36 @@ Two sub-views: **Browse** and **Installed**.
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
-| Content | Safe only · Include 18+ · 18+ only | always `nsfw=true` (the only way to get every sample image with its rating); Safe only (default) keeps models that pass `safe_filter` (see below) · everything · only the models Safe only hides |
+| Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Top rated · Most downloaded (default) · Newest | `sort=Highest Rated / Most Downloaded / Newest` |
 | Time | This week · This month · This year · All time (default) | `period` |
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |
+| Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
 | Search | free text | `query` |
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
   (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`).
-- 18+ modes require a one-time confirmation per session (stored in RAM only).
-- Default content mode is **Safe only**. When 18+ is off, also blur any preview image flagged NSFW.
-- Content, Look and Price are partly client-side filters: keep fetching pages until the grid page
+- Turning Safe mode off requires a one-time "I'm 18 or older" confirmation per session (stored
+  in RAM only). There is no "adult only" mode: the NSFW tag is the only way to narrow to those
+  models, and it needs Safe mode off.
+- Safe mode is **On** by default. While it is on, also blur any preview image flagged NSFW.
+- Safe mode, Look, Tags and Price are partly client-side filters: keep fetching pages until the grid page
   (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
   stops the older one's extra requests.
-- **Safe only** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
+- **Safe mode** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
   nothing stricter than `nsfw=false`, which only hides models CivitAI flags, and rejects
   `browsingLevel`): a model is hidden when CivitAI flags it NSFW, its `nsfwLevel` bitmask has
   no PG bit, it has an adult tag (or two suggestive ones), its name has an adult word (whole
   words), or more than half of its creator's rated sample images are R or above. The
   model-level `nsfwLevel` alone is not used otherwise: mainstream models such as Juggernaut XL
-  are 31 (all levels) because people post every kind of image with them. Card previews in Safe
-  only are PG images only (like Stability Matrix); no PG image → no preview.
+  are 31 (all levels) because people post every kind of image with them. Card previews with Safe
+  mode on are PG images only (like Stability Matrix); no PG image → no preview.
 - Opening filters are **Most downloaded · All time** (mainstream models; "This month" is
   dominated by fresh suggestive anime merges). A line above the grid says "Showing models that
-  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe only hid.
+  run in Pinhole — turn off “Works with Pinhole” to see all" and how many Safe mode hid.
 - Speed: CivitAI answers are requested gzip-compressed and cached in RAM (never on disk: the
   Rust side keeps 12 answers for 5 min, the UI 80 pages for 10 min) and the next page is
   fetched ahead. Card previews are CivitAI's own card rendition (`width=450,optimized=true`;
@@ -281,7 +286,16 @@ model in small text.
 
 **Install** button:
 1. Pick the best file: primary, `SafeTensor` or GGUF format only. **Never PickleTensor.**
-   Require `pickleScanResult == Success` and `virusScanResult == Success`.
+   Require `pickleScanResult == Success` and `virusScanResult == Success`. When that file is
+   Tight or Too big for this card (§6.2) and the version has another safe, hashed file that
+   Fits (e.g. an FP8 or Q4 file), pick that one instead (else a Tight one over a Too big one).
+   All-in-one families (SD 1.5, SDXL) only switch within the same format: their GGUF files hold
+   the diffusion model alone, without the VAE and text encoders;
+   the card says "Compact (FP8) version, so it fits your card". When a version has more than
+   one installable file, the dialog shows a **Size** choice ("Full quality", "Compact (FP8)",
+   "Compact (Q4)"…) with each file's size and VRAM badge and a plain explanation: compact
+   versions need less graphics memory, pictures keep their size, fine detail is a little softer.
+   The user's pick is re-planned and installed as chosen.
 2. Resolve the family (§6) and list the extra components needed (VAE, text encoders),
    skipping any already installed (matched by SHA-256).
 3. Show the total download size and a free-disk-space check, then download everything with
@@ -289,6 +303,24 @@ model in small text.
 4. If CivitAI answers 401/403, prompt for an API key (explain why; optional; stored in keychain).
 5. For LoRAs, save trigger words from the version's `trainedWords` into `installed.json`,
    and offer a toggle "Add trigger words automatically".
+
+#### Model details
+Clicking a card's preview or name opens the model's details page (Back or Esc returns to the
+grid where it was):
+- The card's facts (rating, downloads, size, VRAM needed with the fit badge, licence, client-work
+  badge, LoRA trigger words) and the same Install button.
+- **Example images**: the version's preview images from CivitAI, fetched through the Rust client
+  like every preview. With Safe mode on, images made for adults are left out (with a count); videos are skipped.
+  Images come from `GET /api/v1/model-versions/{id}`, the only endpoint that still returns each
+  image's generation data (`/models` and `/images` send `meta: null`, checked 2026-09-28).
+- Clicking an image shows it larger with its prompt and main settings, plus two buttons:
+  **Use these settings** (turns the image's generation data into "Copy generation data" text and
+  runs it through Paste from CivitAI, so Create fills the prompt and settings, selects this model
+  or offers to install it, and shows what was applied) and **Edit this image** (the full-size image
+  goes into the in-memory session and opens in Edit). The generation data is held in memory only.
+- **Open on CivitAI** opens the model's page in the system browser: `civitai.red` for NSFW models,
+  `civitai.com` for everything else. The URL is built in Rust from the model id; the WebView
+  never navigates.
 
 #### Installed
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
@@ -338,8 +370,17 @@ finetune of a known family.
 - **Optional second cards** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_detail` offers
   Krea 2 Turbo ("more detail, slower") next to Z-Image Turbo on 12 GB+ cards (Q5_K_S below
   20 GB, Q8_0 from 20 GB). When nothing in an optional role fits, the card is left out.
+- `edit_alt` offers FLUX.1 Kontext ("lighter, faster edits") next to Qwen Image Edit, so a
+  16 GB card has two edit models to choose from; it is left out when it would be the same
+  family as the Edit pick.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
-  choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
+  choosing the best quant that **Fits** (bf16 → Q8 → Q6 → Q4 → Q3); only when none Fits, the
+  Tight quant with the lowest need. "Recommended for your card" must be OK to run: a Tight
+  pick is a last resort, not the default. A pick smaller than the family's best version
+  carries a plain note (smaller version, fine detail a little softer).
+- When the installed version of a pick is Tight and a smaller registry version Fits, that
+  smaller version is offered (Models → Installed, and in Edit next to a tight edit model);
+  the installed file stays, both show in the model picker. The last Realistic candidate is the
   small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
   model: there, candidates are sized against system RAM instead (§6.2).
 - **First run**: after the engine download, show "Recommended for your GPU (16 GB)" (or
@@ -368,10 +409,14 @@ everything else is **Too big**. The UI then says "your computer", not "your GPU"
 
 How X is computed:
 1. **Known models**: `vram_gb: { min, recommended }` from the registry (measured, not guessed).
-2. **Unknown models** (CivitAI, dropped-in files): estimate =
-   diffusion weights size + VAE + text encoders that stay on GPU (per family `flags`) +
-   activation overhead for the family's default resolution (`activation_gb` in the registry).
-   Label it "~X GB (estimate)".
+2. **Unknown models** (CivitAI, dropped-in files): estimate = the larger of two stages,
+   because the pinned sd.cpp places the diffusion model first, parks text encoders in RAM when
+   they don't fit and frees their GPU copy after the prompt is read:
+   - diffusion stage = diffusion weights + VAE and other non-text-encoder components +
+     activation overhead for the family's default resolution (`activation_gb`) + 0.5 GB;
+   - prompt stage = text encoders + 1 GB compute + 0.5 GB.
+   Min (Tight) = half the diffusion weights + activations + 0.5 GB (offload). Label it
+   "~X GB (estimate)". Not yet checked against measured peaks on real cards.
 3. After a real run, record the observed peak VRAM for that file in `installed.json`
    (a number only) and show the measured value from then on.
 
@@ -428,7 +473,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
   graphics card and moves it to the processor for a model after the card runs out of memory while
   reading the prompt (kept for the app session); Off never moves it automatically (family flags
   such as `--clip-on-cpu` still apply)
-- Default content mode (Safe only / Include 18+ / 18+ only)
+- Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
 - CivitAI API key (set / remove; keychain)
@@ -470,10 +515,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 engine download + launch of `sd-server`, health check.
 
 **M1 – Generate**: registry loader, header detector, wiring, VRAM estimate, Create tab with
-simple dials and Style field, in-memory results, Save, Cancel, Clear session. First-run
+simple dials and Style field, in-memory results, Save, Cancel, Reset. First-run
 "Recommended for your GPU" screen with one-click download (§6.1).
 
-**M2 – Models tab**: CivitAI browse with all filters (incl. 18+ only, paid hidden by default),
+**M2 – Models tab**: CivitAI browse with all filters (Safe mode, Tags, paid hidden by default),
 model cards with VRAM needed, install flow with component resolution, Installed view, delete.
 
 **M3 – Edit**: instruction edit (Qwen Image Edit 2511 / Kontext), restyle img2img, mask brush,
@@ -511,8 +556,8 @@ build is shared.
   that fits the user's GPU (§6.1).
 - **VRAM**: every model shows how much VRAM it needs (§6.2).
 - **Paid (early access) models**: hidden by default.
-- **Content filter**: Safe only (default) · Include 18+ · 18+ only. Release drops "18+ only"
-  (`docs/RELEASE-SPEC.md` §5).
+- **Content filter**: Safe mode On (default) · Off. No "adult only" mode; the NSFW tag in the
+  Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
 - **Distribution**: personal testing only for now. Any shared build is gated by
   `docs/RELEASE-SPEC.md`.
 - **Updates** (manual only): Settings → Check for updates asks
@@ -525,7 +570,12 @@ build is shared.
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
-  the next start. The checksum list protects against broken or swapped downloads, not against a
+  the next start. While the repository is private, GitHub answers the unauthenticated check with 404:
+  the app says the releases can't be seen yet and offers the release page, or a GitHub token field
+  (fine-grained, Contents: read-only on this repository; OS keychain only). With a token the check
+  and the downloads use the API (`/releases`, `/releases/assets/{id}` with `Accept:
+  application/octet-stream`), and the token is sent only in `Authorization` to `api.github.com`
+  (reqwest drops it on the redirect to the release CDN). The checksum list protects against broken or swapped downloads, not against a
   compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
   Prompts are never sent to a server for moderation.
@@ -552,18 +602,31 @@ build is shared.
   loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
-  processor"); otherwise → `--vae-tiling` (an automatic tiling choice shows in the engine note and
-  Fine-tune "VAE tiling: Off" wins over it). "failed to encode prompt" without a memory line is not
+  processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
+  note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising runs out, the
+  weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
+  every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
+  model runs with the same settings, also after the idle stop — another model, other settings or
+  deleting it tries the card again; the engine status says so meanwhile). sd.cpp's auto-fit decides once,
+  at launch, to keep weights on the card with a fixed ~2 GB of working memory, so a bigger picture
+  or a reference image has no room; offloaded weights are only cached there. "failed to encode prompt" without a memory line is not
   treated as running out of memory. The final error (code `vram`, never the generic
   "couldn't make this image") names the other programs when known and says to close them or pick
-  the smaller version of the model; the engine output stays behind Details.
+  the smaller version of the model; the engine output stays behind Details, led by the engine's
+  memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's
+  last launch. `sd-server` runs at `--log-level info` for that plan, never verbose / debug (they
+  print the request). Weights auto-fit keeps in system memory are memory-mapped from the model
+  file (`--mmap`) rather than copied into pinned memory, so the OS can page them out; because a
+  mapped file can't be deleted on Windows, deleting a model first stops the engine when it runs
+  that model or has one of its files open. sd-server's per-tensor "unknown tensor" lines are not
+  kept in the output buffer (they can run to hundreds and push out the useful lines).
 - Code layout: a Cargo workspace of small crates under `src-tauri/crates/` (see
   `docs/ARCHITECTURE.md`).
 - **Local engine API exposure (security review).** Upstream `sd-server` has no authentication,
   answers any CORS `Origin` (with credentials) and keeps every finished job — base64 images
   included — at `GET /sdcpp/v1/jobs/{id}` for 600 s. Another program on this computer, or a web
   page that finds the random port and a job id, could read recent images while the engine runs.
-  Interim mitigations: loopback-only random port; the engine is stopped on **Clear session** and
+  Interim mitigations: loopback-only random port; the engine is stopped on **Reset** and
   5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
   after start-up Pinhole checks that the server on the port is its own child reporting the model
   it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via

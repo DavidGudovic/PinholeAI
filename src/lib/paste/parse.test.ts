@@ -42,7 +42,7 @@ describe("parseGenerationData", () => {
     expect(p.sampler).toBe("Euler a");
     expect(p.seed).toBe(987654321);
     expect(p.resources).toEqual([
-      { type: "checkpoint", modelVersionId: 1190596, modelName: "WAI-NSFW-illustrious-SDXL", modelVersionName: "v11.0", hash: null, weight: null },
+      { type: "checkpoint", modelVersionId: 1190596, modelName: "WAI-illustrious-SDXL", modelVersionName: "v11.0", hash: null, weight: null },
       { type: "lora", modelVersionId: 456789, modelName: "Detailer, Illustrious", modelVersionName: "v1.0", hash: null, weight: 0.8 },
       { type: "embed", modelVersionId: 222, modelName: "lazyneg", modelVersionName: "v1", hash: null, weight: 1 },
     ]);
@@ -183,6 +183,16 @@ describe("parseGenerationData", () => {
   it("puts the Model hash on CivitAI's checkpoint entry", () => {
     const p = parseGenerationData('x\nSteps: 1, Model hash: abcdef1234, Civitai resources: [{"type":"checkpoint","modelVersionId":9}]')!;
     expect(p.resources).toEqual([{ type: "checkpoint", modelVersionId: 9, modelName: null, modelVersionName: null, hash: "abcdef1234", weight: null }]);
+  });
+
+  it("reads CivitAI AIRs when there is no modelVersionId", () => {
+    const p = parseGenerationData(
+      'x\nSteps: 1, Civitai resources: [{"air":"urn:air:sdxl:checkpoint:civitai:827184@1190596"},{"type":"lora","weight":0.8,"air":"urn:air:sdxl:lora:civitai:12@34"},{"air":"urn:air:sdxl:checkpoint:huggingface:a/b@c"}]',
+    )!;
+    expect(p.resources).toEqual([
+      { type: "checkpoint", modelVersionId: 1190596, modelName: null, modelVersionName: null, hash: null, weight: null },
+      { type: "lora", modelVersionId: 34, modelName: null, modelVersionName: null, hash: null, weight: 0.8 },
+    ]);
   });
 });
 

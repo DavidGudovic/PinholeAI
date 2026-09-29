@@ -53,11 +53,28 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   has no preview API); cancel during generation restarts the engine.
 - Privacy by construction: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
-- Hardening: engine stops after Clear session / 5 min idle (upstream sd-server has no auth and keeps
+- Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,
   imports re-encoded to PNG, downloads size-bounded, release builds refuse unpinned engines.
 - Linux engine needs Ubuntu 24.04+ (upstream builds use glibc 2.38); Linux NVIDIA uses Vulkan.
 - Windows engines need the VC++ runtime: bundled and copied next to the engine only when missing.
+
+## Waiting on a real-GPU test (RTX 5070 Ti 16 GB, Windows 11)
+CI runs on CPU only, so these are built but unproven:
+- Z-Image Turbo (Q8 model + Q8 encoder) on 16 GB while another program holds ~9 GB of VRAM.
+- The out-of-memory retries (text encoder on the processor, then VAE tiling) and the Settings toggle.
+- Krea 2 Turbo on 12 and 16 GB: speed and whether it fits.
+- Windows: the leftover-engine sweep at start and the `nvidia-smi` "other programs" note.
+- Defaults and VRAM figures for the new families (priority: FLUX.2 klein, Anima, Chroma, SD 3.5,
+  Qwen-Image 2.1); int8 files on Vulkan.
+
+Not checked against live CivitAI (the API probe can only reach `civitai.com`, not
+`image.civitai.com`): the `width=450,optimized=true` card thumbnail and video-still URLs, and
+whether CivitAI actually gzips its JSON. Check both in a real app build.
+
+Behaviour note: Pinhole adds no prompt filter, prefix or negative prompt to Z-Image Turbo; what the
+base model will draw is the model's own behaviour. CivitAI images made with a fine-tune need that
+fine-tune installed to reproduce.
 
 ## CI, releases, repo habits
 - CI is tiered for the private repo's Actions minutes: every push/PR ≈ 4 min (Linux tests + frontend
@@ -78,12 +95,13 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
    + base), Chroma, Qwen-Image 2.1, SD 3 / 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; CivitAI int8
    (ComfyUI int8_tensorwise) files now install. Not runnable: MiniMax H3 (video + audio only in the
    engine), "Qwen 2" (API-only on CivitAI). Needs real-GPU checks of defaults and VRAM figures.
-3. **CivitAI browser** (built, awaiting a real-app check): Safe only = Stability Matrix's default
+3. **CivitAI browser** (built, awaiting a real-app check): Safe mode (On/Off) = Stability Matrix's default
    (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
    live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then
    "Load more"); gzip JSON, CivitAI's own 450 px card renditions, RAM caches, prefetch.
-4. **Engine auth patch** (decision pending): build a patched sd-server in CI that rejects browser
-   requests and requires a per-launch token — recommended before any public release.
+4. **Engine auth patch** (decided 2026-09-28: before any shared build, not now): build a patched
+   sd-server in CI that rejects browser requests and requires a per-launch token. Listed in the
+   RELEASE-SPEC §12 checklist.
 5. Measure real VRAM on 8 / 12 / 16 GB cards (SPEC §14) and record observed peak VRAM.
 6. Code signing (e.g. Azure Trusted Signing) to remove SmartScreen warnings.
 7. M6 / `RELEASE-SPEC.md`: AI-generated marking, local image check + guard LLM, licence acceptance,

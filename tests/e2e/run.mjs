@@ -600,10 +600,10 @@ try {
     await waitSetting("theme", "light");
     await driver.wait(async () => !(await isDark()), 5000, "dark class still applied");
 
-    // Content mode, paid, trigger words, saved metadata
-    await click(`//div[@role='radiogroup']//button[normalize-space(.)='Include 18+']`);
-    await waitSetting("contentMode", "include_18plus");
-    await click(`//div[@role='radiogroup']//button[normalize-space(.)='Safe only']`);
+    // Safe mode, paid, trigger words, saved metadata
+    await click(`//div[@role='radiogroup'][@aria-label='Safe mode']//button[normalize-space(.)='Off']`);
+    await waitSetting("contentMode", "all");
+    await click(`//div[@role='radiogroup'][@aria-label='Safe mode']//button[normalize-space(.)='On']`);
     await waitSetting("contentMode", "safe");
     const paid0 = yamlValue(readSettingsYaml(), "showPaid");
     await toggleByLabel("Show paid (early access) models");
@@ -884,8 +884,8 @@ try {
     note(`top-bar engine chip: ${chip.length ? "Engine problem" : "none"}`);
   });
 
-  await step("create-clear-session", async (note) => {
-    await clickButton("Clear session");
+  await step("create-reset", async (note) => {
+    await click("//header//button[normalize-space(.)='Reset' or .//span[normalize-space(.)='Reset']]");
     await sleep(800);
     const prompt = await driver.findElement(By.id("prompt")).getAttribute("value");
     assert(prompt === "", `prompt not cleared: ${prompt.length} chars left`);
@@ -893,7 +893,7 @@ try {
     if (!(await driver.findElements(By.id("ft-steps"))).length) await clickButton("Fine-tune");
     await sleep(300);
     const neg = await driver.executeScript("const t = [...document.querySelectorAll('#tab-create textarea')].find(t => /Default:|Nothing/.test(t.placeholder)); return t ? t.value : null");
-    note(`negative prompt after Clear session: ${neg === null ? "(Fine-tune closed)" : JSON.stringify(neg)}`);
+    note(`negative prompt after Reset: ${neg === null ? "(Fine-tune closed)" : JSON.stringify(neg)}`);
     assert(!neg, "negative prompt not cleared");
     await shot("21-create-cleared");
   });

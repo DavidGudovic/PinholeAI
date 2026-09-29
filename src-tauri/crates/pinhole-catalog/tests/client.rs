@@ -46,7 +46,7 @@ fn client(srv: &MockServer, offline: bool) -> CivitaiClient {
 struct AnyEnv;
 impl CatalogEnv for AnyEnv {
     fn family_for(&self, base_model: &str, _: Option<&str>) -> Option<FamilyInfo> {
-        (base_model != "SD 3.5 Large").then(|| FamilyInfo { id: "sdxl".into(), label: "SDXL".into(), license_note: None })
+        (base_model != "SD 3.5 Large").then(|| FamilyInfo { id: "sdxl".into(), label: "SDXL".into(), license_note: None, diffusion_only: false })
     }
     fn vram_for(&self, _: &str, _: u64) -> Option<(VramNeed, Fit)> {
         None
@@ -73,7 +73,7 @@ async fn search_sends_query_without_key() {
     assert!(r.path.contains("sort=Most%20Downloaded"), "{}", r.path);
     assert!(r.path.contains("limit=50"), "{}", r.path);
     assert!(r.path.contains("baseModels=SDXL%201.0&baseModels=Pony"), "{}", r.path);
-    assert!(r.path.contains("nsfw=true"), "Safe only filters client-side");
+    assert!(r.path.contains("nsfw=true"), "Safe mode filters client-side");
     assert!(!r.path.contains("page="));
     assert!(r.header("authorization").is_none(), "browsing is anonymous");
     assert!(!r.path.contains("secret-key"));

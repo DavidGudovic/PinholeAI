@@ -83,7 +83,7 @@ unloaded when idle (like the captioner). Scores and verdicts are held in memory 
 2. **Minor + sexual:** the output is sexually explicit **and** depicts someone who appears under
    18 — in every mode (Create and Edit), photo or drawn/anime style.
 
-Not blocked: adult explicit images of fictional people when 18+ content is on; swimwear; art
+Not blocked: adult explicit images of fictional people when Safe mode is off; swimwear; art
 nudes (tune thresholds against a safe test set).
 
 - **Coverage:** final results, live TAESD previews (check them too, or turn previews off in Edit
@@ -134,15 +134,15 @@ blocking logic with mocked classifier scores; measure false positives on a safe 
 ## 5. Catalog and recommended models
 
 - **CivitAI flags** (on every model in `/api/v1/models`):
-  - `minor: true` → never shown in any 18+ mode.
-  - `poi: true` (real-person likeness) → never shown in 18+ modes, never offered in the Edit tab.
+  - `minor: true` → never shown with Safe mode off.
+  - `poi: true` (real-person likeness) → never shown with Safe mode off, never offered in the Edit tab.
   - `sfwOnly: true` → show a badge; while such a model is active, §3 blocks explicit output
     regardless of content mode.
-- **Remove the "18+ only" content mode.** Keep *Safe only* (default) and *Include 18+*.
-  Update SPEC §5.4, §8, §11 (M2), §13 and `config/catalog-filters.yaml` (`only_18plus`).
+- ~~Remove the "18+ only" content mode.~~ Done (2026-09-28): Safe mode On (default) / Off, plus
+  a Tags multi-select whose NSFW tag needs Safe mode off; no one-click adult preset.
 - **`recommended.anime`:** remove `sdxl_pony`; pick an SFW-leaning Illustrious checkpoint.
 - **`recommended.edit`:** FLUX.1 Kontext only if §3 ships and §6 licence acceptance is in place.
-- Keep the once-per-session 18+ confirmation; add "I am 18 or older" wording to it.
+- Keep the once-per-session confirmation for turning Safe mode off ("I'm 18 or older").
 
 ---
 
@@ -188,7 +188,12 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 
 - Describe privacy as ownership of your work: "Your prompts and images stay on your computer."
 - Never use: "leaves no trace", "untraceable", "no one will know", "uncensored", "unfiltered",
-  "NSFW", "undress", "nudify", "face swap".
+  "NSFW", "undress", "nudify", "face swap". Only exception: "NSFW" as the label of the Browse
+  tag filter (CivitAI's own term, so people can find or avoid those models), never in marketing.
+- Don't frame privacy as hiding what you made from other people ("forgets everything", "wipes
+  your tracks", "nobody will see", "no history"). State facts instead: what stays on the
+  computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
+  "Clear session" or "Panic").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
   person's body or clothes while keeping their face.
 - Screenshots: safe for work, fictional subjects, no celebrities or real people.
@@ -233,7 +238,7 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 - [ ] §2 AI marker: metadata + C2PA + watermark, always on, tests pass
 - [ ] §3 image check: two block rules, previews covered, fail-closed, false-positive rate measured
 - [ ] §4 guard LLM on the final combined prompt and Edit instructions
-- [ ] §5 CivitAI flags enforced, "18+ only" removed, recommended lists updated
+- [ ] §5 CivitAI flags enforced, recommended lists updated ("18+ only" removed 2026-09-28)
 - [ ] §6 licence field everywhere, acceptance for non-commercial / gated models
 - [ ] §7 first-run terms + Edit consent notice
 - [ ] §8 wording pass over README, repo description, UI, screenshots
@@ -242,6 +247,10 @@ Applies to the README, repo description, release notes, screenshots, issue templ
 - [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign,
       plus Authenticode for Windows) and "Update and restart" refuses a file whose signature doesn't
       verify. Today it only checks `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").
+- [ ] Engine API locked down: ship a patched `sd-server` that rejects any request carrying an
+      `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").
+      Today any web page open in the user's browser that finds the port can send it jobs or read
+      recent images. Decided 2026-09-28: fix before any shared build, not in the test build.
 - [ ] SPEC.md, CLAUDE.md and the privacy tests updated to match
 
 ---

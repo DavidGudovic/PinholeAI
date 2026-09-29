@@ -6,6 +6,9 @@ const api = vi.hoisted(() => ({
   checkForUpdates: vi.fn<() => Promise<UpdateCheck>>(),
   installUpdate: vi.fn<(v: string) => Promise<void>>(),
   openReleasePage: vi.fn<(v: string | null) => Promise<void>>(),
+  hasGithubToken: vi.fn<() => Promise<boolean>>(() => Promise.resolve(false)),
+  setGithubToken: vi.fn<(t: string) => Promise<void>>(),
+  clearGithubToken: vi.fn<() => Promise<void>>(),
 }));
 vi.mock("../lib/api", async (orig) => ({ ...(await orig<typeof import("../lib/api")>()), ...api }));
 vi.mock("../tabs/models/lib/downloads", () => ({ useTaggedGroup: () => null, cancelGroup: vi.fn() }));
@@ -15,6 +18,7 @@ import { UpdateSection } from "./UpdateSection";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  api.hasGithubToken.mockResolvedValue(false);
 });
 
 const update = (installMode: "installer" | "manual"): UpdateCheck => ({
@@ -60,5 +64,29 @@ describe("UpdateSection", () => {
     render(<UpdateSection offline={false} />);
     fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
     expect(await screen.findByText(/Network problem/)).toBeTruthy();
+  });
+
+  it("explains when GitHub doesn't show the releases and offers the release page", async () => {
+    api.checkForUpdates.mockRejectedValue({ code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub, because the project isn't public yet.", details: "HTTP 404" });
+    api.openReleasePage.mockResolvedValue();
+    render(<UpdateSection offline={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open release page/i }));
+    expect(api.openReleasePage).toHaveBeenCalledWith(null);
+    expect(screen.queryByText(/HTTP 404/)).toBeNull();
+  });
+
+  it("saves a GitHub token from the private-repo note and checks again", async () => {
+    api.checkForUpdates
+      .mockRejectedValueOnce({ code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub.", details: "HTTP 404" })
+      .mockResolvedValueOnce({ currentVersion: "0.1.0", update: null });
+    api.setGithubToken.mockResolvedValue();
+    render(<UpdateSection offline={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
+    fireEvent.change(await screen.findByPlaceholderText(/GitHub token/), { target: { value: " github_pat_abc " } });
+    fireEvent.click(screen.getByRole("button", { name: /save token and check again/i }));
+    expect(await screen.findByText(/newest version/)).toBeTruthy();
+    expect(api.setGithubToken).toHaveBeenCalledWith("github_pat_abc");
+    expect(screen.getByText(/token saved in your system keychain/)).toBeTruthy();
   });
 });

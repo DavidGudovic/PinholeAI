@@ -220,14 +220,32 @@ pub fn missing_to_run<'a>(registry: &'a Registry, family: &Family, hw: &HwContex
         .collect()
 }
 
+/// Kinds read only while encoding the prompt (a separate stage, see `vram::estimate`).
+pub fn is_text_encoder_kind(kind: &str) -> bool {
+    matches!(kind, "clip_l" | "clip_g" | "t5xxl" | "llm" | "llm_vision")
+}
+
 /// Bytes of the components that stay on the GPU (registry
-/// `wiring::gpu_resident_components`), for `vram::estimate`.
-pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext) -> u64 {
+/// `wiring::gpu_resident_components`), for `vram::estimate`:
+/// `(other components such as the VAE, text encoders)`.
+pub fn gpu_component_bytes(registry: &Registry, family: &Family, hw: &HwContext) -> (u64, u64) {
     wiring::gpu_resident_components(registry, family, hw)
         .iter()
         .filter_map(|rc| registry.component(&rc.component_id))
-        .map(|c| mb_to_bytes(c.size_mb))
-        .sum()
+        .fold((0, 0), |(other, te), c| {
+            let b = mb_to_bytes(c.size_mb);
+            if is_text_encoder_kind(&c.kind) {
+                (other, te + b)
+            } else {
+                (other + b, te)
+            }
+        })
+}
+
+/// [`vram::estimate`] for a main file of `family` on this hardware.
+pub fn estimate_need(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> VramNeed {
+    let (other, te) = gpu_component_bytes(registry, family, hw);
+    vram::estimate(registry, family, main_bytes, other, te)
 }
 
 // ------------------------------------------------------------------ VRAM
@@ -241,7 +259,7 @@ pub fn need_from(v: &VramGb) -> VramNeed {
 pub fn family_need(registry: &Registry, family: &Family, hw: &HwContext, main_bytes: u64) -> VramNeed {
     match &family.vram_gb {
         Some(v) => need_from(v),
-        None => vram::estimate(registry, family, main_bytes, gpu_component_bytes(registry, family, hw)),
+        None => estimate_need(registry, family, hw, main_bytes),
     }
 }
 
@@ -357,9 +375,12 @@ pub fn quant_options(spec: &DownloadSpec) -> Vec<QuantOption> {
     out
 }
 
-/// SPEC §6.1: the best quant that fits, starting at the hardware tier's
-/// `prefer_quant` (bf16 → Q8 → Q4). Falls back to any option that fits.
-/// `fit_of` sizes one option on this machine (see [`need_and_fit`]).
+/// SPEC §6.1: the best quant that **Fits**, starting at the hardware tier's
+/// `prefer_quant` (bf16 → Q8 → Q4); if none Fits, the Tight one that is
+/// closest to fitting (lowest need: least of the model streamed from RAM).
+/// A recommended pick must run well on the card, so a smaller version that
+/// Fits beats a bigger one that is Tight. `fit_of` sizes one option on this
+/// machine (see [`need_and_fit`]).
 pub fn choose_quant<'a>(
     options: &'a [QuantOption],
     prefer: Option<&str>,
@@ -368,7 +389,11 @@ pub fn choose_quant<'a>(
     let start = prefer.map(quant_rank).unwrap_or(0);
     let preferred = options.iter().filter(|o| quant_rank(&o.quant) >= start);
     let rest = options.iter().filter(|o| quant_rank(&o.quant) < start);
-    preferred.chain(rest).map(|o| (o, fit_of(o))).find(|(_, (_, f))| *f != Fit::TooBig).map(|(o, (n, f))| (o, n, f))
+    let sized: Vec<(&QuantOption, VramNeed, Fit)> = preferred.chain(rest).map(|o| (o, fit_of(o))).map(|(o, (n, f))| (o, n, f)).collect();
+    sized.iter().find(|(_, _, f)| *f == Fit::Fits).cloned().or_else(|| {
+        // min_by keeps the first of equal needs (preference order).
+        sized.iter().filter(|(_, _, f)| *f == Fit::Tight).min_by(|a, b| a.1.gb.total_cmp(&b.1.gb)).cloned()
+    })
 }
 
 /// VRAM need of an installed main model: measured peak → registry download

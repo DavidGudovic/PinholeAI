@@ -34,14 +34,17 @@ export const CatalogCardView = memo(function CatalogCardView({
   showPrice,
   installed,
   onInstall,
+  onOpen,
 }: {
   card: CatalogCard;
   content: ContentMode;
   showPrice: boolean;
   installed: boolean;
   onInstall: (card: CatalogCard) => void;
+  /** Open the model's details page. */
+  onOpen: (card: CatalogCard) => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLButtonElement>(null);
   const visibility = useVisibility(ref);
   const blur = shouldBlurPreview(card, content);
   // Video previews arrive as a still frame (Rust rewrites the URL); a bare video file is never fetched.
@@ -86,7 +89,13 @@ export const CatalogCardView = memo(function CatalogCardView({
   return (
     // content-visibility: the browser skips layout/paint for cards far off screen.
     <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
-      <div ref={ref} className="relative aspect-[4/5] overflow-hidden bg-neutral-100 dark:bg-neutral-800">
+      <button
+        ref={ref}
+        type="button"
+        onClick={() => onOpen(card)}
+        aria-label={`Show ${card.name} details`}
+        className="relative block aspect-[4/5] w-full cursor-pointer overflow-hidden bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none focus-visible:ring-inset dark:bg-neutral-800"
+      >
         {preview.src ? (
           <img src={preview.src} alt="" draggable={false} decoding="async" className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
         ) : card.previewIsVideo && (videoFile || preview.failed) ? (
@@ -99,7 +108,7 @@ export const CatalogCardView = memo(function CatalogCardView({
         {blur && preview.src && (
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs font-medium text-white">
-              <EyeOff className="h-3.5 w-3.5" /> 18+ preview hidden
+              <EyeOff className="h-3.5 w-3.5" /> Preview hidden by Safe mode
             </span>
           </div>
         )}
@@ -120,12 +129,14 @@ export const CatalogCardView = memo(function CatalogCardView({
             </Overlay>
           )}
         </div>
-      </div>
+      </button>
 
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="min-w-0">
           <h3 className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-50" title={card.name}>
-            {card.name}
+            <button type="button" onClick={() => onOpen(card)} className="block max-w-full truncate text-left hover:underline focus-visible:underline focus-visible:outline-none">
+              {card.name}
+            </button>
           </h3>
           <p className="truncate text-[11px] text-neutral-500" title={`${card.baseModel} · ${card.versionName}`}>
             {card.baseModel} · {card.versionName}
@@ -149,7 +160,10 @@ export const CatalogCardView = memo(function CatalogCardView({
         </div>
 
         {card.vram ? (
-          <VramLine vram={card.vram} fit={card.fit} />
+          <div>
+            <VramLine vram={card.vram} fit={card.fit} />
+            {card.smallerFile && <p className="mt-0.5 text-[11px] text-neutral-500">{card.smallerFile} version, so it fits your card</p>}
+          </div>
         ) : isLora ? (
           <span className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</span>
         ) : null}

@@ -308,6 +308,7 @@ families:
     components: {}
     taesd: null
     uses_negative_prompt: true
+    flags: ["--diffusion-fa"]      # memory-efficient attention (docs/performance.md); falls back per op where unsupported
     defaults:
       sampler: dpm++2m
       scheduler: karras
@@ -363,6 +364,7 @@ families:
       vae_override: sdxl_vae_fp16_fix   # avoids black/NaN images in fp16 (docs/sd.md passes --vae too)
     taesd: taesdxl
     uses_negative_prompt: true
+    flags: ["--diffusion-fa"]      # see sd15
     defaults:
       sampler: dpm++2m
       scheduler: karras
@@ -458,7 +460,7 @@ families:
     # No --clip-on-cpu: it is deprecated (common.cpp "use --backend te=cpu") and
     # auto-fit (on by default) already parks T5 in RAM when VRAM is short while
     # still encoding on the GPU, which is much faster than CPU encoding.
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     # `flux` = the engine's own default for Flux (resolution-aware shift,
     # default_scheduler() in src/pipeline/request.cpp).
     defaults: { sampler: euler, scheduler: flux, guidance: 3.5 }
@@ -840,7 +842,7 @@ families:
     components: { vae: flux_ae, t5xxl: { vram_gte_24: t5xxl_fp16, else: t5xxl_fp8 } }   # docs/chroma.md
     taesd: taef1
     uses_negative_prompt: true
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     defaults: { sampler: euler, scheduler: beta }
     dials:
       shape: *shapes_1024
@@ -866,7 +868,7 @@ families:
     layout: all_in_one
     components: { clip_l: clip_l, clip_g: clip_g, t5xxl: { vram_gte_24: t5xxl_fp16, else: t5xxl_fp8 } }
     uses_negative_prompt: true
-    flags: []
+    flags: ["--diffusion-fa"]      # see sd15
     defaults: { sampler: euler }        # ComfyUI template: euler, 20 steps, CFG 4
     dials:
       shape: *shapes_1024
@@ -1032,6 +1034,15 @@ families:
       sha256: 8677bac90627adbbc11efab87b1870e701c4eb3689ee865a3de8ab81b705a723
       size_mb: 13245
       vram_gb: { min: 12, recommended: 16 }    # ESTIMATE, weights partly in RAM (auto-fit)
+      # The best version that Fits is picked (families.rs choose_quant): Q3_K_M on
+      # 16 GB cards, where Q4_K_M ran only at the smallest size / fastest setting
+      # (real-GPU report, RTX 5070 Ti). vram_gb = weights + VAE + 3.0 activations
+      # + 0.5 engine reserve (text encoder is a separate stage, vram.rs) — ESTIMATES.
+      # Sizes / SHA-256: HF tree API via the API probe workflow, 2026-09-28.
+      alt_quants:
+        q3_k: { file: qwen-image-edit-2511-Q3_K_M.gguf, url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q3_K_M.gguf", sha256: 5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9, size_mb: 9921, vram_gb: { min: 9, recommended: 13 } }
+        q6_k: { file: qwen-image-edit-2511-Q6_K.gguf, url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q6_K.gguf", sha256: fdc28e5b8f7d9cfe0399fd1700c375f25f000fc4159bbdb0d4a809ae898eb759, size_mb: 16852, vram_gb: { min: 12, recommended: 19.5 } }
+        q8_0: { file: qwen-image-edit-2511-Q8_0.gguf, url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q8_0.gguf", sha256: ab4f0622fb002fccaaa679a2ecce6fd1b3190d8ea28a5b7b2b17b8669bc24afa, size_mb: 21762, vram_gb: { min: 14, recommended: 24 } }
 
   flux1_kontext:
     label: "FLUX.1 Kontext"
@@ -1046,7 +1057,7 @@ families:
     layout: diffusion_only
     components: { vae: flux_ae, clip_l: clip_l, t5xxl: t5xxl_fp8 }   # docs/kontext.md
     uses_negative_prompt: false
-    flags: []                      # see flux1_dev about --clip-on-cpu
+    flags: ["--diffusion-fa"]      # see flux1_dev about --clip-on-cpu
     defaults: { sampler: euler, scheduler: flux, guidance: 2.5 }
     dials:
       shape: *shapes_1024          # used when no reference size is given
@@ -1083,6 +1094,10 @@ recommended:
   edit:
     - { family: qwen_image_edit_2511, source: registry }
     - { family: flux1_kontext, source: registry }
+  # A second Edit card (recommend.rs OPTIONAL_ROLES): a lighter edit model next
+  # to Qwen Image Edit, left out when it is already the Edit pick (small cards).
+  edit_alt:
+    - { family: flux1_kontext, source: registry, title: "FLUX.1 Kontext — lighter, faster edits" }
   describe:
     - { captioner: reuse }       # free if Qwen Image Edit is installed
     - { captioner: default }
@@ -1113,6 +1128,8 @@ captioner:
 # auto-fit (diffusion_engine.cpp: auto_fit_enabled = auto_fit && params_backend
 # empty) and forces every weight into RAM — worse on low-RAM PCs. `--max-vram`
 # only lowers auto-fit's budget; the default (free VRAM − 512 MiB) is fine.
+# Pinhole adds --offload-to-cpu only as an out-of-memory retry, when every weight fits in RAM
+# (generate.rs next_memory_fallback): then the card caches weights and gives them up for work.
 # VAE tiling stays for small cards: decode retries with tiles on OOM by itself,
 # but img2img/edit *encoding* does not (docs/performance.md).
 hardware_profiles:
@@ -1141,6 +1158,9 @@ known_files:
   - { sha256: df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1, family: z_image_turbo, friendly_name: "Z-Image Turbo (Q8_0)" }
   - { sha256: 14b375ab4f226bc5378f68f37e899ef3c2242b8541e61e2bc1aff40976086fbd, family: z_image_turbo, friendly_name: "Z-Image Turbo (Q4_K)" }
   - { sha256: 8677bac90627adbbc11efab87b1870e701c4eb3689ee865a3de8ab81b705a723, family: qwen_image_edit_2511, friendly_name: "Qwen Image Edit 2511 (Q4_K_M)" }
+  - { sha256: 5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9, family: qwen_image_edit_2511, friendly_name: "Qwen Image Edit 2511 (Q3_K_M)" }
+  - { sha256: fdc28e5b8f7d9cfe0399fd1700c375f25f000fc4159bbdb0d4a809ae898eb759, family: qwen_image_edit_2511, friendly_name: "Qwen Image Edit 2511 (Q6_K)" }
+  - { sha256: ab4f0622fb002fccaaa679a2ecce6fd1b3190d8ea28a5b7b2b17b8669bc24afa, family: qwen_image_edit_2511, friendly_name: "Qwen Image Edit 2511 (Q8_0)" }
   - { sha256: ebd4e92c44c47f104ad64e4353692f37addf06eb99420c9b459334d871c8b750, family: flux1_kontext, friendly_name: "FLUX.1 Kontext dev (Q4_K_M)" }
   - { sha256: e9476a13728cd75d8279f6ec8bad753a66a1957ca375a1464dc63b37db6e3916, family: sd15, friendly_name: "Stable Diffusion 1.5 (fp16)" }
   - { sha256: d08fb5d68026c0d87325f9a7b3ad6454061113a2bc73cc883114dae172937ae7, family: qwen_image, friendly_name: "Qwen-Image (bf16)" }

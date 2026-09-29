@@ -6,12 +6,16 @@ import type { BrowsePage, BrowseQuery, CatalogCard, CatalogFilterOptions, Catalo
 export interface BrowseFilters {
   kind: CatalogKind;
   look: string | null;
+  /** Picked tag keys, in the order they were picked. */
+  tags: string[];
   content: ContentMode;
   price: PriceMode;
   sort: string;
   period: string;
   commercialOnly: boolean;
   compatibleOnly: boolean;
+  /** Hide models that are too big for this computer's graphics card (models only). */
+  runsOnMyCard: boolean;
   query: string;
 }
 
@@ -23,6 +27,17 @@ export const FALLBACK_OPTIONS: CatalogFilterOptions = {
     { key: "illustration", label: "Illustration" },
     { key: "three_d", label: "3D" },
     { key: "brand", label: "Brand & product" },
+  ],
+  tags: [
+    { key: "edit", label: "Edit model", needsSafeModeOff: false },
+    { key: "portraits", label: "Portraits", needsSafeModeOff: false },
+    { key: "characters", label: "Characters", needsSafeModeOff: false },
+    { key: "landscapes", label: "Landscapes", needsSafeModeOff: false },
+    { key: "architecture", label: "Architecture", needsSafeModeOff: false },
+    { key: "animals", label: "Animals", needsSafeModeOff: false },
+    { key: "fantasy", label: "Fantasy", needsSafeModeOff: false },
+    { key: "scifi", label: "Sci-fi", needsSafeModeOff: false },
+    { key: "nsfw", label: "NSFW", needsSafeModeOff: true },
   ],
   sorts: [
     { label: "Top rated", api: "Highest Rated" },
@@ -36,9 +51,8 @@ export const FALLBACK_OPTIONS: CatalogFilterOptions = {
     { label: "All time", api: "AllTime" },
   ],
   content: [
-    { key: "safe", label: "Safe only" },
-    { key: "include_18plus", label: "Include 18+" },
-    { key: "only_18plus", label: "18+ only" },
+    { key: "safe", label: "On" },
+    { key: "all", label: "Off" },
   ],
   price: [
     { key: "free", label: "Free" },
@@ -61,14 +75,15 @@ export const COMMERCIAL_OPTIONS: { value: "any" | "ok"; label: string }[] = [
   { value: "ok", label: "OK for client work" },
 ];
 
-export function isAdult(mode: ContentMode): boolean {
-  return mode === "include_18plus" || mode === "only_18plus";
+/** Safe mode is off (turning it off asks to confirm once per session). */
+export function isSafeModeOff(mode: ContentMode): boolean {
+  return mode !== "safe";
 }
 
 /**
- * Initial filters. Content: the Settings default, but an 18+ default only applies once the
- * user confirmed 18+ this session (otherwise start Safe and ask). Price: "Include early access"
- * when Settings → Show paid is on, else the catalog default (Free).
+ * Initial filters. Safe mode: the Settings default, but "Off" only applies once the user
+ * confirmed this session (otherwise start with Safe mode on and ask). Price: "Include early
+ * access" when Settings → Show paid is on, else the catalog default (Free).
  */
 export function defaultFilters(
   options: CatalogFilterOptions | null,
@@ -77,17 +92,19 @@ export function defaultFilters(
 ): BrowseFilters {
   const o = options ?? FALLBACK_OPTIONS;
   const wantedContent = settings?.contentMode ?? o.defaultContent;
-  const content = isAdult(wantedContent) && !adultConfirmed ? "safe" : wantedContent;
+  const content = isSafeModeOff(wantedContent) && !adultConfirmed ? "safe" : wantedContent;
   const price: PriceMode = settings?.showPaid ? "include" : o.defaultPrice;
   return {
     kind: "models",
     look: null,
+    tags: [],
     content,
     price,
     sort: pickOption(o.sorts, o.defaultSort) ?? "Most Downloaded",
     period: pickOption(o.periods, o.defaultPeriod) ?? "AllTime",
     commercialOnly: false,
     compatibleOnly: true,
+    runsOnMyCard: false,
     query: "",
   };
 }
@@ -95,6 +112,22 @@ export function defaultFilters(
 /** `wanted` when it is one of the options, else the first option. */
 function pickOption(list: { api: string }[], wanted: string | undefined): string | undefined {
   return list.find((o) => o.api === wanted)?.api ?? list[0]?.api;
+}
+
+/** Tags as sent: sorted and unique (picking order doesn't change the results or the cache key). */
+export function tagsFor(f: Pick<BrowseFilters, "tags">): string[] {
+  return [...new Set(f.tags)].sort();
+}
+
+/** Pick or unpick one tag. */
+export function toggleTag(tags: string[], key: string): string[] {
+  return tags.includes(key) ? tags.filter((t) => t !== key) : [...tags, key];
+}
+
+/** Tags that stay picked when Safe mode turns on (the NSFW tag can't find anything then). */
+export function tagsWithSafeMode(tags: string[], options: Pick<CatalogFilterOptions, "tags">): string[] {
+  const offOnly = new Set(options.tags.filter((t) => t.needsSafeModeOff).map((t) => t.key));
+  return tags.filter((t) => !offOnly.has(t));
 }
 
 /** Normalise free text the way we send it: trimmed, inner whitespace collapsed, capped. */
@@ -106,12 +139,14 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
   return {
     kind: f.kind,
     look: f.look,
+    tags: tagsFor(f),
     content: f.content,
     price: f.price,
     sort: f.sort,
     period: f.period,
     commercialOnly: f.commercialOnly,
     compatibleOnly: f.compatibleOnly,
+    runsOnMyCard: f.kind === "models" && f.runsOnMyCard,
     query: normalizeSearch(f.query),
     cursor,
   };
@@ -120,13 +155,16 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
 /** Stable key: a new key means "start over from the first page". */
 export function filtersKey(f: BrowseFilters): string {
   const q = toBrowseQuery(f, null);
-  return JSON.stringify([q.kind, q.look, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.query]);
+  return JSON.stringify([q.kind, q.look, q.tags, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.query]);
 }
 
 /** Filters that differ from the defaults (for a "Clear filters" button). */
 export function changedFilterCount(f: BrowseFilters, defaults: BrowseFilters): number {
-  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "query"];
-  return keys.filter((k) => (k === "query" ? normalizeSearch(f.query) !== normalizeSearch(defaults.query) : f[k] !== defaults[k])).length;
+  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "runsOnMyCard", "query"];
+  // "Runs on my card" is hidden (and not sent) for style add-ons.
+  const shown = f.kind === "models" ? keys : keys.filter((k) => k !== "runsOnMyCard");
+  const tagsChanged = tagsFor(f).join() !== tagsFor(defaults).join() ? 1 : 0;
+  return tagsChanged + shown.filter((k) => (k === "query" ? normalizeSearch(f.query) !== normalizeSearch(defaults.query) : f[k] !== defaults[k])).length;
 }
 
 /** Price badges are only shown when paid models can appear (SPEC §5.4 model card). */
@@ -134,9 +172,9 @@ export function showPriceBadge(price: PriceMode): boolean {
   return price !== "free";
 }
 
-/** Blur previews flagged NSFW whenever 18+ is off (catalog-filters.yaml: blur_nsfw_previews_when_safe). */
+/** Blur previews flagged NSFW while Safe mode is on (catalog-filters.yaml: blur_nsfw_previews_when_safe). */
 export function shouldBlurPreview(card: Pick<CatalogCard, "previewNsfw" | "modelNsfw">, content: ContentMode): boolean {
-  return !isAdult(content) && (card.previewNsfw || card.modelNsfw);
+  return !isSafeModeOff(content) && (card.previewNsfw || card.modelNsfw);
 }
 
 /** A preview URL that points at a video file (not a still frame of it): never fetched. */
@@ -162,24 +200,26 @@ export interface BrowseTotals {
   checked: number;
   hiddenByContent: number;
   hiddenByFilters: number;
+  hiddenBySize: number;
 }
 
-export const NO_TOTALS: BrowseTotals = { checked: 0, hiddenByContent: 0, hiddenByFilters: 0 };
+export const NO_TOTALS: BrowseTotals = { checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
 
-export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "hiddenByContent" | "hiddenByFilters">): BrowseTotals {
+export function addTotals(a: BrowseTotals, page: Pick<BrowsePage, "checked" | "hiddenByContent" | "hiddenByFilters" | "hiddenBySize">): BrowseTotals {
   return {
     checked: a.checked + (page.checked ?? 0),
     hiddenByContent: a.hiddenByContent + (page.hiddenByContent ?? 0),
     hiddenByFilters: a.hiddenByFilters + (page.hiddenByFilters ?? 0),
+    hiddenBySize: a.hiddenBySize + (page.hiddenBySize ?? 0),
   };
 }
 
 /**
  * The plain-words line above the grid: how many cards, and why some models aren't there
- * ("Works with Pinhole", "Safe only"), each with what to change to see them.
+ * ("Works with Pinhole", Safe mode), each with what to change to see them.
  */
 export function resultsSummary(
-  f: Pick<BrowseFilters, "kind" | "content" | "compatibleOnly">,
+  f: Pick<BrowseFilters, "kind" | "content" | "compatibleOnly"> & Partial<Pick<BrowseFilters, "runsOnMyCard">>,
   shown: number,
   totals: BrowseTotals,
 ): { count: string; hints: string[] } {
@@ -189,6 +229,8 @@ export function resultsSummary(
   if (f.compatibleOnly)
     hints.push(models ? "Showing models that run in Pinhole — turn off “Works with Pinhole” to see all." : "Showing style add-ons that work in Pinhole — turn off “Works with Pinhole” to see all.");
   if (f.content === "safe" && totals.hiddenByContent > 0)
-    hints.push(`“Safe only” hid ${totals.hiddenByContent} made for adults.`);
+    hints.push(`Safe mode hid ${totals.hiddenByContent} made for adults.`);
+  if (models && f.runsOnMyCard && totals.hiddenBySize > 0)
+    hints.push(`“Runs on my card” hid ${totals.hiddenBySize} too big for your graphics card.`);
   return { count: `${shown.toLocaleString("en-US")} ${noun}`, hints };
 }

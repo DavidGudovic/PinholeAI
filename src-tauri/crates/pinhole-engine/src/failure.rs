@@ -159,6 +159,13 @@ pub fn memory_failure(log: &str) -> Option<Stage> {
     (classify(log, None) == Failure::OutOfMemory).then(|| failed_stage(log))
 }
 
+/// The memory plan sd-server printed while starting (auto-fit: free VRAM and
+/// RAM, and where each part's weights went), from its output lines. Needs
+/// `--log-level info`; empty when auto-fit didn't run (e.g. `--offload-to-cpu`).
+pub fn memory_plan(lines: &[String]) -> Vec<String> {
+    lines.iter().filter(|l| l.contains("backend_fit.cpp")).map(|l| l.trim_end().to_string()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +231,24 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
         assert_eq!(memory_failure(vae), Some(Stage::Vae));
         // A segment that failed for another reason isn't reported as memory by itself.
         assert_eq!(classify("[ERROR  ] ggml_runner.cpp:898  - z_image segment 2/9 (blocks) failed during input binding", None), Failure::Unknown);
+    }
+
+    #[test]
+    fn memory_plan_keeps_only_the_auto_fit_lines() {
+        let log: Vec<String> = [
+            "[INFO ] diffusion_engine.cpp:732  - loading diffusion model from 'C:/Pinhole/Data/models/q.gguf'",
+            "[INFO ] backend_fit.cpp:323  - auto-fit plan:",
+            "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 5070 Ti       free  15010 MiB, budget  14498 MiB",
+            "[INFO ] backend_fit.cpp:333  -     RAM          free  24000 MiB, params budget  21600 MiB",
+            "[INFO ] backend_fit.cpp:346  -     DiT          params  12630 MiB, compute reserve  2048 MiB -> compute CUDA0, params CPU",
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"diffusion=CUDA0\" --params-backend \"diffusion=CPU\"",
+            "[INFO ] main.cpp:149  - listening on: http://127.0.0.1:5000",
+        ]
+        .map(String::from)
+        .to_vec();
+        let plan = memory_plan(&log);
+        assert_eq!(plan.len(), 5);
+        assert!(plan[0].ends_with("auto-fit plan:"));
+        assert!(memory_plan(&log[..1]).is_empty());
     }
 }

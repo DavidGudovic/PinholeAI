@@ -200,6 +200,7 @@ struct GhRelease {
 
 #[derive(Debug, Clone, Deserialize)]
 struct GhAsset {
+    id: u64,
     name: String,
     size: u64,
 }
@@ -259,6 +260,59 @@ fn asset_url(version: &semver::Version, name: &str) -> String {
     format!("https://github.com/{REPO}/releases/download/v{version}/{name}")
 }
 
+/// With a token, files of a private repository come from the API asset endpoint
+/// (`Accept: application/octet-stream`), which redirects to GitHub's release CDN.
+/// reqwest drops `Authorization` on that cross-host redirect.
+fn asset_api_url(id: u64) -> String {
+    format!("https://api.github.com/repos/{REPO}/releases/assets/{id}")
+}
+
+// ------------------------------------------------------------------ GitHub token
+
+/// Optional GitHub token (keychain only) so updates work while the repository is
+/// private. Cached in RAM after the first keychain read (`None` = not read yet),
+/// like the CivitAI key; keychain problems count as "no token".
+static TOKEN_CACHE: parking_lot::Mutex<Option<Option<String>>> = parking_lot::Mutex::new(None);
+
+async fn github_token() -> Option<String> {
+    if let Some(cached) = TOKEN_CACHE.lock().clone() {
+        return cached;
+    }
+    let token = crate::catalog::blocking(pinhole_store::keychain::get_github_token).await.ok()?.ok()?;
+    *TOKEN_CACHE.lock() = Some(token.clone());
+    token
+}
+
+pub async fn has_github_token() -> bool {
+    github_token().await.is_some()
+}
+
+pub async fn set_github_token(token: String) -> CoreResult<()> {
+    let token = token.trim().to_string();
+    let stored = token.clone();
+    crate::catalog::blocking(move || pinhole_store::keychain::set_github_token(&stored)).await??;
+    *TOKEN_CACHE.lock() = Some(Some(token));
+    Ok(())
+}
+
+pub async fn clear_github_token() -> CoreResult<()> {
+    crate::catalog::blocking(pinhole_store::keychain::delete_github_token).await??;
+    *TOKEN_CACHE.lock() = Some(None);
+    Ok(())
+}
+
+fn api_headers(token: Option<&str>, accept: &str) -> Vec<(String, String)> {
+    let mut h = vec![("accept".to_string(), accept.to_string()), ("x-github-api-version".to_string(), "2022-11-28".to_string())];
+    if let Some(t) = token {
+        h.push(("authorization".to_string(), format!("Bearer {t}")));
+    }
+    h
+}
+
+fn as_refs(h: &[(String, String)]) -> Vec<(&str, &str)> {
+    h.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect()
+}
+
 /// Release page for "What's new" / manual installs. `None` → the releases list.
 pub fn release_page_url(version: Option<&str>) -> CoreResult<String> {
     match version {
@@ -285,21 +339,62 @@ pub fn parse_current(version: &str) -> CoreResult<semver::Version> {
     semver::Version::parse(version).map_err(|_| CoreError::internal("Pinhole couldn't read its own version.").with_details(version.to_string()))
 }
 
-async fn fetch_releases(core: &AppCore) -> CoreResult<Vec<GhRelease>> {
-    let headers = [("accept", "application/vnd.github+json"), ("x-github-api-version", "2022-11-28")];
-    core.http.get_json::<Vec<GhRelease>>(RELEASES_API, &headers).await.map_err(|e| match e {
+/// `CoreError.code` when GitHub doesn't show Pinhole's releases (private repository).
+pub const UNAVAILABLE: &str = "updates_unavailable";
+const UNAVAILABLE_MESSAGE: &str =
+    "Pinhole can't see its releases on GitHub, because the project isn't public yet. Add a GitHub token below, or download new versions from the release page.";
+const TOKEN_REFUSED: &str =
+    "GitHub refused your token. It may have expired or lack read access to the Pinhole repository (Contents: read-only): replace it.";
+const UNAVAILABLE_WITH_TOKEN: &str = "GitHub doesn't show Pinhole's releases to your token. Give it read access to the Pinhole repository (Contents: read-only), or replace it.";
+
+/// The release list, plus the token to use for the downloads. A token GitHub
+/// rejects (expired, or no access) falls back to asking without it, so an old
+/// token can't block updates once the repository is public.
+async fn fetch_releases(core: &AppCore, token: Option<String>) -> CoreResult<(Vec<GhRelease>, Option<String>)> {
+    let get = |t: Option<&str>| {
+        let headers = api_headers(t, "application/vnd.github+json");
+        async move { core.http.get_json::<Vec<GhRelease>>(RELEASES_API, &as_refs(&headers)).await }
+    };
+    match get(token.as_deref()).await {
+        Ok(list) => Ok((list, token)),
+        Err(pinhole_net::NetError::Unauthorized(code)) if token.is_some() => match get(None).await {
+            Ok(list) => Ok((list, None)),
+            Err(_) => Err(releases_error(pinhole_net::NetError::Unauthorized(code), true)),
+        },
+        Err(e) => Err(releases_error(e, token.is_some())),
+    }
+}
+
+/// Plain-language error for a failed asset download (checksum list).
+fn asset_error(e: pinhole_net::NetError, with_token: bool) -> CoreError {
+    match e {
+        pinhole_net::NetError::Offline => CoreError::new("offline", "Offline mode is on. Turn it off in Settings to update."),
+        pinhole_net::NetError::Unauthorized(_) if with_token => CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string()),
+        other => CoreError::from(other),
+    }
+}
+
+/// Plain-language error for a failed releases request.
+fn releases_error(e: pinhole_net::NetError, with_token: bool) -> CoreError {
+    match e {
         pinhole_net::NetError::Offline => CoreError::new("offline", "Offline mode is on. Turn it off in Settings to check for updates."),
+        // GitHub answers 404 (not 401) for a private repository or one that moved:
+        // the releases can't be seen without signing in.
+        pinhole_net::NetError::Status(404) => {
+            CoreError::new(UNAVAILABLE, if with_token { UNAVAILABLE_WITH_TOKEN } else { UNAVAILABLE_MESSAGE }).with_details(e.to_string())
+        }
+        pinhole_net::NetError::Unauthorized(_) if with_token => CoreError::new(UNAVAILABLE, TOKEN_REFUSED).with_details(e.to_string()),
         pinhole_net::NetError::Unauthorized(_) | pinhole_net::NetError::Status(429) => {
             CoreError::new("network", "GitHub is limiting update checks right now. Try again in an hour.").with_details(e.to_string())
         }
         other => CoreError::from(other),
-    })
+    }
 }
 
 /// "Check for updates": one request to the GitHub releases API.
 pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreResult<UpdateCheck> {
     let current = parse_current(current_version)?;
-    let releases = fetch_releases(core).await?;
+    let (releases, _) = fetch_releases(core, github_token().await).await?;
     let target = detect_target_with(&Environment::current(core));
     Ok(UpdateCheck { current_version: current.to_string(), update: pick_update(&releases, &current, &target) })
 }
@@ -347,7 +442,7 @@ async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: 
         return Err(CoreError::invalid("This copy of Pinhole can't update itself. Open the download page and install the new version from there."));
     };
 
-    let releases = fetch_releases(core).await?;
+    let (releases, token) = fetch_releases(core, github_token().await).await?;
     let release = releases
         .iter()
         .find(|r| !r.draft && tag_version(&r.tag_name).as_ref() == Some(&wanted))
@@ -357,16 +452,26 @@ async fn install_inner(core: &Arc<AppCore>, current: &semver::Version, version: 
         .iter()
         .find(|a| a.name == name)
         .ok_or_else(|| CoreError::not_found("This release has no download for your system. Open the download page instead."))?;
-    if !release.assets.iter().any(|a| a.name == SUMS_FILE) {
+    let Some(sums_asset) = release.assets.iter().find(|a| a.name == SUMS_FILE) else {
         return Err(CoreError::new("hash_mismatch", "This release can't be checked (it has no SHA256SUMS.txt), so Pinhole won't install it."));
-    }
-    let sums = core.http.get_bytes(&asset_url(&wanted, SUMS_FILE), &[], MAX_SUMS_BYTES).await?;
+    };
+    // Public repository: plain download URLs. Private (token): the API asset endpoint.
+    let (sums_url, file_url, file_headers) = match token.as_deref() {
+        Some(t) => (asset_api_url(sums_asset.id), asset_api_url(asset.id), api_headers(Some(t), "application/octet-stream")),
+        None => (asset_url(&wanted, SUMS_FILE), asset_url(&wanted, &name), Vec::new()),
+    };
+    let sums = core
+        .http
+        .get_bytes(&sums_url, &as_refs(&file_headers), MAX_SUMS_BYTES)
+        .await
+        .map_err(|e| asset_error(e, token.is_some()))?;
     let sha256 = sum_for(&String::from_utf8_lossy(&sums), &name)
         .ok_or_else(|| CoreError::new("hash_mismatch", "This release's checksum list doesn't include your download, so Pinhole won't install it."))?;
 
     std::fs::create_dir_all(&staging)?;
     let spec = DownloadSpec {
-        url: asset_url(&wanted, &name),
+        url: file_url,
+        headers: file_headers,
         dest: staging.join(&name),
         sha256: Some(sha256),
         size_bytes: Some(asset.size),
@@ -531,7 +636,7 @@ mod tests {
             tag_name: tag.into(),
             draft,
             published_at: None,
-            assets: assets.iter().map(|(n, s)| GhAsset { name: (*n).into(), size: *s }).collect(),
+            assets: assets.iter().map(|(n, s)| GhAsset { id: 1, name: (*n).into(), size: *s }).collect(),
         }
     }
 
@@ -570,6 +675,30 @@ mod tests {
         assert_eq!((u.version.as_str(), u.install_mode, u.size_bytes), ("0.4.0-rc.1", InstallMode::Manual, None));
         assert_eq!(pick_update(&list, &current, &Target::Manual).unwrap().version, "0.4.0-rc.1");
         assert!(pick_update(&list, &semver::Version::parse("0.4.0").unwrap(), &win).is_none());
+    }
+
+    #[test]
+    fn private_repository_gets_a_plain_message() {
+        let e = releases_error(pinhole_net::NetError::Status(404), false);
+        assert_eq!(e.code, UNAVAILABLE);
+        assert!(e.message.contains("release page"), "{}", e.message);
+        assert_eq!(e.details.as_deref(), Some("HTTP 404"));
+        let e = releases_error(pinhole_net::NetError::Status(404), true);
+        assert!(e.message.contains("read access"), "{}", e.message);
+        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(401), true).code, UNAVAILABLE);
+        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(403), true).message, TOKEN_REFUSED);
+        // A missing checksum file is not "the repo is private".
+        assert_eq!(asset_error(pinhole_net::NetError::Status(404), false).code, "network");
+        assert_eq!(asset_error(pinhole_net::NetError::Status(404), true).code, "network");
+        assert_eq!(asset_error(pinhole_net::NetError::Unauthorized(403), true).code, UNAVAILABLE);
+        assert_eq!(releases_error(pinhole_net::NetError::Unauthorized(403), false).code, "network");
+        assert_eq!(releases_error(pinhole_net::NetError::Offline, false).code, "offline");
+        assert_eq!(releases_error(pinhole_net::NetError::Status(500), false).code, "network");
+        // The token only ever travels in the Authorization header.
+        let h = api_headers(Some("ghp_x"), "application/octet-stream");
+        assert!(h.contains(&("authorization".into(), "Bearer ghp_x".into())));
+        assert!(!asset_api_url(7).contains("ghp_x"));
+        assert!(api_headers(None, "a").iter().all(|(k, _)| k != "authorization"));
     }
 
     #[test]

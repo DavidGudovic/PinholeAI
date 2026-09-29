@@ -32,7 +32,7 @@ What Pinhole promises (enforced by tests in CI, see [Tests](#tests)):
   metadata or crash output. The engine's output is kept in a small in-memory buffer, with your
   prompt redacted.
 - **Generated images stay in memory** until you click **Save**. Closing the app or
-  **Clear session** discards them. Saved files are named `pinhole_YYYYMMDD_HHMMSS_<seed>.png` and
+  **Reset** discards them. Saved files are named `pinhole_YYYYMMDD_HHMMSS_<seed>.png` and
   carry no metadata unless you turn on "Include generation settings (no prompt)".
 - **The one exception is Styles:** text you explicitly save as a named Style is stored in
   `Data/styles/`. Styles and prompts are separate fields, combined only in memory.
@@ -54,7 +54,7 @@ Honest limitations:
   keeps recently finished images for up to 10 minutes. While it runs, another program on your
   computer — or, in theory, a web page that guesses the port — could fetch them. Pinhole limits
   this: the engine listens on `127.0.0.1` only, on a random port, and is shut down when you click
-  **Clear session** and 5 minutes after your last image. A proper fix (an engine build that
+  **Reset** and 5 minutes after your last image. A proper fix (an engine build that
   requires a per-launch password) is planned. The Describe engine already uses one.
 
 ## Install
@@ -67,8 +67,8 @@ download with `SHA256SUMS.txt` (`sha256sum -c SHA256SUMS.txt`, or `Get-FileHash`
 
 - **Installer:** `Pinhole-<version>-windows-x64-setup.exe` — installs for the current user (no
   admin rights). It also installs the Microsoft Edge **WebView2** runtime if it is missing.
-- **Portable:** `Pinhole-<version>-windows-x64-portable.zip` — unzip anywhere you can write to
-  (e.g. a USB drive), run `Pinhole\Pinhole.exe`. The `Data\` folder next to it makes Pinhole
+- **Portable:** `Pinhole-<version>-windows-x64-portable.zip` — unzip into any folder you can write
+  to and run `Pinhole\Pinhole.exe`. The `Data\` folder next to it makes Pinhole
   portable: models, engine, settings and saved images all stay in that folder.
   Needs WebView2: Windows 11 already has it; on Windows 10 install the
   [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if

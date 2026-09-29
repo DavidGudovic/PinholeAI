@@ -40,7 +40,8 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
   (templates in `.github/ISSUE_TEMPLATE/`).
 - The session start hook (`.claude/hooks/session-start.sh`) installs the Tauri Linux deps, runs
   `npm install`, builds `dist/`, pre-compiles the Rust tests and clones the pinned
-  stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference).
+  stable-diffusion.cpp source to `$SD_CPP_SRC` (read-only reference). It runs in the background, so
+  a build or test right after the session starts can fail on missing deps: wait and try again.
 - **Local checks before every push:** `cargo test --workspace --locked`,
   `cargo clippy --workspace --all-targets`, `npm test`, `npm run build` (includes `tsc`),
   `node scripts/privacy-lint.mjs`. A bug fix comes with a regression test.
@@ -75,7 +76,8 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
    The WebView makes no network calls of its own; CivitAI preview images are fetched through
    the Rust client and handed to the UI as blobs.
 6. Engines bind to `127.0.0.1` only. Engine stdout/stderr go to an in-memory ring buffer only.
-7. CivitAI API key lives in the OS keychain (`keyring` crate), never in `Data/`.
+7. CivitAI API key and the optional GitHub token (updates while the repo is private) live in the
+   OS keychain (`keyring` crate), never in `Data/`. Secrets go only in the `Authorization` header.
 
 **Privacy tests (must exist and pass in CI):**
 - Generate with a sentinel prompt (e.g. `PINHOLE_SENTINEL_7f3a`) plus a saved style, save the
@@ -123,6 +125,9 @@ scripts/          privacy lint, pin verification, packaging (Node, no Python)
 ## Wording rules (docs, README, UI, commits, release notes)
 - Describe privacy as "your prompts and images stay on your computer". Never "leaves no trace",
   "untraceable", "no one will know", "uncensored", "unfiltered", "undress", "nudify", "face swap".
+- Privacy copy states facts (what stays on the computer, what is saved and when, what goes online).
+  Don't frame it as hiding what someone made ("forgets everything", "wipes your tracks", "nobody
+  will see"). The top-bar control is **Reset**. No one-click adult-content shortcuts in the UI.
 - Edit examples change scenes, objects, lighting or style — never a real person's body or clothes
   while keeping their face.
 - Screenshots and examples: safe for work, fictional subjects, no real people.
