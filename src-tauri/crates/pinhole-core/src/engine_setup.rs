@@ -173,6 +173,25 @@ pub(crate) fn ensure_runtime(core: &AppCore, engine: &InstalledEngine) -> CoreRe
     .with_details(format!("missing: {}", missing.join(", "))))
 }
 
+/// The image engine's recent output (memory only, prompt text already redacted),
+/// for Settings → Engine → "Show engine output". The memory plan of the last
+/// launch comes first when its lines have scrolled out of the ring. Empty
+/// before the first launch.
+pub fn engine_output(core: &AppCore) -> String {
+    let lines = core.gen.logs.tail(usize::MAX);
+    let plan = core.gen.memory_plan.lock().clone();
+    match plan {
+        Some((_, plan)) if !plan.is_empty() && !lines.contains(&plan[0]) => {
+            format!(
+                "Memory plan when the engine started:\n{}\n\n{}",
+                plan.join("\n"),
+                lines.join("\n")
+            )
+        }
+        _ => lines.join("\n"),
+    }
+}
+
 /// Current status (cheap: reads a marker file).
 pub fn engine_status(core: &AppCore) -> EngineStatus {
     let flags = core.gen.flags.lock().clone();

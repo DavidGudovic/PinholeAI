@@ -2212,4 +2212,30 @@ mod tests {
             "default captioner + engine to download"
         );
     }
+
+    #[test]
+    fn engine_output_keeps_the_memory_plan_in_view() {
+        let (_tmp, core, _rec) = new_core();
+        assert_eq!(crate::engine_setup::engine_output(&core), "");
+        let plan = "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 5070 Ti       free  15010 MiB, budget  14498 MiB";
+        let log = engine_log(&core);
+        log.push_line(plan);
+        log.push_line("[INFO ] main.cpp:149  - listening on: http://127.0.0.1:5000");
+        *core.gen.memory_plan.lock() = Some(("m".into(), vec![plan.to_string()]));
+        // Still in the ring: shown once, in place.
+        let out = crate::engine_setup::engine_output(&core);
+        assert_eq!(out.matches("RTX 5070 Ti").count(), 1, "{out}");
+        // Scrolled out of the ring: shown first.
+        core.gen.logs.clear();
+        log.push_line("[INFO ] image.cpp:899  - sampling completed, taking 8.00s");
+        let out = crate::engine_setup::engine_output(&core);
+        assert!(
+            out.starts_with("Memory plan when the engine started:"),
+            "{out}"
+        );
+        assert!(
+            out.contains("RTX 5070 Ti") && out.contains("sampling completed"),
+            "{out}"
+        );
+    }
 }
