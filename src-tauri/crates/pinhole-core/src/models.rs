@@ -384,6 +384,14 @@ pub fn model_file_check() -> ContentCheck {
     })
 }
 
+/// Does this download get [`model_file_check`]? CivitAI files (the hash only
+/// proves what the uploader sent) and any file without a pinned hash (model
+/// or component, e.g. `sha256: TODO` in the registry) must parse as
+/// safetensors/GGUF.
+fn needs_content_check(f: &FileToGet, from_civitai: bool) -> bool {
+    from_civitai || f.sha256.is_none()
+}
+
 /// Queue one download group (model + missing components), then register every
 /// file when it finishes (background task) and emit `models-changed`.
 /// Components another running group is already fetching are skipped; a second
@@ -425,9 +433,7 @@ pub(crate) async fn start_install(
             });
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url).into_iter().collect();
-            // CivitAI files (the hash only proves what the uploader sent) and model
-            // files without a pinned hash must parse as safetensors/GGUF.
-            let check = civitai.is_some() || (f.component_id.is_none() && f.sha256.is_none());
+            let check = needs_content_check(&f, civitai.is_some());
             specs.push(DownloadSpec {
                 url: f.url.clone(),
                 dest: dest.clone(),
@@ -1119,6 +1125,19 @@ mod tests {
             component_id: None,
             dtype: None,
         }
+    }
+
+    #[test]
+    fn files_without_a_pinned_hash_get_the_header_check() {
+        let model = lora_file("https://huggingface.co/x/m.safetensors", "m.safetensors");
+        let component = FileToGet { component_id: Some("clip_l".into()), ..model.clone() };
+        // No hash (registry `sha256: TODO`): checked, model or component.
+        assert!(needs_content_check(&model, false));
+        assert!(needs_content_check(&component, false));
+        // Pinned hash: the hash is enough; CivitAI files are always checked.
+        let pinned = FileToGet { sha256: Some("ab".repeat(32)), ..component };
+        assert!(!needs_content_check(&pinned, false));
+        assert!(needs_content_check(&pinned, true));
     }
 
     #[tokio::test]
