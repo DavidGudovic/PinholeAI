@@ -266,6 +266,8 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
 
 /// Describe a session image as a prompt (`sentence`) or booru tags (`tags`).
 pub async fn describe_image(core: &Arc<AppCore>, image_id: &str, style: DescribeStyle) -> CoreResult<String> {
+    // Held for the whole run: the Models folder can't move under the engine.
+    let _folder = crate::models::folder_read(core)?;
     let img = core.session.get(image_id).ok_or_else(|| CoreError::not_found("That image isn't in this session anymore. Add it again."))?;
     let reg = core.registry();
     let instruction = reg

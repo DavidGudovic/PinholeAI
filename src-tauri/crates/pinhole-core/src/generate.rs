@@ -1282,6 +1282,8 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
+    // Held for the whole run: the Models folder can't move under the engine.
+    let _folder = crate::models::folder_read(core)?;
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
@@ -1650,6 +1652,7 @@ fn touch_last_used(core: &AppCore, model_id: &str) {
 /// Upscale a session image with Real-ESRGAN (4×; 2× = 4× then halve). The
 /// upscaler is downloaded on first use. Needs the engine running (any model).
 pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
+    let _folder = crate::models::folder_read(core)?;
     if factor != 2 && factor != 4 {
         return Err(CoreError::invalid("Upscale works at 2× or 4×."));
     }

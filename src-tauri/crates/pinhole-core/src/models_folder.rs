@@ -148,7 +148,7 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
         .models
         .folder_lock
         .try_write()
-        .map_err(|_| CoreError::invalid("Wait for Pinhole to finish adding or deleting a model, then change the Models folder."))?;
+        .map_err(|_| CoreError::invalid("Wait for Pinhole to finish adding or deleting a model (or making or describing a picture), then change the Models folder."))?;
     crate::generate::shutdown(core).await;
     crate::describe::shutdown(core).await;
     crate::models::discard_pending(core);
@@ -706,6 +706,24 @@ mod tests {
         let e = change(&core, Some(shared.path().to_string_lossy().into_owned())).await.unwrap_err();
         assert!(e.message.contains("adding or deleting"), "{}", e.message);
         drop(guard);
+    }
+
+    #[tokio::test]
+    async fn pictures_describe_and_updates_wait_for_a_move() {
+        let (_tmp, core) = test_core();
+        let moving = core.models.folder_lock.try_write().unwrap();
+        let req = crate::generate::GenerateRequest::txt2img("m", "a lighthouse");
+        let errors = [
+            crate::generate::generate(&core, req).await.unwrap_err(),
+            crate::generate::upscale_image(&core, "img", 2).await.unwrap_err(),
+            crate::describe::describe_image(&core, "img", crate::describe::DescribeStyle::Sentence).await.unwrap_err(),
+            crate::update::ensure_idle(&core, None).unwrap_err(),
+        ];
+        for e in errors {
+            assert!(e.message.contains("moving your models"), "{}", e.message);
+        }
+        drop(moving);
+        assert!(crate::update::ensure_idle(&core, None).is_ok());
     }
 
     #[test]
