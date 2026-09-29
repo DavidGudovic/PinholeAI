@@ -70,7 +70,7 @@ jobs:
             win=true
           elif git log origin/main..HEAD --format=%B | grep -qiF '[windows]'; then
             win=true
-          elif git diff --name-only origin/main...HEAD | grep -qE '^(\.github/workflows/|Cargo\.(toml|lock)$|src-tauri/tauri\.conf\.json$|src-tauri/src/lib\.rs$|src-tauri/crates/pinhole-(engine|hardware|store|net)/|src-tauri/crates/pinhole-core/src/(app|generate|update|downloads)\.rs$|tests/)'; then
+          elif git diff --name-only origin/main...HEAD | grep -qE '^(\.github/workflows/|Cargo\.(toml|lock)$|src-tauri/tauri\.conf\.json$|src-tauri/src/lib\.rs$|src-tauri/crates/pinhole-(engine|hardware|store|net|registry)/|src-tauri/crates/pinhole-core/src/(app|generate|update|downloads|models)\.rs$|tests/)'; then
             win=true
           fi
           echo "windows=$win" >> "$GITHUB_OUTPUT"

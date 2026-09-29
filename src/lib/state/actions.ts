@@ -10,6 +10,7 @@ import { importBlob, refFromSession } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseSavePath, copyText } from "./platform";
+import { clearGenerationHandoff } from "../../tabs/create/handoff";
 
 let uidCounter = 0;
 const uid = (p: string) => `${p}${Date.now().toString(36)}${(uidCounter++).toString(36)}`;
@@ -262,6 +263,7 @@ export function makeActions(store: Store) {
   async function clearSession() {
     if (get().job) await cancel();
     await api.clearSession().catch(() => undefined);
+    clearGenerationHandoff();
     dispatch({ type: "clearSession" });
     toast("Reset: prompt fields and unsaved images were cleared.");
   }

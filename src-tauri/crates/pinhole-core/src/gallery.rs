@@ -17,6 +17,7 @@ use pinhole_net::NetError;
 use pinhole_catalog::cards::thumbnail_url;
 use pinhole_catalog::filters::ContentMode;
 use pinhole_catalog::lenient;
+use pinhole_catalog::safe::{SafeFilter, LEVEL_BLOCKED};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -69,7 +70,7 @@ pub async fn model_gallery(core: &AppCore, version_id: u64, content: ContentMode
         other => other,
     }
     .map_err(crate::catalog::net_error)?;
-    Ok(gallery(&version, content, model_nsfw, filters.preview_width))
+    Ok(gallery(&version, content, model_nsfw, &filters.safe, filters.preview_width))
 }
 
 /// `https://civitai.com/models/…` (civitai.red for NSFW models), for the
@@ -140,17 +141,19 @@ pub struct ModelGallery {
     pub offline: bool,
 }
 
-/// Gallery for a version. Videos are skipped (they can't be edited), and so
-/// are images made for adults, with Safe mode on.
-pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, thumb_width: u32) -> ModelGallery {
+/// Gallery for a version. Videos and images CivitAI blocked are skipped. With
+/// Safe mode on, only images that pass the same rule as card previews
+/// ([`SafeFilter::is_safe_preview`]: rated PG, or flagged not NSFW) are shown.
+pub fn gallery(version: &VersionImages, content: ContentMode, model_nsfw: bool, safe: &SafeFilter, thumb_width: u32) -> ModelGallery {
     let mut hidden_nsfw = 0;
     let items = version
         .images
         .iter()
         .enumerate()
+        .filter(|(_, i)| i.image.nsfw_level.is_none_or(|l| l < LEVEL_BLOCKED))
         .filter_map(|(index, i)| {
             let it = item(index, i, model_nsfw, thumb_width)?;
-            if it.nsfw && content == ContentMode::Safe {
+            if content == ContentMode::Safe && (it.nsfw || !safe.is_safe_preview(&i.image)) {
                 hidden_nsfw += 1;
                 return None;
             }
@@ -238,18 +241,19 @@ mod tests {
 
     #[test]
     fn safe_mode_hides_nsfw_and_skips_videos_and_foreign_hosts() {
-        let g = gallery(&version(), ContentMode::Safe, false, 450);
-        assert_eq!(g.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 4]);
-        assert_eq!(g.hidden_nsfw, 1);
+        let g = gallery(&version(), ContentMode::Safe, false, &SafeFilter::default(), 450);
+        // Image 0 is PG-13: fine with Safe mode off, but not PG, so hidden with it on.
+        assert_eq!(g.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![4]);
+        assert_eq!(g.hidden_nsfw, 2);
         assert_eq!(g.trained_words, vec!["analog style"]);
-        let all = gallery(&version(), ContentMode::All, false, 450);
+        let all = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
         assert_eq!(all.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 1, 4]);
         assert!(all.items[1].nsfw && all.hidden_nsfw == 0);
     }
 
     #[test]
     fn keeps_only_known_generation_keys() {
-        let g = gallery(&version(), ContentMode::Safe, false, 450);
+        let g = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
         let m = g.items[0].generation.as_ref().unwrap();
         assert_eq!(m.get("steps"), Some(&Value::from(6)));
         assert!(m.contains_key("prompt") && m.contains_key("Model hash") && m.contains_key("Lora hashes"));
@@ -260,7 +264,7 @@ mod tests {
 
     #[test]
     fn renditions() {
-        let g = gallery(&version(), ContentMode::Safe, false, 450);
+        let g = gallery(&version(), ContentMode::All, false, &SafeFilter::default(), 450);
         assert_eq!(g.items[0].thumb_url, thumbnail_url("https://image.civitai.com/xG1/5403/original=true/12221833.jpeg", 450));
         assert!(g.items[0].thumb_url.contains("/width="));
         assert_eq!(g.items[0].full_url, "https://image.civitai.com/xG1/5403/original=true/12221833.jpeg");
@@ -278,8 +282,27 @@ mod tests {
             }],
             ..Default::default()
         };
-        assert!(gallery(&v, ContentMode::Safe, true, 450).items.is_empty());
-        assert_eq!(gallery(&v, ContentMode::Safe, false, 450).items.len(), 1);
+        assert!(gallery(&v, ContentMode::Safe, true, &SafeFilter::default(), 450).items.is_empty());
+        // Unrated images need an explicit "not NSFW" flag in Safe mode, like card previews.
+        assert!(gallery(&v, ContentMode::Safe, false, &SafeFilter::default(), 450).items.is_empty());
+        let mut flagged = v.clone();
+        flagged.images[0].image.nsfw = Some(false);
+        assert_eq!(gallery(&flagged, ContentMode::Safe, false, &SafeFilter::default(), 450).items.len(), 1);
+        assert_eq!(gallery(&v, ContentMode::All, false, &SafeFilter::default(), 450).items.len(), 1);
+    }
+
+    #[test]
+    fn safe_mode_uses_the_preview_rule_and_blocked_images_never_show() {
+        let img = |level: u32| VersionImage {
+            image: ModelImage { url: format!("https://image.civitai.com/a/b/width=450/{level}.jpeg"), nsfw_level: Some(level), ..Default::default() },
+            meta: None,
+        };
+        let v = VersionImages { images: vec![img(1), img(2), img(32)], ..Default::default() };
+        let safe = gallery(&v, ContentMode::Safe, false, &SafeFilter::default(), 450);
+        assert_eq!(safe.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0]);
+        assert_eq!(safe.hidden_nsfw, 1);
+        let all = gallery(&v, ContentMode::All, false, &SafeFilter::default(), 450);
+        assert_eq!(all.items.iter().map(|i| i.index).collect::<Vec<_>>(), vec![0, 1]);
     }
 
     #[tokio::test]

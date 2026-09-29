@@ -25,13 +25,16 @@ const MAX_PARALLEL = 4;
 let running = 0;
 const waiting: (() => void)[] = [];
 async function limited<T>(job: () => Promise<T>): Promise<T> {
+  // A finishing job hands its slot straight to the next waiter (running stays
+  // the same), so a new call in the same tick can't slip in past the cap.
   if (running >= MAX_PARALLEL) await new Promise<void>((r) => waiting.push(r));
-  running++;
+  else running++;
   try {
     return await job();
   } finally {
-    running--;
-    waiting.shift()?.();
+    const next = waiting.shift();
+    if (next) next();
+    else running--;
   }
 }
 
