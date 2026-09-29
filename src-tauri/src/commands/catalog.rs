@@ -52,8 +52,8 @@ pub async fn open_civitai_page(
 }
 
 #[tauri::command]
-pub async fn plan_civitai_install(core: State<'_, Arc<AppCore>>, version_id: u64) -> Result<InstallPlan, CoreError> {
-    pinhole_core::catalog::plan_civitai_install(&core, version_id).await
+pub async fn plan_civitai_install(core: State<'_, Arc<AppCore>>, version_id: u64, file_id: Option<u64>) -> Result<InstallPlan, CoreError> {
+    pinhole_core::catalog::plan_civitai_install(&core, version_id, file_id).await
 }
 
 #[tauri::command]
@@ -61,8 +61,9 @@ pub async fn install_civitai(
     core: State<'_, Arc<AppCore>>,
     version_id: u64,
     family_id: Option<String>,
+    file_id: Option<u64>,
 ) -> Result<InstallStarted, CoreError> {
-    pinhole_core::catalog::install_civitai(core.inner(), version_id, family_id).await
+    pinhole_core::catalog::install_civitai(core.inner(), version_id, family_id, file_id).await
 }
 
 #[tauri::command]

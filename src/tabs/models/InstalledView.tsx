@@ -188,6 +188,18 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
         </section>
       )}
 
+      {!nothing && models !== null && (
+        <RecommendedCards
+          offers="tightInstalled"
+          heading={
+            <div>
+              <h2 className="text-base font-semibold">A better fit for {machinePlain(hw)}</h2>
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">The version you have doesn't fit your graphics card well. This smaller one runs more reliably.</p>
+            </div>
+          }
+        />
+      )}
+
       {models === null && !error && (
         <div className="space-y-2">
           {[0, 1, 2].map((i) => (

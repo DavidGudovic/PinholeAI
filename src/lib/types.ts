@@ -220,7 +220,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | describe */
+  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | edit_alt (optional lighter edit model) | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */
@@ -236,6 +236,10 @@ export interface RecommendedPick {
   quant: string | null;
   licenseNote: string | null;
   unavailableReason: string | null;
+  /** Plain words when this is a smaller version picked so it fits (or replaces a tight installed one). */
+  note: string | null;
+  /** An installed version of this model is a tight fit, and this smaller one fits. */
+  replacesInstalled?: boolean;
 }
 
 export interface InstallStarted {
@@ -448,6 +452,8 @@ export interface BrowseQuery {
   period: string;
   commercialOnly: boolean;
   compatibleOnly: boolean;
+  /** Hide models that are Too big for this machine. */
+  runsOnMyCard?: boolean;
   query: string;
   cursor: string | null;
 }
@@ -493,6 +499,8 @@ export interface CatalogCard {
   installed: boolean;
   /** Why it can't be installed (pickle only, scans failed…), or null. */
   blockedReason: string | null;
+  /** "Compact (FP8)"… when a smaller file of this version was picked so it fits the card. */
+  smallerFile?: string | null;
 }
 
 export interface BrowsePage {
@@ -507,6 +515,8 @@ export interface BrowsePage {
   hiddenByContent: number;
   /** …hidden by Look, price, commercial use, kind or "Works with Pinhole". */
   hiddenByFilters: number;
+  /** …hidden by "Runs on my card" (too big for this machine). */
+  hiddenBySize?: number;
 }
 
 /** One preview image on a model's details page. */
@@ -552,6 +562,22 @@ export interface InstallPlan {
   /** Non-null → install is refused (unsafe format, failed scans…). */
   blockedReason: string | null;
   needsApiKey: boolean;
+  /** Every installable file of the version; more than one = a size choice. */
+  fileOptions?: PlanFileOption[];
+  /** Label of the main file when a smaller one was picked so it fits the card. */
+  smallerFile?: string | null;
+}
+
+export interface PlanFileOption {
+  /** CivitAI file id: pass back to planCivitaiInstall / installCivitai. */
+  fileId: number;
+  name: string;
+  sizeBytes: number;
+  /** "Full quality" | "Compact (FP8)" | "Compact (Q4)" … */
+  label: string;
+  vram: VramNeed | null;
+  fit: Fit | null;
+  selected: boolean;
 }
 
 // ---------------------------------------------------------------- paste from CivitAI

@@ -59,7 +59,7 @@ pub async fn browse<S: PageSource>(
     let want = filters.page_size as usize;
     let max_requests = 1 + filters.max_extra_requests as usize;
     let mut cursor = query.cursor.clone();
-    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0 };
+    let mut out = BrowsePage { items: Vec::new(), next_cursor: None, offline: false, partial: false, checked: 0, hidden_by_content: 0, hidden_by_filters: 0, hidden_by_size: 0 };
     let mut seen = HashSet::new();
     let mut requests = 0usize;
     loop {
@@ -78,6 +78,7 @@ pub async fn browse<S: PageSource>(
                 Ok(card) => out.items.push(card),
                 Err(Hidden::Content) => out.hidden_by_content += 1,
                 Err(Hidden::Other) => out.hidden_by_filters += 1,
+                Err(Hidden::TooBig) => out.hidden_by_size += 1,
             }
         }
         let next = page.next_cursor();
@@ -275,7 +276,7 @@ mod tests {
 
     impl CatalogEnv for AllCompatible {
         fn family_for(&self, base: &str, _sha: Option<&str>) -> Option<crate::cards::FamilyInfo> {
-            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None })
+            Some(crate::cards::FamilyInfo { id: base.to_lowercase(), label: base.into(), license_note: None, diffusion_only: false })
         }
         fn vram_for(&self, _family: &str, _bytes: u64) -> Option<(pinhole_registry::vram::VramNeed, pinhole_registry::vram::Fit)> {
             None

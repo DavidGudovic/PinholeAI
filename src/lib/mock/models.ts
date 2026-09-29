@@ -495,6 +495,7 @@ function recommendedFor(role: string): RecommendedPick {
         quant: null,
         licenseNote: "Apache 2.0",
         unavailableReason: null,
+        note: null,
       };
     const vram = { gb: 4, minGb: 3, estimate: false };
     return {
@@ -510,6 +511,7 @@ function recommendedFor(role: string): RecommendedPick {
       quant: "q4_k",
       licenseNote: "Qwen Research License — personal use",
       unavailableReason: null,
+      note: null,
     };
   }
   const c = pickFor(role);
@@ -527,6 +529,7 @@ function recommendedFor(role: string): RecommendedPick {
       quant: null,
       licenseNote: null,
       unavailableReason: tooBigReason(role),
+      note: null,
     };
   const installed = s.models.some((m) => m.familyId === c.familyId && m.friendlyName.startsWith(c.title));
   const missing = FAMILIES[c.familyId]?.components.filter((id) => !s.components.has(id)) ?? [];
@@ -545,6 +548,7 @@ function recommendedFor(role: string): RecommendedPick {
     quant: c.quant,
     licenseNote: c.licenseNote,
     unavailableReason: null,
+    note: null,
   };
 }
 

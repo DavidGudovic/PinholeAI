@@ -58,6 +58,7 @@ export function EditTab() {
   const autoEdit = useMemo(() => (models ? actions.autoEditModel() : null), [actions, models]);
   const mode: EditMode = e.mode ?? (autoEdit ? "instruction" : "restyle");
   const editModelId = e.editModelId ?? autoEdit?.id ?? null;
+  const editFit = edits.find((m) => m.id === editModelId)?.fit ?? null;
   const restyleModelId = e.restyleModelId ?? createModelId ?? creates[0]?.id ?? null;
   const model = useModel(mode === "instruction" ? editModelId : restyleModelId);
   const ui = useFamilyUi(model?.familyId);
@@ -162,11 +163,25 @@ export function EditTab() {
                       : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
-                <RecommendedCards roles={["edit"]} compact />
+                <RecommendedCards roles={["edit", "edit_alt"]} compact />
               </div>
             ) : (
               <>
                 <ModelPicker models={edits} value={editModelId} onChange={(id) => dispatch({ type: "patchEdit", patch: { editModelId: id } })} label="Edit model" />
+                {editFit && editFit !== "fits" && !noGpu && (
+                  <RecommendedCards
+                    roles={["edit", "edit_alt"]}
+                    compact
+                    offers="all"
+                    heading={
+                      <p className="text-xs text-neutral-500">
+                        {editFit === "tight"
+                          ? "This edit model is a tight fit for your graphics card: it runs slower and can run out of memory. Models that fit:"
+                          : "This edit model is probably too big for your graphics card. Models that fit:"}
+                      </p>
+                    }
+                  />
+                )}
                 <div>
                   <label htmlFor="edit-instruction" className="mb-1.5 block text-sm font-medium">
                     What should change?

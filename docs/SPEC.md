@@ -261,6 +261,7 @@ Two sub-views: **Browse** and **Installed**.
 | Time | This week · This month · This year · All time (default) | `period` |
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |
+| Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
 | Search | free text | `query` |
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
@@ -296,7 +297,16 @@ model in small text.
 
 **Install** button:
 1. Pick the best file: primary, `SafeTensor` or GGUF format only. **Never PickleTensor.**
-   Require `pickleScanResult == Success` and `virusScanResult == Success`.
+   Require `pickleScanResult == Success` and `virusScanResult == Success`. When that file is
+   Tight or Too big for this card (§6.2) and the version has another safe, hashed file that
+   Fits (e.g. an FP8 or Q4 file), pick that one instead (else a Tight one over a Too big one).
+   All-in-one families (SD 1.5, SDXL) only switch within the same format: their GGUF files hold
+   the diffusion model alone, without the VAE and text encoders;
+   the card says "Compact (FP8) version, so it fits your card". When a version has more than
+   one installable file, the dialog shows a **Size** choice ("Full quality", "Compact (FP8)",
+   "Compact (Q4)"…) with each file's size and VRAM badge and a plain explanation: compact
+   versions need less graphics memory, pictures keep their size, fine detail is a little softer.
+   The user's pick is re-planned and installed as chosen.
 2. Resolve the family (§6) and list the extra components needed (VAE, text encoders),
    skipping any already installed (matched by SHA-256).
 3. Show the total download size and a free-disk-space check, then download everything with
@@ -372,8 +382,17 @@ finetune of a known family.
 - **Optional second cards** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_detail` offers
   Krea 2 Turbo ("more detail, slower") next to Z-Image Turbo on 12 GB+ cards (Q5_K_S below
   20 GB, Q8_0 from 20 GB). When nothing in an optional role fits, the card is left out.
+- `edit_alt` offers FLUX.1 Kontext ("lighter, faster edits") next to Qwen Image Edit, so a
+  16 GB card has two edit models to choose from; it is left out when it would be the same
+  family as the Edit pick.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
-  choosing the best quant that fits (bf16 → Q8 → Q4). The last Realistic candidate is the
+  choosing the best quant that **Fits** (bf16 → Q8 → Q6 → Q4 → Q3); only when none Fits, the
+  Tight quant with the lowest need. "Recommended for your card" must be OK to run: a Tight
+  pick is a last resort, not the default. A pick smaller than the family's best version
+  carries a plain note (smaller version, fine detail a little softer).
+- When the installed version of a pick is Tight and a smaller registry version Fits, that
+  smaller version is offered (Models → Installed, and in Edit next to a tight edit model);
+  the installed file stays, both show in the model picker. The last Realistic candidate is the
   small SD 1.5, so PCs **without a usable GPU** (and cards under 5 GB) still get a one-click
   model: there, candidates are sized against system RAM instead (§6.2).
 - **First run**: after the engine download, show "Recommended for your GPU (16 GB)" (or
@@ -402,10 +421,14 @@ everything else is **Too big**. The UI then says "your computer", not "your GPU"
 
 How X is computed:
 1. **Known models**: `vram_gb: { min, recommended }` from the registry (measured, not guessed).
-2. **Unknown models** (CivitAI, dropped-in files): estimate =
-   diffusion weights size + VAE + text encoders that stay on GPU (per family `flags`) +
-   activation overhead for the family's default resolution (`activation_gb` in the registry).
-   Label it "~X GB (estimate)".
+2. **Unknown models** (CivitAI, dropped-in files): estimate = the larger of two stages,
+   because the pinned sd.cpp places the diffusion model first, parks text encoders in RAM when
+   they don't fit and frees their GPU copy after the prompt is read:
+   - diffusion stage = diffusion weights + VAE and other non-text-encoder components +
+     activation overhead for the family's default resolution (`activation_gb`) + 0.5 GB;
+   - prompt stage = text encoders + 1 GB compute + 0.5 GB.
+   Min (Tight) = half the diffusion weights + activations + 0.5 GB (offload). Label it
+   "~X GB (estimate)". Not yet checked against measured peaks on real cards.
 3. After a real run, record the observed peak VRAM for that file in `installed.json`
    (a number only) and show the measured value from then on.
 

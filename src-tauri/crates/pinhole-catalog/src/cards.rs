@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use pinhole_registry::vram::{Fit, VramNeed};
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
+use pinhole_store::datadir::ModelKind;
 use pinhole_store::InstalledIndex;
 
 use crate::api::{Model, ModelImage, ModelVersion};
@@ -34,6 +35,9 @@ pub struct FamilyInfo {
     pub id: String,
     pub label: String,
     pub license_note: Option<String>,
+    /// The family's main file is the diffusion model alone (VAE and text encoders come
+    /// separately), so a GGUF of it can stand in for a safetensors file.
+    pub diffusion_only: bool,
 }
 
 /// The real environment: registry + effective hardware + installed index.
@@ -63,7 +67,7 @@ impl CatalogEnv for RegistryEnv<'_> {
             _ => return None,
         };
         let f = self.registry.family(&id)?;
-        Some(FamilyInfo { id, label: f.label.clone(), license_note: f.license_note.clone() })
+        Some(FamilyInfo { id, label: f.label.clone(), license_note: f.license_note.clone(), diffusion_only: families::main_model_kind(f) == ModelKind::Diffusion })
     }
 
     fn vram_for(&self, family_id: &str, main_bytes: u64) -> Option<(VramNeed, Fit)> {
@@ -96,7 +100,12 @@ pub fn card_or_hidden(ctx: &CardContext, env: &dyn CatalogEnv, m: &Model) -> Res
         return Err(hidden);
     }
     let version = f.pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now).ok_or(Hidden::Other)?;
-    Ok(card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now))
+    let card = card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now);
+    // Unknown size (LoRAs, no family) is never hidden: they have no figure of their own.
+    if ctx.query.runs_on_my_card && card.fit == Some(Fit::TooBig) {
+        return Err(Hidden::TooBig);
+    }
+    Ok(card)
 }
 
 /// Card for a specific version (also used by install plans and paste lookups).
@@ -108,10 +117,20 @@ pub fn card_for_version(
     v: &ModelVersion,
     now: DateTime<Utc>,
 ) -> CatalogCard {
-    let file = select::select_file(&v.files, &filters.allowed_file_formats);
-    let sha = file.as_ref().ok().and_then(|f| f.sha256());
-    let family = env.family_for(&v.base_model, sha.as_deref());
+    let default_file = select::select_file(&v.files, &filters.allowed_file_formats);
+    let family = env.family_for(&v.base_model, default_file.as_ref().ok().and_then(|f| f.sha256()).as_deref());
     let is_lora = filters.is_lora_type(&m.kind);
+    // A smaller file of the version when the usual one doesn't fit this card (SPEC §6.2).
+    let (file, smaller) = match (&family, is_lora) {
+        (Some(fam), false) => {
+            match select::select_file_for_machine(&v.files, &filters.allowed_file_formats, fam.diffusion_only, None, |f| env.vram_for(&fam.id, f.size_bytes()).map(|(_, fit)| fit)) {
+                Ok((f, smaller)) => (Ok(f), smaller),
+                Err(e) => (Err(e), false),
+            }
+        }
+        _ => (default_file, false),
+    };
+    let sha = file.as_ref().ok().and_then(|f| f.sha256());
     let mut blocked_reason = file.as_ref().err().cloned();
     if blocked_reason.is_none() && family.is_none() && !v.base_model.eq_ignore_ascii_case(OTHER_BASE_MODEL) {
         blocked_reason = Some(families::unsupported_message(Some(v.base_model.as_str()).filter(|b| !b.is_empty())));
@@ -151,6 +170,7 @@ pub fn card_for_version(
         license_note: family.as_ref().and_then(|f| f.license_note.clone()),
         installed: env.is_installed(v.id, sha.as_deref()),
         blocked_reason,
+        smaller_file: file.as_ref().ok().filter(|_| smaller).map(|f| select::precision_label(f)),
     }
 }
 
@@ -252,7 +272,7 @@ pub(crate) mod tests {
                 "Flux.1 D" => ("flux1_dev", "FLUX.1 dev", Some("Non-commercial license")),
                 _ => return None,
             };
-            Some(FamilyInfo { id: id.into(), label: label.into(), license_note: lic.map(Into::into) })
+            Some(FamilyInfo { id: id.into(), label: label.into(), license_note: lic.map(Into::into), diffusion_only: id.starts_with("flux") })
         }
         fn vram_for(&self, _family: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
             let gb = bytes as f32 / 1e9 + 2.0;
@@ -446,5 +466,46 @@ pub(crate) mod tests {
         // No transform segment: left alone (the UI then shows "Video preview").
         let bare = img(r#"{"url":"https://image.civitai.com/x/v.mp4"}"#);
         assert_eq!(preview_url(&bare, 450), "https://image.civitai.com/x/v.mp4");
+    }
+
+    #[test]
+    fn runs_on_my_card_hides_too_big_models() {
+        let f = filters();
+        let page = page();
+        let small = FakeEnv { vram_gb: 4.0, installed_versions: vec![] };
+        let q = BrowseQuery { runs_on_my_card: true, ..Default::default() };
+        let ctx = CardContext { filters: &f, query: &q, now: now() };
+        // The 6.9 GB SDXL checkpoint needs ~8.9 GB: Too big on a 4 GB card.
+        assert!(matches!(card_or_hidden(&ctx, &small, &page.items[0]), Err(Hidden::TooBig)));
+        // Tight still runs: shown.
+        assert_eq!(card_or_hidden(&ctx, &env(), &page.items[0]).unwrap().fit, Some(Fit::Tight));
+        let q = BrowseQuery::default();
+        let ctx = CardContext { filters: &f, query: &q, now: now() };
+        assert_eq!(card_or_hidden(&ctx, &small, &page.items[0]).unwrap().fit, Some(Fit::TooBig), "off: shown with its badge");
+    }
+
+    #[test]
+    fn smaller_file_is_picked_when_the_usual_one_does_not_fit() {
+        let f = filters();
+        let q = BrowseQuery::default();
+        let ctx = CardContext { filters: &f, query: &q, now: now() };
+        let file = |id: u64, name: &str, fp: &str, kb: f64, primary: bool| {
+            serde_json::json!({ "id": id, "name": name, "sizeKB": kb, "type": "Model", "primary": primary,
+                "pickleScanResult": "Success", "virusScanResult": "Success",
+                "metadata": { "format": "SafeTensor", "fp": fp }, "hashes": { "SHA256": format!("{id}").repeat(64) } })
+        };
+        let m: Model = serde_json::from_value(serde_json::json!({ "id": 7, "name": "Big", "type": "Checkpoint", "modelVersions": [
+            { "id": 70, "baseModel": "SDXL 1.0", "files": [ file(1, "big_fp16.safetensors", "fp16", 13_000_000.0, true), file(2, "big_fp8.safetensors", "fp8", 6_500_000.0, false) ] } ] }))
+        .unwrap();
+        // FakeEnv: need = GB + 2; 12 GB card → fp16 (15.3) too big, fp8 (8.7) Fits.
+        let e = FakeEnv { vram_gb: 12.0, installed_versions: vec![] };
+        let c = card_or_hidden(&ctx, &e, &m).unwrap();
+        assert_eq!(c.download_bytes, Some(6_656_000_000));
+        assert_eq!(c.fit, Some(Fit::Fits));
+        assert_eq!(c.smaller_file.as_deref(), Some("Compact (FP8)"));
+        let e = FakeEnv { vram_gb: 24.0, installed_versions: vec![] };
+        let c = card_or_hidden(&ctx, &e, &m).unwrap();
+        assert_eq!(c.download_bytes, Some(13_312_000_000));
+        assert_eq!(c.smaller_file, None);
     }
 }
