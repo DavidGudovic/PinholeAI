@@ -211,7 +211,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           <p className="flex items-start gap-2">
             <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>
-              Pinhole never saves your prompts and sends no usage data. It only goes online for CivitAI browsing and downloads you start. Pictures stay in memory
+              Pinhole never saves your prompts and sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates. Pictures stay in memory
               until you click Save.
             </span>
           </p>

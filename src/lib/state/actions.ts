@@ -6,7 +6,7 @@
 import * as api from "../api";
 import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, ResultImage } from "../types";
 import { editModels, isActiveDownload, type EditMode, type ImgRef, type JobKind, type TabId, type Toast } from "./model";
-import { importBlob, refFromSession } from "./images";
+import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseSavePath, copyText } from "./platform";
@@ -75,18 +75,57 @@ export function makeActions(store: Store) {
     return { code: "invalid", message: "Pinhole is still working on the last image. Wait for it to finish or press Cancel.", details: null };
   }
 
-  async function runJob(kind: JobKind, req: GenerateRequest): Promise<{ images: ResultImage[]; refs: ImgRef[] }> {
+  const cancelledError = (): CoreError => ({ code: "cancelled", message: "Cancelled.", details: null });
+
+  /** Cancel (or Reset) was pressed during the current job, maybe before the engine had it. */
+  let cancelRequested = false;
+
+  /** Mark a job as running for the whole of `work` (only one at a time). */
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>): Promise<T> {
     if (get().job) throw busyError();
+    cancelRequested = false;
     dispatch({ type: "jobStart", kind, at: Date.now() });
     try {
-      const res = await api.generate(req);
-      const refs = await Promise.all(res.images.map((im) => refFromSession(im.id, im.width, im.height)));
-      return { images: res.images, refs };
+      return await work();
     } catch (e) {
       throw api.asCoreError(e);
     } finally {
       dispatch({ type: "jobEnd" });
     }
+  }
+
+  /**
+   * Blob refs for images a job just made. Images that land after Reset belong to the
+   * cleared session: they are released and the job counts as cancelled.
+   */
+  async function jobRefs(images: ResultImage[], nonce: number): Promise<ImgRef[]> {
+    try {
+      const refs = await refsFromSession(images);
+      if (get().sessionNonce === nonce) return refs;
+      releaseRefs(refs, true);
+    } catch (e) {
+      if (get().sessionNonce === nonce) throw e;
+    }
+    throw cancelledError();
+  }
+
+  /** `nonce`: the session when the job started (steps before this one may have awaited). */
+  async function generateNow(req: GenerateRequest, nonce = get().sessionNonce): Promise<{ images: ResultImage[]; refs: ImgRef[] }> {
+    if (cancelRequested || get().sessionNonce !== nonce) throw cancelledError();
+    const res = await api.generate(req);
+    return { images: res.images, refs: await jobRefs(res.images, nonce) };
+  }
+
+  const runJob = (kind: JobKind, req: GenerateRequest) => withJob(kind, () => generateNow(req));
+
+  /** Blob refs for new session images. If one can't be read, the others are released too and the error is thrown. */
+  async function refsFromSession(images: ResultImage[]): Promise<ImgRef[]> {
+    const got = await Promise.allSettled(images.map((im) => refFromSession(im.id, im.width, im.height)));
+    const failed = got.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (!failed) return got.map((r) => (r as PromiseFulfilledResult<ImgRef>).value);
+    releaseRefs(got.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])), true);
+    for (const im of images) void api.discardImage(im.id).catch(() => undefined);
+    throw failed.reason;
   }
 
   function currentCreateModel(): InstalledModel | null {
@@ -127,23 +166,23 @@ export function makeActions(store: Store) {
   }
 
   async function upscale(resultId: string, factor: 2 | 4) {
-    if (get().job) throw busyError();
-    dispatch({ type: "jobStart", kind: "upscale", at: Date.now() });
     try {
-      const im = await api.upscaleImage(resultId, factor);
-      const ref = await refFromSession(im.id, im.width, im.height);
-      const batchId = get().resultBatch[resultId];
-      const batch = batchId ? get().batches[batchId] : undefined;
-      dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs: [ref] });
+      await withJob("upscale", async () => {
+        const nonce = get().sessionNonce;
+        const im = await api.upscaleImage(resultId, factor);
+        const refs = await jobRefs([im], nonce);
+        const batchId = get().resultBatch[resultId];
+        const batch = batchId ? get().batches[batchId] : undefined;
+        dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
+      });
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
-    } finally {
-      dispatch({ type: "jobEnd" });
     }
   }
 
   async function cancel() {
+    if (get().job) cancelRequested = true;
     await api.cancelGeneration().catch(() => undefined);
   }
 
@@ -180,6 +219,10 @@ export function makeActions(store: Store) {
   function sendToEdit(id: string) {
     const ref = get().images[id];
     if (!ref) return;
+    if (get().job?.kind === "edit") {
+      toast("Wait for the current edit to finish first.");
+      return;
+    }
     dispatch({ type: "editLoad", ref });
     setTab("edit");
   }
@@ -203,9 +246,15 @@ export function makeActions(store: Store) {
 
   // ---------------------------------------------------------------- import
   async function importToEdit(blob: Blob) {
+    if (get().job?.kind === "edit") throw busyError();
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    // An edit started while the image was being read: keep its history.
+    if (get().job?.kind === "edit") {
+      releaseRefs([ref], true);
+      throw busyError();
+    }
     dispatch({ type: "editLoad", ref });
   }
 
@@ -230,18 +279,26 @@ export function makeActions(store: Store) {
         details: null,
       } as CoreError;
     }
-    const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
     let maskId: string | null = null;
     try {
-      if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
-      const req = buildEditRequest(get().edit, { mode: opts.mode, source, model: opts.model, ui, maskImageId: maskId, size: opts.size });
-      const { images, refs } = await runJob("edit", req);
-      if (refs[0]) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null });
-      // Only one result is used for the chain; drop any extras from the session.
-      for (const r of refs.slice(1)) {
-        URL.revokeObjectURL(r.url);
-        void api.discardImage(r.id).catch(() => undefined);
-      }
+      // The job (and with it the history lock) starts before the first await.
+      await withJob("edit", async () => {
+        const nonce = get().sessionNonce;
+        const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
+        if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
+        const req = buildEditRequest(get().edit, { mode: opts.mode, source, model: opts.model, ui, maskImageId: maskId, size: opts.size });
+        const { images, refs } = await generateNow(req, nonce);
+        // The history is locked while an edit runs; if the image on screen changed anyway,
+        // don't attach the result to another image's history.
+        const now = get().edit;
+        if (refs[0] && now.chain[now.index]?.imageId === node.imageId) {
+          dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null });
+          releaseRefs(refs.slice(1), true);
+        } else {
+          releaseRefs(refs, true);
+          if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
+        }
+      });
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;

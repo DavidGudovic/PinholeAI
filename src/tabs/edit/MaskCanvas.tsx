@@ -61,6 +61,17 @@ export function MaskCanvas({
       tmp.height = c.height;
       const t = tmp.getContext("2d")!;
       t.drawImage(c, 0, 0);
+      // Everything erased again: nothing painted (an all-black mask would change nothing).
+      // Anti-aliased eraser edges can leave a few nearly transparent pixels.
+      const px = t.getImageData(0, 0, tmp.width, tmp.height).data;
+      let any = false;
+      for (let i = 3; i < px.length; i += 4) {
+        if (px[i] > 16) {
+          any = true;
+          break;
+        }
+      }
+      if (!any) return null;
       t.globalCompositeOperation = "source-in";
       t.fillStyle = "#fff";
       t.fillRect(0, 0, tmp.width, tmp.height);

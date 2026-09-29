@@ -88,10 +88,11 @@ export async function applyParsed(
   store.dispatch({
     type: "patchCreate",
     patch: {
-      ...(opts.setPrompt ? { prompt: plan.prompt } : {}),
+      // Settings pasted without a prompt keep the prompt (and negative prompt) already typed.
+      ...(opts.setPrompt && plan.prompt.trim() ? { prompt: plan.prompt } : {}),
       modelId,
       presetId: null,
-      fineTune: plan.fineTune,
+      fineTune: plan.prompt.trim() || plan.fineTune.negativePrompt ? plan.fineTune : { ...plan.fineTune, negativePrompt: s.create.fineTune.negativePrompt },
       stick: plan.stick,
       ...(plan.shape ? { shape: plan.shape } : {}),
       loras,
