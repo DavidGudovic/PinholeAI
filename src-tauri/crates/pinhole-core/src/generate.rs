@@ -90,8 +90,8 @@ const RETRY_NOTES: &[&str] = &[
     OFFLOAD_RETRY_NOTE,
 ];
 const MORE_ROOM_NOTE: &str = "This model keeps more of the graphics card free and is sent to it in parts, because the card ran out of memory earlier. Pictures take a bit longer.";
-/// Graphics memory (GiB) every GPU launch keeps free on top of the engine's own
-/// estimate (`--max-vram -2`). sd.cpp budgets weights + working memory + 0.5 GiB
+/// Graphics memory (GiB) a GPU launch keeps free on top of the engine's own
+/// estimate (`--max-vram -2` on a 12 GB+ card, see [`vram_reserves`]). sd.cpp budgets weights + working memory + 0.5 GiB
 /// (backend_fit.cpp, model_manager.cpp `check_capacity`) and runs the whole
 /// model in one piece when that fits the free memory it measured. On Windows /
 /// CUDA the real use was ~0.85 GiB higher (a Krea 2 edit on a 16 GB card: 12.5 GB
@@ -101,8 +101,32 @@ const MORE_ROOM_NOTE: &str = "This model keeps more of the graphics card free an
 /// runs in parts instead (ggml_runner.cpp segmented execution): the card caches
 /// what fits and the rest streams in, like Forge's reserved inference memory.
 pub(crate) const VRAM_RESERVE_GIB: u8 = 2;
-/// The reserve after running out of memory anyway ([`MORE_ROOM_RETRY_NOTE`]).
+/// The reserve after running out of memory anyway on a 16 GB+ card
+/// ([`MORE_ROOM_RETRY_NOTE`]).
 pub(crate) const MORE_ROOM_RESERVE_GIB: u8 = 4;
+
+/// (reserve at launch, reserve for the "more room" retry) in GiB for a card
+/// with `vram_gb` (0 = unknown). Smaller cards keep less free: the reserve
+/// comes out of what auto-fit may keep on the card (free − reserve instead of
+/// free − 0.5 GiB). The retry stays at a quarter of the card at most, because
+/// sd.cpp treats a reserve at or above the free memory as no limit at all
+/// (ggml_graph_cut.cpp `resolve_auto_max_vram_bytes`). Below 8 GB the launch
+/// keeps the engine's own default.
+pub(crate) fn vram_reserves(vram_gb: f32) -> (u8, u8) {
+    if !(vram_gb.is_finite() && vram_gb > 0.0) {
+        (1, 2)
+    } else if vram_gb >= 16.0 {
+        (VRAM_RESERVE_GIB, MORE_ROOM_RESERVE_GIB)
+    } else if vram_gb >= 12.0 {
+        (VRAM_RESERVE_GIB, 3)
+    } else if vram_gb >= 8.0 {
+        (1, 2)
+    } else if vram_gb >= 4.0 {
+        (0, 1)
+    } else {
+        (0, 0)
+    }
+}
 const OFFLOAD_NOTE: &str = "This model is kept in system memory and sent to the graphics card as needed, because the card ran out of memory. Pictures take longer until the model is next loaded.";
 /// System memory kept free when deciding whether a model fits there (OS, other apps).
 const OFFLOAD_SPARE_RAM_GB: f64 = 2.0;
@@ -271,8 +295,12 @@ pub(crate) struct MemFallback {
     /// only sticks while the engine that needed it stays loaded.
     pub offload: bool,
     /// `--max-vram -N`: graphics memory (GiB) the engine keeps free beyond its
-    /// own estimate. 0 = don't pass it (CPU engine). See [`VRAM_RESERVE_GIB`].
+    /// own estimate. 0 = don't pass it (CPU engine, small card). In the
+    /// remembered choices: only set when a retry raised it.
     pub vram_reserve_gib: u8,
+    /// The reserve a "more room" retry raises it to; 0 = no such retry.
+    /// See [`vram_reserves`].
+    pub more_room_gib: u8,
 }
 
 /// Settings `textEncoderOnCpu`.
@@ -1020,7 +1048,7 @@ pub(crate) fn with_text_encoder_on_cpu(args: &mut Vec<String>) {
 
 /// This model's memory choices: Settings `textEncoderOnCpu` on / off, or (auto)
 /// what an out-of-memory retry chose earlier this session. GPU backends only.
-fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallback {
+fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool, vram_gb: f32) -> MemFallback {
     let mut fb = core
         .gen
         .mem_fallback
@@ -1034,11 +1062,17 @@ fn memory_choices(core: &AppCore, model_id: &str, gpu_backend: bool) -> MemFallb
             TeChoice::Off => false,
             TeChoice::Auto => fb.te_on_cpu,
         };
+    let (reserve, more_room) = if gpu_backend {
+        vram_reserves(vram_gb)
+    } else {
+        (0, 0)
+    };
     fb.vram_reserve_gib = if gpu_backend {
-        fb.vram_reserve_gib.max(VRAM_RESERVE_GIB)
+        fb.vram_reserve_gib.max(reserve)
     } else {
         0
     };
+    fb.more_room_gib = more_room;
     fb
 }
 
@@ -1133,8 +1167,8 @@ fn offload_fits_ram(args: &[String], ram_gb: f32) -> bool {
 /// * denoising → more room, then weights to system memory (tiling only as a
 ///   last resort: it only helps the VAE).
 ///
-/// "More room" raises the graphics memory the engine keeps free from
-/// [`VRAM_RESERVE_GIB`] to [`MORE_ROOM_RESERVE_GIB`] (`--max-vram`), so a model
+/// "More room" raises the graphics memory the engine keeps free (`--max-vram`,
+/// e.g. from 2 to 4 GiB on a 16 GB card, see [`vram_reserves`]), so a model
 /// that almost fits runs in parts and its weights give way to working memory.
 /// Weights in system memory alone don't help: sd.cpp still runs the model in
 /// one piece when its estimate fits, holding every weight on the card
@@ -1167,14 +1201,12 @@ fn next_memory_fallback(
             OFFLOAD_RETRY_NOTE,
         ));
     // Only when the budget in `args` is Pinhole's own (not a registry --max-vram).
-    let own_reserve = flag_value(args, "--max-vram") == Some(format!("-{}", fb.vram_reserve_gib));
-    let more_room = (gpu_backend
-        && fb.vram_reserve_gib > 0
-        && fb.vram_reserve_gib < MORE_ROOM_RESERVE_GIB
-        && own_reserve)
+    let own_reserve = flag_value(args, "--max-vram")
+        == (fb.vram_reserve_gib > 0).then(|| format!("-{}", fb.vram_reserve_gib));
+    let more_room = (gpu_backend && fb.vram_reserve_gib < fb.more_room_gib && own_reserve)
         .then_some((
             MemFallback {
-                vram_reserve_gib: MORE_ROOM_RESERVE_GIB,
+                vram_reserve_gib: fb.more_room_gib,
                 ..fb
             },
             MORE_ROOM_RETRY_NOTE,
@@ -1314,7 +1346,7 @@ pub(crate) fn engine_note(core: &AppCore, flags: &EngineFlags) -> Option<String>
     if fb.vae_tiling {
         notes.push(TILING_ON_NOTE.to_string());
     }
-    if fb.vram_reserve_gib >= MORE_ROOM_RESERVE_GIB && core.gen.offloaded.lock().is_none() {
+    if fb.vram_reserve_gib > 0 && core.gen.offloaded.lock().is_none() {
         notes.push(MORE_ROOM_NOTE.to_string());
     }
     if core.gen.offloaded.lock().is_some() {
@@ -1935,7 +1967,7 @@ async fn generate_inner(
     let tiling_allowed = !params.vae_tiling && req.fine_tune.vae_tiling != Some(false);
     // (Fine-tune "VAE tiling: Off" still wins over a remembered tiling choice:
     // the request body turns tiling off per job, without an engine restart.)
-    let fb = memory_choices(core, &prep.model.id, gpu_backend);
+    let fb = memory_choices(core, &prep.model.id, gpu_backend, hw.vram_gb);
     let mut fb = with_remembered_offload(core, &prep.model.id, &wiring_args, fb, gpu_backend);
     let steps = params.steps.max(1);
     let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
@@ -1977,7 +2009,10 @@ async fn generate_inner(
                     let entry = remembered.entry(prep.model.id.clone()).or_default();
                     entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
                     entry.vae_tiling |= next_fb.vae_tiling;
-                    entry.vram_reserve_gib = entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
+                    if next_fb.vram_reserve_gib > fb.vram_reserve_gib {
+                        entry.vram_reserve_gib =
+                            entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
+                    }
                 }
                 fb = next_fb;
                 set_retry_note(core, note);
@@ -2373,7 +2408,7 @@ async fn upscale_inner(
                 core,
                 &model_id,
                 &args,
-                memory_choices(core, &model_id, gpu_backend),
+                memory_choices(core, &model_id, gpu_backend, hw.vram_gb),
                 gpu_backend,
             );
             let args = with_memory_choices(&args, fb);
@@ -2948,8 +2983,10 @@ mod tests {
         let stage = memory_failure(log).expect("out of memory");
         assert_eq!(stage, Stage::Diffusion);
         let wiring = v(&["--diffusion-model", "/krea2.safetensors"]);
+        let (reserve, more_room) = vram_reserves(16.0);
         let fb = MemFallback {
-            vram_reserve_gib: VRAM_RESERVE_GIB,
+            vram_reserve_gib: reserve,
+            more_room_gib: more_room,
             ..Default::default()
         };
         let args = with_memory_choices(&wiring, fb);
@@ -2977,8 +3014,10 @@ mod tests {
 
         // A --max-vram from the registry wins and isn't raised.
         let pinned = v(&["--diffusion-model", "/d", "--max-vram", "6"]);
+        let (reserve, more_room) = vram_reserves(16.0);
         let fb = MemFallback {
-            vram_reserve_gib: VRAM_RESERVE_GIB,
+            vram_reserve_gib: reserve,
+            more_room_gib: more_room,
             ..Default::default()
         };
         let args = with_memory_choices(&pinned, fb);
@@ -2989,6 +3028,44 @@ mod tests {
         assert!(!with_memory_choices(&wiring, MemFallback::default())
             .iter()
             .any(|a| a == "--max-vram"));
+    }
+
+    /// The reserve scales with the card and the retry stays at a quarter of it
+    /// (sd.cpp treats a reserve at or above the free memory as no limit).
+    #[test]
+    fn vram_reserve_scales_with_the_card() {
+        assert_eq!(vram_reserves(16.0), (2, 4));
+        assert_eq!(vram_reserves(12.0), (2, 3));
+        assert_eq!(vram_reserves(8.0), (1, 2));
+        assert_eq!(vram_reserves(6.0), (0, 1));
+        assert_eq!(vram_reserves(4.0), (0, 1));
+        assert_eq!(vram_reserves(2.0), (0, 0));
+        assert_eq!(vram_reserves(0.0), (1, 2), "unknown card");
+        for gb in [2.0_f32, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0] {
+            let (r, m) = vram_reserves(gb);
+            assert!(r <= m && f32::from(m) <= gb / 4.0, "{gb}");
+        }
+        // A 4 GB card launches without a budget; the retry adds one.
+        let wiring = v(&["--diffusion-model", "/d"]);
+        let fb = MemFallback {
+            more_room_gib: 1,
+            ..Default::default()
+        };
+        let args = with_memory_choices(&wiring, fb);
+        assert!(!args.iter().any(|a| a == "--max-vram"));
+        let (fb, note) = next_memory_fallback(
+            fb,
+            Stage::Diffusion,
+            TeChoice::Auto,
+            true,
+            &args,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!((fb.vram_reserve_gib, note), (1, MORE_ROOM_RETRY_NOTE));
+        let args = with_memory_choices(&wiring, fb);
+        assert_eq!(flag_value(&args, "--max-vram").as_deref(), Some("-1"));
     }
 
     #[test]
