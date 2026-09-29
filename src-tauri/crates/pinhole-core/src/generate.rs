@@ -857,7 +857,10 @@ pub(crate) fn model_files(
 fn decoding_now(own: &str) -> bool {
     let mut decoding = false;
     for line in own.lines() {
-        if line.contains("decode_first_stage completed") || line.contains("generating image") || line.contains(" - hires ") {
+        if line.contains("decode_first_stage completed")
+            || line.contains("generating image")
+            || line.contains(" - hires ")
+        {
             decoding = false;
         } else if line.contains(" decoding ") && line.contains(" latents") {
             decoding = true;
@@ -2517,9 +2520,15 @@ mod tests {
         assert!(!decoding_now(sampling));
         let decoding = format!("{sampling}[INFO ] image.cpp:899  - sampling completed, taking 3.10s\n[INFO ] image.cpp:554  - decoding 1 latents\n");
         assert!(decoding_now(&decoding));
-        assert!(decoding_now(&format!("{decoding}[INFO ] image.cpp:552  - decoding 1/2 latents\n")));
-        assert!(!decoding_now(&format!("{decoding}[INFO ] image.cpp:624  - decode_first_stage completed, taking 1.20s\n")));
-        assert!(!decoding_now(&format!("{decoding}[INFO ] image.cpp:866  - generating image: 2/2 - seed 43\n")));
+        assert!(decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:552  - decoding 1/2 latents\n"
+        )));
+        assert!(!decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:624  - decode_first_stage completed, taking 1.20s\n"
+        )));
+        assert!(!decoding_now(&format!(
+            "{decoding}[INFO ] image.cpp:866  - generating image: 2/2 - seed 43\n"
+        )));
     }
 
     #[test]
