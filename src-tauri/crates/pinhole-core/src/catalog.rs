@@ -281,6 +281,10 @@ pub async fn plan_civitai_install(
     file_id: Option<u64>,
 ) -> CoreResult<InstallPlan> {
     let filters = filters(core)?;
+    // Checked here too: a cached version must not bypass Offline mode.
+    if core.offline.get() {
+        return Err(net_error(NetError::Offline));
+    }
     let client = civitai_client(core).await;
     let fetched = fetch_version(&core.models.versions, &client, version_id).await?;
     let (version, model) = (&fetched.0, &fetched.1);
@@ -329,6 +333,10 @@ pub async fn install_civitai(
     file_id: Option<u64>,
 ) -> CoreResult<InstallStarted> {
     let filters = filters(core)?;
+    // Checked here too: a cached version must not bypass Offline mode.
+    if core.offline.get() {
+        return Err(net_error(NetError::Offline));
+    }
     let client = civitai_client(core).await;
     let fetched = fetch_version(&core.models.versions, &client, version_id).await?;
     let (version, model) = (&fetched.0, &fetched.1);
@@ -437,6 +445,29 @@ mod tests {
             assert!(got.1.is_none());
         }
         assert_eq!(count("/model-versions/8"), 2);
+    }
+
+    /// A version fetched moments ago still gives the plain offline error once
+    /// Offline mode is on (plan and install).
+    #[tokio::test]
+    async fn cached_version_does_not_bypass_offline() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let version: pinhole_catalog::api::ModelVersion =
+            serde_json::from_value(serde_json::json!({ "id": 5, "modelId": 0 })).unwrap();
+        core.models.versions.put(5, Arc::new((version, None)));
+        assert!(core.models.versions.get(5).is_some());
+        core.offline.set(true);
+        assert_eq!(
+            plan_civitai_install(&core, 5, None).await.unwrap_err().code,
+            "offline"
+        );
+        assert_eq!(
+            install_civitai(&core, 5, None, None)
+                .await
+                .unwrap_err()
+                .code,
+            "offline"
+        );
     }
 
     #[tokio::test]
