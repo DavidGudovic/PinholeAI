@@ -443,7 +443,7 @@ export function planPaste(p: ParsedGeneration, ui: FamilyUi | null): PastePlan {
       `Hires fix${p.hires.scale != null ? ` ×${p.hires.scale}` : ""}${p.denoise != null ? `, strength ${p.denoise}` : ""}`,
     );
     if (p.hires.steps) skipped.push({ what: `Hires steps ${p.hires.steps}`, why: "Pinhole picks hires steps automatically" });
-    if (p.hires.upscaler && !/^(none|latent.*)$/i.test(p.hires.upscaler)) {
+    if (p.hires.upscaler && !/^(none|lanczos)$/i.test(p.hires.upscaler)) {
       skipped.push({ what: `Upscaler "${p.hires.upscaler}"`, why: "Pinhole uses its own hires upscaler" });
     }
   } else if (p.denoise != null && p.denoise < 1) {

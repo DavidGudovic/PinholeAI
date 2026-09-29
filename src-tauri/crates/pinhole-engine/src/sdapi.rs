@@ -55,6 +55,27 @@ pub struct HiresRequest {
     pub denoising_strength: f32,
 }
 
+/// Hires upscaler sent when no upscaler model is chosen. sd-server's default is
+/// `Latent`, which blurs and garbles the image unless the second pass denoises
+/// heavily (about 0.5+); copied CivitAI settings often use 0.3–0.4, meant for an
+/// image upscaler. `Lanczos` upscales the decoded image instead, so low
+/// strengths only refine it.
+pub const HIRES_IMAGE_UPSCALER: &str = "Lanczos";
+
+impl HiresRequest {
+    /// Hires fix with an image-space upscale ([`HIRES_IMAGE_UPSCALER`]).
+    /// `steps` 0 = reuse the first pass's steps.
+    pub fn image_space(scale: f32, steps: u32, denoising_strength: f32) -> Self {
+        Self {
+            enabled: true,
+            upscaler: Some(HIRES_IMAGE_UPSCALER.into()),
+            scale,
+            steps,
+            denoising_strength,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct VaeTilingRequest {
     pub enabled: bool,
@@ -571,6 +592,20 @@ mod tests {
                 && v.get("hires").is_none()
         );
         assert!(!req.embeds_metadata());
+    }
+
+    /// Regression: with no `upscaler`, sd-server upscales in latent space, which
+    /// garbled copied CivitAI settings (hires ×2 at strength 0.35).
+    #[test]
+    fn hires_uses_an_image_space_upscaler() {
+        let mut req = ImgGenRequest::new("a cat", 1024, 1024, 1);
+        req.hires = Some(HiresRequest::image_space(2.0, 0, 0.35));
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["hires"]["enabled"], true);
+        assert_eq!(v["hires"]["upscaler"], "Lanczos");
+        assert_eq!(v["hires"]["scale"], 2.0);
+        assert_eq!(v["hires"]["steps"], 0);
+        assert!((v["hires"]["denoising_strength"].as_f64().unwrap() - 0.35).abs() < 1e-6);
     }
 
     #[test]

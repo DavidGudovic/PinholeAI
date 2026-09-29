@@ -79,6 +79,18 @@ describe("galleryGenerationText", () => {
     expect(p.seed).toBe(1);
   });
 
+  it("falls back to the image's own size, before the hires upscale, when the data has no Size", () => {
+    const { Size: _, ...noSize } = LIVE_META;
+    const p = parseGenerationData(galleryGenerationText(noSize, SOURCE, { width: 1024, height: 1536 })!)!;
+    expect([p.width, p.height]).toEqual([512, 768]);
+    const plain = { prompt: "x", steps: 20, seed: 1 };
+    const q = parseGenerationData(galleryGenerationText(plain, null, { width: 832, height: 1216 })!)!;
+    expect([q.width, q.height]).toEqual([832, 1216]);
+    // Size in the data wins over the image's own size.
+    const r = parseGenerationData(galleryGenerationText(LIVE_META, SOURCE, { width: 2000, height: 3000 })!)!;
+    expect([r.width, r.height]).toEqual([512, 768]);
+  });
+
   it("returns null when there is nothing to apply", () => {
     expect(galleryGenerationText(null, SOURCE)).toBeNull();
     expect(galleryGenerationText({ Model: "x" }, null)).toBeNull();
