@@ -150,6 +150,9 @@ describe("reducer", () => {
     s = run(base, { type: "editDelete", index: 1 });
     expect(s.edit.chain.map((n) => [n.imageId, n.label])).toEqual([["o", "Original"], ["e2", "Edit 1"], ["e3", "Edit 2"]]);
     expect(s.edit.chain[s.edit.index].imageId).toBe("e3");
+    // Deleting the shown middle edit shows the edit that took its place, not the original.
+    s = run(base, { type: "editGoto", index: 1 }, { type: "editDelete", index: 1 });
+    expect(s.edit.chain[s.edit.index].imageId).toBe("e2");
     // The original cannot be deleted.
     expect(run(base, { type: "editDelete", index: 0 })).toBe(base);
   });

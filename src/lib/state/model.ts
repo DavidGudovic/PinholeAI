@@ -505,7 +505,8 @@ function inner(s: AppState, a: Action): AppState {
       const chain = s.edit.chain
         .filter((_, i) => i !== a.index)
         .map((n, i) => (i === 0 ? n : { ...n, label: `Edit ${i}` }));
-      const index = a.index < s.edit.index ? s.edit.index - 1 : a.index === s.edit.index ? a.index - 1 : s.edit.index;
+      // Deleting the shown edit shows the one that took its place (the next edit), or the one before it if it was the last.
+      const index = a.index < s.edit.index ? s.edit.index - 1 : a.index === s.edit.index ? Math.min(a.index, chain.length - 1) : s.edit.index;
       return { ...s, edit: { ...s.edit, chain, index } };
     }
     case "editClear":

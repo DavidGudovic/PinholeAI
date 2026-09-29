@@ -378,7 +378,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             title={filters.kind === "models" ? "No models match these filters" : "No style add-ons match these filters"}
             actions={changed > 0 ? <Button onClick={clearFilters}>Clear filters</Button> : undefined}
           >
-            Try another look, fewer tags, a longer time range ("All time"), or a different search.
+            {filters.period === "AllTime" ? "Try another look, fewer tags, or a different search." : 'Try another look, fewer tags, a longer time range ("All time"), or a different search.'}
           </EmptyState>
         )
       ) : (
