@@ -1272,6 +1272,58 @@ mod tests {
         assert!(core.gen.slot.lock().await.proc.is_none());
     }
 
+    /// A delete while the job still stops the previous engine (before the new
+    /// one is spawned) cancels the job too: no new engine starts.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn deleting_the_model_while_the_old_engine_stops_cancels_the_load() {
+        let (tmp, core, _rec) = new_core();
+        let spawned = tmp.path().join("spawned");
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Sd, "sd-server", &format!("touch '{}'\nexec sleep 30", spawned.display()));
+        // The running engine ignores SIGTERM, so stopping it takes a few seconds.
+        let old = tmp.path().join("old-sd.sh");
+        std::fs::write(&old, "#!/bin/sh\ntrap '' TERM\nwhile :; do sleep 1; done\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let proc = pinhole_engine::EngineProcess::spawn(&old, &[], 1, Arc::new(pinhole_engine::LogBuffer::default())).unwrap();
+        put_engine(&core, proc, false).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let model = register_fake_model(&core, "sd15");
+        let c2 = core.clone();
+        let m2 = model.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(m2, "x")).await });
+        for _ in 0..200 {
+            if core.gen.loading.lock().is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(core.gen.loading.lock().is_some(), "marked as loading while the old engine stops");
+        generate::unload_model(&core, &model, &[]).await;
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(!spawned.exists(), "no engine started after the cancel");
+        assert!(core.gen.loading.lock().is_none());
+    }
+
+    /// Reset while a generate waits for the previous job: its images are dropped too.
+    #[tokio::test]
+    async fn reset_while_a_job_waits_drops_its_images() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let busy = core.gen.run_lock.lock().await;
+        let c2 = core.clone();
+        let task = tokio::spawn(async move { generate::generate(&c2, GenerateRequest::txt2img(model, "a lighthouse")).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        core.session.clear();
+        drop(busy);
+        assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+        assert!(core.session.is_empty());
+    }
+
     /// Cancelling an upscale stops a Pinhole-started engine: sd-server upscales
     /// synchronously and would keep working otherwise.
     #[cfg(unix)]
@@ -1309,7 +1361,8 @@ mod tests {
     #[tokio::test]
     async fn describe_shutdown_cancels_a_loading_engine() {
         let (_tmp, core, _rec) = new_core();
-        install_fake_engine(&core, pinhole_engine::install::EngineKind::Llama, "llama-server", "exec sleep 30");
+        // Its log reads like an out-of-memory failure: a cancelled load is still "cancelled".
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Llama, "llama-server", "echo 'ggml: out of memory'\nexec sleep 30");
         install_component(&core, ModelKind::Captioner, "cap.gguf", describe::DEFAULT_MODEL_ID);
         install_component(&core, ModelKind::Captioner, "cap-mmproj.gguf", describe::DEFAULT_MMPROJ_ID);
         let img = session::import_image(&core, pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255])).unwrap();
@@ -1328,6 +1381,28 @@ mod tests {
         assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
         assert!(!core.describe.is_busy());
         assert!(!core.describe.stopping.lock().is_cancelled(), "a fresh token for the next describe");
+    }
+
+    /// A describe that gets the engine slot while a shutdown is pending
+    /// doesn't start llama-server at all.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn describe_during_shutdown_starts_no_engine() {
+        let (tmp, core, _rec) = new_core();
+        let spawned = tmp.path().join("spawned");
+        install_fake_engine(&core, pinhole_engine::install::EngineKind::Llama, "llama-server", &format!("touch '{}'\nexec sleep 30", spawned.display()));
+        install_component(&core, ModelKind::Captioner, "cap.gguf", describe::DEFAULT_MODEL_ID);
+        install_component(&core, ModelKind::Captioner, "cap-mmproj.gguf", describe::DEFAULT_MMPROJ_ID);
+        let img = session::import_image(&core, pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255])).unwrap();
+        // A launch clears the log buffer: this line stays only when nothing launched.
+        core.describe.logs.push_bytes(b"before\n");
+        // What `shutdown` does first, before it gets the slot.
+        core.describe.stopping.lock().cancel();
+        let err = describe::describe_image(&core, &img.id, describe::DescribeStyle::Sentence).await.unwrap_err();
+        assert_eq!(err.code, "cancelled");
+        assert!(core.describe.logs.tail_text(5).contains("before"), "llama-server wasn't started");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!spawned.exists(), "llama-server wasn't started");
     }
 
     #[tokio::test]

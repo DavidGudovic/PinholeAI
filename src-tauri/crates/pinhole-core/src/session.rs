@@ -47,14 +47,8 @@ pub struct Session {
 }
 
 impl Session {
-    /// Store a (scrubbed) generated PNG under `meta.id`.
-    pub fn insert_generated(&self, png: Vec<u8>, meta: ResultImage) {
-        let img = SessionImage { id: meta.id.clone(), bytes: Arc::new(png), kind: Kind::Png, width: meta.width, height: meta.height, meta: Some(meta) };
-        self.images.write().insert(img.id.clone(), img);
-    }
-
-    /// Like [`Session::insert_generated`], but only while no Reset happened
-    /// since [`Session::epoch`] returned `epoch` (a job that finishes after
+    /// Result intake: store a (scrubbed) generated PNG under `meta.id`, but
+    /// only while no Reset happened since [`Session::epoch`] returned `epoch` (a job that finishes after
     /// Reset must not bring its images back). Returns whether it was stored.
     pub fn insert_generated_since(&self, epoch: u64, png: Vec<u8>, meta: ResultImage) -> bool {
         let mut images = self.images.write();
@@ -288,14 +282,14 @@ mod tests {
     fn store_roundtrip_and_clear() {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
-        s.insert_generated(png.clone(), meta("a"));
+        assert!(s.insert_generated_since(s.epoch(), png.clone(), meta("a")));
         let got = s.get("a").unwrap();
         assert_eq!(got.bytes.as_slice(), png.as_slice());
         assert_eq!(got.parent_id(), Some("p"));
         assert_eq!(s.len(), 1);
         assert!(s.remove("a"));
         assert!(s.get("a").is_none());
-        s.insert_generated(png, meta("b"));
+        assert!(s.insert_generated_since(s.epoch(), png, meta("b")));
         s.clear();
         assert!(s.is_empty());
     }

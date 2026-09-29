@@ -1082,6 +1082,15 @@ fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String]) {
     *core.gen.offloaded.lock() = wiring_args.iter().any(|a| a == "--offload-to-cpu").then(|| (model_id.to_string(), wiring_args.to_vec()));
 }
 
+/// Clears `GenState::loading` when [`ensure_engine`] returns, on every path.
+struct LoadingMark<'a>(&'a AppCore);
+
+impl Drop for LoadingMark<'_> {
+    fn drop(&mut self) {
+        *self.0.gen.loading.lock() = None;
+    }
+}
+
 async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &str, label: &str, cancel: &CancellationToken, t0: Instant) -> CoreResult<String> {
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
@@ -1096,6 +1105,10 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     let args = full_sd_args(core, wiring_args, &cfg);
     let installed = engine_setup::installed_engine(core, EngineKind::Sd);
     let mut slot = core.gen.slot.lock().await;
+    // From here until return this job holds the slot: a delete of this model
+    // cancels it (`cancel_load_of`) instead of waiting for the slot.
+    *core.gen.loading.lock() = Some((model_id.to_string(), args.clone()));
+    let _loading = LoadingMark(core);
     {
         let s = &mut *slot;
         if let Some(p) = s.proc.as_mut() {
@@ -1135,6 +1148,9 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     set_others_note(core, others.as_ref().filter(|o| o.is_significant()).map(others_note));
     *core.gen.gpu_others.lock() = others;
 
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port for the engine.").with_details(e.to_string()))?;
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
@@ -1153,7 +1169,6 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
     let client = SdClient::new(core.local.clone(), proc.base_url());
     let logs = core.gen.logs.clone();
     let mut last_emit = Instant::now();
-    *core.gen.loading.lock() = Some((model_id.to_string(), args.clone()));
     let ready = proc
         .wait_ready(
             || client.is_ready(),
@@ -1168,7 +1183,6 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
             },
         )
         .await;
-    *core.gen.loading.lock() = None;
     core.gen.flags.lock().loading = false;
     // Port squatting: whoever answered must be our child with our model.
     let ready = match ready {
@@ -1314,6 +1328,9 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
+    // Read before waiting for another job: results of a job that outlives a
+    // Reset are dropped (see `Session::insert_generated_since`).
+    let session_epoch = core.session.epoch();
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
@@ -1322,7 +1339,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     let t0 = Instant::now();
     // The model that actually runs (Edit may pick another one than `req.model_id`).
     let mut label = core.installed.lock().get(&req.model_id).map(|m| m.friendly_name.clone()).unwrap_or_default();
-    let result = generate_inner(core, &req, &cancel, t0, &mut label).await;
+    let result = generate_inner(core, &req, &cancel, t0, session_epoch, &mut label).await;
     *core.gen.active.lock() = None;
     core.gen.logs.clear_secrets();
     match &result {
@@ -1334,9 +1351,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     result
 }
 
-async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant, final_label: &mut String) -> CoreResult<GenerateResult> {
-    // Results of a job that outlives a Reset are dropped (see `Session::insert_generated_since`).
-    let session_epoch = core.session.epoch();
+async fn generate_inner(core: &Arc<AppCore>, req: &GenerateRequest, cancel: &CancellationToken, t0: Instant, session_epoch: u64, final_label: &mut String) -> CoreResult<GenerateResult> {
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
@@ -1751,7 +1766,10 @@ async fn upscale_inner(
     label: &mut String,
 ) -> CoreResult<ResultImage> {
     let base = match running_engine_url(core).await {
-        Some(u) => u,
+        Some(u) => {
+            *label = loaded_model_label(core).await;
+            u
+        }
         None => {
             // sd-server needs a model loaded to run at all: start it with the image's
             // model, or the most recently used one.
@@ -1772,7 +1790,10 @@ async fn upscale_inner(
             r?
         }
     };
-    *label = loaded_model_label(core).await;
+    // A Cancel before the request goes out leaves the (maybe just loaded) engine alone.
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     emit_progress(core, GenPhase::Generating, label, None, None, t0);
     let client = SdClient::new(core.local.clone(), base);
     let b64 = base64::engine::general_purpose::STANDARD.encode(src.bytes.as_slice());

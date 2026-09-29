@@ -383,11 +383,20 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
             return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url()).with_api_key(s.api_key.clone()));
         }
     }
+    // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
+    let cancel = core.describe.stopping.lock().clone();
+    let cancelled = || CoreError::new("cancelled", "Cancelled.");
     if let Some(old) = slot.take() {
         old.proc.stop().await;
     }
+    if cancel.is_cancelled() {
+        return Err(cancelled());
+    }
     engine_setup::ensure_runtime(core, &engine)?;
     engine_setup::sweep_orphans(core).await;
+    if cancel.is_cancelled() {
+        return Err(cancelled());
+    }
     let cfg = engine_setup::engine_config(core)?;
     let port = free_port().map_err(|e| CoreError::internal("Couldn't find a free local port.").with_details(e.to_string()))?;
     // `launch_args` sets the host and port (loopback only).
@@ -399,8 +408,6 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
     let mut proc = EngineProcess::spawn_with_env(&engine.exe, &args, &[(llama::API_KEY_ENV, api_key.as_str())], port, core.describe.logs.clone())
         .map_err(|e| CoreError::new("engine_failed", "The describe engine couldn't be started.").with_details(e.to_string()))?;
     let client = LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
-    // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
-    let cancel = core.describe.stopping.lock().clone();
     match proc.wait_ready(|| client.is_ready(), LOAD_TIMEOUT, &cancel, |_| {}).await {
         Ok(()) => {
             if let Err(e) = verify_llama_identity(&mut proc, &client, &model).await {
@@ -415,10 +422,11 @@ async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
             let code = proc.exit_code();
             proc.stop().await;
             let tail = core.describe.logs.tail_text(30);
+            // A cancelled load (its log tail may look like a failure) is just cancelled.
             Err(match (e, classify(&tail, code)) {
+                (ReadyError::Cancelled, _) => cancelled(),
                 (_, Failure::OutOfMemory) => CoreError::new("vram", "Not enough memory to load the describe model. Close other apps and try again.").with_details(tail),
                 (_, Failure::ModelLoad) => CoreError::new("engine_failed", "The describe model couldn't be loaded — the file may be damaged. Download it again.").with_details(tail),
-                (ReadyError::Cancelled, _) => CoreError::new("cancelled", "Cancelled."),
                 (ReadyError::Timeout, _) => CoreError::new("engine_failed", "The describe model took too long to load. Try again.").with_details(tail),
                 _ => CoreError::new("engine_failed", "The describe engine stopped unexpectedly. Try again.").with_details(tail),
             })
