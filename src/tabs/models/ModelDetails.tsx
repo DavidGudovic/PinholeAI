@@ -205,7 +205,7 @@ export function ModelDetails({
             <p className="text-sm text-neutral-500">Offline mode is on, so Pinhole doesn't contact CivitAI. Turn it off in Settings to see example images.</p>
           ) : gallery.items.length === 0 ? (
             <p className="text-sm text-neutral-500">
-              {gallery.hiddenNsfw > 0 ? "Every example image for this model is made for adults, and Safe mode is on." : "This model has no example images."}
+              {gallery.hiddenNsfw > 0 ? "Safe mode is on and hides every example image for this model." : "This model has no example images."}
             </p>
           ) : (
             <>
