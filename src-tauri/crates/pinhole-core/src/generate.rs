@@ -1143,6 +1143,8 @@ async fn ensure_engine(core: &Arc<AppCore>, wiring_args: &[String], model_id: &s
         f.running = false;
         f.loaded_model_id = None;
     }
+    // The old engine is gone even if this load is cancelled or fails before the spawn.
+    engine_setup::emit_status(core);
 
     let installed = installed.ok_or_else(|| {
         CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
