@@ -20,6 +20,7 @@ pub mod generate;
 pub mod imagecheck;
 pub mod library;
 pub mod linked;
+pub mod licence;
 pub mod models;
 pub mod models_folder;
 pub mod session;
