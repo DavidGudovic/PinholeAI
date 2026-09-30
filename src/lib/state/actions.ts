@@ -410,10 +410,16 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- edit
-  /** Edit the image on screen with the settings as they are now (queued if a job is running). */
-  async function runEdit(opts: { mode: EditMode; model: InstalledModel; mask: Blob | null; size: [number, number] }) {
+  /**
+   * Edit a history step with the settings as they are now (queued if a job is running).
+   * `from`: the step to edit (default: the shown one); the result replaces every later step.
+   * `newSeed`: ignore a fixed Seed ("Try again").
+   */
+  async function runEdit(opts: { mode: EditMode; model: InstalledModel; mask: Blob | null; size: [number, number]; from?: number; newSeed?: boolean }) {
     const s = get();
-    const node = s.edit.chain[s.edit.index];
+    const shown = s.edit.index;
+    const at = opts.from ?? shown;
+    const node = s.edit.chain[at];
     const source = node ? s.images[node.imageId] : undefined;
     if (!node || !source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
     const text = opts.mode === "instruction" ? s.edit.instruction : s.edit.restylePrompt;
@@ -433,31 +439,33 @@ export function makeActions(store: Store) {
         withJob(
           "edit",
           async () => {
-          const nonce = get().sessionNonce;
-          const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
-          if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
-          const req = buildEditRequest(edit, {
-            mode: opts.mode,
-            source,
-            model: opts.model,
-            ui,
-            maskImageId: maskId,
-            size: opts.size,
-            loras,
-            autoAdd: settings?.addTriggerWords ?? true,
-          });
-          const { images, refs } = await generateNow(req, nonce);
-          // Added after the image it was made from. A queued edit of an earlier image goes at the
-          // end, keeping the edits made since; if that image is gone, the result is dropped.
-          const now = get().edit;
-          const at = now.chain.findIndex((n) => n.imageId === node.imageId);
-          if (refs[0] && at >= 0) {
-            dispatch({ type: at === now.index ? "editPush" : "editAppend", ref: refs[0], meta: images[0] ?? null });
-            releaseRefs(refs.slice(1), true);
-          } else {
-            releaseRefs(refs, true);
-            if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
-          }
+            const nonce = get().sessionNonce;
+            const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
+            if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
+            const req = buildEditRequest(opts.newSeed ? { ...edit, seed: null } : edit, {
+              mode: opts.mode,
+              source,
+              model: opts.model,
+              ui,
+              maskImageId: maskId,
+              size: opts.size,
+              loras,
+              autoAdd: settings?.addTriggerWords ?? true,
+            });
+            const { images, refs } = await generateNow(req, nonce);
+            // Added after the step it was made from, replacing later steps. A queued edit of an
+            // earlier step goes at the end instead, keeping the edits made since; if that step is
+            // gone, the result is dropped.
+            const now = get().edit;
+            const pos = now.chain.findIndex((n) => n.imageId === node.imageId);
+            if (refs[0] && pos >= 0) {
+              if (opts.from != null || pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: pos });
+              else dispatch({ type: "editAppend", ref: refs[0], meta: images[0] ?? null });
+              releaseRefs(refs.slice(1), true);
+            } else {
+              releaseRefs(refs, true);
+              if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
+            }
           },
           1,
           [source.id, ...second],
@@ -468,6 +476,35 @@ export function makeActions(store: Store) {
       if (err.code !== "cancelled") throw err;
     } finally {
       if (maskId) void api.discardImage(maskId).catch(() => undefined);
+    }
+  }
+
+  /** Upscale the shown edit step; the result becomes the next step. Resolves quietly on cancel. */
+  async function upscaleEdit(factor: 2 | 4) {
+    const s = get();
+    const shown = s.edit.index;
+    const node = s.edit.chain[shown];
+    if (!node) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
+    try {
+      await withJob("editUpscale", async () => {
+        const nonce = get().sessionNonce;
+        const im = await api.upscaleImage(node.imageId, factor);
+        if (cancelRequested) {
+          void api.discardImage(im.id).catch(() => undefined);
+          throw cancelledError();
+        }
+        const refs = await jobRefs([im], nonce);
+        const now = get().edit;
+        if (now.index === shown && now.chain[shown]?.imageId === node.imageId) {
+          dispatch({ type: "editPush", ref: refs[0], meta: im, after: shown });
+        } else {
+          releaseRefs(refs, true);
+          toast("The upscale finished after the image changed, so it wasn't added.");
+        }
+      }, 1);
+    } catch (e) {
+      const err = api.asCoreError(e);
+      if (err.code !== "cancelled") throw err;
     }
   }
 
@@ -541,6 +578,7 @@ export function makeActions(store: Store) {
     importSecondToEdit,
     importToDescribe,
     runEdit,
+    upscaleEdit,
     autoEditModel,
     clearSession,
     onEngine,

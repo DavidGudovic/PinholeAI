@@ -111,7 +111,11 @@ export interface DescribeParams {
   text: string;
 }
 
-export type JobKind = "create" | "edit" | "upscale" | "describe";
+/** "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results). */
+export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "describe";
+
+/** A job that belongs to the Edit tab (it locks the edit history while it runs). */
+export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
 
 export interface Job {
   kind: JobKind;
@@ -266,7 +270,8 @@ export type Action =
   | { type: "queueAdd"; job: QueuedJob }
   | { type: "queueRemove"; id: string }
   | { type: "editLoad"; ref: ImgRef }
-  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null }
+  /** `after`: the step it was made from (default: the shown one); later steps are dropped. */
+  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null; after?: number }
   | { type: "editAppend"; ref: ImgRef; meta?: ResultImage | null }
   | { type: "editGoto"; index: number }
   | { type: "editDelete"; index: number }
@@ -384,7 +389,7 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 /** An edit is running or waiting: the edit history stays put until they are done. */
-export const editBusy = (s: Pick<AppState, "job" | "queue">) => s.job?.kind === "edit" || s.queue.some((q) => q.kind === "edit");
+export const editBusy = (s: Pick<AppState, "job" | "queue">) => isEditJob(s.job?.kind) || s.queue.some((q) => q.kind === "edit");
 
 /** A new Generate/Edit press waits in the queue. */
 export const willQueue = (s: Pick<AppState, "job" | "queue">) => !!s.job || s.queue.length > 0;
@@ -555,7 +560,7 @@ function inner(s: AppState, a: Action): AppState {
       };
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
-      const kept = s.edit.chain.slice(0, s.edit.index + 1);
+      const kept = s.edit.chain.slice(0, (a.after ?? s.edit.index) + 1);
       const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }
