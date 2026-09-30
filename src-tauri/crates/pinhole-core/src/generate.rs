@@ -1930,7 +1930,18 @@ async fn generate_inner(
     let mut mask_image = None;
     let mut source: Option<SessionImage> = None;
     match req.mode {
-        GenMode::Txt2img => {}
+        // Create's reference picture ("in the style of this picture"): sent like an edit's
+        // image, but the size comes from the dials, not from the picture.
+        GenMode::Txt2img => {
+            if let Some(id) = req.ref_image_ids.first() {
+                if !wiring::can_edit(&prep.family) {
+                    return Err(CoreError::invalid(
+                        "This model can't use a reference picture. Pick a FLUX.2 model, or remove the picture.",
+                    ));
+                }
+                ref_images.push(b64_image(core, id)?.0);
+            }
+        }
         GenMode::Img2img => {
             let id = req
                 .init_image_id

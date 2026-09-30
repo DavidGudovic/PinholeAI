@@ -24,6 +24,7 @@ import { onGenerationHandoff } from "./handoff";
 import { applyPastedText, type PasteOutcome } from "./pasteApply";
 import { PresetPicker, type PresetNotice } from "./PresetPicker";
 import { PromptBox } from "./PromptBox";
+import { ReferenceSlot } from "./ReferenceSlot";
 import { Results } from "./Results";
 
 export function CreateTab() {
@@ -142,6 +143,7 @@ function CreateWorkspace() {
           {presetNotice && <PresetNoticeCard notice={presetNotice} onDismiss={() => setPresetNotice(null)} />}
 
           <PromptBox ui={ui} onOpenPaste={() => setPasteOpen(true)} onApplyPasted={(t) => void applyPaste(t).catch((e) => setError(api.asCoreError(e)))} />
+          <ReferenceSlot model={model} />
           <AddonChips model={model} />
           {outcome && <PasteSummary outcome={outcome} onDismiss={() => setOutcome(null)} onOutcome={setOutcome} />}
 

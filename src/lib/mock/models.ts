@@ -59,6 +59,7 @@ export const FAMILIES: Record<string, MockFamily> = {
     edit: true,
     modes: ["edit"],
   },
+  flux2_klein_4b: { label: "FLUX.2 klein 4B", components: [], vram: { min: 8, rec: 12 }, license: "Apache 2.0", modes: ["txt2img", "img2img", "edit"] },
   z_image_turbo: { label: "Z-Image Turbo", components: ["flux_ae", "qwen3_4b"], vram: { min: 12, rec: 16 }, license: "Apache 2.0", modes: ["txt2img", "img2img"] },
   qwen_image: { label: "Qwen-Image", components: ["qwen_image_vae", "qwen25_vl_7b_q8"], vram: { min: 12, rec: 16 }, license: "Apache 2.0", modes: ["txt2img", "img2img"] },
   qwen_image_edit_2511: {
@@ -229,6 +230,8 @@ let captionerInstalled = typeof location !== "undefined" && new URLSearchParams(
 function state() {
   if (!models) {
     models = empty() ? [] : seedModels.map((m) => ({ ...m }));
+    // `?flux2`: a FLUX.2 klein model (takes a reference picture in Create, edits in Edit).
+    if (!empty() && mockFlags().flux2) models.unshift({ ...seedModels[0], id: "m_klein", friendlyName: "FLUX.2 klein 4B", familyId: "flux2_klein_4b", familyLabel: "FLUX.2 klein 4B", modes: ["txt2img", "img2img", "edit"], multiRef: true, lastUsed: secsAgo(60_000), civitaiModelId: null, civitaiVersionId: null, baseModel: null, relPath: "models/diffusion/flux-2-klein-4b.safetensors" });
     loras = empty() ? [] : seedLoras.map((l) => ({ ...l }));
     components = new Set(empty() ? [] : ["flux_ae", "clip_l", "qwen3_4b", "sdxl_vae_fp16_fix"]);
   }

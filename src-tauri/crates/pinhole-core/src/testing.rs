@@ -651,6 +651,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_sends_a_reference_picture_to_models_that_take_one() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(600, 300, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let with_ref = |model: String| {
+            let mut req =
+                GenerateRequest::txt2img(model, "a lighthouse in the style of the picture");
+            req.ref_image_ids = vec![reference.id.clone()];
+            req
+        };
+
+        // SDXL can't take one: a plain error instead of quietly ignoring the picture.
+        let sdxl = register_fake_model(&core, "sdxl");
+        let err = generate::generate(&core, with_ref(sdxl)).await.unwrap_err();
+        assert!(err.message.contains("reference picture"), "{}", err.message);
+        assert!(mock.requests().is_empty());
+
+        // FLUX.2 klein: the picture goes in ref_images; the size follows the dials (square), and
+        // it isn't the result's parent (that's for edits).
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        let res = generate::generate(&core, with_ref(klein)).await.unwrap();
+        assert_eq!(res.images[0].family_id, "flux2_klein_4b");
+        assert!(res.images[0].parent_id.is_none());
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
+        assert!(body.get("init_image").is_none());
+        assert_eq!(body["width"], body["height"]);
+    }
+
+    #[tokio::test]
     async fn edit_add_ons_go_only_to_the_model_they_were_picked_for() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;

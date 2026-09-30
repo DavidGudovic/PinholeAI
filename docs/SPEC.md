@@ -210,6 +210,18 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Reference picture** (optional, under the prompt): "make something in the style of this picture"
+or "the same character somewhere else". Shown only for models whose architecture takes reference
+images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev today); **Add a reference
+picture** opens a file, and a picture can also be dropped, pasted (Ctrl/Cmd+V) or picked from this
+session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+`ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
+result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
+queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
+it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
+picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
+recently used); Generate then says the same instead of quietly dropping it.
+
 **Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
 model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
 is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
@@ -647,7 +659,7 @@ build is shared.
 - **Background remover** for product shots (brand work).
 - **Batch edit**: apply the same instruction to several images (e.g. a product line).
 - **Seed grid**: 4 seeds side by side, pick one to continue.
-- **Keyboard-first flow**: Ctrl+Enter generate, E edit, S save, D describe.
+- **Keyboard-first flow** (built): Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
 
 ---
 

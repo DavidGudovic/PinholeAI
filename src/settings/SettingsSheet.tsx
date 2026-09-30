@@ -16,6 +16,7 @@ import {
 } from "../lib/api";
 import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
+import { ShortcutsList } from "../components/ShortcutsList";
 import { useHelperModels } from "../lib/helpers";
 import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from "../components/ui";
 import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/controls";
@@ -480,6 +481,10 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
 
       <Section title="Updates">
         <UpdateSection offline={settings.offline} />
+      </Section>
+
+      <Section title="Keyboard shortcuts">
+        <ShortcutsList />
       </Section>
 
       <Section title="Appearance">

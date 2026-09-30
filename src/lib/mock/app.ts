@@ -32,6 +32,8 @@ export function mockFlags() {
     lowDisk: p.has("lowdisk"),
     /** Other programs hold graphics memory: the first model load shows a note. */
     busyGpu: p.has("busygpu"),
+    /** Adds an installed FLUX.2 klein model (reference picture in Create). */
+    flux2: p.has("flux2"),
     theme: theme === "dark" || theme === "light" || theme === "system" ? (theme as Settings["theme"]) : null,
   };
 }
