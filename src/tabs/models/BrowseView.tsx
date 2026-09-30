@@ -193,6 +193,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     const chain = pages.chain(liveKey);
     if (!chain) return;
     reqId.current += 1;
+    autoRounds.current = 0;
     showPages(liveKey, chain.pages);
     setError(null);
     setPhase("idle");
