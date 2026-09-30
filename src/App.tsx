@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Logo } from "./components/Logo";
 import { Toasts } from "./components/Toasts";
+import { BlockedNotice } from "./components/BlockedNotice";
 import { TopBar } from "./components/TopBar";
 import { ShortcutsList } from "./components/ShortcutsList";
 import { Button, Dialog, Spinner } from "./components/ui";
@@ -101,6 +102,7 @@ function Shell() {
       <div className="h-full overflow-auto">
         <UseNotice onAgreed={() => setNoticeAgreed(true)} />
         <Toasts />
+        <BlockedNotice />
       </div>
     );
   }
@@ -117,6 +119,7 @@ function Shell() {
           }}
         />
         <Toasts />
+        <BlockedNotice />
       </div>
     );
   }
@@ -156,6 +159,7 @@ function Shell() {
         <ShortcutsList />
       </Dialog>
       <Toasts />
+      <BlockedNotice />
     </div>
   );
 }
