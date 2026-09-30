@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { startMockDownload } from "./models";
+import { requireLicence } from "./licences";
 import type { CaptionerStatus, CoreError, HelperModel, InstalledModel, RecommendedPick } from "../types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -76,6 +77,8 @@ const table: MockTable = {
   install_captioner: async (a) => {
     await sleep(200);
     const seven = a.helperId === "qwen25_vl_7b";
+    // Like Rust: only the default helper has a licence, asked only when its files download.
+    if ((!a.helperId || a.helperId === "describe") && !installed) requireLicence("describe");
     const groupId = startMockDownload(
       seven ? "Qwen2.5-VL 7B" : "Describe model",
       seven

@@ -60,7 +60,50 @@ pub struct Registry {
 
 /// Keys a child family never takes from its `inherits:` parent: they describe
 /// one concrete file / CivitAI category, not the architecture.
-const NON_INHERITED_KEYS: &[&str] = &["download", "civitai_base_models"];
+/// `license_accept` is set on each family that needs it, so a permissively licensed
+/// child (FLUX.1 schnell) doesn't pick up its parent's licence.
+const NON_INHERITED_KEYS: &[&str] = &["download", "civitai_base_models", "license_accept"];
+
+/// Licence acceptance (RELEASE-SPEC §6) comes from the shipped models.yaml only:
+/// `overrides.yaml` can neither drop nor change a `license_accept`.
+fn keep_shipped_licenses(shipped: &Value, merged: &mut Value) {
+    const KEY: &str = "license_accept";
+    let set = |target: &mut Value, from: Option<&Value>| {
+        if let Value::Mapping(m) = target {
+            match from.and_then(|f| f.get(KEY)) {
+                Some(v) => {
+                    m.insert(KEY.into(), v.clone());
+                }
+                None => {
+                    m.remove(KEY);
+                }
+            }
+        }
+    };
+    if let Some(Value::Mapping(fams)) = merged.get_mut("families") {
+        for (id, fam) in fams.iter_mut() {
+            let from = id.as_str().and_then(|id| shipped.get("families")?.get(id));
+            set(fam, from);
+        }
+    }
+    let shipped_helpers = shipped
+        .get("captioner")
+        .and_then(|c| c.get("helpers"))
+        .and_then(Value::as_sequence);
+    if let Some(Value::Sequence(helpers)) = merged
+        .get_mut("captioner")
+        .and_then(|c| c.get_mut("helpers"))
+    {
+        for h in helpers.iter_mut() {
+            let id = h.get("id").cloned();
+            let from = shipped_helpers.and_then(|list| {
+                list.iter()
+                    .find(|s| id.is_some() && s.get("id") == id.as_ref())
+            });
+            set(h, from);
+        }
+    }
+}
 
 /// Used when a registry has no `hardware_profiles` at all.
 static DEFAULT_PROFILE: HardwareProfile = HardwareProfile {
@@ -110,7 +153,11 @@ impl Registry {
             let over = parse_doc(over, "overrides.yaml")?;
             match over {
                 Value::Null => {}
-                Value::Mapping(_) => merge::deep_merge(&mut root, over),
+                Value::Mapping(_) => {
+                    let shipped = root.clone();
+                    merge::deep_merge(&mut root, over);
+                    keep_shipped_licenses(&shipped, &mut root);
+                }
                 _ => {
                     return Err(RegistryError::Yaml(
                         "overrides.yaml: the top level must be a mapping".into(),
@@ -262,6 +309,12 @@ impl Registry {
         let comp_ok = |id: &str| self.file.components.contains_key(id);
         let mut helper_ids = std::collections::HashSet::new();
         for h in &self.file.captioner.helpers {
+            if h.license_accept.is_some() && h.license_note.is_none() {
+                problems.push(format!(
+                    "captioner helper `{}`: `license_accept` needs a `license_note`",
+                    h.id
+                ));
+            }
             if !helper_ids.insert(h.id.as_str()) {
                 problems.push(format!("captioner helper `{}` is listed twice", h.id));
             }
@@ -288,6 +341,11 @@ impl Registry {
         }
         for f in self.families_in_order() {
             let id = &f.id;
+            if f.license_accept.is_some() && f.license_note.is_none() {
+                problems.push(format!(
+                    "family `{id}`: `license_accept` needs a `license_note`"
+                ));
+            }
             for (kind, choice) in &f.components {
                 let ids: Vec<&String> = match choice {
                     ComponentChoice::Fixed(c) => vec![c],

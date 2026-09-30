@@ -24,6 +24,7 @@ import type {
 } from "../types";
 import { effectiveVramGb, mockFlags, mockRamGb, mockSettings } from "./app";
 import { catalogEntryByVersion } from "./catalog";
+import { requireLicence } from "./licences";
 
 const MB = 1024 * 1024;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -576,6 +577,8 @@ async function installRecommended(role: string) {
   const pick = recommendedFor(role);
   if (pick.installed) throw err("invalid", "This model is already installed.");
   if (pick.unavailableReason) throw err("vram", pick.unavailableReason);
+  // Like Rust: only a download of a licensed family or helper asks.
+  if (pick.downloadBytes > 0) requireLicence(role === "describe" ? "describe" : pick.familyId);
   if (role === "describe") {
     const groupId = startMockDownload("Describe model", [
       { name: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", bytes: 1900 * MB },

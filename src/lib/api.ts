@@ -24,6 +24,7 @@ async function invoke<R>(cmd: string, args?: InvokeArgs): Promise<R> {
     throw e;
   }
 }
+import { askLicence, LICENCE_DECLINED, LICENSE_NEEDED } from "./licence";
 
 // ---------------------------------------------------------------- app (store agent)
 export const appInfo = () => invoke<T.AppInfo>("app_info");
@@ -31,6 +32,22 @@ export const getSettings = () => invoke<T.Settings>("get_settings");
 /** Saves settings.yaml and applies side effects (offline flag, theme, GPU override). */
 export const setSettings = (settings: T.Settings) => invoke<T.Settings>("set_settings", { settings });
 export const quitApp = () => invoke<void>("quit_app");
+/** "I accept" on a model licence (id from a "license_needed" error). */
+export const acceptLicense = (id: string) => invoke<T.Settings>("accept_license", { id });
+
+/** Runs an install; when it needs a licence the user hasn't accepted yet, asks once, saves the
+ *  acceptance and tries again. Declining rejects with code "cancelled". */
+async function withLicence<R>(run: () => Promise<R>): Promise<R> {
+  try {
+    return await run();
+  } catch (e) {
+    const err = asCoreError(e);
+    if (err.code !== LICENSE_NEEDED || !err.details) throw e;
+    if (!(await askLicence(err.details, err.message))) throw LICENCE_DECLINED;
+    await acceptLicense(err.details);
+    return run();
+  }
+}
 export const getHardware = () => invoke<T.HardwareView>("get_hardware");
 export const openDataFolder = () => invoke<void>("open_data_folder");
 export const openOutputsFolder = () => invoke<void>("open_outputs_folder");
@@ -72,7 +89,8 @@ export const previewModelsFolder = (folder: string | null) => invoke<T.ModelsFol
 /** Moves every model to `folder` (progress via onModelsMove), then Pinhole restarts. Resolves only on failure paths that return. */
 export const changeModelsFolder = (folder: string | null) => invoke<void>("change_models_folder", { folder });
 export const getRecommended = () => invoke<T.RecommendedPick[]>("get_recommended");
-export const installRecommended = (role: string) => invoke<T.InstallStarted>("install_recommended", { role });
+export const installRecommended = (role: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_recommended", { role }));
 /** "Add a file I already have": detects the family, then copies the file into Data/models/<kind>/ (hash computed while copying). */
 export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_local_model", { path });
 export const confirmFamily = (token: string, familyId: string) =>
@@ -107,7 +125,7 @@ export const openCivitaiPage = (modelId: number, versionId: number | null, nsfw:
   invoke<void>("open_civitai_page", { modelId, versionId, nsfw });
 export const planCivitaiInstall = (versionId: number, fileId: number | null = null) => invoke<T.InstallPlan>("plan_civitai_install", { versionId, fileId });
 export const installCivitai = (versionId: number, familyId: string | null, fileId: number | null = null) =>
-  invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId });
+  withLicence(() => invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId }));
 export const hasCivitaiKey = () => invoke<boolean>("has_civitai_key");
 export const setCivitaiKey = (key: string) => invoke<void>("set_civitai_key", { key });
 export const clearCivitaiKey = () => invoke<void>("clear_civitai_key");
@@ -141,7 +159,8 @@ export const upscaleImage = (id: string, factor: 2 | 4) => invoke<T.ResultImage>
 // ---------------------------------------------------------------- describe (engine agent)
 export const captionerStatus = (purpose: T.HelperPurpose = "describe") => invoke<T.CaptionerStatus>("captioner_status", { purpose });
 /** `helperId`: a HelperModel id; omitted = the default helper. */
-export const installCaptioner = (helperId?: string) => invoke<T.InstallStarted>("install_captioner", { helperId: helperId ?? null });
+export const installCaptioner = (helperId?: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_captioner", { helperId: helperId ?? null }));
 export const listHelperModels = () => invoke<T.HelperModel[]>("list_helper_models");
 export const describeImage = (imageId: string, style: T.DescribeStyle) =>
   invoke<string>("describe_image", { imageId, style });

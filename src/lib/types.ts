@@ -66,6 +66,8 @@ export interface Settings {
   editNoticeSeen?: boolean;
   /** Show the quiet "Tip" line under a result (default on). */
   showTips?: boolean;
+  /** Model licences the user accepted (ids). Changed only by acceptLicense. */
+  acceptedLicenses?: string[];
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";

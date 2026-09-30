@@ -411,6 +411,15 @@ pub async fn install_captioner(
         crate::app::wait_for_hardware(core, Duration::from_secs(30)).await;
     }
     let parts = missing_parts(core, helper)?;
+    // RELEASE-SPEC §6: the helper's licence is accepted once before its files download.
+    if parts.iter().any(|(_, p)| matches!(p, Part::File { .. })) {
+        let spec = offered_helpers(core)
+            .into_iter()
+            .find(|h| helper.map_or(h.default, |id| h.id == id));
+        if let Some(h) = spec {
+            crate::licence::require(core, h.license_accept.as_deref(), h.license_note.as_deref())?;
+        }
+    }
     let (specs, roles): (Vec<DownloadSpec>, Vec<Part>) = parts.into_iter().unzip();
     crate::models::models_dir_for_write(core, ModelKind::Captioner)?;
     let group_id = core.downloads.enqueue_kind(

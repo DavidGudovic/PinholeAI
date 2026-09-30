@@ -15,6 +15,7 @@ import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, SafetyCheckStatus, Settings } from "../types";
 import { startMockDownload } from "./models";
+import { isKnownLicence } from "./licences";
 import { NOTICE_VERSION } from "../../firstrun/UseNotice";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -334,10 +335,18 @@ const table: MockTable = {
   get_settings: async () => ({ ...mockSettings() }),
   set_settings: async (a) => {
     await sleep(60);
-    // Like Rust: the Models folder only changes by moving the models.
-    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings), modelsFolder: mockSettings().modelsFolder });
+    // Like Rust: the Models folder only changes by moving the models; licences only by accept_license.
+    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings), modelsFolder: mockSettings().modelsFolder, acceptedLicenses: mockSettings().acceptedLicenses });
     settings = next;
     return { ...next };
+  },
+  accept_license: async (a) => {
+    await sleep(60);
+    const id = String(a.id ?? "");
+    if (!isKnownLicence(id)) throw err("invalid", "Unknown licence.");
+    const s = mockSettings();
+    if (!(s.acceptedLicenses ?? []).includes(id)) settings = { ...s, acceptedLicenses: [...(s.acceptedLicenses ?? []), id] };
+    return { ...mockSettings() };
   },
   get_hardware: async () => {
     await sleep(80);

@@ -553,7 +553,7 @@ pub fn get_recommended(core: &AppCore) -> CoreResult<Vec<RecommendedPick>> {
 
 /// One-click install of a role's pick (first run, empty Create/Edit/Describe).
 pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<InstallStarted> {
-    let action = {
+    let (action, family_id) = {
         let registry = core.registry();
         let hw = crate::app::hw_context(core);
         let index = snapshot(core);
@@ -572,11 +572,12 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
                         .unwrap_or_else(|| "No recommended model fits this computer.".into()),
                 ))
             }
-            other => other,
+            other => (other, plan.pick.family_id),
         }
     };
     match action {
         PickAction::Download { label, files } => {
+            crate::licence::require_family(core, family_id.as_deref())?;
             let items = files.into_iter().map(|f| (f, None)).collect();
             start_install(core, label, items, None).await
         }
