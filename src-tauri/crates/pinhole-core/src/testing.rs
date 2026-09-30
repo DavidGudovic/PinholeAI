@@ -1696,7 +1696,8 @@ mod tests {
         let text = describe::improve_prompt(&core, "  a red fox  ", None, &["sks".into()])
             .await
             .unwrap();
-        assert_eq!(text, "a red fox, in snow, soft light");
+        assert_eq!(text.text, "a red fox, in snow, soft light");
+        assert!(text.note.is_none());
         let body = &llama.requests()[0];
         let system = body
             .pointer("/messages/0/content")
@@ -1717,6 +1718,22 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, "invalid");
+    }
+
+    #[tokio::test]
+    async fn improve_prompt_falls_back_when_the_model_loops() {
+        let (_tmp, core, _rec) = new_core();
+        let looped = vec!["bedroom"; 60].join(", ");
+        let llama = MockLlamaServer::start(&looped, 0).await;
+        use_external_captioner(&core, &llama.base_url());
+        let out = describe::improve_prompt(&core, "bedroom", Some("sdxl"), &[])
+            .await
+            .unwrap();
+        assert_eq!(out.text, "bedroom", "the user's own words come back");
+        assert!(out.note.is_some());
+        let body = &llama.requests()[0];
+        assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
+        assert!(body["max_tokens"].as_u64().unwrap() <= 200);
     }
 
     #[tokio::test]

@@ -56,6 +56,19 @@ pub fn launch_args(
     a
 }
 
+/// Sampling for "Improve my prompt" (see [`LlamaClient::rewrite`]).
+static REWRITE_SAMPLING: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    serde_json::json!({
+        "temperature": 0.6,
+        "top_p": 0.9,
+        "top_k": 40,
+        "repeat_penalty": 1.15,
+        "repeat_last_n": 128,
+        "dry_multiplier": 0.8,
+        "stop": ["\n\n"]
+    })
+});
+
 #[derive(Clone)]
 enum Http {
     Local(pinhole_net::LocalClient),
@@ -204,7 +217,12 @@ impl LlamaClient {
                 { "type": "text", "text": instruction }
             ]
         }]);
-        self.chat(messages, max_tokens, 0.2).await
+        self.chat(
+            messages,
+            max_tokens,
+            serde_json::json!({ "temperature": 0.2 }),
+        )
+        .await
     }
 
     /// Text in, text out: `system` instruction plus the user's `text` as the chat message.
@@ -218,22 +236,27 @@ impl LlamaClient {
             { "role": "system", "content": system },
             { "role": "user", "content": text }
         ]);
-        self.chat(messages, max_tokens, 0.7).await
+        // A 3B model with greedy-ish sampling and no penalty loops ("bedroom, bedroom, …") on
+        // one-word ideas: moderate temperature, a repeat penalty and llama.cpp's DRY sampler.
+        self.chat(messages, max_tokens, REWRITE_SAMPLING.clone())
+            .await
     }
 
     async fn chat(
         &self,
         messages: serde_json::Value,
         max_tokens: u32,
-        temperature: f32,
+        sampling: serde_json::Value,
     ) -> Result<String, ApiError> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": temperature,
             "stream": false,
             "cache_prompt": false
         });
+        if let (Some(b), Some(s)) = (body.as_object_mut(), sampling.as_object()) {
+            b.extend(s.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
         let resp = self
             .post("/v1/chat/completions", &body)?
             .timeout(Duration::from_secs(10 * 60))
