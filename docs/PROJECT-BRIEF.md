@@ -52,7 +52,7 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   Hugging Face / GitHub APIs (verify-pins workflow). Gated repos are never used for one-click downloads.
 - sd.cpp auto-fit places weights GPU → RAM (no `--offload-to-cpu`); no live TAESD preview (the server
   has no preview API); cancel during generation restarts the engine.
-- Privacy by construction: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
+- Local by design: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
 - Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,

@@ -50,7 +50,7 @@ minutes after your last picture. An engine build that requires a per-launch pass
 ## Acceptable use
 
 Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-this with AI running entirely on your own computer, so your work never leaves your device.
+this entirely on your own computer, so your work never leaves your device.
 
 When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
 and to each model's licence. You are responsible for what you make.
