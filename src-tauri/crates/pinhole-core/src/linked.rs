@@ -297,6 +297,11 @@ fn scan_folder(core: &AppCore, id: &str) {
     let old_skipped = core.linked.skipped.lock().clone();
     for f in &found {
         let rel = linked_rel_path(id, &f.parts);
+        // A name the index can't store as is (e.g. with `:` on Linux) would
+        // resolve to another path: leave the file out.
+        if pinhole_store::datadir::normalize_rel(&rel) != rel {
+            continue;
+        }
         let stamp = FileStamp {
             size: f.size,
             mtime: f.mtime,
