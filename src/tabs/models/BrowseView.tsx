@@ -6,10 +6,10 @@
 // previews load on-screen first (lib/preview.ts). Nothing is written to disk.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
-import { asCoreError, browseCatalog, catalogFilters, listLoras, listModels, onModelsChanged } from "../../lib/api";
+import { asCoreError, browseCatalog, catalogFilters, getSettings, listLoras, listModels, onModelsChanged, setSettings } from "../../lib/api";
 import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
 import { Button, ErrorNotice, Segmented, Toggle, cx, focusRing, inputClass } from "../../components/ui";
-import { onSettingsChanged } from "../../settings/events";
+import { emitSettingsChanged, onSettingsChanged } from "../../settings/events";
 import { createModels } from "../../lib/state/model";
 import { useAppState } from "../../lib/state/store";
 import { CatalogCardView } from "./CatalogCardView";
@@ -282,6 +282,14 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     else if (isSafeModeOff(m)) update({ content: m });
     else update({ content: m, tags: tagsWithSafeMode(filters.tags, options) });
   };
+  // "Hide anime" is remembered across launches (Settings); the list reacts at once.
+  const setHideAnime = (hideAnime: boolean) => {
+    update(hideAnime && filters.look === "anime" ? { hideAnime, look: null } : { hideAnime });
+    void getSettings()
+      .then((cur) => setSettings({ ...cur, hideAnime }))
+      .then(emitSettingsChanged)
+      .catch(() => undefined); // not remembered; this session's switch still applies
+  };
   const defaults = defaultFilters(options, settings, isAdultConfirmed());
   const changed = changedFilterCount(filters, { ...defaults, kind: filters.kind });
   const clearFilters = () => {
@@ -348,7 +356,13 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             Any
           </Chip>
           {options.looks.map((l) => (
-            <Chip key={l.key} active={filters.look === l.key} onClick={() => update({ look: filters.look === l.key ? null : l.key })}>
+            <Chip
+              key={l.key}
+              active={filters.look === l.key}
+              disabled={filters.hideAnime && l.key === "anime"}
+              title={filters.hideAnime && l.key === "anime" ? "Turn off Hide anime to use this look" : undefined}
+              onClick={() => update({ look: filters.look === l.key ? null : l.key })}
+            >
               {l.label}
             </Chip>
           ))}
@@ -388,6 +402,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             />
           </FilterGroup>
           <Toggle checked={filters.compatibleOnly} onChange={(v) => update({ compatibleOnly: v })} label={<span className="text-sm">Works with Pinhole</span>} />
+          <Toggle checked={filters.hideAnime} onChange={setHideAnime} label={<span className="text-sm">Hide anime</span>} />
           {filters.kind === "models" && (
             <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm">Runs on my card</span>} />
           )}

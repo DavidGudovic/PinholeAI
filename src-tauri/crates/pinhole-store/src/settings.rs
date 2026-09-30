@@ -16,6 +16,8 @@ pub struct Settings {
     /// Safe mode default for Browse: `safe` (On) | `all` (Off).
     pub content_mode: String,
     pub show_paid: bool,
+    /// Browse: hide anime models and add-ons (the "Hide anime" switch).
+    pub hide_anime: bool,
     /// `none` | `settings` ("Include generation settings (no prompt)")
     pub saved_metadata: String,
     /// `system` | `light` | `dark`
@@ -46,6 +48,7 @@ impl Default for Settings {
             vram_override_gb: None,
             content_mode: "safe".into(),
             show_paid: false,
+            hide_anime: false,
             saved_metadata: "none".into(),
             theme: "system".into(),
             add_trigger_words: true,
@@ -190,6 +193,7 @@ mod tests {
             vram_override_gb: Some(12.0),
             content_mode: "all".into(),
             show_paid: true,
+            hide_anime: true,
             saved_metadata: "settings".into(),
             theme: "dark".into(),
             add_trigger_words: false,
@@ -324,6 +328,7 @@ mod tests {
             "vramOverrideGb",
             "contentMode",
             "showPaid",
+            "hideAnime",
             "savedMetadata",
             "theme",
             "addTriggerWords",

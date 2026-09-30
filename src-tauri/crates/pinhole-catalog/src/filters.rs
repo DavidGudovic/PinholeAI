@@ -80,6 +80,10 @@ pub struct BrowseQuery {
     pub compatible_only: bool,
     /// "Runs on my card": hide models that are Too big for this machine (SPEC §5.4).
     pub runs_on_my_card: bool,
+    /// "Hide anime": drop models tagged or named as anime / manga / cartoon and the
+    /// anime-native base models (`catalog-filters.yaml → hide_anime`). CivitAI's API
+    /// can't exclude tags, so this is a client-side rule (Browse keeps fetching).
+    pub hide_anime: bool,
     pub query: String,
     pub cursor: Option<String>,
 }
@@ -97,6 +101,7 @@ impl Default for BrowseQuery {
             commercial_only: false,
             compatible_only: true,
             runs_on_my_card: false,
+            hide_anime: false,
             query: String::new(),
             cursor: None,
         }
@@ -317,6 +322,8 @@ struct FiltersYaml {
     style_badges: Vec<StyleBadge>,
     #[serde(default)]
     tags: serde_yaml::Mapping,
+    #[serde(default)]
+    hide_anime: Option<TagYaml>,
     price: PriceSection,
     content: ContentSection,
     sort: Vec<ApiOption>,
@@ -375,6 +382,8 @@ pub struct CatalogFilters {
     pub style_badges: Vec<StyleBadge>,
     /// Tags multi-select, in YAML order.
     pub tags: Vec<TagFilter>,
+    /// "Hide anime" rule (see [`BrowseQuery::hide_anime`]); `None` = nothing to hide.
+    pub hide_anime: Option<TagFilter>,
     pub price: PriceSection,
     pub content: ContentSection,
     /// Safe mode rules (normalized, see [`SafeFilter::normalized`]).
@@ -488,6 +497,24 @@ impl CatalogFilters {
             looks,
             style_badges: raw.style_badges,
             tags,
+            hide_anime: raw.hide_anime.map(|t| TagFilter {
+                key: "hide_anime".into(),
+                label: t.label,
+                rule: TagRule::Match,
+                tags: t
+                    .tags
+                    .iter()
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .collect(),
+                name_words: t
+                    .name_words
+                    .iter()
+                    .map(|p| crate::safe::name_words(p))
+                    .filter(|w| !w.is_empty())
+                    .collect(),
+                base_models: t.base_models.iter().map(|b| b.trim().to_string()).collect(),
+                api_base_models: Vec::new(),
+            }),
             price: raw.price,
             content: raw.content,
             safe: raw.safe_filter.normalized(),
@@ -732,6 +759,9 @@ impl CatalogFilters {
                 None => {} // unknown look key: ignore the filter
             }
         }
+        if q.hide_anime && self.hides_anime(m) {
+            return Some(Hidden::Other);
+        }
         for key in &q.tags {
             match self.tag(key) {
                 Some(tag) if tag.matches(m, &self.safe) => {}
@@ -745,6 +775,25 @@ impl CatalogFilters {
             }
         }
         None
+    }
+
+    /// "Hide anime": tags or name words, or the version a card shows (the newest)
+    /// is on an anime-native base model. Older versions don't count.
+    fn hides_anime(&self, m: &Model) -> bool {
+        let Some(a) = &self.hide_anime else {
+            return false;
+        };
+        let by_base = m.model_versions.first().is_some_and(|v| {
+            a.base_models
+                .iter()
+                .any(|b| b.eq_ignore_ascii_case(v.base_model.trim()))
+        });
+        by_base
+            || TagFilter {
+                base_models: Vec::new(),
+                ..a.clone()
+            }
+            .matches(m, &self.safe)
     }
 
     /// The version a card shows, after compatibility and price rules:
@@ -1251,6 +1300,48 @@ pub(crate) mod tests {
             "modelVersions": [{ "id": 2, "name": "v1", "baseModel": base_model, "files": [], "images": [] }],
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn hide_anime_drops_anime_tags_names_and_anime_base_models() {
+        let f = filters();
+        let on = BrowseQuery {
+            hide_anime: true,
+            compatible_only: false,
+            ..Default::default()
+        };
+        let off = BrowseQuery {
+            hide_anime: false,
+            ..on.clone()
+        };
+        let hidden = [
+            model("Soft Light", &["style", "Anime"], "SDXL 1.0"),
+            model("Cute things", &["cartoon"], "SD 1.5"),
+            model("Chibi Maker", &[], "SDXL 1.0"),
+            model("Plain Name", &["style"], "Illustrious"),
+            model("Plain Name", &["style"], "NoobAI"),
+        ];
+        // Only the newest version's base model counts.
+        let mixed: Model = serde_json::from_value(serde_json::json!({
+            "id": 1, "name": "Mixed", "type": "Checkpoint", "tags": [],
+            "modelVersions": [
+                { "id": 3, "name": "v2", "baseModel": "SDXL 1.0", "files": [], "images": [] },
+                { "id": 2, "name": "v1", "baseModel": "Illustrious", "files": [], "images": [] },
+            ],
+        }))
+        .unwrap();
+        assert!(f.keep_model(&on, &mixed));
+        for m in &hidden {
+            assert!(f.keep_model(&off, m), "{} kept when off", m.name);
+            assert!(!f.keep_model(&on, m), "{} hidden when on", m.name);
+        }
+        for m in [
+            model("Juggernaut XL", &["photorealistic"], "SDXL 1.0"),
+            model("Realistic Pony", &["realistic"], "Pony"),
+            model("Animated Sunsets", &["landscape"], "SDXL 1.0"),
+        ] {
+            assert!(f.keep_model(&on, &m), "{} stays", m.name);
+        }
     }
 
     #[test]
