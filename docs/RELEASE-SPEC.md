@@ -289,7 +289,7 @@ prints them for a folder of test pictures.
 ## 7. Terms and notices
 
 - **Level 1:** an acceptable-use section in the README (added 2026-09-30: usage guidelines,
-  built-in local check, GitHub private reporting); add a link to `SAFETY.md` (§9) once it exists.
+  built-in local check, GitHub private reporting) with a link to `SAFETY.md` (§9).
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
@@ -343,7 +343,7 @@ templates, posts and UI.
 
 ## 9. Paper trail and reporting
 
-- **Level 1: `SAFETY.md`** in the repo root: what Pinhole blocks and doesn't (§3.2), how (on the
+- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and doesn't (§3.2), how (on the
   computer, nothing recorded), known limits (open-source code can be modified; classifiers miss
   things), and how to report a problem (GitHub private vulnerability reporting only, no email
   address; decided 2026-09-30).
@@ -439,8 +439,9 @@ templates, posts and UI.
 - [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
 - [x] §5 `sdxl_pony` removed from `recommended.anime`
 - [x] §5 Edit references: covered by origin tracking + the image check (replaces the one-reference cap)
-- [x] §7 acceptable-use section in the README (link to `SAFETY.md` still to add with it)
-- [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
+- [x] §7 acceptable-use section in the README, linking `SAFETY.md`
+- [ ] §9 `SAFETY.md` (written 2026-09-30) + reporting route (GitHub private vulnerability
+      reporting turned on: a repository setting only the owner can change)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and
       PR text
 - [ ] SPEC.md, CLAUDE.md, PROJECT-BRIEF.md and ARCHITECTURE.md match this file (levels instead of
