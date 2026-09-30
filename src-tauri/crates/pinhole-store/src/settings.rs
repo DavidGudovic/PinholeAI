@@ -46,6 +46,8 @@ pub struct Settings {
     pub notice_accepted: u32,
     /// The one-time Edit notice (first photo from the computer opened in Edit) was shown.
     pub edit_notice_seen: bool,
+    /// Show the one quiet "Tip" line under a result (Settings → Show tips).
+    pub show_tips: bool,
 }
 
 impl Default for Settings {
@@ -68,6 +70,7 @@ impl Default for Settings {
             improve_model: "auto".into(),
             notice_accepted: 0,
             edit_notice_seen: false,
+            show_tips: true,
         }
     }
 }
@@ -225,6 +228,7 @@ mod tests {
             improve_model: "qwen25_vl_7b".into(),
             notice_accepted: 1,
             edit_notice_seen: true,
+            show_tips: false,
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"
@@ -361,6 +365,7 @@ mod tests {
             "engineBackend",
             "noticeAccepted",
             "editNoticeSeen",
+            "showTips",
         ] {
             assert!(v.get(key).is_some(), "{key}");
         }

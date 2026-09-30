@@ -110,6 +110,64 @@ describe("use as image 2", () => {
   });
 });
 
+describe("same character", () => {
+  const klein: InstalledModel = { ...model, id: "k", friendlyName: "FLUX.2 klein", modes: ["txt2img", "img2img", "edit"] };
+  const withResult = (models: InstalledModel[], origin: "generated" | "imported" = "generated") => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models });
+    store.dispatch({ type: "addResults", batch: null, images: [{ ...img("a"), origin }], refs: [ref("a")] });
+    return { store, actions };
+  };
+
+  it("uses the image as Create's reference picture when the model takes one", () => {
+    const { store, actions } = withResult([model, klein]);
+    store.dispatch({ type: "patchCreate", patch: { modelId: "k" } });
+    actions.sameCharacter("a");
+    const s = store.getState();
+    expect(s.create.refImageId).toBe("a");
+    expect(s.create.modelId).toBe("k");
+    expect(s.tab).toBe("create");
+    expect(s.create.prompt).toBe("a lighthouse");
+  });
+
+  it("switches to an installed model that takes a reference picture", () => {
+    const { store, actions } = withResult([model, klein]);
+    actions.sameCharacter("a");
+    expect(store.getState().create).toMatchObject({ modelId: "k", refImageId: "a" });
+    expect(store.getState().toasts.at(-1)?.text).toMatch(/Switched to FLUX.2 klein/);
+  });
+
+  it("doesn't switch to a model that can't run now", () => {
+    const { store, actions } = withResult([model, { ...klein, fit: "tooBig" }]);
+    actions.sameCharacter("a");
+    expect(store.getState().create.modelId).toBe("m");
+    expect(store.getState().tab).toBe("edit");
+  });
+
+  it("sends a picture the user added to Edit even when Create could use it", () => {
+    const { store, actions } = withResult([model, klein], "imported");
+    store.dispatch({ type: "patchCreate", patch: { modelId: "k" } });
+    actions.sameCharacter("a");
+    expect(store.getState().tab).toBe("edit");
+    expect(store.getState().create.refImageId).toBeNull();
+  });
+
+  it("opens Describe a change in Edit when no Create model can take one", () => {
+    const { store, actions } = withResult([model]);
+    store.dispatch({ type: "createSetRef", ref: ref("a") });
+    store.dispatch({ type: "editSetSecond", ref: ref("a") });
+    actions.sameCharacter("a");
+    const s = store.getState();
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+    expect(s.edit.mode).toBe("instruction");
+    expect(s.edit.secondImageId).toBeNull();
+    expect(s.tab).toBe("edit");
+    expect(s.create).toMatchObject({ modelId: "m", refImageId: null });
+    // The image keeps its id, so the backend's origin tracking carries through.
+    expect(s.images.a).toBeTruthy();
+  });
+});
+
 describe("async results after the screen moved on", () => {
   it("drops an edit result when another image was loaded while it ran", async () => {
     const { store, actions } = setup();

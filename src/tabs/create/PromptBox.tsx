@@ -8,6 +8,7 @@ import { looksLikeGenerationData } from "../../lib/paste/parse";
 import type { FamilyUi } from "../../lib/types";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { useImprovePrompt } from "./ImprovePrompt";
+import { STARTER_IDEAS } from "./starterIdeas";
 
 export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | null; onOpenPaste: () => void; onApplyPasted: (text: string) => void }) {
   const prompt = useAppState((s) => s.create.prompt);
@@ -69,6 +70,30 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
             }
           }}
         />
+        {!prompt.trim() && (
+          <div className="px-3 pb-2.5">
+            <p className="mb-1.5 text-xs text-neutral-500">Not sure where to start? Try one, or type a few words and press Improve.</p>
+            <div className="flex flex-wrap gap-1.5">
+              {STARTER_IDEAS.map((i) => (
+                <button
+                  key={i.label}
+                  type="button"
+                  title={i.prompt}
+                  onClick={() => {
+                    dispatch({ type: "patchCreate", patch: { prompt: i.prompt } });
+                    requestAnimationFrame(() => area.current?.focus());
+                  }}
+                  className={cx(
+                    "rounded-full border border-neutral-200 px-2.5 py-1 text-xs text-neutral-600 hover:border-amber-400 hover:bg-amber-50 hover:text-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/10 dark:hover:text-white",
+                    focusRing,
+                  )}
+                >
+                  {i.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {/* Wraps instead of squeezing: Style + "Save as style" and the Improve model picker don't fit on one line in the sidebar. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
           <StylePicker value={styleId} onChange={(id) => dispatch({ type: "patchCreate", patch: { styleId: id } })} familyId={ui?.familyId} familyLabel={ui?.label} />
