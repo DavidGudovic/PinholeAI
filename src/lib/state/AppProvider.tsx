@@ -45,6 +45,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
           vramOverrideGb: null,
           contentMode: "safe",
           showPaid: false,
+          hideAnime: false,
           savedMetadata: "none",
           theme: "system",
           addTriggerWords: true,

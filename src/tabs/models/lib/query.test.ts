@@ -60,6 +60,14 @@ describe("defaultFilters", () => {
     expect(defaultFilters(FALLBACK_OPTIONS, { contentMode: "safe", showPaid: true }, false).price).toBe("include");
   });
 
+  it("starts with Hide anime as remembered in Settings", () => {
+    expect(defaultFilters(FALLBACK_OPTIONS, { contentMode: "safe", showPaid: false }, false).hideAnime).toBe(false);
+    const on = defaultFilters(FALLBACK_OPTIONS, { contentMode: "safe", showPaid: false, hideAnime: true }, false);
+    expect(on.hideAnime).toBe(true);
+    expect(toBrowseQuery(on).hideAnime).toBe(true);
+    expect(filtersKey(on)).not.toBe(filtersKey({ ...on, hideAnime: false }));
+  });
+
   it("only applies a Safe mode Off default after this session's confirmation", () => {
     const s = { contentMode: "all" as const, showPaid: false };
     expect(defaultFilters(FALLBACK_OPTIONS, s, false).content).toBe("safe");
@@ -81,6 +89,7 @@ describe("toBrowseQuery", () => {
       commercialOnly: false,
       compatibleOnly: true,
       runsOnMyCard: false,
+      hideAnime: false,
       query: "pixel art",
       cursor: "abc",
     });

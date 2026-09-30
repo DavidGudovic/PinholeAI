@@ -48,6 +48,7 @@ export function mockSettings(): Settings {
       vramOverrideGb: null,
       contentMode: "safe",
       showPaid: false,
+      hideAnime: false,
       savedMetadata: "none",
       theme: f.theme ?? "system",
       addTriggerWords: true,
