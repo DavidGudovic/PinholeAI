@@ -64,6 +64,8 @@ import {
   type EditSizeChoice,
 } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
+import { AddonChips } from "../create/AddonChips";
+import { LoraSection } from "../create/FineTune";
 import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
@@ -445,6 +447,8 @@ export function EditTab() {
             </>
           )}
 
+          {!needsEditModel && <AddonChips model={model} target="edit" />}
+
           {mode === "instruction" && current && (
             <div>
               {secondPicker.input}
@@ -655,6 +659,7 @@ export function EditTab() {
                       });
                     }}
                   />
+                  <LoraSection model={model} target="edit" />
                 </div>
                 <p className="text-[11px] text-neutral-400">
                   Size keeps your image’s shape.{" "}

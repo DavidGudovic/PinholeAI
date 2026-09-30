@@ -27,6 +27,51 @@ pub struct CivitaiRef {
     pub trained_words: Vec<String>,
     #[serde(default)]
     pub license: Option<String>,
+    /// The creator's own description (HTML from CivitAI), kept so the model's
+    /// page can show it offline. Shown only after the UI sanitizes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator_notes: Option<CreatorNotes>,
+}
+
+/// Most bytes kept per description (CivitAI descriptions are usually a few KB).
+pub const MAX_NOTES_BYTES: usize = 20_000;
+
+/// What a model's creator wrote about it: the model page text and the notes of
+/// this version. Raw CivitAI HTML; never prompt text.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CreatorNotes {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The model is made for adults: Safe mode hides these notes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adult: bool,
+}
+
+impl CreatorNotes {
+    /// Trims and size-caps both texts; `None` when both are empty.
+    pub fn from_html(model: Option<&str>, version: Option<&str>, adult: bool) -> Option<Self> {
+        let notes = Self {
+            model: clean_notes(model),
+            version: clean_notes(version),
+            adult,
+        };
+        (notes.model.is_some() || notes.version.is_some()).then_some(notes)
+    }
+}
+
+fn clean_notes(text: Option<&str>) -> Option<String> {
+    let t = text?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    let mut end = t.len().min(MAX_NOTES_BYTES);
+    while !t.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(t[..end].to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -346,6 +391,7 @@ mod tests {
                 base_model: Some("SDXL 1.0".into()),
                 trained_words: vec!["tw".into()],
                 license: None,
+                creator_notes: None,
             }),
             added_at: 1_700_000_000,
             last_used: None,
@@ -553,5 +599,16 @@ mod tests {
             !names.iter().any(|n| n.starts_with("installed.json")),
             "{names:?}"
         );
+    }
+
+    #[test]
+    fn creator_notes_are_trimmed_and_capped() {
+        assert_eq!(CreatorNotes::from_html(Some("  "), None, false), None);
+        let n = CreatorNotes::from_html(Some(" <p>hi</p> "), Some(""), false).unwrap();
+        assert_eq!(n.model.as_deref(), Some("<p>hi</p>"));
+        assert_eq!(n.version, None);
+        let long = "é".repeat(MAX_NOTES_BYTES);
+        let n = CreatorNotes::from_html(None, Some(&long), false).unwrap();
+        assert!(n.version.unwrap().len() <= MAX_NOTES_BYTES);
     }
 }

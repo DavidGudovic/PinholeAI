@@ -2,7 +2,7 @@
 // images. Each image can send its settings to Create or itself to Edit, and
 // the model's CivitAI page opens in the system browser.
 // PRIVACY: image generation data (prompts) stays in memory; nothing is logged.
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, Check, Download, ExternalLink, ImageOff, RotateCw, ShieldAlert, SlidersHorizontal, ThumbsUp, Wand2 } from "lucide-react";
 import * as api from "../../lib/api";
 import type { CatalogCard, ContentMode, CoreError, GalleryItem, ModelGallery } from "../../lib/types";
@@ -11,6 +11,7 @@ import { galleryGenerationText, gallerySettingsSummary } from "../../lib/paste/f
 import { useActions } from "../../lib/state/AppProvider";
 import { createModels } from "../../lib/state/model";
 import { useAppState } from "../../lib/state/store";
+import { CreatorText, hasCreatorText } from "../../components/CreatorText";
 import { Badge, Button, Dialog, ErrorNotice, Spinner } from "../../components/ui";
 import { sendGenerationToCreate } from "../create/handoff";
 import { GroupProgress, Skeleton, VramLine } from "./controls";
@@ -146,6 +147,12 @@ export function ModelDetails({
     }
   };
 
+  const openLink = useCallback((url: string) => void api.openExternalLink(url).catch((e) => actions.toast(api.asCoreError(e).message)), [actions]);
+  const notes = useMemo(() => {
+    const n = gallery?.creatorNotes;
+    return { model: hasCreatorText(n?.model) ? n?.model : null, version: hasCreatorText(n?.version) ? n?.version : null };
+  }, [gallery]);
+
   const openCivitai = () => void api.openCivitaiPage(card.modelId, card.versionId, card.modelNsfw).catch((e) => actions.toast(api.asCoreError(e).message));
 
   return (
@@ -161,6 +168,22 @@ export function ModelDetails({
         </div>
 
         <Header card={card} installed={installed} isLora={isLora} onInstall={onInstall} trainedWords={gallery?.trainedWords ?? []} />
+
+        {(notes.model || notes.version) && (
+          <section className="space-y-3 rounded-xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+            <div>
+              <h2 className="text-base font-semibold">From the creator</h2>
+              <p className="text-xs text-neutral-500">Written by the model's creator on CivitAI. Pictures and embedded content are left out. Links open in your browser.</p>
+            </div>
+            {notes.model && <CreatorText html={notes.model} onLink={openLink} />}
+            {notes.version && (
+              <div className="space-y-1">
+                {notes.model && <h3 className="text-sm font-semibold">About this version</h3>}
+                <CreatorText html={notes.version} onLink={openLink} />
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="space-y-3">
           <div>

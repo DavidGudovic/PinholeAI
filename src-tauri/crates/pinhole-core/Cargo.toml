@@ -25,6 +25,7 @@ base64 = { workspace = true }
 async-trait = { workspace = true }
 semver = { workspace = true }
 zip = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 pinhole-net = { workspace = true, features = ["test-util"] }

@@ -54,8 +54,13 @@ function gallery(versionId: number, content: string, modelNsfw: boolean): ModelG
             },
     });
   }
-  return { items, hiddenNsfw: hidden, trainedWords: card?.type === "LORA" ? ["mockstyle"] : [], offline: false };
+  return { items, hiddenNsfw: hidden, trainedWords: card?.type === "LORA" ? ["mockstyle"] : [], creatorNotes: { model: MOCK_NOTES, version: "<p>v2 fixes <b>hands</b> and adds a softer look.</p>" }, offline: false };
 }
+
+const MOCK_NOTES =
+  '<h2>About this model</h2><p>A <strong>general-purpose</strong> model for <em>everyday scenes</em>. Tips:</p><ul><li>Use 25 steps</li><li>Keep the prompt short</li></ul>' +
+  '<p>Support me: <a href="https://example.com/creator">my page</a></p><img src="https://example.com/tracker.png"><script>alert(1)</script>' + // privacy-lint: allow mock creator text; the sanitizer drops the image and script
+  "<p>Long text. ".repeat(40) + "</p>";
 
 const table: MockTable = {
   model_gallery: async (a) => {
@@ -63,6 +68,7 @@ const table: MockTable = {
     await sleep(400);
     return gallery(Number(a.versionId), String(a.content), Boolean(a.modelNsfw));
   },
+  open_external_link: async () => {},
   open_civitai_page: async (a) => {
     if (!Number(a.modelId)) throw err("invalid", "That model has no CivitAI page.");
   },

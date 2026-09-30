@@ -557,6 +557,8 @@ export interface ModelGallery {
   hiddenNsfw: number;
   /** LoRA trigger words. */
   trainedWords: string[];
+  /** What the creator wrote (raw CivitAI HTML, sanitize before showing). Absent when none or Safe mode hides it. */
+  creatorNotes?: { model?: string | null; version?: string | null } | null;
   offline: boolean;
 }
 

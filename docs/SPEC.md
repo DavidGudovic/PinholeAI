@@ -249,6 +249,12 @@ Two modes, picked automatically:
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
 
+Both modes take style add-ons (LoRAs) like Create: added in Edit's Fine-tune (with Quality,
+Output size and Seed), shown as chips under the text, trigger words picked on the chip. Only
+add-ons made for the edit's model (same architecture) are used. Edit keeps its own add-on list
+(Reset keeps it, like Create). Pasting CivitAI generation data stays in Create: it describes a
+text-to-image run (size, seed, sampler), not an edit of your own picture.
+
 If no edit model is installed, the Edit tab shows one card: "Get the best edit model for your
 GPU" — one-click download of the top edit model that fits (§6.1), showing its download size
 and VRAM need.
@@ -359,6 +365,12 @@ grid where it was):
   runs it through Paste from CivitAI, so Create fills the prompt and settings, selects this model
   or offers to install it, and shows what was applied) and **Edit this image** (the full-size image
   goes into the in-memory session and opens in Edit). The generation data is held in memory only.
+- **From the creator**: the creator's description of the model and of this version (CivitAI HTML).
+  It is rebuilt from a short allow-list (text formatting, lists, https links); pictures, video,
+  iframes and styles are dropped, so nothing is loaded from another server and Safe mode can't be
+  bypassed. Long text collapses behind Show more; links open in the system browser (https only,
+  checked in Rust). Saved in `installed.json` at install (`creatorNotes`, raw HTML, 20 KB cap each)
+  so installed models show it offline. Safe mode hides it for models made for adults.
 - **Open on CivitAI** opens the model's page in the system browser: `civitai.red` for NSFW models,
   `civitai.com` for everything else. The URL is built in Rust from the model id; the WebView
   never navigates.

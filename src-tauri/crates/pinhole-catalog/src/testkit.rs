@@ -71,6 +71,7 @@ pub fn with_civitai(mut f: InstalledFile, version_id: u64) -> InstalledFile {
         base_model: Some("SDXL 1.0".into()),
         trained_words: vec![],
         license: None,
+        creator_notes: None,
     });
     f
 }

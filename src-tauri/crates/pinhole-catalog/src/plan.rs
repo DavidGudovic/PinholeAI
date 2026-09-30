@@ -4,7 +4,7 @@
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
 use pinhole_store::datadir::ModelKind;
-use pinhole_store::installed::CivitaiRef;
+use pinhole_store::installed::{CivitaiRef, CreatorNotes};
 use pinhole_store::InstalledIndex;
 
 use pinhole_registry::vram::{Fit, VramNeed};
@@ -420,6 +420,14 @@ pub fn civitai_install_files(
         license: model
             .filter(|m| !m.allow_commercial_use.allows("Image"))
             .map(|_| "No commercial use".to_string()),
+        creator_notes: CreatorNotes::from_html(
+            model.and_then(|m| m.description.as_deref()),
+            version.description.as_deref(),
+            model.is_some_and(|m| m.nsfw || env.filters.safe.adult_reason(m).is_some())
+                || version
+                    .nsfw_level
+                    .is_some_and(|l| l >= crate::safe::LEVEL_R),
+        ),
     };
     Ok(CivitaiInstall {
         label,

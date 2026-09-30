@@ -274,12 +274,13 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
   );
 }
 
-function LoraSection({ model }: { model: InstalledModel | null }) {
-  const c = useAppState((s) => s.create);
+/** Add-on list with Add; `target`: the Create or the Edit tab's add-ons. */
+export function LoraSection({ model, target = "create" }: { model: InstalledModel | null; target?: "create" | "edit" }) {
+  const c = useAppState((s) => s[target]);
   const loras = useAppState((s) => s.loras);
   const dispatch = useDispatch();
   const actions = useActions();
-  const setLoras = (list: typeof c.loras) => dispatch({ type: "patchCreate", patch: { loras: list } });
+  const setLoras = (list: typeof c.loras) => dispatch(target === "edit" ? { type: "patchEdit", patch: { loras: list } } : { type: "patchCreate", patch: { loras: list } });
   const available = loras.filter((l) => !c.loras.some((u) => u.loraId === l.id));
   const compatible = available.filter((l) => loraCompatible(l, model?.familyId));
   const incompatible = available.filter((l) => !loraCompatible(l, model?.familyId));

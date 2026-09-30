@@ -401,6 +401,7 @@ mod tests {
                 base_model: None,
                 trained_words: vec![],
                 license: None,
+                creator_notes: None,
             }),
             added_at: 0,
             last_used: None,

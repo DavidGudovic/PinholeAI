@@ -114,6 +114,9 @@ pub struct Model {
     pub allow_commercial_use: CommercialUse,
     #[serde(deserialize_with = "lenient::strings")]
     pub tags: Vec<String>,
+    /// The creator's description of the model (HTML).
+    #[serde(deserialize_with = "lenient::opt_string")]
+    pub description: Option<String>,
     /// Every version's base model (newer responses), e.g. `["SD 1.5 Hyper", "SD 1.5"]`.
     #[serde(deserialize_with = "lenient::strings")]
     pub base_models: Vec<String>,
@@ -215,6 +218,9 @@ pub struct ModelVersion {
     pub require_auth: bool,
     #[serde(deserialize_with = "lenient::strings")]
     pub trained_words: Vec<String>,
+    /// The creator's notes for this version (HTML).
+    #[serde(deserialize_with = "lenient::opt_string")]
+    pub description: Option<String>,
     #[serde(deserialize_with = "lenient::nsfw_level")]
     pub nsfw_level: Option<u32>,
     #[serde(deserialize_with = "lenient::obj")]
