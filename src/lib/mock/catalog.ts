@@ -314,6 +314,7 @@ async function browse(q: BrowseQuery, forFamily: string | null = null): Promise<
       if (q.content === "safe" && isAdultEntry(e)) out.hiddenByContent += 1;
       else if (
         (q.look && !e.looks.includes(q.look)) ||
+        (q.hideAnime && (e.looks.includes("anime") || /Illustrious|NoobAI/i.test(e.baseModel))) ||
         !(q.tags ?? []).every((t) => mockTagMatches(e, t)) ||
         (q.price === "free" && e.earlyAccess) ||
         (q.price === "paid_only" && !e.earlyAccess)

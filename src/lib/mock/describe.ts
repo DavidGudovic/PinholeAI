@@ -53,6 +53,14 @@ async function mood(bytes: ArrayBuffer): Promise<{ tone: string; light: string }
   }
 }
 
+/** Canned "Improve my prompt": the idea plus a few fitting details (tags or sentences). */
+function improved(idea: string, tags: boolean): string {
+  const t = idea.trim().replace(/[.,\s]+$/, "");
+  return tags
+    ? `${t}, detailed, soft natural light, depth of field, rich colours, balanced composition, sharp focus, high quality`
+    : `${t}. The scene is lit by soft, warm natural light with gentle depth of field, a balanced composition and rich, calm colours, rendered in fine detail.`;
+}
+
 const table: MockTable = {
   captioner_status: () => status(),
   install_captioner: async () => {
@@ -66,6 +74,16 @@ const table: MockTable = {
       { kind: "captioner", durationMs: 5000, onDone: () => (installed = true) },
     );
     return { groupId };
+  },
+  improve_prompt: async (a) => {
+    const st = await status();
+    if (!st.available) throw err("not_found", "The helper model isn't installed yet.");
+    await sleep(warm ? 900 : 2500);
+    warm = true;
+    const idea = String(a.prompt ?? "").trim();
+    if (!idea) throw err("invalid", "Type a few words about your picture first.");
+    const fam = String(a.familyId ?? "");
+    return improved(idea, /sd15|sdxl|pony|illustrious/.test(fam));
   },
   describe_image: async (a) => {
     const st = await status();
