@@ -186,8 +186,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
-7. The CivitAI API key (optional) and the GitHub token (optional, Settings → Updates) are stored in
-   the OS keychain (`keyring` crate), never in `Data/`.
+7. The CivitAI API key (optional) is stored in the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
 9. Saved-image metadata: only the **AI-generated marker** by default (RELEASE-SPEC §2): XMP
    `DigitalSourceType` only ("made with AI", no app name), always written to pictures Pinhole made (no
@@ -791,13 +790,11 @@ build is shared.
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
-  the next start. While the repository is private, GitHub answers the unauthenticated check with 404:
-  the app says the releases can't be seen yet and offers the release page, or a GitHub token field
-  (fine-grained, Contents: read-only on this repository; OS keychain only). With a token the check
-  and the downloads use the API (`/releases`, `/releases/assets/{id}` with `Accept:
-  application/octet-stream`), and the token is sent only in `Authorization` to `api.github.com`
-  (reqwest drops it on the redirect to the release CDN). The checksum list protects against broken or swapped downloads, not against a
-  compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
+  the next start. The check and the downloads are unauthenticated (public release API and
+  download URLs). If GitHub answers 404 (releases can't be seen), the app says so and offers the
+  release page. Earlier builds could store a GitHub token in the keychain; the first start after
+  the update deletes it (marker `Data/.github-token-cleared`). The checksum list protects against
+  broken or swapped downloads, not against a compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
   Prompts are never sent to a server for moderation. Already in: a word check
   (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,

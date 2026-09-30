@@ -45,7 +45,7 @@ export const ONLINE_CALLS: Call[] = [
   {
     when: "You press Check for updates in Settings",
     where: "api.github.com and github.com",
-    sent: "A request for the release list. Your GitHub token, if you added one, goes in the request header.",
+    sent: "A request for the release list.",
   },
 ];
 
