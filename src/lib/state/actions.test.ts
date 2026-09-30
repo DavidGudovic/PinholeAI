@@ -123,6 +123,60 @@ describe("async results after the screen moved on", () => {
     expect(store.getState().job).toBeNull();
   });
 
+  it("Try again redoes the shown edit from the step before, with a new seed", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor", seed: 7 } });
+    const first = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    await tick();
+    pending!({ images: [img("r1")] } as GenerateResult);
+    await first;
+    const again = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64], from: 0, newSeed: true });
+    await tick();
+    const api = await import("../api");
+    const calls = vi.mocked(api.generate).mock.calls;
+    expect(calls[0][0].fineTune.seed).toBe(7);
+    expect(calls[1][0].fineTune.seed).toBeUndefined();
+    expect(calls[1][0].initImageId).toBe("a");
+    pending!({ images: [img("r2")] } as GenerateResult);
+    await again;
+    expect(store.getState().edit.chain.map((n) => [n.imageId, n.label])).toEqual([
+      ["a", "Original"],
+      ["r2", "Edit 1"],
+    ]);
+    expect(store.getState().edit.index).toBe(1);
+    // The fixed seed stays for the next normal edit.
+    expect(store.getState().edit.seed).toBe(7);
+  });
+
+  it("adds an Edit-tab upscale as the next step of the edit history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    const run = actions.upscaleEdit(2);
+    expect(store.getState().job?.kind).toBe("editUpscale");
+    // Loading another image while it runs is refused.
+    await expect(actions.importToEdit(new Blob([new Uint8Array(4)]))).rejects.toMatchObject({ code: "invalid" });
+    await tick();
+    pendingUpscale!(img("u"));
+    await run;
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "u"]);
+    expect(store.getState().edit.index).toBe(1);
+    // Create's results don't get it.
+    expect(store.getState().results).toEqual([]);
+  });
+
+  it("drops an Edit-tab upscale when the history changed meanwhile", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    const run = actions.upscaleEdit(4);
+    await tick();
+    store.dispatch({ type: "editLoad", ref: ref("b") });
+    pendingUpscale!(img("u"));
+    await run;
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(discarded).toContain("u");
+  });
+
   it("drops an upscale that finishes after Reset", async () => {
     const { store, actions } = setup();
     const run = actions.upscale("x", 2);

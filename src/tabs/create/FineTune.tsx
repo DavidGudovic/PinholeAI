@@ -5,7 +5,7 @@ import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, 
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
 import { previewFinalPrompt } from "../../lib/api";
-import type { FamilyUi, FineTune, InstalledModel } from "../../lib/types";
+import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
 import { useDebounced } from "../../lib/state/hooks";
 import { DEFAULT_LORA_WEIGHT, loraCompatible } from "../../lib/state/model";
@@ -392,13 +392,22 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
   const c = useAppState((s) => s.create);
   const loras = useAppState((s) => s.loras);
   const settings = useAppState((s) => s.settings);
-  // Rust resolves the style's words from its id, so an edit to the selected style must refresh too.
-  const style = useAppState((s) => s.styles.find((x) => x.id === s.create.styleId));
   const req = useMemo(() => (model ? buildCreateRequest(c, { ui, loras, model, settings }) : null), [c, ui, loras, model, settings]);
+  return <PromptPreview req={c.prompt.trim() ? req : null} empty="Type a prompt to see exactly what is sent." />;
+}
+
+/**
+ * Shows what Rust sends for `req` (style, trigger words and prefix combined). `req` null = nothing to
+ * send yet; `empty` says what to type. Shared by Create and Edit.
+ */
+export function PromptPreview({ req, empty }: { req: GenerateRequest | null; empty: string }) {
+  // Rust resolves the style's words from its id, so an edit to the selected style must refresh too.
+  const style = useAppState((s) => (req?.styleId ? s.styles.find((x) => x.id === req.styleId) : undefined));
   // Only the parts that change the text matter; debounce typing. (In memory only.)
   const key = req
     ? JSON.stringify([
         req.modelId,
+        req.mode,
         req.prompt,
         req.styleId,
         style?.positive ?? null,
@@ -414,7 +423,7 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!req || !req.prompt) {
+    if (!req) {
       setPreview(null);
       return;
     }
@@ -436,8 +445,8 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
     <div className="col-span-2">
       <div className="mb-1 text-xs font-medium text-neutral-600 dark:text-neutral-400">Final prompt sent to the model</div>
       <div className="max-h-40 overflow-auto rounded-lg bg-neutral-100 px-3 py-2 font-mono text-[11.5px] leading-relaxed text-neutral-700 select-text dark:bg-neutral-800/70 dark:text-neutral-300">
-        {!c.prompt.trim() ? (
-          <span className="text-neutral-400">Type a prompt to see exactly what is sent.</span>
+        {!req ? (
+          <span className="text-neutral-400">{empty}</span>
         ) : failed ? (
           <span className="text-neutral-400">Preview isn’t available right now.</span>
         ) : !preview ? (

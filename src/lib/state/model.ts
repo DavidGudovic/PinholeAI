@@ -111,7 +111,11 @@ export interface DescribeParams {
   text: string;
 }
 
-export type JobKind = "create" | "edit" | "upscale" | "describe";
+/** "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results). */
+export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "describe";
+
+/** A job that belongs to the Edit tab (it locks the edit history while it runs). */
+export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
 
 export interface Job {
   kind: JobKind;
@@ -244,7 +248,8 @@ export type Action =
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
   | { type: "editLoad"; ref: ImgRef }
-  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null }
+  /** `after`: the step it was made from (default: the shown one); later steps are dropped. */
+  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null; after?: number }
   | { type: "editGoto"; index: number }
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
@@ -517,7 +522,7 @@ function inner(s: AppState, a: Action): AppState {
       };
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
-      const kept = s.edit.chain.slice(0, s.edit.index + 1);
+      const kept = s.edit.chain.slice(0, (a.after ?? s.edit.index) + 1);
       const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }

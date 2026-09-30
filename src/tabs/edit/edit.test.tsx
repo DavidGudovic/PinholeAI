@@ -209,6 +209,51 @@ describe("Edit tab", () => {
     expect(store.getState().edit.loras).toEqual([]);
     expect(store.getState().create.loras).toEqual([]);
   });
+
+  it("Try again redoes the shown edit from the step before; the original can't be tried again", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle", restylePrompt: "watercolor", seed: 5 } });
+    });
+    const tryAgain = await screen.findByRole("button", { name: "Try again" });
+    expect(tryAgain).toHaveProperty("disabled", true);
+    const meta = { id: "r", width: 64, height: 64, seed: 5, modelId: "m", modelLabel: "Test model", familyId: "", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: "a" };
+    act(() => store.dispatch({ type: "editPush", ref: ref("r"), meta }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    const req = vi.mocked(api.generate).mock.calls[0][0];
+    expect(req.initImageId).toBe("a");
+    expect(req.fineTune.seed).toBeUndefined();
+  });
+
+  it("offers Upscale and shows the final prompt in Fine-tune", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle", restylePrompt: "watercolor lighthouse" } });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /^Upscale/ }));
+    expect(await screen.findByText("Upscale 2×")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Fine-tune/ }));
+    expect(await screen.findByText("Final prompt sent to the model")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText(/watercolor lighthouse/, { selector: "div" })).toBeTruthy(), { timeout: 2000 });
+  });
 });
 
 describe("Compare slider", () => {
