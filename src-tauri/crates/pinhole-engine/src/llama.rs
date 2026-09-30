@@ -62,8 +62,8 @@ static REWRITE_SAMPLING: std::sync::LazyLock<serde_json::Value> = std::sync::Laz
         "temperature": 0.6,
         "top_p": 0.9,
         "top_k": 40,
-        "repeat_penalty": 1.15,
-        "repeat_last_n": 128,
+        "repeat_penalty": 1.1,
+        "repeat_last_n": 64,
         "dry_multiplier": 0.8,
         "stop": ["\n\n"]
     })

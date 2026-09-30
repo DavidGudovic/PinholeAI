@@ -513,11 +513,17 @@ fn collapse_repeats(text: &str, idea: &str, tags: bool) -> (String, bool) {
         // Sentences, each keeping its ending mark.
         let mut out = Vec::new();
         let mut cur = String::new();
-        for c in text.chars() {
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
             cur.push(c);
-            if matches!(c, '.' | '!' | '?') {
+            // Only at the end of a sentence: "f/1.8" stays in one piece.
+            if matches!(c, '.' | '!' | '?') && chars.peek().is_none_or(|n| n.is_whitespace()) {
                 out.push(std::mem::take(&mut cur).trim().to_string());
             }
+        }
+        // A last sentence cut off by the token limit is dropped (when a whole one came before).
+        if !cur.trim().is_empty() && !out.is_empty() {
+            cur.clear();
         }
         out.push(cur.trim().to_string());
         out
@@ -895,6 +901,20 @@ mod tests {
         );
         assert!(!bad);
         assert_eq!(t, "A cozy bedroom at dawn. Soft light fills the room.");
+    }
+
+    #[test]
+    fn sentences_keep_decimals_and_drop_a_cut_off_tail() {
+        let (t, bad) = collapse_repeats(
+            "A portrait shot at f/1.8 in warm light. The background is soft and calm. The sky is",
+            "portrait",
+            false,
+        );
+        assert!(!bad);
+        assert_eq!(
+            t,
+            "A portrait shot at f/1.8 in warm light. The background is soft and calm."
+        );
     }
 
     #[test]
