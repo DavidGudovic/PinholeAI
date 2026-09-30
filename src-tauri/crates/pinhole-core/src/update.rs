@@ -277,9 +277,20 @@ fn asset_url(version: &semver::Version, name: &str) -> String {
 
 /// One-time cleanup: earlier builds let the user store a GitHub token (updates
 /// while the repository was private). Updates are unauthenticated now, so delete
-/// any token left in the keychain. Keychain problems are ignored.
-pub async fn remove_legacy_github_token() {
-    let _ = crate::catalog::blocking(pinhole_store::keychain::delete_github_token).await;
+/// any token left in the keychain, once (a marker file in `Data/` records it, so
+/// later starts don't touch the keychain). Keychain problems are ignored and the
+/// cleanup is tried again next start.
+pub async fn remove_legacy_github_token(data_root: std::path::PathBuf) {
+    let marker = data_root.join(".github-token-cleared");
+    if marker.exists() {
+        return;
+    }
+    if crate::catalog::blocking(pinhole_store::keychain::delete_github_token)
+        .await
+        .is_ok_and(|r| r.is_ok())
+    {
+        let _ = std::fs::write(marker, b"");
+    }
 }
 
 fn api_headers(accept: &str) -> Vec<(String, String)> {

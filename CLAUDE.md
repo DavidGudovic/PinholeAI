@@ -87,8 +87,7 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
    The WebView makes no network calls of its own; CivitAI preview images are fetched through
    the Rust client and handed to the UI as blobs.
 6. Engines bind to `127.0.0.1` only. Engine stdout/stderr go to an in-memory ring buffer only.
-7. The CivitAI API key lives in the
-   OS keychain (`keyring` crate), never in `Data/`. Secrets go only in the `Authorization` header.
+7. The CivitAI API key lives in the OS keychain (`keyring` crate), never in `Data/`. Secrets go only in the `Authorization` header.
 
 **Privacy tests (must exist and pass in CI):**
 - Generate with a sentinel prompt (e.g. `PINHOLE_SENTINEL_7f3a`) plus a saved style, save the

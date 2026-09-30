@@ -19,7 +19,7 @@ const table: MockTable = {
     await sleep(700);
     if (mockSettings().offline) throw offlineError;
     if (new URLSearchParams(location.search).get("update") === "private")
-      throw { code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub, right now. You can download new versions from the release page.", details: "HTTP 404" };
+      throw { code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub right now. You can download new versions from the release page.", details: "HTTP 404" };
     const m = mode();
     if (m === "none") return { currentVersion: "0.1.0", update: null };
     return {

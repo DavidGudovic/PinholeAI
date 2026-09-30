@@ -63,7 +63,7 @@ describe("UpdateSection", () => {
   });
 
   it("explains when GitHub doesn't show the releases and offers the release page", async () => {
-    api.checkForUpdates.mockRejectedValue({ code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub, right now.", details: "HTTP 404" });
+    api.checkForUpdates.mockRejectedValue({ code: "updates_unavailable", message: "Pinhole can't see its releases on GitHub right now.", details: "HTTP 404" });
     api.openReleasePage.mockResolvedValue();
     render(<UpdateSection offline={false} />);
     fireEvent.click(screen.getByRole("button", { name: /check for updates/i }));
