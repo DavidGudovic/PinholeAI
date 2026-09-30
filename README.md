@@ -22,7 +22,6 @@ decision can be seen and changed in the **Fine-tune** drawer.
   and missing models/LoRAs are one click away.
 - **Runs on your computer.** No account and no cloud service. Works offline once models are
   downloaded.
-- **Won't fill up your drive.** Only the pictures you save are kept.
 - **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
   (`sd-server`) and [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) —
   NVIDIA (CUDA, incl. RTX 50xx), AMD/Intel (Vulkan), or CPU.
@@ -36,7 +35,8 @@ Pinhole works like any other desktop app: your prompts and pictures stay on your
 - **Going online only when you ask.** Browsing CivitAI, downloading a model or the engine, and
   **Check for updates** connect to `civitai.com`, `huggingface.co` or `github.com` (plus their
   download servers). **Offline mode** in Settings turns all of that off.
-- **Styles** you save are stored in `Data/styles/`.
+- **Saving is up to you.** Nothing is saved until you press **Save**. Text you save as a named
+  Style is stored in `Data/styles/`.
 - **Local engines.** The image and text engines run as separate programs that only accept
   connections from your own computer (`127.0.0.1`). The optional CivitAI API key is kept in your
   system's keychain.

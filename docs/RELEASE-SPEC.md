@@ -299,9 +299,8 @@ templates, posts and UI.
   "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
   behind".
 - Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
-  disk", "never saved"), and never frame it as privacy or leaving no trace. The reason is a tidy
-  drive (other tools auto-save every image): say it at most once per surface, e.g. "Won't fill up
-  your drive. Only the pictures you save are kept."
+  disk", "never saved"). Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save."
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
