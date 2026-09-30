@@ -23,6 +23,7 @@ import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/co
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
+import { WhatGoesOnlineLink } from "../components/WhatGoesOnline";
 import { emitSettingsChanged } from "./events";
 import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
@@ -222,6 +223,9 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
               Pinhole never saves your prompts and sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates. Pictures stay in memory
               until you click Save.
             </span>
+          </p>
+          <p className="mt-2 pl-6">
+            <WhatGoesOnlineLink offline={settings.offline} /> lists every site Pinhole can contact and what it sends.
           </p>
           <p className="mt-2 pl-6">
             Honest limitation: when memory runs low, your operating system may move parts of it to disk (swap or pagefile). Pinhole can't control that.

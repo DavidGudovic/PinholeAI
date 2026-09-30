@@ -8,6 +8,7 @@ import { useActions } from "../lib/state/AppProvider";
 import { isActiveDownload, isEditJob, type TabId } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { Logo } from "./Logo";
+import { OnlineBadge } from "./WhatGoesOnline";
 import { ErrorWithFix } from "./ErrorWithFix";
 import { Button, ErrorNotice, IconButton, Popover, ProgressBar, Spinner, cx, focusRing } from "./ui";
 
@@ -59,6 +60,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </nav>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <OnlineBadge />
         <EngineChip />
         <DownloadsButton />
         <Button

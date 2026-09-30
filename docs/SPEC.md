@@ -141,6 +141,11 @@ folder can overwrite each other's index (dual boot never does that).
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
    layer. The catalog shows "Offline" and only installed models.
+   A small **Offline / Online** badge in the top bar shows the state at all times; clicking it opens
+   **What goes online**, a plain list of every call the app can make (what you did, which site, what is
+   sent) and what never leaves the computer, with a button to switch Offline mode. Settings → Privacy links
+   to the same page. The list lives in `src/components/WhatGoesOnline.tsx`: **add to it in the same PR
+   whenever a new network call is added.**
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
