@@ -12,7 +12,7 @@ press Generate. Tauri 2 + Rust core + React/TS UI. Images are made by
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. Both are pinned, SHA-256-verified
 downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on your computer.
 
-## Status (v0.1.0, personal test build)
+## Status (v0.2.0, personal test build)
 - Milestones M0–M5 implemented on `main`. M6 (release readiness, `RELEASE-SPEC.md`) not started —
   **no build is shared with anyone until it is done.**
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
