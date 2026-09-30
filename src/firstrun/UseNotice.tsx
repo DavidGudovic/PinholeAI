@@ -45,13 +45,13 @@ export function UseNotice(props: { onAgreed: () => void }) {
             <ShieldCheck className="h-4 w-4 text-emerald-600" /> Built-in safety check
           </h2>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-            Pinhole checks prompts and pictures on your computer and stops the most harmful content, such as sexual
-            images of anyone who looks under 18. The check works offline, can't be turned off and keeps no record.
+            Pinhole checks prompts and pictures on your computer to keep them within the usage guidelines. The check
+            works offline, can't be turned off and keeps no record.
           </p>
         </div>
 
         <p className="mt-6 text-sm text-neutral-600 dark:text-neutral-400">
-          By continuing, you agree to the{" "}
+          Don't use Pinhole for anything illegal, harmful or non-consensual. By continuing, you agree to the{" "}
           <button
             type="button"
             className={cx("rounded font-medium text-neutral-900 underline underline-offset-2 dark:text-neutral-100", focusRing)}
