@@ -149,8 +149,14 @@ chain as a brought-in picture.
 
 Three rules (`pinhole_check::rules`). Nothing else is blocked: adult images of adults (Safe mode is
 a catalog setting, not a generation filter), swimwear, art nudes and every ordinary edit of a real
-photo stay allowed. "Intimate" = nudity score ≥ 0.8 **and** the tagger's questionable + explicit
-rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" and stays allowed.
+photo stay allowed. "Intimate" (rules 1 and 3) = an explicit rating ≥ 0.6, or one of the
+tagger's nudity tags (including implied nudity: covered or censored) or underwear / lingerie /
+see-through tags ≥ 0.5 **and** either nudity score ≥ 0.8 with the tagger's questionable +
+explicit rating ≥ 0.5, or an explicit rating ≥ 0.35. The explicit-only path is there because the
+tagger was trained on drawings and may not name nudity on a photo. The tags are needed because
+the nudity model and the questionable rating also fire on swimwear (2026-09-30 measurement:
+about 1 in 5 anime swimwear pictures counted before; ruling: adults-only change, rule 2 stays
+as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids`).
 
 1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
    brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
@@ -159,15 +165,19 @@ rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" a
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
    it existed before Pinhole saw it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
-   (explicit ≥ 0.35, or intimate with nudity ≥ 0.85) **and** either:
-   - the tagger's `loli`, `shota` or `child` tag ≥ 0.5 (drawn or photo), or
+   (explicit ≥ 0.35, or nudity ≥ 0.85 with questionable + explicit ≥ 0.5; no tags needed, so
+   swimwear can count here) **and** either:
+   - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
-     whose age estimate says under 10 with ≥ 0.6. On 100 FairFace photos, adults scored at most
+     whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6. On 100
+     FairFace photos, adults scored at most
      0.05 and ages 3–9 0.77 on average.
 
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
-   often drawn young). Aimed at clear children, honestly: apparent-age models are off by several
-   years, so teenagers are left to the word check and the child tags (SAFETY.md says so).
+   often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
+   10–19, 20–29…) and it is off by several years, so it can't separate teenagers from young
+   adults without blocking many adults. Teenagers are left to the word check, the brought-in
+   photo rule (rule 1) and, for drawings, the child tags.
 3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
    Models flagged `poi` or `minor` can't be installed at all (§5). Known limits: the flag is set
@@ -367,10 +377,11 @@ templates, posts and UI.
 
 ## 9. Paper trail and reporting
 
-- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and doesn't (§3.2), how (on the
-  computer, nothing recorded), known limits (open-source code can be modified; classifiers miss
-  things), and how to report a problem (GitHub private vulnerability reporting only, no email
-  address; decided 2026-09-30).
+- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
+  doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
+  (checks can make mistakes; a modified build can leave them out; no "limitations" section,
+  David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
+  no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
   states plainly that Pinhole can't identify its users or see what they made.

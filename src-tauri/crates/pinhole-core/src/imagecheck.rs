@@ -357,15 +357,15 @@ pub fn describe(r: &Readings) -> String {
     let mut s = format!("nudity {:.2}", r.nudity);
     if let Some(t) = &r.tags {
         s += &format!(
-            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · child tags {:.2}/{:.2}/{:.2} · photo {:.2}/{:.2}",
-            t.general, t.sensitive, t.questionable, t.explicit, t.loli, t.shota, t.child, t.realistic, t.photorealistic
+            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2}",
+            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic
         );
     }
     if let Some(faces) = &r.faces {
         let f: Vec<String> = faces
             .iter()
-            .map(|f| match f.under_ten {
-                Some(u) => format!("{:.2} ({:.0}px) under-10 {:.2}", f.score, f.side, u),
+            .map(|f| match f.child_face {
+                Some(u) => format!("{:.2} ({:.0}px) child face {:.2}", f.score, f.side, u),
                 None => format!("{:.2} ({:.0}px)", f.score, f.side),
             })
             .collect();

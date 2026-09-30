@@ -22,7 +22,7 @@ fn main() {
             mut blocked,
             mut intimate,
             mut sexual,
-            mut child_tag,
+            mut minor_tag,
             mut young_face,
             mut adult_faces,
         ) = (0, 0, 0, 0, 0, 0, 0);
@@ -40,11 +40,13 @@ fn main() {
                     || pinhole_check::rules::is_sexual(r.nudity, tags))
             {
                 println!(
-                    "  {} nudity {:.2} questionable {:.2} explicit {:.2}",
+                    "  {} nudity {:.2} questionable {:.2} explicit {:.2} nude tag {:.2} underwear tag {:.2}",
                     p.display(),
                     r.nudity,
                     t.questionable,
-                    t.explicit
+                    t.explicit,
+                    t.nude,
+                    t.underwear
                 );
             }
             if pinhole_check::rules::is_intimate(r.nudity, tags) {
@@ -53,8 +55,8 @@ fn main() {
             if pinhole_check::rules::is_sexual(r.nudity, tags) {
                 sexual += 1;
             }
-            if t.loli.max(t.shota).max(t.child) >= pinhole_check::rules::CHILD_TAG {
-                child_tag += 1;
+            if t.minor >= pinhole_check::rules::MINOR_TAG {
+                minor_tag += 1;
             }
             let faces: Vec<_> = r.faces.iter().flatten().filter(|f| f.counts()).collect();
             if !faces.is_empty() {
@@ -62,8 +64,8 @@ fn main() {
             }
             if pinhole_check::rules::is_photo_style(&t)
                 && faces.iter().any(|f| {
-                    f.under_ten
-                        .is_some_and(|u| u >= pinhole_check::rules::UNDER_TEN)
+                    f.child_face
+                        .is_some_and(|u| u >= pinhole_check::rules::CHILD_FACE)
                 })
             {
                 young_face += 1;
@@ -75,9 +77,9 @@ fn main() {
             }
         }
         println!(
-            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · child tag ≥ {:.1}: {child_tag} · photo-style face under-10 ≥ {:.1}: {young_face} · with a face: {adult_faces}",
-            pinhole_check::rules::CHILD_TAG,
-            pinhole_check::rules::UNDER_TEN,
+            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · minor tag ≥ {:.1}: {minor_tag} · photo-style child face ≥ {:.1}: {young_face} · with a face: {adult_faces}",
+            pinhole_check::rules::MINOR_TAG,
+            pinhole_check::rules::CHILD_FACE,
         );
     }
 }
