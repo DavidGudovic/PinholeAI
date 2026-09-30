@@ -71,7 +71,9 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
   - A C2PA manifest (`c2pa` Rust crate): claim generator (C2PA requires one; C2PA is on hold, and if it is added the claim generator must not name Pinhole), action
     `c2pa.created` or `c2pa.edited` with the digital source type. Decide on signing (a
     self-signed certificate shows as "unknown signer" in validators).
-- **Invisible pixel watermark** that survives JPEG re-encode, resizing and clipboard copy
+- **Invisible pixel watermark** (built 2026-09-30: `pinhole-engine/src/watermark.rs`, a fixed
+  spread-spectrum pattern in DCT blocks of a 256×256 brightness grid, the same for everyone,
+  ~52 dB PSNR; applied in `session::export_png`) that survives JPEG re-encode, resizing and clipboard copy
   (candidates: Adobe TrustMark — verify licence and ONNX export — or a DWT-DCT watermark ported to Rust).
 - **Contents:** "made with AI" only (David, 2026-09-30: no app name or version either). **No prompt, negative prompt, style
   text, seed, user name or machine identifier.** This keeps the privacy rules intact.

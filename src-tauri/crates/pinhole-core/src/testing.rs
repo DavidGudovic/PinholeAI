@@ -2613,8 +2613,19 @@ mod tests {
             let saved = std::fs::read(session::save_image(&core, &photo).unwrap().path).unwrap();
             assert!(xmp(&saved).is_none(), "an untouched import isn't AI-made");
         }
-        // Copy uses the same export.
-        assert!(session::decode_rgba(&core, &made).is_ok());
+        // The pixel watermark: on Save and Copy of what Pinhole made, not on an untouched import.
+        let marked = |bytes: &[u8]| {
+            let (px, w, h) = pinhole_engine::image::decode_rgba(bytes).unwrap();
+            pinhole_engine::watermark::is_marked(&px, w, h)
+        };
+        let saved = std::fs::read(session::save_image(&core, &made).unwrap().path).unwrap();
+        assert!(marked(&saved));
+        let (px, w, h) = session::decode_rgba(&core, &made).unwrap();
+        assert!(pinhole_engine::watermark::is_marked(&px, w, h), "Copy");
+        let saved = std::fs::read(session::save_image(&core, &photo).unwrap().path).unwrap();
+        assert!(!marked(&saved));
+        // What stays in memory (shown on screen) is unchanged.
+        assert!(!marked(&session::get(&core, &made).unwrap()));
     }
 
     fn last_generation_event(rec: &Recorder) -> Option<crate::events::GenerationProgress> {
