@@ -895,6 +895,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                 base_model: Some(v.base_model.clone()).filter(|b| !b.is_empty()),
                 trained_words: v.trained_words.clone(),
                 license: None,
+                creator_notes: None,
             });
             resolution = families::resolve_family(
                 &registry,
@@ -1158,6 +1159,7 @@ mod tests {
                 base_model: Some("SDXL 1.0".into()),
                 trained_words: vec![],
                 license: None,
+                creator_notes: None,
             }),
             dtype: Some("f16".into()),
         };

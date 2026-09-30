@@ -365,6 +365,12 @@ grid where it was):
   runs it through Paste from CivitAI, so Create fills the prompt and settings, selects this model
   or offers to install it, and shows what was applied) and **Edit this image** (the full-size image
   goes into the in-memory session and opens in Edit). The generation data is held in memory only.
+- **From the creator**: the creator's description of the model and of this version (CivitAI HTML).
+  It is rebuilt from a short allow-list (text formatting, lists, https links); pictures, video,
+  iframes and styles are dropped, so nothing is loaded from another server and Safe mode can't be
+  bypassed. Long text collapses behind Show more; links open in the system browser (https only,
+  checked in Rust). Saved in `installed.json` at install (`creatorNotes`, raw HTML, 20 KB cap each)
+  so installed models show it offline. Safe mode hides it for models made for adults.
 - **Open on CivitAI** opens the model's page in the system browser: `civitai.red` for NSFW models,
   `civitai.com` for everything else. The URL is built in Rust from the model id; the WebView
   never navigates.

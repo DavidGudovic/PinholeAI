@@ -72,6 +72,8 @@ export const fetchPreview = (url: string) => invoke<ArrayBuffer>("fetch_preview"
 /** Model details page: preview images + their generation data (kept in memory only). */
 export const modelGallery = (versionId: number, content: T.ContentMode, modelNsfw: boolean) =>
   invoke<T.ModelGallery>("model_gallery", { versionId, content, modelNsfw });
+/** Opens an https link from a creator's description in the system browser (checked in Rust). */
+export const openExternalLink = (url: string) => invoke<void>("open_external_link", { url });
 /** Opens the model's CivitAI page (civitai.red for NSFW models) in the system browser. */
 export const openCivitaiPage = (modelId: number, versionId: number | null, nsfw: boolean) =>
   invoke<void>("open_civitai_page", { modelId, versionId, nsfw });
