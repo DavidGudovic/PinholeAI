@@ -1,6 +1,6 @@
 // Results: big preview of the selected image, its actions and settings summary,
 // and a strip of every image made this session (in memory until Save).
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   ChevronDown,
   Copy,
@@ -45,6 +45,10 @@ export function Results() {
   const dispatch = useDispatch();
   const [viewing, setViewing] = useState(false);
   const viewable = results.filter((r) => images[r.id]);
+  // Removing the last image closes the viewer for good.
+  useEffect(() => {
+    if (!selected) setViewing(false);
+  }, [selected]);
   const viewIndex = Math.max(
     0,
     viewable.findIndex((r) => r.id === selectedId),
@@ -77,7 +81,7 @@ export function Results() {
           pending={pending}
         />
       )}
-      {viewing && selected && (
+      {viewing && selected && viewable.length > 0 && (
         <ImageViewer
           images={viewable.map((r) => ({
             url: images[r.id].url,

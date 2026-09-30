@@ -254,7 +254,15 @@ export function ImageViewer({
         onDoubleClick={toggle}
         onClick={(e) => {
           // A click on the empty backdrop (not a drag) closes.
-          if (e.target === e.currentTarget && !moved.current) onClose();
+          if (moved.current || e.target !== e.currentTarget) return;
+          // The image ignores pointer events, so test against its rectangle.
+          const p = rel(e.clientX, e.clientY);
+          const v = viewRef.current;
+          const d = dimsRef.current;
+          const inside =
+            Math.abs(p.x - v.x) <= (d.w * v.scale) / 2 &&
+            Math.abs(p.y - v.y) <= (d.h * v.scale) / 2;
+          if (!inside) onClose();
         }}
       >
         {size.w > 0 && (
