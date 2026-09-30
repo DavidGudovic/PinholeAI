@@ -647,7 +647,7 @@ build is shared.
 - **Background remover** for product shots (brand work).
 - **Batch edit**: apply the same instruction to several images (e.g. a product line).
 - **Seed grid**: 4 seeds side by side, pick one to continue.
-- **Keyboard-first flow**: Ctrl+Enter generate, E edit, S save, D describe.
+- **Keyboard-first flow** (built): Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
 
 ---
 

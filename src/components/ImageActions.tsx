@@ -1,7 +1,9 @@
 // Save (with Save as…) and Upscale buttons shared by Create's results and the Edit tab.
 import { useState } from "react";
 import { ChevronDown, ImageUp, Save } from "lucide-react";
+import { useShortcuts } from "../lib/shortcuts";
 import { useActions } from "../lib/state/AppProvider";
+import type { TabId } from "../lib/state/model";
 import { canSaveAs } from "../lib/state/platform";
 import { Button, MenuItem, Popover, cx, focusRing } from "./ui";
 
@@ -14,15 +16,28 @@ export function SaveButton({
   seed,
   size = "md",
   run,
+  tab,
 }: {
   id: string;
   seed: number | null;
   size?: "sm" | "md";
+  /** The tab it sits in: S and Ctrl/Cmd+Shift+S save this image while that tab is showing. */
+  tab: TabId;
   run: (f: () => Promise<unknown>) => Promise<void>;
 }) {
   const actions = useActions();
   const [saving, setSaving] = useState(false);
   const icon = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
+  const save = () => {
+    // The toast from actions.save confirms it; a double-click must not write two files.
+    if (saving) return;
+    setSaving(true);
+    void run(() => actions.save(id)).finally(() => setSaving(false));
+  };
+  useShortcuts(tab, {
+    save,
+    saveAs: canSaveAs() ? () => void run(() => actions.saveAs(id, seed)) : undefined,
+  });
   return (
     <div className="inline-flex">
       <Button
@@ -30,12 +45,7 @@ export function SaveButton({
         size={size}
         className={cx(canSaveAs() && "rounded-r-none")}
         disabled={saving}
-        onClick={() => {
-          // The toast from actions.save confirms it; a double-click must not write two files.
-          if (saving) return;
-          setSaving(true);
-          void run(() => actions.save(id)).finally(() => setSaving(false));
-        }}
+        onClick={save}
       >
         <Save className={icon} /> Save
       </Button>

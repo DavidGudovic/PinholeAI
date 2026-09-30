@@ -18,6 +18,7 @@ import { Logo } from "../../components/Logo";
 import { Button, IconButton, Kbd, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
+import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
 import type { ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
@@ -137,6 +138,12 @@ function Preview({
     }
   };
 
+  useShortcuts("create", {
+    edit: () => actions.sendToEdit(result.id),
+    describe: () => actions.sendToDescribe(result.id),
+    fullscreen: onExpand,
+  });
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 pt-5 pb-3">
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
@@ -150,7 +157,7 @@ function Preview({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <SaveButton id={result.id} seed={result.seed} run={run} />
+        <SaveButton id={result.id} seed={result.seed} run={run} tab="create" />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
