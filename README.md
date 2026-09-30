@@ -209,7 +209,7 @@ Model knowledge belongs in `config/models.yaml`, not in code.
 
 ## Status
 
-Version 0.1 — in active development (milestones M0–M5 in [`docs/SPEC.md`](docs/SPEC.md#11-milestones)).
+Version 0.2 — in active development (milestones M0–M5 in [`docs/SPEC.md`](docs/SPEC.md#11-milestones)).
 Expect rough edges; model recommendations and VRAM numbers are still being measured.
 
 ## License
