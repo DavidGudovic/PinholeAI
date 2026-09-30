@@ -4,7 +4,7 @@
 // PRIVACY: prompt text passes through here into IPC only. Never log it.
 
 import * as api from "../api";
-import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, ResultImage } from "../types";
+import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, LoraUse, ResultImage } from "../types";
 import { DEFAULT_LORA_WEIGHT, editModels, isActiveDownload, loraCompatible, type EditMode, type ImgRef, type JobKind, type TabId, type Toast } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
@@ -244,10 +244,12 @@ export function makeActions(store: Store) {
     const updated = await api.setLoraTriggerWords(loraId, words);
     const s = get();
     dispatch({ type: "setLoras", loras: s.loras.map((l) => (l.id === loraId ? updated : l)) });
-    const used = get().create.loras;
-    if (used.some((u) => u.loraId === loraId && u.words)) {
-      dispatch({ type: "patchCreate", patch: { loras: used.map((u) => (u.loraId === loraId ? { loraId: u.loraId, weight: u.weight } : u)) } });
-    }
+    const reset = (used: LoraUse[]) =>
+      used.some((u) => u.loraId === loraId && u.words) ? used.map((u) => (u.loraId === loraId ? { loraId: u.loraId, weight: u.weight } : u)) : null;
+    const create = reset(get().create.loras);
+    if (create) dispatch({ type: "patchCreate", patch: { loras: create } });
+    const edit = reset(get().edit.loras);
+    if (edit) dispatch({ type: "patchEdit", patch: { loras: edit } });
   }
 
   function sendToEdit(id: string) {

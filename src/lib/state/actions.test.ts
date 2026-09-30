@@ -28,6 +28,7 @@ vi.mock("../api", async (orig) => {
   };
 });
 
+const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
 
@@ -267,5 +268,20 @@ describe("autoEditModel", () => {
     expect(actions.autoEditModel(true)?.id).toBe("q");
     store.dispatch({ type: "setModels", models: [kontext] });
     expect(actions.autoEditModel(true)).toBeNull();
+  });
+});
+
+describe("setLoraTriggerWords", () => {
+  it("puts the add-on's chips back to the default pick in Create and Edit", async () => {
+    const { store, actions } = setup();
+    const lora = { id: "l1", friendlyName: "l1", familyId: null, baseModel: null, trainedWords: ["old"], sizeBytes: 1, civitaiModelId: null, civitaiVersionId: null };
+    const spy = vi.spyOn(apiMod, "setLoraTriggerWords").mockResolvedValue({ ...lora, trainedWords: ["new"] });
+    store.dispatch({ type: "setLoras", loras: [lora] });
+    store.dispatch({ type: "patchCreate", patch: { loras: [{ loraId: "l1", weight: 1, words: ["old"] }] } });
+    store.dispatch({ type: "patchEdit", patch: { loras: [{ loraId: "l1", weight: 0.5, words: ["old"] }] } });
+    await actions.setLoraTriggerWords("l1", ["new"]);
+    expect(store.getState().create.loras).toEqual([{ loraId: "l1", weight: 1 }]);
+    expect(store.getState().edit.loras).toEqual([{ loraId: "l1", weight: 0.5 }]);
+    spy.mockRestore();
   });
 });
