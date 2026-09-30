@@ -290,6 +290,21 @@ describe("requests", () => {
     expect(s.edit.secondImageId).toBeNull();
   });
 
+  it("sends the Edit tab's add-ons that fit the edit's model, with their trigger words", () => {
+    const style = { ...lora("l1", "sdxl"), trainedWords: ["zxc_style"] };
+    const other = lora("l2", "flux1_dev");
+    const e = { ...withModels().edit, instruction: "make it blue", restylePrompt: "oil painting", loras: [{ loraId: "l1", weight: 0.7 }, { loraId: "l2", weight: 1 }] };
+    const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: null, size: [512, 512], loras: [style, other] });
+    expect(rs.loras).toEqual([{ loraId: "l1", weight: 0.7, words: ["zxc_style"] }]);
+    expect(rs.addTriggerWords).toBe(true);
+    const ins = buildEditRequest(e, { mode: "instruction", source: ref("src"), model: model("k", "flux1_kontext"), ui: FAMILY_UI.flux1_kontext, maskImageId: null, size: [512, 512], loras: [style, other], autoAdd: false });
+    expect(ins.loras).toEqual([{ loraId: "l2", weight: 1, words: [] }]);
+    // Reset keeps the add-ons (no prompt text in them), like Create.
+    const s = reducer({ ...withModels(), edit: e }, { type: "clearSession" });
+    expect(s.edit.loras).toHaveLength(2);
+    expect(s.edit.instruction).toBe("");
+  });
+
   it("fits edit sizes to ~1 MP in multiples of 16", () => {
     expect(fitEditSize(1024, 1024)).toEqual([1024, 1024]);
     expect(fitEditSize(4000, 3000)).toEqual([1184, 880]);

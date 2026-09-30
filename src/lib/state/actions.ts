@@ -333,7 +333,17 @@ export function makeActions(store: Store) {
         const nonce = get().sessionNonce;
         const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
         if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
-        const req = buildEditRequest(get().edit, { mode: opts.mode, source, model: opts.model, ui, maskImageId: maskId, size: opts.size });
+        const st = get();
+        const req = buildEditRequest(st.edit, {
+          mode: opts.mode,
+          source,
+          model: opts.model,
+          ui,
+          maskImageId: maskId,
+          size: opts.size,
+          loras: st.loras,
+          autoAdd: st.settings?.addTriggerWords ?? true,
+        });
         const { images, refs } = await generateNow(req, nonce);
         // The history is locked while an edit runs; if the image on screen changed anyway,
         // don't attach the result to another image's history.

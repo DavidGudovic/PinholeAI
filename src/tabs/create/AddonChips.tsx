@@ -10,13 +10,14 @@ import { loraCompatible, pickedTriggerWords } from "../../lib/state/model";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import type { InstalledLora, InstalledModel, LoraUse } from "../../lib/types";
 
-export function AddonChips({ model }: { model: InstalledModel | null }) {
-  const used = useAppState((s) => s.create.loras);
+/** `target`: the Create or the Edit tab's add-ons. */
+export function AddonChips({ model, target = "create" }: { model: InstalledModel | null; target?: "create" | "edit" }) {
+  const used = useAppState((s) => s[target].loras);
   const loras = useAppState((s) => s.loras);
   const autoAdd = useAppState((s) => s.settings?.addTriggerWords ?? true);
   const dispatch = useDispatch();
   if (!used.length) return null;
-  const setLoras = (list: LoraUse[]) => dispatch({ type: "patchCreate", patch: { loras: list } });
+  const setLoras = (list: LoraUse[]) => dispatch(target === "edit" ? { type: "patchEdit", patch: { loras: list } } : { type: "patchCreate", patch: { loras: list } });
   const setWeight = (i: number, weight: number) => setLoras(used.map((x, j) => (j === i ? { ...x, weight } : x)));
   const setWords = (i: number, words: string[]) => setLoras(used.map((x, j) => (j === i ? { ...x, words } : x)));
   const remove = (i: number) => setLoras(used.filter((_, j) => j !== i));
