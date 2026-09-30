@@ -216,7 +216,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
   if (running) throw err("invalid", "Pinhole is still working on the last image.");
   // Stand-in for the Rust word check (text_check.rs), for trying the block screen in the mock.
   if (/\bminor\b/i.test(req.prompt) && /\bexplicit\b/i.test(req.prompt))
-    throw err("blocked", "Pinhole doesn't make sexual images or text involving anyone under 18.");
+    throw err("blocked", "Pinhole can't help with this. See the usage guidelines.");
   running = true;
   cancelled = false;
   const started = Date.now();

@@ -11,10 +11,11 @@
 
 use crate::{CoreError, CoreResult};
 
-/// Shown when text is blocked. No details (they would have to quote the text) and no retry
-/// hint (David, 2026-09-30: it read like an invitation to reword around the check).
-pub const BLOCKED_MESSAGE: &str =
-    "Pinhole doesn't make sexual images or text involving anyone under 18.";
+/// Shown when the check stops something (the text check here, the image check too). Neutral on
+/// purpose: no details (they would have to quote the text), no retry hint (it read like an
+/// invitation to reword around the check) and no naming of harmful content, so a false block
+/// never reads as an accusation (David, 2026-09-30). The UI shows the usage guidelines with it.
+pub const BLOCKED_MESSAGE: &str = "Pinhole can't help with this. See the usage guidelines.";
 
 /// Terms that point at someone under 18. The last word of each also matches with a trailing
 /// `s`/`es` ("little girls").
