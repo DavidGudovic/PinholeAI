@@ -174,6 +174,7 @@ pub fn register_fake_lora(core: &AppCore, family_id: &str, trained_words: &[&str
             base_model: None,
             trained_words: trained_words.iter().map(|s| s.to_string()).collect(),
             license: None,
+            creator_notes: None,
         }),
         added_at: now(),
         last_used: None,

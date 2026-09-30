@@ -274,7 +274,7 @@ impl VersionCache {
     }
 }
 
-async fn fetch_version(
+pub(crate) async fn fetch_version(
     cache: &VersionCache,
     client: &CivitaiClient,
     version_id: u64,

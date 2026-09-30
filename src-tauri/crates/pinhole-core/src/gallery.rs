@@ -16,8 +16,9 @@ use pinhole_catalog::api::{civitai_auth_header, is_preview_url, ModelImage, API_
 use pinhole_catalog::cards::thumbnail_url;
 use pinhole_catalog::filters::ContentMode;
 use pinhole_catalog::lenient;
-use pinhole_catalog::safe::{SafeFilter, LEVEL_BLOCKED};
+use pinhole_catalog::safe::{SafeFilter, LEVEL_BLOCKED, LEVEL_R};
 use pinhole_net::NetError;
+use pinhole_store::installed::CreatorNotes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -65,6 +66,7 @@ pub async fn model_gallery(
             items: Vec::new(),
             hidden_nsfw: 0,
             trained_words: Vec::new(),
+            creator_notes: stored_notes(core, version_id, content, model_nsfw),
             offline: true,
         });
     }
@@ -81,13 +83,89 @@ pub async fn model_gallery(
         other => other,
     }
     .map_err(crate::catalog::net_error)?;
-    Ok(gallery(
+    let mut g = gallery(
         &version,
         content,
         model_nsfw,
         &filters.safe,
         filters.preview_width,
-    ))
+    );
+    // The description is a bonus: if it can't be read, the page shows what
+    // was saved at install (or nothing).
+    let client = crate::catalog::civitai_client(core).await;
+    g.creator_notes =
+        match crate::catalog::fetch_version(&core.models.versions, &client, version_id).await {
+            Ok(fetched) => {
+                let (v, m) = (&fetched.0, &fetched.1);
+                let adult = |l: Option<u32>| l.is_some_and(|l| l >= LEVEL_R);
+                let is_adult = model_nsfw
+                    || adult(v.nsfw_level)
+                    || m.as_ref().is_some_and(|m| {
+                        m.nsfw || adult(m.nsfw_level) || filters.safe.adult_reason(m).is_some()
+                    });
+                notes_for(
+                    content,
+                    model_nsfw,
+                    CreatorNotes::from_html(
+                        m.as_ref().and_then(|m| m.description.as_deref()),
+                        v.description.as_deref(),
+                        is_adult,
+                    ),
+                )
+            }
+            Err(_) => stored_notes(core, version_id, content, model_nsfw),
+        };
+    Ok(g)
+}
+
+/// The creator's description saved when the model was installed.
+fn stored_notes(
+    core: &AppCore,
+    version_id: u64,
+    content: ContentMode,
+    model_nsfw: bool,
+) -> Option<CreatorNotes> {
+    let stored = core
+        .installed
+        .lock()
+        .files
+        .iter()
+        .filter_map(|f| f.civitai.as_ref())
+        .find(|c| c.version_id == version_id)
+        .and_then(|c| c.creator_notes.clone());
+    notes_for(content, model_nsfw, stored)
+}
+
+/// Safe mode hides the description of a model made for adults, like its images.
+fn notes_for(
+    content: ContentMode,
+    model_nsfw: bool,
+    notes: Option<CreatorNotes>,
+) -> Option<CreatorNotes> {
+    let adult = model_nsfw || notes.as_ref().is_some_and(|n| n.adult);
+    if content == ContentMode::Safe && adult {
+        None
+    } else {
+        notes
+    }
+}
+
+/// Links from a creator's description open in the system browser: https only.
+/// The UI passes the address of a link it found, so check it here.
+pub fn external_link(url: &str) -> CoreResult<String> {
+    let bad = || CoreError::invalid("Pinhole only opens https links from descriptions.");
+    if url.len() > 2048 {
+        return Err(bad());
+    }
+    let parsed = url::Url::parse(url.trim()).map_err(|_| bad())?;
+    if parsed.scheme() != "https"
+        || parsed.host_str().is_none_or(str::is_empty)
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(bad());
+    }
+    Ok(parsed.to_string())
 }
 
 /// `https://civitai.com/models/…` (civitai.red for NSFW models), for the
@@ -155,6 +233,9 @@ pub struct ModelGallery {
     pub hidden_nsfw: usize,
     /// LoRA trigger words.
     pub trained_words: Vec<String>,
+    /// What the creator wrote about the model (raw HTML: the UI sanitizes it).
+    /// `None` when there is none, or Safe mode hides it.
+    pub creator_notes: Option<CreatorNotes>,
     pub offline: bool,
 }
 
@@ -187,6 +268,7 @@ pub fn gallery(
         items,
         hidden_nsfw,
         trained_words: version.trained_words.clone(),
+        creator_notes: None,
         offline: false,
     }
 }
@@ -313,6 +395,32 @@ mod tests {
             vec![0, 1, 4]
         );
         assert!(all.items[1].nsfw && all.hidden_nsfw == 0);
+    }
+
+    #[test]
+    fn safe_mode_hides_notes_of_adult_models() {
+        let n = CreatorNotes::from_html(Some("<p>hi</p>"), None, false);
+        assert!(notes_for(ContentMode::Safe, true, n.clone()).is_none());
+        // Saved at install for an adult model: hidden even when the card says nothing.
+        let adult = CreatorNotes::from_html(Some("<p>hi</p>"), None, true);
+        assert!(notes_for(ContentMode::Safe, false, adult.clone()).is_none());
+        assert_eq!(notes_for(ContentMode::All, false, adult.clone()), adult);
+        assert_eq!(notes_for(ContentMode::Safe, false, n.clone()), n);
+        assert_eq!(notes_for(ContentMode::All, true, n.clone()), n);
+    }
+
+    #[test]
+    fn external_links_are_https_only() {
+        assert!(external_link("https://patreon.com/x?y=1").is_ok());
+        for bad in [
+            "http://example.com",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "https://user:pw@example.com",
+            "not a url",
+        ] {
+            assert!(external_link(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

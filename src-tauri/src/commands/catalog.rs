@@ -68,6 +68,18 @@ pub async fn open_civitai_page(
         })
 }
 
+/// Open a link from a creator's description in the system browser (https only).
+#[tauri::command]
+pub async fn open_external_link(handle: AppHandle, url: String) -> Result<(), CoreError> {
+    let url = pinhole_core::gallery::external_link(&url)?;
+    handle
+        .opener()
+        .open_url(url.as_str(), None::<&str>)
+        .map_err(|e| {
+            CoreError::new("io", "Couldn't open your browser.").with_details(e.to_string())
+        })
+}
+
 #[tauri::command]
 pub async fn plan_civitai_install(
     core: State<'_, Arc<AppCore>>,
@@ -109,6 +121,7 @@ super::area_commands![
     fetch_preview,
     model_gallery,
     open_civitai_page,
+    open_external_link,
     plan_civitai_install,
     install_civitai,
     has_civitai_key,
