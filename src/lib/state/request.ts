@@ -72,7 +72,7 @@ export function effectiveFineTune(ft: FineTune, ui: FamilyUi | null): FineTune {
 }
 
 /** Add-ons that work with `model`, each with the trigger words it adds (`autoAdd` = the Settings default). */
-export function activeLoras(c: CreateParams, loras: InstalledLora[], model: InstalledModel | null, autoAdd = true): LoraUse[] {
+export function activeLoras(c: Pick<CreateParams, "loras">, loras: InstalledLora[], model: InstalledModel | null, autoAdd = true): LoraUse[] {
   return c.loras.flatMap((u) => {
     const l = loras.find((x) => x.id === u.loraId);
     return l && loraCompatible(l, model?.familyId) ? [{ loraId: u.loraId, weight: u.weight, words: pickedTriggerWords(u, l, autoAdd) }] : [];
@@ -138,8 +138,12 @@ export function buildEditRequest(
     ui: FamilyUi | null;
     maskImageId: string | null;
     size: [number, number];
+    /** Installed add-ons and the Settings trigger-word default, for `e.loras`. */
+    loras?: InstalledLora[];
+    autoAdd?: boolean;
   },
 ): GenerateRequest {
+  const loras = activeLoras(e, opts.loras ?? [], opts.model, opts.autoAdd ?? true);
   const fineTune: FineTune = { width: opts.size[0], height: opts.size[1] };
   if (e.seed != null) fineTune.seed = e.seed;
   const shape = shapeFor(opts.ui, opts.size[0], opts.size[1]).shape;
@@ -151,8 +155,8 @@ export function buildEditRequest(
       styleId: e.styleId,
       dials: { shape, quality: e.quality, stick: e.stayClose ?? defaultStayClosePosition(opts.ui), count: 1 },
       fineTune,
-      loras: [],
-      addTriggerWords: false,
+      loras,
+      addTriggerWords: true,
       // Image 1 = the one being edited; image 2 = the optional second image (no mask with two).
       refImageIds: e.secondImageId ? [opts.source.id, e.secondImageId] : [opts.source.id],
       maskImageId: e.secondImageId ? null : opts.maskImageId,
@@ -165,8 +169,8 @@ export function buildEditRequest(
     styleId: e.styleId,
     dials: { shape, quality: e.quality, stick: defaultStickPosition(opts.ui), count: 1 },
     fineTune,
-    loras: [],
-    addTriggerWords: false,
+    loras,
+    addTriggerWords: true,
     initImageId: opts.source.id,
     strength: CHANGE_STRENGTH[e.change],
     maskImageId: opts.maskImageId,
