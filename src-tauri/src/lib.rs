@@ -112,6 +112,7 @@ pub fn run() {
                 tauri::async_runtime::block_on(async move { core.start_background() });
             }
             app.manage(core);
+            tauri::async_runtime::spawn(pinhole_core::update::remove_legacy_github_token());
             Ok(())
         })
         .invoke_handler(commands::dispatch)

@@ -1,5 +1,4 @@
-//! CivitAI API key and the optional GitHub token (for updates while the
-//! repository is private) in the OS keychain (`keyring`), never in `Data/`.
+//! CivitAI API key in the OS keychain (`keyring`), never in `Data/`.
 //!
 //! Backends: Windows Credential Manager, the freedesktop Secret Service on
 //! Linux (GNOME Keyring / KWallet), macOS Keychain. The calls block (D-Bus on
@@ -29,34 +28,10 @@ pub fn delete_civitai_key() -> Result<(), StoreError> {
     delete_on(&entry()?)
 }
 
-pub fn get_github_token() -> Result<Option<String>, StoreError> {
-    get_with(&github_entry()?, map_github_err)
-}
-
-pub fn set_github_token(token: &str) -> Result<(), StoreError> {
-    let entry = github_entry()?;
-    set_github_on(&entry, token)
-}
-
+/// Removes the GitHub token earlier builds could store (updates now need none).
 pub fn delete_github_token() -> Result<(), StoreError> {
-    delete_with(&github_entry()?, map_github_err)
-}
-
-fn github_entry() -> Result<Entry, StoreError> {
-    Entry::new(SERVICE, GITHUB_ACCOUNT).map_err(map_github_err)
-}
-
-fn set_github_on(entry: &Entry, token: &str) -> Result<(), StoreError> {
-    let token = token.trim();
-    if token.is_empty() {
-        return Err(StoreError::Invalid("Paste your GitHub token first.".into()));
-    }
-    if token.len() > MAX_KEY_LEN || !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(StoreError::Invalid(
-            "That doesn't look like a GitHub token. Copy it again from GitHub → Settings → Developer settings → Personal access tokens.".into(),
-        ));
-    }
-    entry.set_password(token).map_err(map_github_err)
+    let entry = Entry::new(SERVICE, GITHUB_ACCOUNT).map_err(map_err)?;
+    delete_with(&entry, map_err)
 }
 
 fn entry() -> Result<Entry, StoreError> {
@@ -130,22 +105,6 @@ fn map_err(e: KeyringError) -> StoreError {
     StoreError::Keychain(msg.into())
 }
 
-/// [`map_err`] for the GitHub token (Settings → Updates).
-fn map_github_err(e: KeyringError) -> StoreError {
-    let msg = match e {
-        KeyringError::PlatformFailure(_) | KeyringError::NoStorageAccess(_) => {
-            "Your system keychain isn't available, so Pinhole can't store the GitHub token. \
-             Unlock your keychain (on Linux: install or start GNOME Keyring or KWallet) and try again."
-        }
-        KeyringError::BadEncoding(_) | KeyringError::Ambiguous(_) => {
-            "The saved GitHub token couldn't be read. Remove it in Settings → Updates and add it again."
-        }
-        KeyringError::TooLong(..) | KeyringError::Invalid(..) => "Your system keychain refused the GitHub token. Check the token and try again.",
-        _ => "Your system keychain couldn't be used, so Pinhole can't store the GitHub token.",
-    };
-    StoreError::Keychain(msg.into())
-}
-
 #[cfg(test)]
 mod tests {
     //! Never touches the real keychain: every entry is a keyring mock credential.
@@ -182,33 +141,14 @@ mod tests {
     }
 
     #[test]
-    fn github_token_round_trip_and_validation() {
+    fn legacy_github_token_is_removed() {
         keyring::set_default_credential_builder(keyring::mock::default_credential_builder());
         let entry = Entry::new(SERVICE, GITHUB_ACCOUNT).unwrap();
-        assert!(matches!(
-            set_github_on(&entry, " "),
-            Err(StoreError::Invalid(_))
-        ));
-        assert!(matches!(
-            set_github_on(&entry, "ghp_abc def"),
-            Err(StoreError::Invalid(_))
-        ));
-        assert!(matches!(
-            set_github_on(&entry, "https://x"),
-            Err(StoreError::Invalid(_))
-        ));
-        set_github_on(&entry, " github_pat_11ABC_def123\n").unwrap();
-        assert_eq!(
-            get_with(&entry, map_github_err).unwrap().as_deref(),
-            Some("github_pat_11ABC_def123")
-        );
-        mock(&entry).set_error(KeyringError::BadEncoding(vec![0xff]));
-        match get_with(&entry, map_github_err).unwrap_err() {
-            StoreError::Keychain(m) => {
-                assert!(m.contains("GitHub token") && !m.contains("CivitAI"), "{m}")
-            }
-            other => panic!("unexpected {other:?}"),
-        }
+        entry.set_password("github_pat_11ABC_def123").unwrap();
+        delete_with(&entry, map_err).unwrap();
+        assert!(matches!(entry.get_password(), Err(KeyringError::NoEntry)));
+        // Nothing there is fine.
+        delete_with(&entry, map_err).unwrap();
     }
 
     #[test]
