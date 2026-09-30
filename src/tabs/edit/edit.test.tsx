@@ -165,6 +165,32 @@ describe("Edit tab", () => {
     expect(store.getState().edit.secondImageId).toBeNull();
     vi.mocked(api.listModels).mockImplementation(async () => [model]);
   });
+
+  it("with a second image and no model that combines two, only offers one that can", async () => {
+    const kontext = { ...model, id: "kx", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" } as InstalledModel;
+    vi.mocked(api.listModels).mockImplementation(async () => [model, kontext]);
+    const pick = (familyId: string, title: string) =>
+      ({ role: "edit", roleLabel: "Edit", title, familyId, goodAt: null, downloadBytes: 1, vram: null, fit: "fits", installed: false, quant: null, licenseNote: null }) as never;
+    const recommended = vi.spyOn(api, "getRecommended").mockResolvedValue([pick("flux1_kontext", "Kontext card")]);
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(2));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "editSetSecond", ref: ref("b") });
+    });
+    expect(await screen.findByText("Combining two images needs another edit model")).toBeTruthy();
+    await flush();
+    expect(screen.queryByText("Kontext card")).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove image 2" })).toBeTruthy();
+    recommended.mockRestore();
+    vi.mocked(api.listModels).mockImplementation(async () => [model]);
+  });
 });
 
 describe("Compare slider", () => {
