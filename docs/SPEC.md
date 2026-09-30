@@ -670,8 +670,11 @@ build is shared.
   application/octet-stream`), and the token is sent only in `Authorization` to `api.github.com`
   (reqwest drops it on the redirect to the release CDN). The checksum list protects against broken or swapped downloads, not against a
   compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
-- **Safety checks** (release): local only — image classifiers + a small guard LLM, on CPU.
-  Prompts are never sent to a server for moderation.
+- **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
+  Prompts are never sent to a server for moderation. Already in: a word check
+  (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,
+  whatever Safe mode says: the prompt at Generate (after styles and trigger words), the idea sent to
+  Improve my prompt, and what Describe / Improve write back.
 
 ### Implementation decisions (v1 build-out)
 - **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the

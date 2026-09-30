@@ -340,6 +340,15 @@ templates, posts and UI.
   misfire on ordinary anime prompts; it would cost time and RAM on every Generate; and §3 sees
   what was actually made. Reconsider only as a signal that tightens the §3.2 rule 2 threshold,
   never as a block on its own.
+- **Local word check on text — added** (2026-09-30, before §3 exists). `text_check.rs` blocks
+  text that pairs an under-18 term with a sexual term, in every Safe mode: the positive prompt
+  at Generate (style, trigger words and the picked add-ons' names and trigger words included;
+  not the negative prompt), the idea sent to
+  "Improve my prompt", and what Describe / Improve write back. Unlike the dropped guard LLM it
+  costs nothing, needs no model, and only fires when both lists match, so ordinary anime prompts
+  pass. Word lists live in code, not YAML, so a config edit can't turn it off. It ignores zero-width characters and fullwidth letters but misses
+  misspellings, look-alike letters and made-up words, so it doesn't replace §3.2 rule 2. Required before any
+  helper model without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or
   regulators; the UK defence asks for steps that *prevent* non-consensual use; and the app can't
