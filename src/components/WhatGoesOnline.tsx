@@ -51,7 +51,7 @@ export const ONLINE_CALLS: Call[] = [
 
 /** Stays on this computer, always. */
 export const STAYS_LOCAL = [
-  "Your prompts, pictures, styles and settings. Pictures live in memory until you click Save.",
+  "Your prompts, pictures, styles and settings.",
   "Making pictures, editing and Describe: the engines run on this computer and listen on this computer only.",
   "No usage data, crash reports, analytics or automatic update checks. Nothing goes online until you do something above.",
   "The app window itself makes no network calls of its own: no web fonts, no remote images.",

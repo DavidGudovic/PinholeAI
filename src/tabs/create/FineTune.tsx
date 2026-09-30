@@ -521,7 +521,7 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
           </>
         )}
       </div>
-      <p className="mt-1 text-[11px] text-neutral-400">Combined in memory for each image. Never saved.</p>
+      <p className="mt-1 text-[11px] text-neutral-400">What the model receives for each image.</p>
     </div>
   );
 }

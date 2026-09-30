@@ -106,9 +106,8 @@ function EmptyResults() {
         Your images appear here
       </h2>
       <p className="mt-1.5 max-w-sm text-sm text-neutral-500">
-        Describe what you want to see, then press Generate. Images stay in
-        memory until you save them. Drop a picture you saved with Pinhole here
-        to reuse its settings.
+        Describe what you want to see, then press Generate. Drop a picture you
+        saved with Pinhole here to reuse its settings.
       </p>
       <p className="mt-3 inline-flex items-center gap-1 text-xs text-neutral-400">
         <Kbd>{modKey}</Kbd>

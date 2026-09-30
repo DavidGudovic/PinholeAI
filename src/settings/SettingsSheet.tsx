@@ -221,15 +221,11 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           <p className="flex items-start gap-2">
             <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>
-              Pinhole never saves your prompts and sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates. Pictures stay in memory
-              until you click Save.
+              Pinhole sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates.
             </span>
           </p>
           <p className="mt-2 pl-6">
             <WhatGoesOnlineLink offline={settings.offline} /> lists every site Pinhole can contact and what it sends.
-          </p>
-          <p className="mt-2 pl-6">
-            Honest limitation: when memory runs low, your operating system may move parts of it to disk (swap or pagefile). Pinhole can't control that.
           </p>
         </div>
       </Section>
@@ -408,7 +404,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         />
         <Row
           label="Add trigger words automatically"
-          hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you, in memory only. Pick which ones on the add-on’s chip under the prompt."
+          hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you. Pick which ones on the add-on’s chip under the prompt."
           control={<Toggle checked={settings.addTriggerWords} onChange={(v) => update({ addTriggerWords: v })} label={<span className="sr-only">Add trigger words automatically</span>} />}
         />
         <Row

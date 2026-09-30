@@ -50,7 +50,7 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
           <p className="mt-1.5">
             Pinhole checks prompts and pictures on your computer against these guidelines, for example content that
             sexualizes minors or intimate edits of photos of real people. It also keeps models marked for safe images
-            only to safe images. The check works offline, can't be turned off and keeps no record. Like any automatic
+            only to safe images. The check works offline and can't be turned off. Like any automatic
             check, it can sometimes stop something harmless.
           </p>
         </section>
