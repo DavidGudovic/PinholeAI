@@ -292,6 +292,19 @@ export function makeActions(store: Store) {
     dispatch({ type: "editLoad", ref });
   }
 
+  /** The optional second image for "Describe a change". */
+  async function importSecondToEdit(blob: Blob) {
+    if (get().job?.kind === "edit") throw busyError();
+    const ref = await importBlob(blob).catch((e) => {
+      throw api.asCoreError(e);
+    });
+    if (get().job?.kind === "edit") {
+      releaseRefs([ref], true);
+      throw busyError();
+    }
+    dispatch({ type: "editSetSecond", ref });
+  }
+
   async function importToDescribe(blob: Blob) {
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
@@ -342,14 +355,16 @@ export function makeActions(store: Store) {
   }
 
   /** The edit model Pinhole picks automatically (the registry lists edit families best-first). */
-  function autoEditModel(): InstalledModel | null {
-    const list = editModels(get().models).filter((m) => !m.missingComponents.length);
-    const all = list.length ? list : editModels(get().models);
+  /** Best installed edit model; with `twoImages`, only ones that combine two images. */
+  function autoEditModel(twoImages = false): InstalledModel | null {
+    const list = editModels(get().models, twoImages).filter((m) => !m.missingComponents.length);
+    const all = list.length ? list : editModels(get().models, twoImages);
     const rank = (m: InstalledModel) => (m.familyId === "qwen_image_edit_2511" ? 0 : m.familyId === "flux1_kontext" ? 1 : 2);
     const fitRank = (m: InstalledModel) => (m.fit === "fits" ? 0 : m.fit === "tight" ? 1 : m.fit === "tooBig" ? 3 : 2);
-    // Dedicated edit models first unless they're too big; then generators that can edit (FLUX.2).
-    const tier = (m: InstalledModel) => (m.isEditModel && m.fit !== "tooBig" ? 0 : 1);
-    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || rank(a) - rank(b))[0] ?? null;
+    // One image: dedicated edit models first unless they're too big; then generators that can edit (FLUX.2).
+    // Two images need more memory, so a model that fits wins (FLUX.2 klein over a tight Qwen Edit).
+    const tier = (m: InstalledModel) => (twoImages ? fitRank(m) : m.isEditModel && m.fit !== "tooBig" ? 0 : 1);
+    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || Number(b.isEditModel) - Number(a.isEditModel) || rank(a) - rank(b))[0] ?? null;
   }
 
   // ---------------------------------------------------------------- session
@@ -399,6 +414,7 @@ export function makeActions(store: Store) {
     useAsPrompt,
     removeResult,
     importToEdit,
+    importSecondToEdit,
     importToDescribe,
     runEdit,
     autoEditModel,

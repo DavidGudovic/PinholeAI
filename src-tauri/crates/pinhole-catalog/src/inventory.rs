@@ -80,6 +80,7 @@ pub fn installed_model_view(
         style_badge: registry_style_badge(registry, file),
         modes,
         is_edit_model: is_edit,
+        multi_ref: family.is_some_and(|f| f.multi_ref && pinhole_registry::wiring::can_edit(f)),
         size_bytes: file.size_bytes,
         vram,
         fit,

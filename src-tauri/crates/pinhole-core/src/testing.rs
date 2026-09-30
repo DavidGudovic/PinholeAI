@@ -575,6 +575,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn two_image_edit_needs_a_model_that_combines_them() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let img = |c: u8| {
+            session::import_image(
+                &core,
+                pinhole_engine::testutil::solid_png(256, 256, [c, 20, 30, 255]),
+            )
+            .unwrap()
+            .id
+        };
+        let (a, b) = (img(10), img(200));
+        let edit_req = |model: String| {
+            let mut req =
+                GenerateRequest::txt2img(model, "put the bottle from image 2 on the shelf");
+            req.mode = GenMode::Edit;
+            req.ref_image_ids = vec![a.clone(), b.clone()];
+            req.dials.quality = Quality::Fast;
+            req
+        };
+
+        // Kontext edits one image only.
+        let kontext = register_fake_model(&core, "flux1_kontext");
+        let err = generate::generate(&core, edit_req(kontext.clone()))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("combine two images"),
+            "{}",
+            err.message
+        );
+
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        for chosen in [klein, kontext] {
+            let res = generate::generate(&core, edit_req(chosen)).await.unwrap();
+            assert_eq!(res.images[0].family_id, "flux2_klein_4b");
+            let body = mock.requests().last().cloned().unwrap();
+            assert_eq!(body["ref_images"].as_array().unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
     async fn cancel_and_failures_map_to_plain_errors() {
         let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start_with(MockOptions {

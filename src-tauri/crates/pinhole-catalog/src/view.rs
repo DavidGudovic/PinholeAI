@@ -214,6 +214,9 @@ pub struct InstalledModel {
     pub style_badge: Option<String>,
     pub modes: Vec<String>,
     pub is_edit_model: bool,
+    /// Instruction edits can take a second image (registry `multi_ref`).
+    #[serde(default)]
+    pub multi_ref: bool,
     pub size_bytes: u64,
     pub vram: Option<VramNeed>,
     pub fit: Option<Fit>,

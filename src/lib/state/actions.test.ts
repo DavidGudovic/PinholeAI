@@ -255,4 +255,17 @@ describe("autoEditModel", () => {
     store.dispatch({ type: "setModels", models: [klein] });
     expect(actions.autoEditModel()?.id).toBe("k");
   });
+
+  it("with two images, only models that combine them, and one that fits wins", () => {
+    const { store, actions } = setup();
+    const klein: InstalledModel = { ...model, id: "k", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" };
+    const qwen: InstalledModel = { ...model, id: "q", familyId: "qwen_image_edit_2511", modes: ["edit"], isEditModel: true, multiRef: true, fit: "tight" };
+    const kontext: InstalledModel = { ...model, id: "x", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" };
+    store.dispatch({ type: "setModels", models: [klein, qwen, kontext] });
+    expect(actions.autoEditModel(true)?.id).toBe("k");
+    store.dispatch({ type: "setModels", models: [{ ...klein, fit: "tight" }, qwen, kontext] });
+    expect(actions.autoEditModel(true)?.id).toBe("q");
+    store.dispatch({ type: "setModels", models: [kontext] });
+    expect(actions.autoEditModel(true)).toBeNull();
+  });
 });

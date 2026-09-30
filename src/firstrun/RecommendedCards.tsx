@@ -39,8 +39,10 @@ export function RecommendedCards(props: {
   compact?: boolean;
   /** Show the "Get all" button (first run). */
   showGetAll?: boolean;
+  /** Only picks of these model families (e.g. edit models that combine two images). */
+  families?: string[];
 }) {
-  const { roles, compact = false, showGetAll = false, offers, heading } = props;
+  const { roles, compact = false, showGetAll = false, offers, heading, families } = props;
   const [picks, setPicks] = useState<RecommendedPick[] | null>(null);
   const [loadError, setLoadError] = useState<CoreError | null>(null);
   const [errors, setErrors] = useState<Record<string, CoreError | null>>({});
@@ -67,7 +69,9 @@ export function RecommendedCards(props: {
     ? null
     : !roles?.length
       ? picks
-      : roles.map((r) => picks.find((p) => p.role === r)).filter((p): p is RecommendedPick => !!p);
+      : roles
+          .map((r) => picks.find((p) => p.role === r))
+          .filter((p): p is RecommendedPick => !!p && (!families || (!!p.familyId && families.includes(p.familyId))));
   const offered = shown && offers ? shown.filter((p) => isOffer(p) && p.fit === "fits" && (offers === "all" || !!p.replacesInstalled)) : shown;
 
   const get = useCallback(async (role: string) => {

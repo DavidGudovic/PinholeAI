@@ -153,8 +153,9 @@ export function buildEditRequest(
       fineTune,
       loras: [],
       addTriggerWords: false,
-      refImageIds: [opts.source.id],
-      maskImageId: opts.maskImageId,
+      // Image 1 = the one being edited; image 2 = the optional second image (no mask with two).
+      refImageIds: e.secondImageId ? [opts.source.id, e.secondImageId] : [opts.source.id],
+      maskImageId: e.secondImageId ? null : opts.maskImageId,
     };
   }
   return {

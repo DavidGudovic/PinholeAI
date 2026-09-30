@@ -241,6 +241,11 @@ Two modes, picked automatically:
    - Dial: **Stay close to original** (maps to the family's guidance setting; hidden when the
      family has a fixed CFG and no guidance, e.g. distilled FLUX.2 klein).
    - Optional **"Only change here"** brush: paint a mask → `mask_image`.
+   - Optional **"Add another image"**: a second picture (image 2) for edits like "put the
+     bottle from image 2 on the shelf". Sent as `ref_images[1]`; only models with
+     `multi_ref: true` (Qwen Image Edit, FLUX.2) are offered then, and one that Fits wins the
+     automatic pick. The brush is hidden while image 2 is there. Image 2 stays in memory like
+     the edit chain until it is removed or Reset.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
 
