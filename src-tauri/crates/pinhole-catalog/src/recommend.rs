@@ -13,19 +13,12 @@ use crate::families::{self, mb_to_bytes, normalize_sha, QuantOption};
 use crate::view::RecommendedPick;
 
 /// Display order of roles; other roles in the YAML follow alphabetically.
-pub const ROLE_ORDER: [&str; 6] = [
-    "realistic",
-    "realistic_detail",
-    "anime",
-    "edit",
-    "edit_alt",
-    "describe",
-];
+pub const ROLE_ORDER: [&str; 5] = ["realistic", "realistic_fast", "anime", "edit", "describe"];
 
-/// Extra cards next to a main role (e.g. a second, slower Realistic model for
-/// 12 GB+ cards). [`recommend`] leaves them out when none of their candidates
+/// Extra cards next to a main role (the fast Realistic model next to
+/// Qwen-Image 2.1). [`recommend`] leaves them out when none of their candidates
 /// fits this machine: no card at all rather than a "doesn't fit" card.
-pub const OPTIONAL_ROLES: [&str; 2] = ["realistic_detail", "edit_alt"];
+pub const OPTIONAL_ROLES: [&str; 1] = ["realistic_fast"];
 
 /// One file to download and how to register it afterwards.
 #[derive(Debug, Clone, PartialEq)]
@@ -65,9 +58,9 @@ pub struct PickPlan {
 
 pub fn role_label(role: &str) -> String {
     match role {
-        "realistic" | "realistic_detail" => "Realistic".into(),
+        "realistic" | "realistic_fast" => "Realistic".into(),
         "anime" => "Anime".into(),
-        "edit" | "edit_alt" => "Edit".into(),
+        "edit" => "Edit".into(),
         "describe" => "Describe".into(),
         other => {
             let mut c = other.chars();
@@ -82,10 +75,11 @@ fn good_at(role: &str) -> Option<String> {
     Some(
         match role {
             "realistic" => "Photos and lifelike pictures",
-            "realistic_detail" => "More detailed photos and lifelike pictures, slower to make",
+            "realistic_fast" => {
+                "Photos and lifelike pictures, several times faster; a little less detail"
+            }
             "anime" => "Anime and illustration",
             "edit" => "Changing a picture by describing the change",
-            "edit_alt" => "Changing a picture by describing the change; lighter and faster, a little less precise",
             "describe" => "Turning a picture into a prompt",
             _ => return None,
         }
@@ -113,22 +107,15 @@ pub fn recommend(registry: &Registry, index: &InstalledIndex, hw: &HwContext) ->
         .filter_map(|r| recommend_role(registry, index, hw, r))
         .filter(|p| !(OPTIONAL_ROLES.contains(&p.pick.role.as_str()) && p.pick.title.is_none()))
         .collect();
-    // A second card that repeats the first one's model (e.g. the lighter edit
-    // model is already the Edit pick on a small card) is left out.
-    let family_of = |role: &str| {
-        picks
-            .iter()
-            .find(|p| p.pick.role == role)
-            .and_then(|p| p.pick.family_id.clone())
-    };
-    let (edit, realistic) = (family_of("edit"), family_of("realistic"));
+    // A second card that repeats the first one's model (the fast model is
+    // already the Realistic pick on a smaller card) is left out.
+    let realistic = picks
+        .iter()
+        .find(|p| p.pick.role == "realistic")
+        .and_then(|p| p.pick.family_id.clone());
     picks
         .into_iter()
-        .filter(|p| match p.pick.role.as_str() {
-            "edit_alt" => p.pick.family_id != edit,
-            "realistic_detail" => p.pick.family_id != realistic,
-            _ => true,
-        })
+        .filter(|p| p.pick.role != "realistic_fast" || p.pick.family_id != realistic)
         .collect()
 }
 
@@ -338,9 +325,24 @@ fn registry_pick(
             .map(families::need_from)
             .unwrap_or_else(|| families::estimate_need(registry, fam, hw, index, o.size_bytes))
     };
-    let chosen = families::choose_quant(&options, prefer.as_deref(), |o| {
+    // `min_quant`: only versions at least this good, and only when one Fits.
+    let floor = cand.min_quant.as_deref().map(families::quant_rank);
+    // A weight type the table doesn't know (`iq4_xs`, a file without one) doesn't pass a floor.
+    let good_enough = |quant: &str| {
+        floor.is_none_or(|f| {
+            let q = families::quant_of_file(quant);
+            q != "unknown" && families::quant_rank(&q) <= f
+        })
+    };
+    let eligible: Vec<QuantOption> = options
+        .iter()
+        .filter(|o| good_enough(&o.quant))
+        .cloned()
+        .collect();
+    let chosen = families::choose_quant(&eligible, prefer.as_deref(), |o| {
         families::need_and_fit(registry, fam, hw, index, need_of(o), o.size_bytes)
-    });
+    })
+    .filter(|(_, _, f)| floor.is_none() || *f == Fit::Fits);
 
     // Installed versions of this family, best fit first.
     let mut installed: Vec<(&InstalledFile, VramNeed, Fit)> = index
@@ -357,6 +359,7 @@ fn registry_pick(
             );
             (m, n, f)
         })
+        .filter(|(m, _, _)| good_enough(&installed_quant(m)))
         .collect();
     installed.sort_by_key(|(_, _, f)| fit_rank(*f));
     let mut note = None;
@@ -371,11 +374,11 @@ fn registry_pick(
                     .any(|(i, _, _)| option_of(&options, i).is_some_and(|io| io.file == o.file))
         });
         if smaller.is_none() {
+            if floor.is_some() && fit != Fit::Fits {
+                return Err(Skip::Vram);
+            }
             let complete = required_complete(registry, fam, hw, index);
-            let quant = m
-                .dtype
-                .clone()
-                .unwrap_or_else(|| families::quant_of_file(&m.rel_path));
+            let quant = installed_quant(m);
             return Ok(PickPlan {
                 pick: RecommendedPick {
                     role: role.into(),
@@ -461,6 +464,13 @@ fn registry_pick(
             files,
         },
     })
+}
+
+/// Weight type of an installed file: from its header, else its file name.
+fn installed_quant(m: &InstalledFile) -> String {
+    m.dtype
+        .clone()
+        .unwrap_or_else(|| families::quant_of_file(&m.rel_path))
 }
 
 fn fit_rank(f: Fit) -> u8 {
@@ -638,6 +648,13 @@ mod tests {
 
     const MB: u64 = 1_000_000;
 
+    /// An installed Qwen-Image 2.1 file with its real size (its need is estimated from it).
+    fn q21(id: &str, file: &str, size_bytes: u64) -> InstalledFile {
+        let mut f = model(id, "qwen_image_21", ModelKind::Diffusion, file);
+        f.size_bytes = size_bytes;
+        f
+    }
+
     fn picks(vram: f32, idx: &InstalledIndex) -> Vec<PickPlan> {
         recommend(&registry(), idx, &hw(vram))
     }
@@ -660,20 +677,12 @@ mod tests {
         let roles: Vec<&str> = p.iter().map(|p| p.pick.role.as_str()).collect();
         assert_eq!(
             roles,
-            [
-                "realistic",
-                "realistic_detail",
-                "anime",
-                "edit",
-                "edit_alt",
-                "describe"
-            ]
+            ["realistic", "realistic_fast", "anime", "edit", "describe"]
         );
         assert_eq!(p[0].pick.role_label, "Realistic");
         assert_eq!(p[1].pick.role_label, "Realistic", "second Realistic card");
         assert!(p[0].pick.good_at.is_some() && p[1].pick.good_at.is_some());
-        // The optional second Realistic card only appears when it fits.
-        // …and the lighter edit card only when it isn't already the Edit pick.
+        // The fast second Realistic card only appears when it isn't already the Realistic pick.
         let roles: Vec<String> = picks(8.0, &index(vec![]))
             .into_iter()
             .map(|p| p.pick.role)
@@ -694,8 +703,8 @@ mod tests {
         );
         assert_eq!(
             summary(role(&p, "edit")),
-            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight)),
-            "Qwen Edit needs 12 GB"
+            (Some("qwen_image_21"), Some("q4_k"), Some(Fit::Tight)),
+            "the 7B Qwen-Image 2.1 in 4-bit is the smallest edit model"
         );
         // z_image q4_k + flux_ae + Qwen3-4B Q4_K_M (the 8 GB bf16 encoder only from 20 GB)
         assert_eq!(
@@ -752,42 +761,93 @@ mod tests {
         );
         assert_eq!(
             summary(role(&p, "edit")),
-            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Tight))
+            (Some("qwen_image_21"), Some("q4_k"), Some(Fit::Tight))
         );
     }
 
     #[test]
     fn twelve_gb() {
         let p = picks(12.0, &index(vec![]));
-        // Q8 needs 12 GB to be comfortable (registry figure): the Q4 that Fits wins over a Tight Q8.
+        // Qwen-Image 2.1 Q6_K Fits (9.8 GB estimate); Q8_0 (11.3) would be Tight.
         assert_eq!(
             summary(role(&p, "realistic")),
+            (Some("qwen_image_21"), Some("q6_k"), Some(Fit::Fits))
+        );
+        // Z-Image Q8 needs 12 GB to be comfortable (registry figure): the Q4 that Fits.
+        assert_eq!(
+            summary(role(&p, "realistic_fast")),
             (Some("z_image_turbo"), Some("q4_k"), Some(Fit::Fits))
         );
         assert_eq!(
             summary(role(&p, "anime")),
             (Some("sdxl_illustrious"), None, Some(Fit::Fits))
         );
-        // No Qwen Edit version Fits 12 GB; Q3_K_M is the closest (Tight).
         assert_eq!(
             summary(role(&p, "edit")),
-            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Tight))
+            (Some("qwen_image_21"), Some("q6_k"), Some(Fit::Fits))
         );
     }
 
     #[test]
-    fn sixteen_gb_runs_q8_z_image_and_qwen_edit() {
-        // SPEC §6: the 16 GB tier runs Z-Image Turbo Q8_0 + the Q8_0 GGUF text encoder
-        // (bf16 + bf16 ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511 Q3_K_M
-        // (Q4_K_M ran only at the smallest size / fastest setting on a real 16 GB card).
+    fn sixteen_gb_runs_q8_qwen_image_21_for_create_and_edit() {
+        // One download does both: Qwen-Image 2.1 Q8_0 + its VAE + the Qwen3-VL 8B Q4_K_M
+        // text encoder (Q8 only from 20 GB) + the vision file edits need.
         let p = picks(16.0, &index(vec![]));
         let r = role(&p, "realistic");
         assert_eq!(
             summary(r),
+            (Some("qwen_image_21"), Some("q8_0"), Some(Fit::Fits))
+        );
+        assert_eq!(r.pick.title.as_deref(), Some("Qwen-Image 2.1"));
+        assert_eq!(
+            r.pick.license_note.as_deref(),
+            Some("Qwen Research License")
+        );
+        assert_eq!(r.pick.download_bytes, (7687 + 676 + 5028 + 1159) * MB);
+        let v = r.pick.vram.unwrap();
+        assert!(v.estimate);
+        // 7.16 GiB weights + 0.63 VAE + 3.0 activations + 0.5 reserve.
+        assert_eq!((v.gb, v.min_gb), (11.3, 7.1));
+        assert_eq!(
+            r.pick.note.as_deref(),
+            Some(SMALLER_NOTE),
+            "bf16 is the full version"
+        );
+        match &r.action {
+            PickAction::Download { files, .. } => {
+                assert_eq!(files[0].file_name, "qwen_image_2.1-Q8_0.gguf");
+                assert_eq!(files[0].kind, ModelKind::Diffusion);
+                assert_eq!(files[0].friendly_name, "Qwen-Image 2.1 (Q8)");
+                assert_eq!(
+                    files[0].sha256.as_deref(),
+                    Some("f8b244b00937f0e444a40dbf7866460871b89b30142594973b6012d1b471dc0a")
+                );
+                assert!(files[0]
+                    .url
+                    .starts_with("https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/"));
+                let comps: Vec<_> = files[1..]
+                    .iter()
+                    .map(|f| f.component_id.as_deref().unwrap())
+                    .collect();
+                assert_eq!(comps.len(), 3);
+                for c in ["qwen_image_21_vae", "qwen3vl_8b_q4km", "qwen3vl_8b_mmproj"] {
+                    assert!(comps.contains(&c), "{c}");
+                }
+            }
+            other => panic!("{other:?}"),
+        }
+        let e = role(&p, "edit");
+        assert_eq!(summary(e), summary(r));
+        assert_eq!(e.pick.download_bytes, r.pick.download_bytes);
+        // Z-Image Turbo Q8_0 + the Q8_0 GGUF text encoder is the fast second card
+        // (bf16 + bf16 ran out of VRAM on a real 16 GB card).
+        let f = role(&p, "realistic_fast");
+        assert_eq!(
+            summary(f),
             (Some("z_image_turbo"), Some("q8_0"), Some(Fit::Fits))
         );
-        assert_eq!(r.pick.download_bytes, (6577 + 335 + 4280) * MB);
-        match &r.action {
+        assert_eq!(f.pick.download_bytes, (6577 + 335 + 4280) * MB);
+        match &f.action {
             PickAction::Download { files, .. } => {
                 assert_eq!(files[0].file_name, "z_image_turbo-Q8_0.gguf");
                 assert!(files
@@ -802,30 +862,6 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(
-            r.pick.note.as_deref(),
-            Some(SMALLER_NOTE),
-            "bf16 is the full version"
-        );
-        let e = role(&p, "edit");
-        assert_eq!(
-            summary(e),
-            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits))
-        );
-        assert_eq!(e.pick.vram.unwrap().gb, 13.0);
-        assert_eq!(e.pick.vram.unwrap().min_gb, 9.0);
-        assert!(!e.pick.vram.unwrap().estimate);
-        assert_eq!(e.pick.note.as_deref(), Some(SMALLER_NOTE));
-        match &e.action {
-            PickAction::Download { files, .. } => {
-                assert_eq!(files[0].file_name, "qwen-image-edit-2511-Q3_K_M.gguf");
-                assert_eq!(
-                    files[0].sha256.as_deref(),
-                    Some("5631fd3a407880e1fb541dc47696628633c898565136c128d5a2741d4b84e9e9")
-                );
-            }
-            other => panic!("{other:?}"),
-        }
     }
 
     #[test]
@@ -834,107 +870,169 @@ mod tests {
         let r = role(&p, "realistic");
         assert_eq!(
             summary(r),
-            (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits))
+            (Some("qwen_image_21"), Some("bf16"), Some(Fit::Fits))
         );
         assert_eq!(
             r.pick.download_bytes,
+            (14230 + 676 + 8710 + 1159) * MB,
+            "bf16 model + Q8 text encoder"
+        );
+        assert_eq!(r.pick.note, None, "full version, no note");
+        assert_eq!(summary(role(&p, "edit")), summary(r));
+        let f = role(&p, "realistic_fast");
+        assert_eq!(
+            summary(f),
+            (Some("z_image_turbo"), Some("bf16"), Some(Fit::Fits))
+        );
+        assert_eq!(
+            f.pick.download_bytes,
             (12310 + 335 + 8045) * MB,
             "bf16 model + bf16 encoder"
-        );
-        assert_eq!(
-            summary(role(&p, "edit")),
-            (Some("qwen_image_edit_2511"), Some("q6_k"), Some(Fit::Fits))
-        );
-        assert_eq!(
-            role(&p, "realistic").pick.note,
-            None,
-            "full version, no note"
         );
     }
 
     #[test]
-    fn krea2_turbo_is_a_second_realistic_pick_from_12_gb() {
-        // Q5_K_S until Q8_0 Fits (24 GB); not offered below 12 GB or without a GPU.
-        for (vram, want) in [
-            (12.0, Some(("q5_k", Fit::Tight))),
-            (16.0, Some(("q5_k", Fit::Tight))),
-            (19.9, Some(("q5_k", Fit::Fits))),
-            (20.0, Some(("q5_k", Fit::Fits))), // a Q5 that Fits beats a Tight Q8
-            (24.0, Some(("q8_0", Fit::Fits))),
-            (11.9, None),
-            (8.0, None),
-            (0.0, None),
-        ] {
+    fn picks_by_card() {
+        // The table in config/models.yaml → recommended. Real cards report a little
+        // under their size (a "16 GB" card is ~15.9 GiB).
+        type Row = (
+            f32,
+            (&'static str, &'static str),
+            Option<&'static str>,
+            (&'static str, &'static str),
+        );
+        let rows: [Row; 8] = [
+            (
+                5.8,
+                ("z_image_turbo", "q4_k"),
+                None,
+                ("qwen_image_21", "q4_k"),
+            ),
+            (
+                7.8,
+                ("z_image_turbo", "q4_k"),
+                None,
+                ("qwen_image_21", "q4_k"),
+            ),
+            (
+                9.8,
+                ("z_image_turbo", "q4_k"),
+                None,
+                ("qwen_image_21", "q4_k"),
+            ),
+            (
+                11.8,
+                ("qwen_image_21", "q6_k"),
+                Some("q4_k"),
+                ("qwen_image_21", "q6_k"),
+            ),
+            (
+                15.8,
+                ("qwen_image_21", "q8_0"),
+                Some("q8_0"),
+                ("qwen_image_21", "q8_0"),
+            ),
+            (
+                19.8,
+                ("qwen_image_21", "q8_0"),
+                Some("q8_0"),
+                ("qwen_image_21", "q8_0"),
+            ),
+            (
+                23.8,
+                ("qwen_image_21", "bf16"),
+                Some("bf16"),
+                ("qwen_image_21", "bf16"),
+            ),
+            (
+                31.8,
+                ("qwen_image_21", "bf16"),
+                Some("bf16"),
+                ("qwen_image_21", "bf16"),
+            ),
+        ];
+        for (vram, (rf, rq), fast, (ef, eq)) in rows {
             let p = picks(vram, &index(vec![]));
-            // Z-Image Turbo stays the first Realistic pick.
-            assert_ne!(
-                role(&p, "realistic").pick.family_id.as_deref(),
-                Some("krea2_turbo"),
+            let r = role(&p, "realistic");
+            assert_eq!(
+                (r.pick.family_id.as_deref(), r.pick.quant.as_deref()),
+                (Some(rf), Some(rq)),
+                "{vram} GB realistic"
+            );
+            // Qwen-Image 2.1 is only picked when a Q6 or better version Fits.
+            if rf == "qwen_image_21" {
+                assert_eq!(r.pick.fit, Some(Fit::Fits), "{vram} GB");
+            }
+            let f = p.iter().find(|p| p.pick.role == "realistic_fast");
+            assert_eq!(
+                f.map(|f| (f.pick.family_id.as_deref(), f.pick.quant.as_deref())),
+                fast.map(|q| (Some("z_image_turbo"), Some(q))),
+                "{vram} GB fast card"
+            );
+            let e = role(&p, "edit");
+            assert_eq!(
+                (e.pick.family_id.as_deref(), e.pick.quant.as_deref()),
+                (Some(ef), Some(eq)),
+                "{vram} GB edit"
+            );
+            // Nothing recommended is too big for the card.
+            assert!(
+                p.iter().all(|p| p.pick.fit != Some(Fit::TooBig)),
                 "{vram} GB"
             );
-            let k = p.iter().find(|p| p.pick.role == "realistic_detail");
-            match want {
-                Some((quant, fit)) => {
-                    assert_eq!(
-                        summary(k.unwrap()),
-                        (Some("krea2_turbo"), Some(quant), Some(fit)),
-                        "{vram} GB"
-                    );
-                }
-                None => assert!(k.is_none(), "{vram} GB: no card when it doesn't fit"),
-            }
         }
         let p = picks(16.0, &index(vec![]));
-        let k = role(&p, "realistic_detail");
+        let f = role(&p, "realistic_fast");
+        assert_eq!(f.pick.title.as_deref(), Some("Z-Image Turbo"));
+        assert_eq!(f.pick.role_label, "Realistic");
+        assert!(f.pick.good_at.as_deref().unwrap().contains("faster"));
+        // No fast card without a GPU either (Z-Image is too big for the processor).
+        assert!(picks(0.0, &index(vec![]))
+            .iter()
+            .all(|p| p.pick.role != "realistic_fast"));
+    }
+
+    #[test]
+    fn qwen_image_21_needs_a_good_version_that_fits_for_create() {
+        let reg = registry();
+        // 10 GB: its Q6_K would be Tight → Z-Image Turbo, while Edit takes the Q4_K that Fits.
+        let p = recommend(&reg, &index(vec![]), &hw(10.0));
         assert_eq!(
-            k.pick.title.as_deref(),
-            Some("Krea 2 Turbo — more detail, slower")
+            role(&p, "realistic").pick.family_id.as_deref(),
+            Some("z_image_turbo")
         );
-        assert_eq!(k.pick.role_label, "Realistic");
-        assert!(k
-            .pick
-            .license_note
-            .as_deref()
-            .unwrap()
-            .starts_with("Krea 2 Community License"));
-        // Q5_K_S + Qwen3-VL 4B Q8_0 + the Qwen-Image (Wan 2.1 layout) VAE.
-        assert_eq!(k.pick.download_bytes, (8819 + 4280 + 254) * MB);
-        match &k.action {
-            PickAction::Download { label, files } => {
-                assert_eq!(label, "Krea 2 Turbo — more detail, slower");
-                assert_eq!(files[0].file_name, "Krea-2-Turbo-Q5_K_S.gguf");
-                assert_eq!(files[0].friendly_name, "Krea 2 Turbo (Q5)");
-                assert_eq!(files[0].kind, ModelKind::Diffusion);
-                assert_eq!(files[0].family.as_deref(), Some("krea2_turbo"));
-                assert!(files[0].url.starts_with(
-                    "https://huggingface.co/realrebelai/KREA-2_GGUFs/resolve/main/TURBO/"
-                ));
-                assert_eq!(
-                    files[0].sha256.as_deref(),
-                    Some("2d9a6bfb1b9ef512b040af72b59ce8c4a564f834a083747f3a6e7d3781e8b6dd")
-                );
-                let comps: Vec<_> = files[1..]
-                    .iter()
-                    .map(|f| f.component_id.as_deref().unwrap())
-                    .collect();
-                assert_eq!(comps.len(), 2);
-                assert!(comps.contains(&"qwen3vl_4b_q8") && comps.contains(&"qwen_image_vae"));
-            }
-            other => panic!("{other:?}"),
-        }
-        let k24 =
-            recommend_role(&registry(), &index(vec![]), &hw(24.0), "realistic_detail").unwrap();
-        match &k24.action {
-            PickAction::Download { files, .. } => {
-                assert_eq!(files[0].file_name, "Krea-2-Turbo-Q8_0.gguf")
-            }
-            other => panic!("{other:?}"),
-        }
-        // Asked for directly (install_recommended), a card that doesn't fit explains why.
-        let small =
-            recommend_role(&registry(), &index(vec![]), &hw(8.0), "realistic_detail").unwrap();
-        assert_eq!(small.action, PickAction::Nothing);
-        assert!(small.pick.unavailable_reason.is_some());
+        assert_eq!(
+            summary(role(&p, "edit")),
+            (Some("qwen_image_21"), Some("q4_k"), Some(Fit::Fits))
+        );
+        // An installed 4-bit copy (e.g. from Edit) is below the floor for Create:
+        // on a 16 GB card Create still offers the Q8_0, Edit keeps using the Q4_K.
+        let idx = index(vec![
+            q21("q4", "qwen_image_2.1-Q4_K.gguf", 4_197_494_816),
+            component(&reg, "qwen_image_21_vae"),
+            component(&reg, "qwen3vl_8b_q4km"),
+            component(&reg, "qwen3vl_8b_mmproj"),
+        ]);
+        let r = recommend_role(&reg, &idx, &hw(16.0), "realistic").unwrap();
+        assert_eq!(
+            summary(&r),
+            (Some("qwen_image_21"), Some("q8_0"), Some(Fit::Fits))
+        );
+        assert!(!r.pick.installed);
+        assert_eq!(r.pick.download_bytes, 7687 * MB, "parts are shared");
+        let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
+        assert!(e.pick.installed);
+        assert_eq!(e.action, PickAction::Nothing);
+        // A weight type the quant table doesn't know (IQ4_XS) doesn't pass the floor either.
+        let mut iq = q21("iq", "qwen_image_2.1-IQ4_XS.gguf", 3_900_000_000);
+        iq.dtype = Some("iq4_xs".into());
+        let r = recommend_role(&reg, &index(vec![iq]), &hw(16.0), "realistic").unwrap();
+        assert!(!r.pick.installed);
+        assert_eq!(r.pick.quant.as_deref(), Some("q8_0"));
+        // Installed Q8_0 on a 10 GB card: Tight, so Create falls back to Z-Image.
+        let idx = index(vec![q21("q8", "qwen_image_2.1-Q8_0.gguf", 7_687_155_744)]);
+        let r = recommend_role(&reg, &idx, &hw(10.0), "realistic").unwrap();
+        assert_eq!(r.pick.family_id.as_deref(), Some("z_image_turbo"));
     }
 
     #[test]
@@ -1095,13 +1193,23 @@ mod tests {
         assert_eq!(r.pick.download_bytes, 0);
         assert_eq!(r.pick.quant.as_deref(), Some("q8_0"));
         assert_eq!(r.action, PickAction::Nothing);
-        // Kontext reuses the installed FLUX VAE: only clip_l + t5xxl_fp8 + the model.
-        let e = role(&p, "edit");
-        assert_eq!(e.pick.download_bytes, (6932 + 246 + 4894) * MB);
+        // Qwen-Image 2.1 with the old Qwen-Image VAE installed: its own VAE is still needed
+        // (not interchangeable), and the text encoder + vision file are counted once.
+        let idx = index(vec![
+            component(&reg, "qwen_image_vae"),
+            component(&reg, "qwen3vl_8b_q4km"),
+        ]);
+        let e = recommend_role(&reg, &idx, &hw(8.0), "edit").unwrap();
+        assert_eq!(e.pick.download_bytes, (4197 + 676 + 1159) * MB);
         match &e.action {
-            PickAction::Download { files, .. } => assert!(files
-                .iter()
-                .all(|f| f.component_id.as_deref() != Some("flux_ae"))),
+            PickAction::Download { files, .. } => {
+                assert!(files
+                    .iter()
+                    .all(|f| f.component_id.as_deref() != Some("qwen3vl_8b_q4km")));
+                assert!(files
+                    .iter()
+                    .any(|f| f.component_id.as_deref() == Some("qwen_image_21_vae")));
+            }
             other => panic!("{other:?}"),
         }
     }
@@ -1118,8 +1226,7 @@ mod tests {
             ),
             component(&reg, "flux_ae"),
         ]);
-        let p = recommend(&reg, &idx, &hw(24.0));
-        let r = role(&p, "realistic");
+        let r = recommend_role(&reg, &idx, &hw(24.0), "realistic_fast").unwrap();
         assert!(!r.pick.installed);
         assert_eq!(
             r.pick.download_bytes,
@@ -1143,7 +1250,7 @@ mod tests {
             component(&reg, "flux_ae"),
             component(&reg, "qwen3_4b_q8"),
         ]);
-        let r = recommend_role(&reg, &idx, &hw(24.0), "realistic").unwrap();
+        let r = recommend_role(&reg, &idx, &hw(24.0), "realistic_fast").unwrap();
         assert!(r.pick.installed);
         assert_eq!(r.pick.download_bytes, 0);
     }
@@ -1151,46 +1258,40 @@ mod tests {
     #[test]
     fn tight_installed_version_offers_the_smaller_one_that_fits() {
         let reg = registry();
-        // Qwen Image Edit Q4_K_M installed on a 16 GB card: Tight. Q3_K_M Fits → offered.
+        // Qwen-Image 2.1 bf16 installed on a 16 GB card: Tight (17.4 GB). Q8_0 Fits → offered.
         let idx = index(vec![
-            model(
-                "qe",
-                "qwen_image_edit_2511",
-                ModelKind::Diffusion,
-                "qwen-image-edit-2511-Q4_K_M.gguf",
-            ),
-            component(&reg, "qwen_image_vae"),
-            component(&reg, "qwen25_vl_7b_q8"),
-            component(&reg, "qwen25_vl_7b_mmproj"),
+            q21("q21", "qwen_image_2.1_bf16.safetensors", 14_230_280_616),
+            component(&reg, "qwen_image_21_vae"),
+            component(&reg, "qwen3vl_8b_q4km"),
+            component(&reg, "qwen3vl_8b_mmproj"),
         ]);
-        let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
-        assert_eq!(
-            summary(&e),
-            (Some("qwen_image_edit_2511"), Some("q3_k"), Some(Fit::Fits))
-        );
-        assert!(!e.pick.installed);
-        assert_eq!(e.pick.note.as_deref(), Some(TIGHT_INSTALLED_NOTE));
-        assert!(e.pick.replaces_installed);
-        assert_eq!(
-            e.pick.download_bytes,
-            9921 * MB,
-            "only the smaller model; parts are shared"
-        );
+        for r in ["realistic", "edit"] {
+            let e = recommend_role(&reg, &idx, &hw(16.0), r).unwrap();
+            assert_eq!(
+                summary(&e),
+                (Some("qwen_image_21"), Some("q8_0"), Some(Fit::Fits)),
+                "{r}"
+            );
+            assert!(!e.pick.installed);
+            assert_eq!(e.pick.note.as_deref(), Some(TIGHT_INSTALLED_NOTE));
+            assert!(e.pick.replaces_installed);
+            assert_eq!(
+                e.pick.download_bytes,
+                7687 * MB,
+                "only the smaller model; parts are shared"
+            );
+        }
         // Once the smaller version is installed, the card shows it as done.
         let mut files = idx.files.clone();
-        files.push(model(
-            "qe3",
-            "qwen_image_edit_2511",
-            ModelKind::Diffusion,
-            "qwen-image-edit-2511-Q3_K_M.gguf",
-        ));
+        files.push(q21("q8", "qwen_image_2.1-Q8_0.gguf", 7_687_155_744));
         let e = recommend_role(&reg, &index(files), &hw(16.0), "edit").unwrap();
         assert!(e.pick.installed);
         assert_eq!(e.pick.fit, Some(Fit::Fits));
         assert_eq!(e.action, PickAction::Nothing);
-        // On a 24 GB card the installed Q4_K_M Fits: nothing to offer.
+        // On a 24 GB card the installed bf16 Fits: nothing to offer (the Q8 text encoder
+        // is the one missing part there).
         let e = recommend_role(&reg, &idx, &hw(24.0), "edit").unwrap();
-        assert!(e.pick.installed);
+        assert_eq!(e.pick.quant.as_deref(), Some("bf16"));
         assert_eq!(e.pick.note, None);
     }
 
@@ -1270,21 +1371,30 @@ mod tests {
     }
 
     #[test]
-    fn a_lighter_edit_model_is_offered_next_to_qwen_edit() {
-        let p = picks(16.0, &index(vec![]));
-        let alt = role(&p, "edit_alt");
+    fn older_edit_models_are_no_longer_offered() {
+        // Qwen Image Edit 2511 installed on 16 GB (as before Qwen-Image 2.1): the Edit card
+        // now offers Qwen-Image 2.1, which runs there at Q8 instead of a 3-bit copy.
+        let reg = registry();
+        let idx = index(vec![
+            model(
+                "qe",
+                "qwen_image_edit_2511",
+                ModelKind::Diffusion,
+                "qwen-image-edit-2511-Q3_K_M.gguf",
+            ),
+            component(&reg, "qwen_image_vae"),
+            component(&reg, "qwen25_vl_7b_q8"),
+            component(&reg, "qwen25_vl_7b_mmproj"),
+        ]);
+        let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
         assert_eq!(
-            summary(alt),
-            (Some("flux1_kontext"), Some("q4_k"), Some(Fit::Fits))
+            summary(&e),
+            (Some("qwen_image_21"), Some("q8_0"), Some(Fit::Fits))
         );
-        assert_eq!(alt.pick.role_label, "Edit");
-        assert_eq!(
-            alt.pick.title.as_deref(),
-            Some("FLUX.1 Kontext — lighter, faster edits")
-        );
-        // Small cards: Kontext is already the Edit pick → no second card.
-        assert!(picks(8.0, &index(vec![]))
+        assert!(!e.pick.installed);
+        assert!(!e.pick.replaces_installed);
+        assert!(picks(16.0, &index(vec![]))
             .iter()
-            .all(|p| p.pick.role != "edit_alt"));
+            .all(|p| !["edit_alt", "realistic_detail"].contains(&p.pick.role.as_str())));
     }
 }

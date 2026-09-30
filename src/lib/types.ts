@@ -271,7 +271,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | edit_alt (optional lighter edit model) | describe */
+  /** realistic | realistic_fast (optional fast second Realistic card) | anime | edit | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */

@@ -23,7 +23,7 @@ pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option
     let family = file.family.as_deref()?;
     for (role, label) in [
         ("realistic", "Realistic"),
-        ("realistic_detail", "Realistic"),
+        ("realistic_fast", "Realistic"),
         ("anime", "Anime"),
     ] {
         let heads = registry

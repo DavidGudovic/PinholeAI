@@ -77,7 +77,7 @@ fn shipped_registry_loads_and_validates() {
     );
     assert_eq!(
         reg.recommended()["edit"][0].family.as_deref(),
-        Some("qwen_image_edit_2511")
+        Some("qwen_image_21")
     );
     assert!(reg.captioner().default.is_some());
 }
@@ -507,16 +507,41 @@ families:
 }
 
 #[test]
-fn krea2_turbo_is_the_second_realistic_download() {
+fn qwen_image_21_heads_realistic_and_edit() {
     let reg = shipped();
+    let r = &reg.recommended()["realistic"];
+    assert_eq!(r[0].family.as_deref(), Some("qwen_image_21"));
+    assert_eq!(r[0].min_quant.as_deref(), Some("q6_k"));
+    assert_eq!(r[1].family.as_deref(), Some("z_image_turbo"));
     assert_eq!(
-        reg.recommended()["realistic"][0].family.as_deref(),
-        Some("z_image_turbo"),
-        "Z-Image Turbo stays the first Realistic pick"
+        reg.recommended()["realistic_fast"][0].family.as_deref(),
+        Some("z_image_turbo")
     );
-    let k = &reg.recommended()["realistic_detail"][0];
-    assert_eq!(k.family.as_deref(), Some("krea2_turbo"));
-    assert_eq!(k.source.as_deref(), Some("registry"));
+    assert_eq!(
+        reg.recommended()["edit"][0].family.as_deref(),
+        Some("qwen_image_21")
+    );
+    let f = reg.family("qwen_image_21").unwrap();
+    assert!(f.multi_ref && f.modes.iter().any(|m| m == "edit"));
+    assert_eq!(f.edit_priority, Some(1));
+    let d = f.download.as_ref().unwrap();
+    assert_eq!(d.file, "qwen_image_2.1_bf16.safetensors");
+    // GGUF quants made with the engine's own converter (docs/qwen_image_2.1.md).
+    for q in ["q8_0", "q6_k", "q4_k"] {
+        let a = &d.alt_quants[q];
+        assert!(
+            a.url
+                .starts_with("https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/resolve/main/"),
+            "{q}"
+        );
+        assert_eq!(reg.known_file(&a.sha256).unwrap().family, "qwen_image_21");
+    }
+    assert!(reg.known_file(&d.sha256).is_some());
+}
+
+#[test]
+fn krea2_turbo_registry_files() {
+    let reg = shipped();
     // Ungated GGUF mirror named by docs/krea2.md (krea/Krea-2-* are gated).
     let d = reg
         .family("krea2_turbo")

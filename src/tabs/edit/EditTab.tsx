@@ -84,7 +84,7 @@ import { useFitBox } from "./useFitBox";
 type SizeChoice = EditSizeChoice;
 
 // Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
-const TWO_IMAGE_PICKS = ["qwen_image_edit_2511"];
+const TWO_IMAGE_PICKS = ["qwen_image_21"];
 
 const EDIT_JOBS = ["edit", "editUpscale"] as const;
 
@@ -515,12 +515,12 @@ export function EditTab() {
                     {noGpu
                       ? "Pinhole didn't find one it can use, and edit models are too big for the processor. Switch to Restyle — it works with the model you already have."
                       : twoImages
-                        ? "Qwen Image Edit and FLUX.2 models can use a second image. Or remove the second image to edit with the model you have."
+                        ? "Qwen-Image 2.1, Qwen Image Edit and FLUX.2 models can use a second image. Or remove the second image to edit with the model you have."
                         : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
                 <RecommendedCards
-                  roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                  roles={["edit"]}
                   families={twoImages ? TWO_IMAGE_PICKS : undefined}
                   compact
                 />
@@ -537,7 +537,7 @@ export function EditTab() {
                 />
                 {editFit && editFit !== "fits" && !noGpu && (
                   <RecommendedCards
-                    roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                    roles={["edit"]}
                     families={twoImages ? TWO_IMAGE_PICKS : undefined}
                     compact
                     offers="all"

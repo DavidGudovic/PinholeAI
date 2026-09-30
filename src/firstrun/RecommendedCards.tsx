@@ -13,19 +13,17 @@ import { isActive, machinePlain, quantPlain } from "../tabs/models/lib/words";
 
 const ROLE_ICON: Record<string, ReactNode> = {
   realistic: <Camera className="h-4 w-4" />,
-  // Optional second Realistic card (Krea 2 Turbo on 12 GB+); absent when it doesn't fit.
-  realistic_detail: <Camera className="h-4 w-4" />,
+  // Optional fast second Realistic card (Z-Image Turbo next to Qwen-Image 2.1, 12 GB+).
+  realistic_fast: <Camera className="h-4 w-4" />,
   anime: <Sparkles className="h-4 w-4" />,
   edit: <WandSparkles className="h-4 w-4" />,
-  // Optional lighter edit model (FLUX.1 Kontext); absent when it doesn't fit.
-  edit_alt: <WandSparkles className="h-4 w-4" />,
   describe: <ScanText className="h-4 w-4" />,
 };
 
 const GET_ALL_ROLES = ["realistic", "edit"];
 
 export function RecommendedCards(props: {
-  /** Subset of roles to show (realistic | realistic_detail | anime | edit | edit_alt | describe); default all. */
+  /** Subset of roles to show (realistic | realistic_fast | anime | edit | describe); default all. */
   roles?: string[];
   /**
    * Only picks you can still get: "all" = anything not installed; "tightInstalled" = only
@@ -162,7 +160,10 @@ function GetAllBar({
     return !!starting[role] || (!!g && isActive(g));
   };
   const todo = picks.filter((p) => !busy(p.role));
-  const total = todo.reduce((a, p) => a + p.downloadBytes, 0);
+  // Realistic and Edit can be the same model (Qwen-Image 2.1): it downloads once, so count it once.
+  const total = todo
+    .filter((p, i) => todo.findIndex((o) => o.familyId === p.familyId && o.quant === p.quant) === i)
+    .reduce((a, p) => a + p.downloadBytes, 0);
   const names = GET_ALL_ROLES.map((r) => allPicks.find((p) => p.role === r)?.roleLabel ?? r).join(" + ");
   const todoNames = todo.map((p) => p.roleLabel).join(" + ");
   const allDone = GET_ALL_ROLES.every((r) => allPicks.find((p) => p.role === r)?.installed);
