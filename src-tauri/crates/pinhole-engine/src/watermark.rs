@@ -22,8 +22,8 @@ const COEFFS: [(usize, usize); 5] = [(1, 2), (2, 1), (2, 2), (1, 3), (3, 1)];
 const KEY: u64 = 0x4d41_4445_5749_5448; // "MADEWITH"
 /// Pattern strength in DCT units before masking.
 const STRENGTH: f32 = 4.0;
-/// Pictures smaller than this on either side aren't marked (and can't be detected).
-pub const MIN_SIDE: u32 = 64;
+/// Pictures smaller than this on either side aren't marked (too small to carry it reliably).
+pub const MIN_SIDE: u32 = 96;
 /// Score above which a picture counts as marked (unmarked pictures: ~N(0, 1)).
 pub const DETECT_THRESHOLD: f32 = 6.0;
 
@@ -66,34 +66,51 @@ fn basis() -> [[f32; BLOCK]; BLOCK] {
     b
 }
 
-/// Brightness (0–255) of the picture, shrunk to the grid by area averaging.
+/// Brightness (0–255) of the picture on the grid: an area average where the picture is at
+/// least `GRID` pixels along an axis, bilinear sampling where it is smaller.
 fn luma_grid(rgba: &[u8], width: u32, height: u32) -> Grid {
     let (w, h) = (width as usize, height as usize);
+    let luma: Vec<f32> = rgba
+        .chunks_exact(4)
+        .map(|p| 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32)
+        .collect();
+    // Small side(s): stretch to at least the grid first, so every grid cell gets pixels.
+    let (tw, th) = (w.max(GRID), h.max(GRID));
+    let (src, w, h) = if (tw, th) == (w, h) {
+        (luma, w, h)
+    } else {
+        let mut big = vec![0.0f32; tw * th];
+        for y in 0..th {
+            for x in 0..tw {
+                big[y * tw + x] = bilinear(&luma, w, h, tw, th, x, y);
+            }
+        }
+        (big, tw, th)
+    };
     let mut sum = vec![0.0f32; GRID * GRID];
     let mut count = vec![0u32; GRID * GRID];
     for y in 0..h {
         let gy = y * GRID / h;
         for x in 0..w {
             let gx = x * GRID / w;
-            let p = &rgba[(y * w + x) * 4..][..3];
-            sum[gy * GRID + gx] += 0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32;
+            sum[gy * GRID + gx] += src[y * w + x];
             count[gy * GRID + gx] += 1;
         }
     }
     sum.iter()
         .zip(&count)
-        .map(|(s, c)| if *c > 0 { s / *c as f32 } else { 0.0 })
+        .map(|(s, c)| s / (*c).max(1) as f32)
         .collect()
 }
 
-/// Bilinear sample of the grid at picture pixel (x, y) of a `width`×`height` picture.
-fn upsample(grid: &[f32], width: usize, height: usize, x: usize, y: usize) -> f32 {
-    let gx = ((x as f32 + 0.5) * GRID as f32 / width as f32 - 0.5).clamp(0.0, (GRID - 1) as f32);
-    let gy = ((y as f32 + 0.5) * GRID as f32 / height as f32 - 0.5).clamp(0.0, (GRID - 1) as f32);
-    let (x0, y0) = (gx.floor() as usize, gy.floor() as usize);
-    let (x1, y1) = ((x0 + 1).min(GRID - 1), (y0 + 1).min(GRID - 1));
-    let (fx, fy) = (gx - x0 as f32, gy - y0 as f32);
-    let at = |x: usize, y: usize| grid[y * GRID + x];
+/// Bilinear sample of a `sw`×`sh` buffer at pixel (x, y) of a `dw`×`dh` target.
+fn bilinear(src: &[f32], sw: usize, sh: usize, dw: usize, dh: usize, x: usize, y: usize) -> f32 {
+    let sx = ((x as f32 + 0.5) * sw as f32 / dw as f32 - 0.5).clamp(0.0, (sw - 1) as f32);
+    let sy = ((y as f32 + 0.5) * sh as f32 / dh as f32 - 0.5).clamp(0.0, (sh - 1) as f32);
+    let (x0, y0) = (sx.floor() as usize, sy.floor() as usize);
+    let (x1, y1) = ((x0 + 1).min(sw - 1), (y0 + 1).min(sh - 1));
+    let (fx, fy) = (sx - x0 as f32, sy - y0 as f32);
+    let at = |x: usize, y: usize| src[y * sw + x];
     (at(x0, y0) * (1.0 - fx) + at(x1, y0) * fx) * (1.0 - fy)
         + (at(x0, y1) * (1.0 - fx) + at(x1, y1) * fx) * fy
 }
@@ -140,7 +157,7 @@ pub fn embed(rgba: &mut [u8], width: u32, height: u32) {
     }
     let (w, h) = (width as usize, height as usize);
     for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
-        let r = upsample(&residual, w, h, i % w, i / w);
+        let r = bilinear(&residual, GRID, GRID, w, h, i % w, i / w);
         for c in &mut px[..3] {
             *c = (*c as f32 + r).round().clamp(0.0, 255.0) as u8;
         }
@@ -267,6 +284,35 @@ mod tests {
             let (s, sw, sh) = half(&jpeg(&clean, w, h, 85), w, h);
             assert!(!is_marked(&s, sw, sh), "{}", detect(&s, sw, sh));
         }
+    }
+
+    #[test]
+    fn pictures_smaller_than_the_grid() {
+        for (w, h) in [(192u32, 192u32), (512, 384), (100, 700), (96, 96)] {
+            let clean = picture(w, h, u64::from(w * h));
+            let mut marked = clean.clone();
+            embed(&mut marked, w, h);
+            assert!(
+                is_marked(&marked, w, h),
+                "{w}x{h}: {}",
+                detect(&marked, w, h)
+            );
+            assert!(
+                !is_marked(&clean, w, h),
+                "{w}x{h}: {}",
+                detect(&clean, w, h)
+            );
+            assert!(
+                psnr(&clean, &marked) > 38.0,
+                "{w}x{h}: {}",
+                psnr(&clean, &marked)
+            );
+        }
+        // A 384-px result at half size.
+        let mut m = picture(384, 384, 5);
+        embed(&mut m, 384, 384);
+        let (s, sw, sh) = half(&m, 384, 384);
+        assert!(is_marked(&s, sw, sh), "{}", detect(&s, sw, sh));
     }
 
     #[test]
