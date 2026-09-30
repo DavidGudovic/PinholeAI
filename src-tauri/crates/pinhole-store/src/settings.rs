@@ -50,6 +50,9 @@ pub struct Settings {
     pub edit_notice_seen: bool,
     /// Show the one quiet "Tip" line under a result (Settings → Show tips).
     pub show_tips: bool,
+    /// Ids of the model licences the user accepted (`license_accept` in models.yaml).
+    /// Only changed by `accept_license` in pinhole-core, never by a plain settings save.
+    pub accepted_licenses: Vec<String>,
 }
 
 impl Default for Settings {
@@ -74,6 +77,7 @@ impl Default for Settings {
             notice_accepted: 0,
             edit_notice_seen: false,
             show_tips: true,
+            accepted_licenses: Vec::new(),
         }
     }
 }
@@ -127,6 +131,10 @@ impl Settings {
                 t
             };
         }
+        self.accepted_licenses
+            .retain(|id| !id.trim().is_empty() && id.len() <= 64);
+        self.accepted_licenses.sort();
+        self.accepted_licenses.dedup();
         self.models_folder = self
             .models_folder
             .filter(|p| std::path::Path::new(p.trim()).is_absolute())
@@ -233,6 +241,7 @@ mod tests {
             notice_accepted: 1,
             edit_notice_seen: true,
             show_tips: false,
+            accepted_licenses: vec!["flux1-dev-non-commercial".into()],
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"

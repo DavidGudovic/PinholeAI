@@ -49,6 +49,11 @@
 #   modes:               txt2img / img2img / inpaint / edit (edit = reference image
 #                        + instruction; listed in Edit → "Describe a change").
 #   multi_ref: true      edits can take a second image (Edit's "Add another image").
+#   license_accept: <id> the user accepts this licence once (one "I accept",
+#                        shared by families with the same id) before Pinhole
+#                        downloads the family (RELEASE-SPEC §6). Needs a
+#                        `license_note`; not inherited; overrides.yaml can't
+#                        change it. Captioner helpers take it too.
 #   dials.size_multiple: width/height multiple (UNet 64 = vae 8 × unet 8;
 #                        DiT 16 = vae 8 × 2×2 patches). See
 #                        get_diffusion_model_down_factor(), diffusion_engine.cpp.
@@ -458,6 +463,7 @@ families:
 
   # ---------------------------------------------------------------- FLUX.1
   flux1_dev:
+    license_accept: flux1-dev-non-commercial
     label: "FLUX.1 dev"
     lora_metadata: ["flux1", "flux-1"]
     style_template: natural
@@ -618,6 +624,7 @@ families:
 
   # ---------------------------------------------------------------- Qwen-Image 2.1
   qwen_image_21:
+    license_accept: qwen-research
     label: "Qwen-Image 2.1"
     style_template: natural
     activation_gb: 3.0
@@ -713,6 +720,7 @@ families:
       cfg_default: 4.0                  # docs/flux2.md: --cfg-scale 4.0 (ComfyUI template: 5)
 
   flux2_klein_9b:
+    license_accept: flux2-klein-9b-non-commercial
     label: "FLUX.2 klein 9B"
     style_template: natural
     activation_gb: 2.5
@@ -739,6 +747,7 @@ families:
 
   flux2_klein_9b_base:
     inherits: flux2_klein_9b
+    license_accept: flux2-klein-9b-non-commercial
     label: "FLUX.2 klein 9B Base"
     name_hints: [base]
     civitai_base_models: ["Flux.2 Klein 9B-base"]
@@ -754,6 +763,7 @@ families:
   # 20 steps). Heavy: ~20 GB Q4 diffusion + 14 GB text encoder, auto-fit streams
   # from RAM on anything under ~40 GB of VRAM.
   flux2_dev:
+    license_accept: flux2-dev-non-commercial
     label: "FLUX.2 dev"
     style_template: natural
     activation_gb: 4.0
@@ -789,6 +799,7 @@ families:
   # nvfp4 / mxfp8 / int4 files do not (U8-packed weights are skipped by the
   # safetensors reader).
   krea2_turbo:
+    license_accept: krea2-community
     label: "Krea 2 Turbo"
     name_hints: [turbo]
     style_template: natural
@@ -831,6 +842,7 @@ families:
 
   krea2_raw:
     inherits: krea2_turbo
+    license_accept: krea2-community
     label: "Krea 2 Raw"
     name_hints: [raw]
     detect: { same_as: krea2_turbo }
@@ -847,6 +859,7 @@ families:
   # prompts; recommended prefix / negative below. Engine: AnimaConditioner
   # (Qwen3 0.6B) + the Qwen-Image VAE (docs/anima.md).
   anima:
+    license_accept: anima-non-commercial
     label: "Anima"
     style_template: tags
     activation_gb: 1.5
@@ -873,6 +886,7 @@ families:
 
   anima_turbo:
     inherits: anima
+    license_accept: anima-non-commercial
     label: "Anima Turbo"
     name_hints: [turbo]
     detect: { same_as: anima }          # not in CivitAI's list: recognised by hash or picked
@@ -921,6 +935,7 @@ families:
   # VAE, so all-in-one. CivitAI currently lists no SD 3.x checkpoints (probe
   # 2026-09-28 returned none for every SD 3.x string); kept for local files / LoRAs.
   sd3:
+    license_accept: stability-community
     label: "Stable Diffusion 3 / 3.5"
     style_template: natural
     activation_gb: 2.5
@@ -944,6 +959,7 @@ families:
 
   sd35_turbo:
     inherits: sd3
+    license_accept: stability-community
     label: "Stable Diffusion 3.5 Large Turbo"
     name_hints: [turbo]
     civitai_base_models: ["SD 3.5 Large Turbo"]
@@ -1116,6 +1132,7 @@ families:
         q8_0: { file: qwen-image-edit-2511-Q8_0.gguf, url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q8_0.gguf", sha256: ab4f0622fb002fccaaa679a2ecce6fd1b3190d8ea28a5b7b2b17b8669bc24afa, size_mb: 21762, vram_gb: { min: 14, recommended: 24 } }
 
   flux1_kontext:
+    license_accept: flux1-dev-non-commercial
     label: "FLUX.1 Kontext"
     name_hints: [kontext]
     style_template: natural
@@ -1203,6 +1220,8 @@ captioner:
       title: "Qwen2.5-VL 3B"
       note: "Small and quick. Enough for Describe and short prompt ideas."
       default: true
+      license_note: "Qwen Research License"
+      license_accept: qwen-research
     - id: qwen25_vl_7b
       title: "Qwen2.5-VL 7B"
       note: "Writes fuller, more careful prompts and descriptions. Large download; shared with Qwen Image Edit."
