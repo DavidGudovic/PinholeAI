@@ -246,7 +246,8 @@ pub async fn check_results(
     pngs: Vec<Vec<u8>>,
     sources: Vec<Source>,
     safe_images_only: bool,
-) -> CoreResult<Vec<Vec<u8>>> {
+) -> CoreResult<Vec<CheckedPng>> {
+    let made_from: Arc<[Source]> = Arc::from(sources.clone());
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
         let inspector = c.check.inspector();
@@ -281,7 +282,41 @@ pub async fn check_results(
     if let Some((rule, r)) = blocked {
         return Err(blocked_error(rule, &r));
     }
-    Ok(pngs)
+    Ok(pngs
+        .into_iter()
+        .map(|png| CheckedPng {
+            png,
+            made_from: made_from.clone(),
+        })
+        .collect())
+}
+
+/// A result picture that passed the image check, with the brought-in pictures it was made
+/// from. Only [`check_results`] makes one (the fields are private to this module), and the
+/// session only stores generated pictures as `CheckedPng` (`Session::insert_generated`), so
+/// no picture reaches the UI without the check (RELEASE-SPEC §1 result intake).
+pub struct CheckedPng {
+    png: Vec<u8>,
+    made_from: Arc<[Source]>,
+}
+
+impl CheckedPng {
+    pub fn png(&self) -> &[u8] {
+        &self.png
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>) {
+        (self.png, self.made_from)
+    }
+
+    /// Tests that exercise the session without running the check.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn unchecked_for_tests(png: Vec<u8>) -> Self {
+        Self {
+            png,
+            made_from: Arc::from(Vec::new()),
+        }
+    }
 }
 
 fn blocked_error(rule: Rule, r: &Readings) -> CoreError {

@@ -536,7 +536,12 @@ mod tests {
         assert!(c.is_ready().await);
         let caps = c.capabilities().await.unwrap();
         assert!(caps.upscale);
-        let mut req = ImgGenRequest::new("PINHOLE_SENTINEL_7f3a", 64, 48, 7);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("PINHOLE_SENTINEL_7f3a").unwrap(),
+            64,
+            48,
+            7,
+        );
         req.batch_count = 2;
         let id = c.submit(&req).await.unwrap();
         let first = c.job(&id).await.unwrap();
@@ -573,11 +578,27 @@ mod tests {
         })
         .await;
         let c = SdClient::new_plain_for_tests(mock.base_url());
-        let id = c.submit(&ImgGenRequest::new("x", 64, 64, 1)).await.unwrap();
+        let id = c
+            .submit(&ImgGenRequest::new(
+                crate::words::CheckedPrompt::check("x").unwrap(),
+                64,
+                64,
+                1,
+            ))
+            .await
+            .unwrap();
         assert_eq!(c.cancel(&id).await.unwrap(), CancelOutcome::Cancelled);
         assert_eq!(c.job(&id).await.unwrap().status, JobStatus::Cancelled);
 
-        let id2 = c.submit(&ImgGenRequest::new("y", 64, 64, 1)).await.unwrap();
+        let id2 = c
+            .submit(&ImgGenRequest::new(
+                crate::words::CheckedPrompt::check("y").unwrap(),
+                64,
+                64,
+                1,
+            ))
+            .await
+            .unwrap();
         c.job(&id2).await.unwrap();
         c.job(&id2).await.unwrap();
         assert_eq!(c.cancel(&id2).await.unwrap(), CancelOutcome::Running);
@@ -594,7 +615,15 @@ mod tests {
         })
         .await;
         let c = SdClient::new_plain_for_tests(mock.base_url());
-        let id = c.submit(&ImgGenRequest::new("x", 64, 64, 1)).await.unwrap();
+        let id = c
+            .submit(&ImgGenRequest::new(
+                crate::words::CheckedPrompt::check("x").unwrap(),
+                64,
+                64,
+                1,
+            ))
+            .await
+            .unwrap();
         let j = c.job(&id).await.unwrap();
         assert_eq!(j.status, JobStatus::Failed);
         assert_eq!(j.error.unwrap().code, "generation_failed");

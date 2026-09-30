@@ -223,14 +223,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
   const started = Date.now();
   try {
     // Like Rust: the check's files first (ensure_ready), then the engine.
-    const check = await invoke<SafetyCheckStatus>("safety_check_status").catch(() => null);
-    if (check && !check.ready)
-      throw err(
-        "check_missing",
-        check.downloading
-          ? "Pinhole's safety check is still downloading (see Downloads). Try again when it's done."
-          : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
-      );
+    await requireCheck();
     const engine = await invoke<EngineStatus>("engine_status").catch(() => null);
     if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Set up engine”.");
     const models = await invoke<InstalledModel[]>("list_models");
@@ -373,6 +366,18 @@ const stamp = () => {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 };
 
+/** Like Rust `imagecheck::ensure_ready`: nothing is made without the check's files. */
+async function requireCheck() {
+  const check = await invoke<SafetyCheckStatus>("safety_check_status").catch(() => null);
+  if (check && !check.ready)
+    throw err(
+      "check_missing",
+      check.downloading
+        ? "Pinhole's safety check is still downloading (see Downloads). Try again when it's done."
+        : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+    );
+}
+
 const table: MockTable = {
   family_ui: async (a) => {
     await sleep(40);
@@ -454,6 +459,8 @@ const table: MockTable = {
   upscale_image: async (a) => {
     const im = mustGet(a.id);
     const factor = Number(a.factor) === 4 ? 4 : 2;
+    // Like Rust: upscales are checked like every made picture.
+    await requireCheck();
     if (running) throw err("invalid", "Pinhole is still working on the last image.");
     running = true;
     cancelled = false;

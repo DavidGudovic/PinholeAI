@@ -44,6 +44,7 @@ use pinhole_engine::sdapi::{
     self, ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef,
     SampleParams, SdClient, UpscaleRequest, VaeTilingRequest,
 };
+use pinhole_engine::words::CheckedPrompt;
 use pinhole_hardware::OtherGpuUse;
 use pinhole_registry::style::FinalPrompt;
 use pinhole_registry::wiring::{
@@ -731,6 +732,8 @@ struct Prepared {
     model: InstalledFile,
     family: Family,
     final_prompt: FinalPrompt,
+    /// `final_prompt.prompt` after the word check: the only prompt the engine request takes.
+    prompt: CheckedPrompt,
     /// User texts for log redaction (memory only).
     secrets: Vec<String>,
     loras: Vec<LoraRef>,
@@ -865,8 +868,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 
     // The whole positive prompt (idea + style + trigger words) and the add-ons; the negative
     // prompt is where people list what to keep out, so it isn't checked.
-    addon_words.insert(0, final_prompt.prompt.clone());
-    crate::text_check::check(&addon_words.join(", "))?;
+    let prompt = crate::text_check::checked_with(final_prompt.prompt.clone(), &addon_words)?;
 
     let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
     if let Some(n) = &final_prompt.negative {
@@ -882,6 +884,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
         model,
         family,
         final_prompt,
+        prompt,
         secrets,
         loras,
         safe_images_only,
@@ -2002,7 +2005,7 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
     // Read before waiting for another job: results of a job that outlives a
-    // Reset are dropped (see `Session::insert_generated_since`).
+    // Reset are dropped (see `Session::insert_generated`).
     let session_epoch = core.session.epoch();
     // Early word check so a blocked prompt doesn't wait behind a running job; `prepare`
     // checks the combined prompt again.
@@ -2251,7 +2254,7 @@ async fn generate_inner(
         _ => i64::from(rand::random::<u32>() >> 1),
     };
 
-    let mut body = ImgGenRequest::new(prep.final_prompt.prompt.clone(), width, height, seed);
+    let mut body = ImgGenRequest::new(prep.prompt.clone(), width, height, seed);
     body.negative_prompt = prep.final_prompt.negative.clone().unwrap_or_default();
     body.clip_skip = params.clip_skip.unwrap_or(-1);
     body.batch_count = if fix.is_some() {
@@ -2410,12 +2413,11 @@ async fn generate_inner(
     }
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept.
-    let pngs = crate::imagecheck::check_results(core, pngs, sources.clone(), prep.safe_images_only)
-        .await?;
-    let made_from: Arc<[crate::session::Source]> = Arc::from(sources);
+    let checked =
+        crate::imagecheck::check_results(core, pngs, sources, prep.safe_images_only).await?;
     let mut out = Vec::new();
-    for (i, png) in pngs.into_iter().enumerate() {
-        let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
+    for (i, png) in checked.into_iter().enumerate() {
+        let (w, h) = pinhole_engine::png::dimensions(png.png()).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),
             kind: ResultKind::Generated,
@@ -2435,7 +2437,7 @@ async fn generate_inner(
         };
         if !core
             .session
-            .insert_generated_from(session_epoch, png, meta.clone(), made_from.clone())
+            .insert_generated(session_epoch, png, meta.clone())
         {
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
@@ -2676,10 +2678,11 @@ pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: 
 /// upscaler is downloaded on first use. Needs the engine running (any model).
 pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
     let _folder = crate::models::folder_read(core)?;
+    crate::imagecheck::ensure_ready(core)?;
     if factor != 2 && factor != 4 {
         return Err(CoreError::invalid("Upscale works at 2× or 4×."));
     }
-    // The result is dropped when Reset happens meanwhile (see `Session::insert_generated_since`).
+    // The result is dropped when Reset happens meanwhile (see `Session::insert_generated`).
     let session_epoch = core.session.epoch();
     let src = core
         .session
@@ -2888,13 +2891,16 @@ async fn upscale_inner(
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
-    // Not re-checked: an upscale has the same content as its (checked or brought-in)
-    // source. It keeps the source's brought-in pictures for later edits.
-    let made_from: Arc<[crate::session::Source]> = Arc::from(src.sources());
+    // Checked like every made picture (one way in), and it keeps the source's brought-in
+    // pictures for later edits.
+    let checked = crate::imagecheck::check_results(core, vec![png], src.sources(), false)
+        .await?
+        .pop()
+        .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
     if cancel.is_cancelled()
         || !core
             .session
-            .insert_generated_from(session_epoch, png, meta.clone(), made_from)
+            .insert_generated(session_epoch, checked, meta.clone())
     {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }

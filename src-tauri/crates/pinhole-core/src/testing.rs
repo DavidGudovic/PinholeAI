@@ -1871,6 +1871,35 @@ mod tests {
         assert!(generate::upscale_image(&core, &src.id, 3).await.is_err());
         let (rgba, w, h) = session::decode_rgba(&core, &up2.id).unwrap();
         assert_eq!(rgba.len() as u32, w * h * 4);
+
+        // Upscales go through the image check like every made picture.
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().child = 0.9;
+        use_check(
+            &core,
+            FakeCheck {
+                readings,
+                ..Default::default()
+            },
+        );
+        let kept = core.session.len();
+        let e = generate::upscale_image(&core, &src.id, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(core.session.len(), kept);
+        // And nothing is made without the check's files.
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["nudity"],
+                ..Default::default()
+            },
+        );
+        let e = generate::upscale_image(&core, &src.id, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "check_missing");
     }
 
     /// 2× runs at 4× first: a source over 2048 px per side is refused for 2×
@@ -2580,7 +2609,12 @@ mod tests {
             pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("k3y");
         assert!(with.is_ready().await);
         let id = with
-            .submit(&pinhole_engine::ImgGenRequest::new("a cat", 64, 64, 1))
+            .submit(&pinhole_engine::ImgGenRequest::new(
+                pinhole_engine::words::CheckedPrompt::check("a cat").unwrap(),
+                64,
+                64,
+                1,
+            ))
             .await
             .unwrap();
         assert!(with.job(&id).await.is_ok());

@@ -16,6 +16,7 @@ use parking_lot::RwLock;
 use pinhole_engine::image::{self as img, Kind};
 
 use crate::generate::{ImportedImage, Origin, ResultImage, SavedBatch, SavedEntry, SavedImage};
+use crate::imagecheck::CheckedPng;
 use crate::{AppCore, CoreError, CoreResult};
 
 /// One image held in RAM.
@@ -75,21 +76,13 @@ pub struct Session {
 }
 
 impl Session {
-    /// Result intake: store a (scrubbed) generated PNG under `meta.id`, but
-    /// only while no Reset happened since [`Session::epoch`] returned `epoch` (a job that finishes after
-    /// Reset must not bring its images back). Returns whether it was stored.
-    pub fn insert_generated_since(&self, epoch: u64, png: Vec<u8>, meta: ResultImage) -> bool {
-        self.insert_generated_from(epoch, png, meta, Arc::from(Vec::new()))
-    }
-
-    /// [`Session::insert_generated_since`] for an image made from `made_from`.
-    pub fn insert_generated_from(
-        &self,
-        epoch: u64,
-        png: Vec<u8>,
-        meta: ResultImage,
-        made_from: Arc<[Source]>,
-    ) -> bool {
+    /// Result intake: store a (scrubbed) generated PNG that passed the image check under
+    /// `meta.id`, but only while no Reset happened since [`Session::epoch`] returned `epoch` (a
+    /// job that finishes after Reset must not bring its images back). Returns whether it was
+    /// stored. The only way a made picture gets into the session: it takes nothing but a
+    /// [`CheckedPng`].
+    pub fn insert_generated(&self, epoch: u64, checked: CheckedPng, meta: ResultImage) -> bool {
+        let (png, made_from) = checked.into_parts();
         let mut images = self.images.write();
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
@@ -113,7 +106,10 @@ impl Session {
         self.epoch.load(Ordering::SeqCst)
     }
 
-    pub fn insert(&self, img: SessionImage) {
+    /// Brought-in pictures only ([`import_image`]); made pictures go through
+    /// [`Session::insert_generated`].
+    fn insert_imported(&self, img: SessionImage) {
+        debug_assert!(img.meta.is_none() && img.origin == Origin::Imported);
         self.images.write().insert(img.id.clone(), img);
     }
 
@@ -172,7 +168,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         })?
     };
     let id = uuid::Uuid::new_v4().to_string();
-    core.session.insert(SessionImage {
+    core.session.insert_imported(SessionImage {
         id: id.clone(),
         bytes: Arc::new(bytes),
         kind: Kind::Png,
@@ -575,10 +571,16 @@ mod tests {
             crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
         let epoch = core.session.epoch();
-        assert!(core
-            .session
-            .insert_generated_since(epoch, png.clone(), meta("a")));
-        assert!(core.session.insert_generated_since(epoch, png, meta("b")));
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png),
+            meta("b")
+        ));
         let dir = tmp.path().join("picked");
         fs::create_dir_all(&dir).unwrap();
         let ids = vec!["a".to_string(), "b".to_string(), "gone".to_string()];
@@ -606,14 +608,18 @@ mod tests {
     fn store_roundtrip_and_clear() {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
-        assert!(s.insert_generated_since(s.epoch(), png.clone(), meta("a")));
+        assert!(s.insert_generated(
+            s.epoch(),
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
         let got = s.get("a").unwrap();
         assert_eq!(got.bytes.as_slice(), png.as_slice());
         assert_eq!(got.parent_id(), Some("p"));
         assert_eq!(s.len(), 1);
         assert!(s.remove("a"));
         assert!(s.get("a").is_none());
-        assert!(s.insert_generated_since(s.epoch(), png, meta("b")));
+        assert!(s.insert_generated(s.epoch(), CheckedPng::unchecked_for_tests(png), meta("b")));
         s.clear();
         assert!(s.is_empty());
     }
@@ -623,14 +629,22 @@ mod tests {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
         let epoch = s.epoch();
-        assert!(s.insert_generated_since(epoch, png.clone(), meta("a")));
+        assert!(s.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
         s.clear();
         assert!(
-            !s.insert_generated_since(epoch, png.clone(), meta("b")),
+            !s.insert_generated(
+                epoch,
+                CheckedPng::unchecked_for_tests(png.clone()),
+                meta("b")
+            ),
             "Reset happened since the job started"
         );
         assert!(s.is_empty());
-        assert!(s.insert_generated_since(s.epoch(), png, meta("c")));
+        assert!(s.insert_generated(s.epoch(), CheckedPng::unchecked_for_tests(png), meta("c")));
     }
 
     #[test]

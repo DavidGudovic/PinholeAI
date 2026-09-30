@@ -43,7 +43,7 @@ pieces (net, store) are small enough to audit.
 | **net** | `crates/pinhole-net/**`, `core/src/downloads.rs`, `commands/downloads.rs` | — |
 | **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library,update}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
 | **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
-| **image check** | `crates/pinhole-check/**`, `core/src/imagecheck.rs` (fail closed at result intake) | net, store |
+| **image + word check** | `crates/pinhole-check/**`, `core/src/imagecheck.rs` (fail closed at result intake; `CheckedPng`), `crates/pinhole-engine/src/words.rs` + `core/src/text_check.rs` (`CheckedPrompt`), `core/src/one_way.rs` (guards both choke points) | net, store |
 | **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
 | **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |
 | **UI Models/Settings/First run** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**` | api.ts |
