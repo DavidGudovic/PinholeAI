@@ -260,7 +260,7 @@ image is added at the end of the history.
 Entry points: **Edit this** on any result, drag-and-drop, paste from clipboard, file picker.
 The image comes in as an in-memory buffer (never copied into `Data/`).
 
-Two modes, picked automatically:
+Four modes; Describe a change or Restyle is picked automatically:
 
 1. **Instruction edit** (default when an edit model is installed): the user types what to change:
    "make it evening with warm street lights" or "replace the mug with a water bottle". Uses the
@@ -287,6 +287,20 @@ Two modes, picked automatically:
    `mask_image`, one image, no hires fix), scales the result back down and pastes it into the
    source with a feathered edge. The result keeps the source's size; no face detector is used.
    All of it happens in memory. **How much to change** maps to `strength` 0.3/0.45/0.6.
+4. **Extend** (same models as Restyle): make the picture wider or taller and let the model
+   draw the new edges. The user picks a **New shape** (the Create shape chips, or **Around** =
+   same shape with 15% more on every side; a chip the picture already has is greyed out) and,
+   for a new shape, where the space goes (**Left · Both sides · Right** or **Top · Both sides ·
+   Bottom**). An optional "What's in the picture?" text is the prompt. The stage shows the new
+   canvas as a dashed frame around the picture. Rust puts the source on the bigger canvas
+   (never cropping; at most 8192 px a side), fills the new space with a blurred stretch of the
+   nearest edge as a colour hint, masks the new space plus a seam of about 1/24 of the work
+   size over the old edge, scales both to about the Quality dial's native area, inpaints
+   (img2img + `mask_image`, `strength` 1, one image, no hires fix), scales the result to the
+   canvas size and pastes the source's own pixels back over it, fading into the redraw across
+   the seam. The source keeps its detail; the new space is as sharp as the model's size allows.
+   No brush, no Output size. Works with Try again (same settings from the step before) and
+   the queue. All in memory.
 
 All modes take style add-ons (LoRAs) like Create: added in Edit's Fine-tune (with Quality,
 Output size and Seed), shown as chips under the text, trigger words picked on the chip. Only
@@ -655,7 +669,6 @@ build is shared.
 
 - **Prompt helper**: "Improve my prompt" using the local captioner/LLM, fully offline.
 - **Face fix** pass (ADetailer-style) for small faces in full-body shots.
-- **Outpaint / extend canvas** (change aspect ratio of an existing image).
 - **Background remover** for product shots (brand work).
 - **Batch edit**: apply the same instruction to several images (e.g. a product line).
 - **Seed grid**: 4 seeds side by side, pick one to continue.

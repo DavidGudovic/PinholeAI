@@ -279,7 +279,12 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
       }
       const seed = baseSeed + n;
       let c: HTMLCanvasElement;
-      if (src) {
+      if (src && req.extend) {
+        // Extend (mirrors Rust extend.rs, roughly): a scene on the bigger canvas, the source pasted back.
+        ({ width: w, height: h } = req.extend);
+        c = paintScene(w, h, seed, familyId);
+        c.getContext("2d")!.drawImage(await decode(src.bytes), req.extend.left, req.extend.top, src.width, src.height);
+      } else if (src) {
         if (!req.fineTune.width) [w, h] = [src.width, src.height];
         c = await paintEdit(src, w, h, seed, req.mode === "edit" ? 0.6 : (req.strength ?? 0.55), mask);
       } else {

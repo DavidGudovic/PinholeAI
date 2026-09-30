@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, type Action, type AppState, type ImgRef } from "./model";
-import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
+import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
 
@@ -264,6 +264,35 @@ describe("requests", () => {
     expect(fx.dials.count).toBe(1);
     const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
     expect(rs.fixDetails).toBeUndefined();
+  });
+
+  it("builds an Extend request: bigger canvas, strength 1, no mask, optional prompt", () => {
+    const e = { ...withModels().edit, extendPrompt: " a beach ", extendTo: "wide" as const, extendSide: "end" as const, seed: 3 };
+    const src = { id: "src", url: "blob:src", width: 600, height: 600 };
+    const ex = buildEditRequest(e, { mode: "extend", source: src, model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
+    expect(ex).toMatchObject({ mode: "img2img", prompt: "a beach", initImageId: "src", maskImageId: null, strength: 1 });
+    expect(ex.fixDetails).toBeUndefined();
+    expect(ex.fineTune).toEqual({ seed: 3 });
+    const [sw, sh] = FAMILY_UI.sdxl.shapes.wide;
+    expect(ex.extend).toEqual({ width: Math.round((600 * sw) / sh), height: 600, left: 0, top: 0 });
+  });
+
+  it("extendCanvas never crops and puts the space where asked", () => {
+    const ui = FAMILY_UI.sdxl;
+    // Landscape source → portrait: taller, space split top and bottom.
+    const tall = extendCanvas(1200, 800, "portrait", "both", ui)!;
+    expect(tall.width).toBe(1200);
+    expect(tall.height).toBeGreaterThan(800);
+    expect(tall.top).toBe(Math.floor((tall.height - 800) / 2));
+    expect(tall.left).toBe(0);
+    expect(extendCanvas(1200, 800, "portrait", "start", ui)!.top).toBe(tall.height - 800);
+    expect(extendCanvas(1200, 800, "portrait", "end", ui)!.top).toBe(0);
+    // Same shape: nothing to add.
+    expect(extendCanvas(1024, 1024, "square", "both", ui)).toBeNull();
+    // All around keeps the shape and centres the picture; the side choice doesn't apply.
+    expect(extendCanvas(1000, 500, "around", "start", ui)).toEqual({ width: 1300, height: 650, left: 150, top: 75 });
+    // Tiny pictures still grow on every side.
+    expect(extendCanvas(1, 1, "around", "both", ui)).toEqual({ width: 3, height: 3, left: 1, top: 1 });
   });
 
   it("offers generators that can edit in both Create and Edit", () => {

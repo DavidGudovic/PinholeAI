@@ -602,6 +602,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn extend_draws_the_bigger_canvas_and_keeps_the_source() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(600, 600, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let extend_req = |canvas: generate::ExtendCanvas| {
+            let mut req = GenerateRequest::txt2img(model.clone(), "a beach");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.id.clone());
+            req.strength = Some(0.55);
+            req.extend = Some(canvas);
+            req.dials.count = 4;
+            req
+        };
+
+        // Square → wide, the new space on the right.
+        let wide = generate::ExtendCanvas {
+            width: 1050,
+            height: 600,
+            left: 0,
+            top: 0,
+        };
+        let res = generate::generate(&core, extend_req(wide)).await.unwrap();
+        assert_eq!(res.images.len(), 1);
+        let out = &res.images[0];
+        assert_eq!(
+            (out.width, out.height),
+            (1050, 600),
+            "the canvas comes back"
+        );
+        assert_eq!(out.parent_id.as_deref(), Some(src.id.as_str()));
+        let body = &mock.requests()[0];
+        let (w, h) = (
+            body["width"].as_u64().unwrap(),
+            body["height"].as_u64().unwrap(),
+        );
+        // Drawn at SDXL's size in the canvas's shape.
+        assert!(
+            w > h && w % 64 == 0 && h % 64 == 0 && w * h >= 800_000,
+            "{w}x{h}"
+        );
+        assert_eq!(body["strength"], 1.0);
+        assert_eq!(body["batch_count"], 1);
+        assert!(body.get("hires").is_none_or(|v| v.is_null()));
+        assert!(body["mask_image"].as_str().unwrap().len() > 50);
+
+        // The source's pixels are kept, away from the seam.
+        let img = core.session.get(&out.id).unwrap();
+        let (px, _, _) = pinhole_engine::image::decode_rgba(img.bytes.as_slice()).unwrap();
+        let at = |x: usize, y: usize| &px[(y * 1050 + x) * 4..][..4];
+        assert_eq!(at(10, 300), &[10, 20, 30, 255]);
+        assert_eq!(at(500, 590), &[10, 20, 30, 255]);
+
+        // Nothing to add, or with a mask: refused before any engine work.
+        let same = generate::ExtendCanvas {
+            width: 600,
+            height: 600,
+            left: 0,
+            top: 0,
+        };
+        let err = generate::generate(&core, extend_req(same))
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("already this shape"),
+            "{}",
+            err.message
+        );
+        let mut masked = extend_req(wide);
+        masked.mask_image_id = Some(src.id.clone());
+        assert!(generate::generate(&core, masked).await.is_err());
+        assert_eq!(mock.requests().len(), 1);
+    }
+
+    #[tokio::test]
     async fn instruction_edit_uses_a_generator_that_can_edit() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;

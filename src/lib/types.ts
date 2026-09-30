@@ -350,6 +350,16 @@ export interface GenerateRequest {
   maskImageId?: string | null;
   /** Edit "Fix details" (img2img + mask): redraw only a box around the mask at the model's size, then blend it back. */
   fixDetails?: boolean;
+  /** Edit "Extend" (img2img, no mask): put the source on this bigger canvas and draw the new space. */
+  extend?: ExtendCanvas | null;
+}
+
+/** A bigger canvas in source pixels; `left`/`top` = where the source's top-left corner goes. */
+export interface ExtendCanvas {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
 }
 
 /** generated = txt2img/img2img/edit; upscaled = upscaleImage (model/seed/sampling copied from the source image). */

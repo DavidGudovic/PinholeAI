@@ -14,6 +14,7 @@
 //! ([`logbuf::LogBuffer`]) redacts prompt text before storing a line.
 
 pub mod detail;
+pub mod extend;
 pub mod failure;
 pub mod image;
 pub mod install;

@@ -18,7 +18,8 @@ src-tauri/                 Tauri 2 app crate `pinhole` (thin: commands + event b
     pinhole-net/           THE http client (allow-list + offline), resumable verified downloads
     pinhole-store/         Data dir, settings.yaml, installed.json, styles, presets, keychain
     pinhole-hardware/      GPU vendor/VRAM/RAM detection
-    pinhole-engine/        engine pins/install, sd-server + llama-server processes, API clients, PNG scrub
+    pinhole-engine/        engine pins/install, sd-server + llama-server processes, API clients, PNG scrub,
+                           Edit crop/blend helpers (detail.rs = Fix details, extend.rs = Extend)
     pinhole-catalog/       CivitAI API client, filters, safe-file selection, card view models
     pinhole-core/          AppCore service layer (Tauri-free) used by commands and tests
 tests/                     crate `pinhole-tests`: privacy sentinel scan, offline test, engine smoke test

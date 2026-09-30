@@ -250,14 +250,17 @@ export function stickPositionFor(ui: FamilyUi, value: number): number {
   return clamp01((value - lo) / (hi - lo));
 }
 
+/** Shape chip sizes before the family's own are known. */
+export const DEFAULT_SHAPE_SIZES: Record<Shape, [number, number]> = {
+  square: [1024, 1024],
+  portrait: [832, 1216],
+  landscape: [1216, 832],
+  wide: [1344, 768],
+};
+
 /** Pick the shape chip matching a size exactly, else the closest aspect ratio. */
 export function shapeFor(ui: FamilyUi | null, w: number, h: number): { shape: Shape; exact: boolean } {
-  const shapes = ui?.shapes ?? {
-    square: [1024, 1024],
-    portrait: [832, 1216],
-    landscape: [1216, 832],
-    wide: [1344, 768],
-  };
+  const shapes = ui?.shapes ?? DEFAULT_SHAPE_SIZES;
   let best: Shape = "square";
   let bestDiff = Infinity;
   for (const [name, [sw, sh]] of Object.entries(shapes)) {

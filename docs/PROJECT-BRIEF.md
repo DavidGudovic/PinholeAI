@@ -29,7 +29,7 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
 Create (dials: Shape, Quality, Stick to prompt, How many, Keep this look; Fine-tune drawer with every
 engine setting), **Paste from CivitAI** (reads "Copy generation data" text in memory, fills prompt +
 settings, matches or installs the checkpoint/LoRAs), Edit (instruction edit with Qwen Image Edit /
-Kontext, Restyle, "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
+Kontext, Restyle, Fix details, Extend (wider/taller canvas), "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
 Styles (the only user text ever stored), Presets (never the prompt), Models (CivitAI browser with
 plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big"),
 first-run "Recommended for your GPU", Settings (Offline mode, GPU/VRAM overrides, backend, content
