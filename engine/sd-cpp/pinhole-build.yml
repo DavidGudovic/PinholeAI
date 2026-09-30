@@ -81,7 +81,14 @@ jobs:
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN'
           cmake --build build --config Release -j "$(nproc)"
       - name: Check the patch is in
-        run: src/build/bin/sd-server --help | grep -- --reject-origin > /dev/null
+        # The CUDA build links libcuda.so.1, which only comes with an NVIDIA driver (not on
+        # the runner), so it can't start here: look for the option text in the binary instead.
+        run: |
+          if [ "${{ matrix.build }}" = cuda12 ]; then
+            grep -a -- --reject-origin src/build/bin/sd-server > /dev/null
+          else
+            src/build/bin/sd-server --help | grep -- --reject-origin > /dev/null
+          fi
       - name: Pack
         run: |
           cp src/ggml/LICENSE src/build/bin/ggml.txt

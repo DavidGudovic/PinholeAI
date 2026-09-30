@@ -112,9 +112,17 @@ pub fn effective_hardware(
                 .or_else(|| hw.best_gpu())
         })
         .cloned();
-    let backend = explicit_backend
+    let mut backend = explicit_backend
         .unwrap_or_else(|| default_backend(gpu.as_ref()))
         .to_string();
+    // Linux CUDA needs NVIDIA's driver and an RTX 30xx or newer (the build's
+    // kernels); anything else, or unknown, uses Vulkan. A Settings choice wins.
+    let cuda_ok = detected
+        .and_then(|hw| hw.min_compute_cap)
+        .is_some_and(|c| c >= pinhole_hardware::LINUX_CUDA_MIN_COMPUTE_CAP);
+    if explicit_backend.is_none() && backend == "cuda" && cfg!(target_os = "linux") && !cuda_ok {
+        backend = "vulkan".into();
+    }
     if backend == "cpu" {
         // No GPU found (or one no engine build supports): a VRAM override means nothing here.
         return EffectiveHardware {
@@ -189,6 +197,7 @@ fn finish_detection(core: &AppCore, info: Option<HardwareInfo>) {
             .map(|n| n.get())
             .unwrap_or(1),
         os: std::env::consts::OS.to_string(),
+        min_compute_cap: None,
     });
     *core.hardware.write() = Some(info);
     core.emit(CoreEvent::HardwareReady);
@@ -347,6 +356,7 @@ pub(crate) mod tests {
             ram_gb: 32.0,
             cpu_threads: 16,
             os: "linux".into(),
+            min_compute_cap: Some(12.0),
         }
     }
 
@@ -357,6 +367,39 @@ pub(crate) mod tests {
             engine_backend: backend.into(),
             ..Settings::default()
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_cuda_only_for_rtx_30_and_newer_with_the_driver() {
+        let with_cap = |cap| HardwareInfo {
+            min_compute_cap: cap,
+            ..hw()
+        };
+        let auto = settings("auto", None, "auto");
+        assert_eq!(
+            effective_hardware(&auto, Some(&with_cap(Some(8.6)))).backend,
+            "cuda"
+        );
+        assert_eq!(
+            effective_hardware(&auto, Some(&with_cap(Some(12.0)))).backend,
+            "cuda"
+        );
+        // RTX 20xx / GTX 16xx, or no NVIDIA driver (nouveau: no nvidia-smi).
+        assert_eq!(
+            effective_hardware(&auto, Some(&with_cap(Some(7.5)))).backend,
+            "vulkan"
+        );
+        assert_eq!(
+            effective_hardware(&auto, Some(&with_cap(None))).backend,
+            "vulkan"
+        );
+        // Choosing CUDA in Settings still wins.
+        let cuda = settings("auto", None, "cuda");
+        assert_eq!(
+            effective_hardware(&cuda, Some(&with_cap(None))).backend,
+            "cuda"
+        );
     }
 
     #[test]
@@ -442,6 +485,7 @@ pub(crate) mod tests {
             ram_gb: 8.0,
             cpu_threads: 4,
             os: "linux".into(),
+            min_compute_cap: None,
         };
         let e = effective_hardware(&settings("auto", None, "auto"), Some(&none));
         assert_eq!(
@@ -497,6 +541,7 @@ pub(crate) mod tests {
             ram_gb: 15.6,
             cpu_threads: 8,
             os: "linux".into(),
+            min_compute_cap: None,
         });
         let s = Settings {
             vram_override_gb: Some(12.0),

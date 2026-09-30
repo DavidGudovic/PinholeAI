@@ -78,6 +78,10 @@ pub struct HardwareInfo {
     pub ram_gb: f32,
     pub cpu_threads: usize,
     pub os: String,
+    /// Lowest CUDA compute capability `nvidia-smi` reports (e.g. 8.6); `None`
+    /// without NVIDIA's driver or when it can't tell.
+    #[serde(default)]
+    pub min_compute_cap: Option<f32>,
 }
 
 impl HardwareInfo {
@@ -112,8 +116,14 @@ pub fn detect() -> HardwareInfo {
         ram_gb,
         cpu_threads,
         os: os_label(),
+        min_compute_cap: nvidia::min_compute_cap(),
     }
 }
+
+/// Pinhole's Linux CUDA engine build only carries kernels for compute
+/// capability 8.6+ (RTX 30xx and newer; `CMAKE_CUDA_ARCHITECTURES=86;89;120` in
+/// `engine/sd-cpp/pinhole-build.yml`). Older NVIDIA cards use Vulkan on Linux.
+pub const LINUX_CUDA_MIN_COMPUTE_CAP: f32 = 8.6;
 
 /// Engine backend for a vendor, per `config/engine.yaml → selection`:
 /// nvidia → `cuda`, amd/intel → `vulkan`, none → `cpu`.
@@ -379,6 +389,7 @@ mod tests {
             ram_gb: 32.0,
             cpu_threads: 16,
             os: "linux".into(),
+            min_compute_cap: None,
         }
     }
 

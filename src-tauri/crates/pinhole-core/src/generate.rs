@@ -1567,10 +1567,9 @@ fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
 /// from web pages ([`sdapi::REJECT_ORIGIN_FLAG`]) and requests without this
 /// launch's API key. Compiled in, not a setting: with `true` an engine build
 /// without the patch can't start, so the checks can't be skipped by pointing
-/// engine.yaml at an upstream build. Stays `false` until engine.yaml pins the
-/// patched engine (upstream at the current pin rejects the unknown flag). The
-/// key and bearer header are sent either way; upstream ignores both.
-pub(crate) const ENGINE_LOCKDOWN: bool = false;
+/// engine.yaml at an upstream build. engine.yaml pins the patched build from
+/// Pinhole's fork (`engine/sd-cpp/`).
+pub(crate) const ENGINE_LOCKDOWN: bool = true;
 
 /// Full sd-server argv (without the port): wiring args + pinned defaults, forced
 /// to listen on 127.0.0.1, with LoRA / upscaler folders.
