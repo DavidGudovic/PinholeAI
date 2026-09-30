@@ -27,4 +27,19 @@ pub async fn describe_image(
     describe::describe_image(core.inner(), &image_id, style).await
 }
 
-super::area_commands![captioner_status, install_captioner, describe_image];
+#[tauri::command]
+pub async fn improve_prompt(
+    core: Core<'_>,
+    prompt: String,
+    family_id: Option<String>,
+    avoid: Vec<String>,
+) -> Result<String, CoreError> {
+    describe::improve_prompt(core.inner(), &prompt, family_id.as_deref(), &avoid).await
+}
+
+super::area_commands![
+    captioner_status,
+    install_captioner,
+    describe_image,
+    improve_prompt
+];

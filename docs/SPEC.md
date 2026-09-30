@@ -210,6 +210,17 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
+model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
+is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
+and **Undo** puts back what was typed (shown while the box still holds the improved text; the
+answer is dropped if the prompt was edited meanwhile). The instruction says to keep the user's
+subject, stay safe for work while Safe mode is On, and not to write the trigger words of add-ons in
+use (taken out whole-word if it does anyway, since they are added at request time). The prompt goes
+only to the loopback llama-server, never logged or stored. Without the Describe model it offers
+the one-time download, then improves. Not in Edit: instruction edits are short commands ("make the
+sky a sunset") and a fuller rewrite would drift from what should change.
+
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
 
