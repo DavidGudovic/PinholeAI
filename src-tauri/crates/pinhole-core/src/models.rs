@@ -296,10 +296,16 @@ pub fn set_lora_trigger_words(
         .iter_mut()
         .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
         .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
-    file.trigger_words = Some(clean);
+    let old = file.trigger_words.replace(clean);
     let file = file.clone();
     let view = inventory::installed_lora_view(&index, &file);
-    index.save(&core.data)?;
+    if let Err(e) = index.save(&core.data) {
+        // Not saved: keep the old words in memory too, so a later save can't write them.
+        if let Some(f) = index.files.iter_mut().find(|f| f.id == lora_id) {
+            f.trigger_words = old;
+        }
+        return Err(e.into());
+    }
     Ok(view)
 }
 
@@ -517,6 +523,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
             ));
         }
         crate::generate::shutdown(core).await;
+        crate::engine_setup::emit_status(core);
     }
     let failed;
     {

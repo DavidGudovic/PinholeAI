@@ -746,14 +746,16 @@ pub fn preview_final_prompt(
     core: &AppCore,
     req: &GenerateRequest,
 ) -> CoreResult<FinalPromptPreview> {
-    let p = prepare(core, req)?;
+    let p = prepare(core, req, false)?;
     Ok(FinalPromptPreview {
         prompt: p.final_prompt.prompt,
         negative: p.final_prompt.negative,
     })
 }
 
-fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
+/// `materialize`: make linked add-ons readable by the engine (a link or copy into Pinhole's
+/// add-on folder). Off for the read-only prompt preview, which writes nothing.
+fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResult<Prepared> {
     let (model, family) = resolve_model(core, req)?;
     let reg = core.registry();
 
@@ -787,7 +789,11 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                     )));
                 }
                 // sd-server only loads add-ons from Pinhole's add-on folder.
-                abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+                if materialize {
+                    abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+                } else {
+                    abs = lora_dir.join(f.id.as_str());
+                }
             }
             let rel = abs
                 .strip_prefix(&lora_dir)
@@ -795,7 +801,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                 .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"))
                 .filter(|r| !r.is_empty())
                 .ok_or_else(|| CoreError::invalid("A style add-on (LoRA) is stored outside Data/models/loras. Reinstall it from Models."))?;
-            if !abs.is_file() {
+            if (materialize || !f.is_linked()) && !abs.is_file() {
                 return Err(CoreError::not_found(format!(
                     "The add-on “{}” is missing from the Data folder. Reinstall it from Models.",
                     f.friendly_name
@@ -2059,7 +2065,7 @@ async fn generate_inner(
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
-    let prep = prepare(core, req)?;
+    let prep = prepare(core, req, true)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
@@ -2415,6 +2421,10 @@ async fn generate_inner(
     // none is kept.
     let checked =
         crate::imagecheck::check_results(core, pngs, sources, prep.safe_images_only).await?;
+    // Cancel pressed during the check: nothing is kept (as for an upscale).
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     let mut out = Vec::new();
     for (i, png) in checked.into_iter().enumerate() {
         let (w, h) = pinhole_engine::png::dimensions(png.png()).unwrap_or((width, height));
