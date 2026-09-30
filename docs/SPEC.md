@@ -297,8 +297,8 @@ model (text only, `captioner.improve` in `models.yaml`). Tags for families whose
 is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
 and **Undo** puts back what was typed (shown while the box still holds the improved text; the
 answer is dropped if the prompt was edited meanwhile). The instruction says to keep the user's
-subject, stay safe for work while Safe mode is On (while Off: adult content, adults only, is allowed and
-written plainly, nothing sexual is added that the user didn't ask for, and anyone under 18 stays
+subject, stay safe for work while Safe mode is On (while Off: adult themes between adults are kept and
+described clearly, nothing of that kind is added that the user didn't ask for, and anyone under 18 stays
 non-sexual and clothed; the word check runs on the idea and the answer either way), and not to
 write the trigger words of add-ons in use (taken out whole-word if it does anyway, since they are
 added at request time). An answer that is a refusal ("I'm sorry, but I can't…") or a repetition
@@ -416,8 +416,8 @@ sits by the Describe button and the Improve button. **Automatic** uses the 7B wh
 else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off, and while Off, Automatic uses it first once installed: Qwen2.5-VL 7B abliterated
-(Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
+mode is Off, and while Off, Automatic uses it first once installed: a less restrictive Qwen2.5-VL 7B
+fine-tune (Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
 another installed helper still uses). Installed models still lists it while Safe mode is On, so it
 can be removed. The word check runs on the output of every helper model.
 
