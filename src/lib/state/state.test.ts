@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -181,6 +181,44 @@ describe("reducer", () => {
     expect(cleared.create.fineTune).toEqual({ vaeTiling: true });
     expect(cleared.sessionNonce).toBe(s.sessionNonce + 1);
     expect(referencedImageIds(cleared).size).toBe(0);
+  });
+});
+
+describe("unsaved pictures and prompt history", () => {
+  const made = (s: AppState) =>
+    run(
+      s,
+      { type: "addResults", batch: null, images: [result("a", 1), result("b", 2)], refs: [ref("a"), ref("b")] },
+      { type: "editLoad", ref: ref("o") },
+      { type: "editPush", ref: ref("e"), meta: result("e", 3) },
+    );
+
+  it("counts generated and edited pictures until they are saved (imported originals don't count)", () => {
+    let s = made(withModels());
+    expect(unsavedIds(s).sort()).toEqual(["a", "b", "e"]);
+    s = run(s, { type: "markSaved", entries: [{ id: "a", path: "/x/a.png" }] });
+    expect(unsavedIds(s).sort()).toEqual(["b", "e"]);
+    s = run(s, { type: "removeResult", id: "b" });
+    expect(unsavedIds(s)).toEqual(["e"]);
+  });
+
+  it("Reset forgets what was saved and the prompt history", () => {
+    let s = run(made(withModels()), { type: "markSaved", entries: [{ id: "a", path: "/x/a.png" }] }, { type: "pushPrompt", prompt: SENTINEL }, { type: "askLeave", what: "clear" });
+    expect(JSON.stringify(s)).toContain(SENTINEL);
+    s = run(s, { type: "clearSession" });
+    expect(s.saved).toEqual({});
+    expect(s.promptHistory).toEqual([]);
+    expect(s.leave).toBeNull();
+    expect(JSON.stringify(s)).not.toContain(SENTINEL);
+  });
+
+  it("prompt history skips blanks and repeats, and keeps the newest 50", () => {
+    let s = initialState();
+    s = run(s, { type: "pushPrompt", prompt: "  " }, { type: "pushPrompt", prompt: "cat" }, { type: "pushPrompt", prompt: "cat" }, { type: "pushPrompt", prompt: "dog" });
+    expect(s.promptHistory).toEqual(["cat", "dog"]);
+    for (let i = 0; i < 60; i++) s = run(s, { type: "pushPrompt", prompt: `p${i}` });
+    expect(s.promptHistory).toHaveLength(50);
+    expect(s.promptHistory[49]).toBe("p59");
   });
 });
 

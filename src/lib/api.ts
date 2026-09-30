@@ -118,6 +118,8 @@ export const getImage = (id: string) => invoke<ArrayBuffer>("get_image", { id })
 export const saveImage = (id: string) => invoke<T.SavedImage>("save_image", { id });
 /** Save to a user-chosen path (from the dialog plugin). */
 export const saveImageAs = (id: string, path: string) => invoke<T.SavedImage>("save_image_as", { id, path });
+/** "Save all": every listed image into a folder the user picked. */
+export const saveImagesTo = (ids: string[], dir: string) => invoke<T.SavedBatch>("save_images_to", { ids, dir });
 export const copyImage = (id: string) => invoke<void>("copy_image", { id });
 export const discardImage = (id: string) => invoke<void>("discard_image", { id });
 /** Drops every in-memory image immediately. */

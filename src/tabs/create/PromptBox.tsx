@@ -6,6 +6,7 @@ import { StylePicker } from "../../components/StylePicker";
 import { AutoTextarea, Button, cx, focusRing } from "../../components/ui";
 import { looksLikeGenerationData } from "../../lib/paste/parse";
 import type { FamilyUi } from "../../lib/types";
+import { recallStep, shouldRecall, type Browse } from "../../lib/state/promptRecall";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { useImprovePrompt } from "./ImprovePrompt";
 import { STARTER_IDEAS } from "./starterIdeas";
@@ -13,7 +14,9 @@ import { STARTER_IDEAS } from "./starterIdeas";
 export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | null; onOpenPaste: () => void; onApplyPasted: (text: string) => void }) {
   const prompt = useAppState((s) => s.create.prompt);
   const styleId = useAppState((s) => s.create.styleId);
+  const history = useAppState((s) => s.promptHistory);
   const dispatch = useDispatch();
+  const browse = useRef<Browse | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
   const improve = useImprovePrompt(ui?.familyId);
   // Generation data pasted into the box, waiting for "Apply these settings?".
@@ -60,7 +63,23 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
           value={prompt}
           placeholder="What do you want to see?"
           className="px-3.5 pt-3 text-[15px]"
-          onChange={(e) => dispatch({ type: "patchCreate", patch: { prompt: e.target.value } })}
+          onChange={(e) => {
+            browse.current = null;
+            dispatch({ type: "patchCreate", patch: { prompt: e.target.value } });
+          }}
+          onKeyDown={(e) => {
+            if ((e.key !== "ArrowUp" && e.key !== "ArrowDown") || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey || e.nativeEvent.isComposing) return;
+            const dir = e.key === "ArrowUp" ? -1 : 1;
+            const el = e.currentTarget;
+            if (!history.length || !shouldRecall(el.value, el.selectionStart, el.selectionEnd, dir, browse.current !== null)) return;
+            const step = recallStep(history, browse.current, el.value, dir);
+            browse.current = step.browse;
+            if (step.text === null) return;
+            e.preventDefault();
+            dispatch({ type: "patchCreate", patch: { prompt: step.text } });
+            const end = step.text.length;
+            requestAnimationFrame(() => area.current?.setSelectionRange(end, end));
+          }}
           onPaste={(e) => {
             const text = e.clipboardData.getData("text/plain");
             if (text && looksLikeGenerationData(text)) {

@@ -49,6 +49,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
           savedMetadata: "none",
           theme: "system",
           addTriggerWords: true,
+          soundOnDone: false,
           firstRunDone: true,
           engineBackend: "auto",
           textEncoderOnCpu: "auto",
