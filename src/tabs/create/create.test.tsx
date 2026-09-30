@@ -359,6 +359,20 @@ describe("reference picture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove the reference picture" }));
     expect(store.getState().create.refImageId).toBeNull();
   });
+
+  it("with no installed model that can use it: offers Edit", () => {
+    const store = storeWithResults(result("a", 64, 64));
+    store.dispatch({ type: "setModels", models: [sdxl] });
+    store.dispatch({ type: "selectModel", modelId: "s" });
+    store.dispatch({ type: "createSetRef", ref: store.getState().images.a });
+    withApp(store, <ReferenceSlot model={sdxl} />);
+    fireEvent.click(screen.getByRole("button", { name: "Use it in Edit" }));
+    const s = store.getState();
+    expect(s.tab).toBe("edit");
+    expect(s.edit.mode).toBe("instruction");
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+    expect(s.create.refImageId).toBeNull();
+  });
 });
 
 describe("prompt box toolbar", () => {

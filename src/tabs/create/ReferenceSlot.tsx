@@ -1,6 +1,7 @@
-// Optional reference picture for Create ("in the style of this picture"). Shown only for models
-// that take one (FLUX.2), or while a picture is set. Drop, paste, choose a file or pick a picture
-// from this session. Like every session image it stays in memory; it never goes into a preset.
+// Optional reference picture for Create ("in the style of this picture", "the same character").
+// Shown only for models that take one (FLUX.2, Qwen-Image 2.1), or while a picture is set; the
+// "Same character" result action finds the right model. Drop, paste, choose a file or pick a
+// picture from this session. Like every session image it stays in memory; it never goes into a preset.
 import { useState } from "react";
 import { ImagePlus, Trash, TriangleAlert } from "lucide-react";
 import { DropTarget, useFilePicker, useImagePaste } from "../../components/ImageDrop";
@@ -65,11 +66,15 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
             <span className="inline-flex items-start gap-1.5">
               <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
               {model?.friendlyName ?? "This model"} can't use a reference picture.
-              {!suggest && " Remove it, or get a FLUX.2 model in Models."}
+              {!suggest && " Edit can keep the same character in a new scene."}
             </span>
-            {suggest && (
+            {suggest ? (
               <Button size="sm" onClick={() => dispatch({ type: "selectModel", modelId: suggest.id })}>
                 Switch to {suggest.friendlyName}
+              </Button>
+            ) : (
+              <Button size="sm" onClick={() => actions.sameCharacter(ref.id)}>
+                Use it in Edit
               </Button>
             )}
           </div>
@@ -84,7 +89,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
     <DropTarget onFile={(f) => void load(f)} label="Drop to use as the reference picture">
       {picker.input}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={`Optional: make something in the style of a picture, or with the same subject. Drop, paste (${modKey}+V) or choose one.`}>
+        <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={`Optional: make something in the style of a picture, or with the same character or subject. Drop, paste (${modKey}+V) or choose one.`}>
           {importing ? <Spinner className="h-3.5 w-3.5" /> : <ImagePlus className="h-3.5 w-3.5" />} Add a reference picture
         </Button>
         {recent.length > 0 && (
