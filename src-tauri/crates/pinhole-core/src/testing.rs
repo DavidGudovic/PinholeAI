@@ -1581,6 +1581,19 @@ mod tests {
         assert!(e.details.is_none());
         assert!(mock.requests().is_empty(), "nothing reaches the engine");
 
+        // An add-on's trigger words count even when they aren't added to the prompt.
+        let lora = register_fake_lora(&core, "sdxl", &["loli"]);
+        let mut req = GenerateRequest::txt2img(model.clone(), "1girl, nude");
+        req.loras = vec![generate::LoraUse {
+            lora_id: lora,
+            weight: 1.0,
+            words: None,
+        }];
+        req.add_trigger_words = false;
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+
         // Under-18 terms in the negative prompt are how people keep them out.
         let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
         req.fine_tune.negative_prompt = Some("child, loli".into());

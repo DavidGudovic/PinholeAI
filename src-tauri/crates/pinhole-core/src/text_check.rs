@@ -13,7 +13,8 @@ use crate::{CoreError, CoreResult};
 /// Shown when text is blocked. No details: they would have to quote the text.
 pub const BLOCKED_MESSAGE: &str = "Pinhole doesn't make sexual images or text involving anyone under 18. Change the words and try again.";
 
-/// Terms that point at someone under 18. Single words also match with a trailing `s`/`es`.
+/// Terms that point at someone under 18. The last word of each also matches with a trailing
+/// `s`/`es` ("little girls").
 const UNDER_18: &[&str] = &[
     "child",
     "children",
@@ -32,12 +33,11 @@ const UNDER_18: &[&str] = &[
     "under age",
     "under 18",
     "under eighteen",
-    "minors",
+    "minor",
     "juvenile",
     "loli",
     "lolis",
     "lolicon",
-    "lolita",
     "shota",
     "shotacon",
     "toddlercon",
@@ -45,6 +45,11 @@ const UNDER_18: &[&str] = &[
     "teen",
     "teenage",
     "teenager",
+    "teenaged",
+    "high school",
+    "highschool",
+    "high schooler",
+    "highschooler",
     "tween",
     "schoolgirl",
     "school girl",
@@ -66,7 +71,8 @@ const UNDER_18: &[&str] = &[
     "kindergartener",
 ];
 
-/// Clearly sexual terms. Single words also match with a trailing `s`/`es`.
+/// Clearly sexual terms, same plural rule. Words with common harmless meanings ("cock",
+/// "tit", "thong") are left out.
 const SEXUAL: &[&str] = &[
     "sex",
     "sexual",
@@ -78,6 +84,7 @@ const SEXUAL: &[&str] = &[
     "naked",
     "topless",
     "bottomless",
+    "undress",
     "undressed",
     "undressing",
     "no clothes",
@@ -100,15 +107,12 @@ const SEXUAL: &[&str] = &[
     "vagina",
     "vulva",
     "pussy",
-    "cock",
     "nipple",
     "breasts",
     "boob",
-    "tit",
     "tits",
     "lingerie",
     "panties",
-    "thong",
     "upskirt",
     "pantyshot",
     "cameltoe",
@@ -118,6 +122,15 @@ const SEXUAL: &[&str] = &[
     "sensual",
     "provocative",
     "intercourse",
+    "penetration",
+    "fuck",
+    "fucking",
+    "anal",
+    "creampie",
+    "incest",
+    "molest",
+    "molested",
+    "panty",
     "cum",
     "cumshot",
     "blowjob",
@@ -175,12 +188,36 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
 
 /// Lowercase words; anything that isn't a letter or digit separates them, so booru tags
 /// (`school_girl`), weights (`(loli:1.2)`) and hyphens (`12-year-old`) split the same way.
+/// Zero-width characters are dropped (so they can't split a word) and fullwidth letters and
+/// digits become plain ones. "naked eye" is taken out first.
 fn tokens(text: &str) -> Vec<String> {
-    text.to_lowercase()
+    let plain: String = text
+        .chars()
+        .filter(|c| {
+            !matches!(c, '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}')
+        })
+        .map(|c| match c {
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+            _ => c,
+        })
+        .collect::<String>()
+        .to_lowercase();
+    let words: Vec<String> = plain
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_string)
-        .collect()
+        .collect();
+    let mut out = Vec::with_capacity(words.len());
+    let mut i = 0;
+    while i < words.len() {
+        if words[i] == "naked" && words.get(i + 1).is_some_and(|w| w == "eye") {
+            i += 2;
+            continue;
+        }
+        out.push(words[i].clone());
+        i += 1;
+    }
+    out
 }
 
 fn word_matches(token: &str, word: &str) -> bool {
@@ -192,16 +229,21 @@ fn word_matches(token: &str, word: &str) -> bool {
 
 fn has_phrase(words: &[String], phrase: &str) -> bool {
     let parts: Vec<&str> = phrase.split(' ').collect();
-    if parts.len() == 1 {
-        return words.iter().any(|w| word_matches(w, parts[0]));
-    }
-    words
-        .windows(parts.len())
-        .any(|win| win.iter().zip(&parts).all(|(w, p)| w == p))
+    let last = parts.len() - 1;
+    words.windows(parts.len()).any(|win| {
+        win.iter().zip(&parts).enumerate().all(|(i, (w, p))| {
+            if i == last {
+                word_matches(w, p)
+            } else {
+                w == p
+            }
+        })
+    })
 }
 
 /// An age from 1 to 17: "12", "twelve" or "12yo" followed by "yo", "y o", "year old",
-/// "years old", "yr old" or "yrs old"; or "age 12", "aged 12", "age of 12".
+/// "years old", "year olds", "yr old", "yrs old" or "years of age"; or "aged 12", "age of 12".
+/// A bare "age 12" doesn't count ("Bronze Age, 3 statues").
 fn has_young_age(words: &[String]) -> bool {
     let young =
         |w: &str| w.parse::<u32>().is_ok_and(|n| (1..18).contains(&n)) || NUMBER_WORDS.contains(&w);
@@ -223,12 +265,15 @@ fn has_young_age(words: &[String]) -> bool {
             if next == "yo" || (next == "y" && at(i + 1 + 1) == "o") {
                 return true;
             }
-            if matches!(next, "year" | "years" | "yr" | "yrs") && at(i + 2) == "old" {
+            if matches!(next, "year" | "years" | "yr" | "yrs")
+                && (matches!(at(i + 2), "old" | "olds")
+                    || (at(i + 2) == "of" && at(i + 3) == "age"))
+            {
                 return true;
             }
         }
-        if (w == "age" || w == "aged")
-            && (young(at(i + 1)) || (at(i + 1) == "of" && young(at(i + 2))))
+        if (w == "aged" && young(at(i + 1)))
+            || (w == "age" && at(i + 1) == "of" && young(at(i + 2)))
         {
             return true;
         }
@@ -261,6 +306,16 @@ mod tests {
             "preteen, spread legs",
             "pre-teen, lingerie",
             "under 18, nude",
+            "little girls, nude",
+            "young boys, naked",
+            "school girls, lingerie",
+            "middle schoolers, nsfw",
+            "a minor, nude",
+            "highschool student, naked",
+            "13 year-olds, lewd",
+            "12 years of age, nude",
+            "lo\u{200B}li, nude",
+            "\u{FF4C}\u{FF4F}\u{FF4C}\u{FF49}, nude",
         ] {
             assert!(pairs_minor_with_sexual(t), "{t}");
         }
@@ -282,6 +337,10 @@ mod tests {
             "breastfeeding mother with her baby",
             "a sextant on a ship's chart",
             "skidding car on a wet road, sexy lighting",
+            "Bronze Age, 3 nude marble statues",
+            "a child looking at the stars with the naked eye",
+            "kids watching a blue tit and a cock on the farm",
+            "kids in thongs on the beach",
         ] {
             assert!(!pairs_minor_with_sexual(t), "{t}");
         }

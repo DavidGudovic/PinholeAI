@@ -688,6 +688,9 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     let lora_dir = core.data.models(ModelKind::Lora);
     let mut loras = Vec::new();
     let mut triggers: Vec<String> = Vec::new();
+    // Every picked add-on's name and trigger words, for the word check below (whether or
+    // not the words are added to the prompt: the add-on steers the image either way).
+    let mut addon_words: Vec<String> = Vec::new();
     {
         let idx = core.installed.lock();
         // Add-ons were picked for the chosen model; an edit that fell back to
@@ -722,6 +725,8 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                     1.0
                 },
             });
+            addon_words.push(f.friendly_name.clone());
+            addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
             if req.add_trigger_words {
                 for w in f.trigger_words() {
                     let w = w.trim();
@@ -775,6 +780,11 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
         req.fine_tune.negative_prompt.as_deref(),
         apply_prefix,
     );
+
+    // The whole positive prompt (idea + style + trigger words) and the add-ons; the negative
+    // prompt is where people list what to keep out, so it isn't checked.
+    addon_words.insert(0, final_prompt.prompt.clone());
+    crate::text_check::check(&addon_words.join(", "))?;
 
     let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
     if let Some(n) = &final_prompt.negative {
@@ -1854,6 +1864,9 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     // Read before waiting for another job: results of a job that outlives a
     // Reset are dropped (see `Session::insert_generated_since`).
     let session_epoch = core.session.epoch();
+    // Early word check so a blocked prompt doesn't wait behind a running job; `prepare`
+    // checks the combined prompt again.
+    crate::text_check::check(&req.prompt)?;
     // Held for the whole run: the Models folder can't move under the engine.
     let _folder = crate::models::folder_read(core)?;
     let _run = core.gen.run_lock.lock().await;
@@ -1895,9 +1908,6 @@ async fn generate_inner(
         return Err(CoreError::invalid("Type what you want to see first."));
     }
     let prep = prepare(core, req)?;
-    // The whole positive prompt (idea + style + trigger words); the negative prompt is
-    // where people list what to keep out, so it isn't checked.
-    crate::text_check::check(&prep.final_prompt.prompt)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
