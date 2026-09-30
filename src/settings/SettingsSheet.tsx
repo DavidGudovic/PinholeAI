@@ -24,6 +24,7 @@ import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/co
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
+import { WhatGoesOnlineLink } from "../components/WhatGoesOnline";
 import { emitSettingsChanged } from "./events";
 import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
@@ -225,6 +226,9 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             </span>
           </p>
           <p className="mt-2 pl-6">
+            <WhatGoesOnlineLink offline={settings.offline} /> lists every site Pinhole can contact and what it sends.
+          </p>
+          <p className="mt-2 pl-6">
             Honest limitation: when memory runs low, your operating system may move parts of it to disk (swap or pagefile). Pinhole can't control that.
           </p>
         </div>
@@ -396,6 +400,11 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           label="Show paid (early access) models"
           hint="Early-access models cost money on CivitAI. They're hidden unless this is on."
           control={<Toggle checked={settings.showPaid} onChange={(v) => update({ showPaid: v })} label={<span className="sr-only">Show paid models</span>} />}
+        />
+        <Row
+          label="Show tips"
+          hint="One short tip about a feature you may have missed, under a picture. At most one per session."
+          control={<Toggle checked={settings.showTips ?? true} onChange={(v) => update({ showTips: v })} label={<span className="sr-only">Show tips</span>} />}
         />
         <Row
           label="Add trigger words automatically"

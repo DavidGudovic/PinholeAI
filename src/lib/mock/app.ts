@@ -64,6 +64,7 @@ export function mockSettings(): Settings {
       improveModel: "auto",
       noticeAccepted: f.skipFirstRun ? NOTICE_VERSION : 0,
       editNoticeSeen: false,
+      showTips: true,
     };
     settings = initial;
     return initial;

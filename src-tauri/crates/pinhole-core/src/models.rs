@@ -331,7 +331,7 @@ fn helper_group(core: &AppCore, helper_id: &str) -> Option<Vec<String>> {
 /// Files of one helper that Pinhole downloaded as a helper (kind Captioner / Upscaler).
 /// A Describe model's files that arrived with another model (Qwen Image Edit's encoder)
 /// belong to that model and are not listed.
-fn helper_files<'a>(
+pub(crate) fn helper_files<'a>(
     core: &AppCore,
     index: &'a pinhole_store::InstalledIndex,
     helper_id: &str,
@@ -347,10 +347,28 @@ fn helper_files<'a>(
             [m, p]
         })
         .collect();
+    // A file shared with another helper whose model file is installed stays with that one
+    // (the 7B vision file serves both 7B helpers): not listed or deleted here.
+    let kept: Vec<String> = core
+        .registry()
+        .captioner()
+        .helpers
+        .iter()
+        .filter(|h| h.id != helper_id)
+        .filter_map(|h| {
+            let (m, p) = crate::describe::helper_components(h);
+            index.find_component(&m).is_some().then_some(p)
+        })
+        .collect();
     index
         .files
         .iter()
         .filter(|f| matches!(f.kind, ModelKind::Captioner | ModelKind::Upscaler))
+        .filter(|f| {
+            !f.component_id
+                .as_deref()
+                .is_some_and(|c| kept.iter().any(|x| x == c))
+        })
         .filter(|f| match &group {
             Some(g) => f
                 .component_id
@@ -374,9 +392,21 @@ pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
     let mut out = Vec::new();
     let mut listed: Vec<&str> = Vec::new();
     for h in core.registry().captioner().helpers.iter() {
-        let files = helper_files(core, &index, &h.id);
+        let mut files = helper_files(core, &index, &h.id);
         if files.is_empty() {
             continue;
+        }
+        // A vision file shared with another installed helper is kept on Remove, but its size
+        // still shows once, on the first row that uses it.
+        let (_, p) = crate::describe::helper_components(h);
+        if let Some(shared) = index
+            .files
+            .iter()
+            .find(|f| f.kind == ModelKind::Captioner && f.component_id.as_deref() == Some(&p))
+        {
+            if !listed.contains(&shared.id.as_str()) && !files.iter().any(|f| f.id == shared.id) {
+                files.push(shared);
+            }
         }
         listed.extend(files.iter().map(|f| f.id.as_str()));
         out.push(InstalledHelper {
@@ -1955,7 +1985,8 @@ mod tests {
         let models = crate::describe::list_helper_models(&core);
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            ["describe", "qwen25_vl_7b"]
+            ["describe", "qwen25_vl_7b"],
+            "the Safe-mode-Off helper is hidden while Safe mode is On"
         );
         assert!(models.iter().all(|m| !m.installed && m.download_bytes > 0));
         let seven = &models[1];
@@ -2004,6 +2035,103 @@ mod tests {
         assert!(
             s.source.is_none(),
             "falls back to automatic, which has nothing installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_safe_mode_off_helper_shares_the_7b_vision_file_and_is_automatic_while_off() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let mut st = core.settings.read().clone();
+        st.content_mode = "all".into();
+        crate::app::set_settings(&core, st).unwrap();
+        let ids: Vec<String> = crate::describe::list_helper_models(&core)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            ids,
+            ["describe", "qwen25_vl_7b", "qwen25_vl_7b_abliterated"]
+        );
+
+        let dir = core.data.models(ModelKind::Captioner);
+        std::fs::create_dir_all(&dir).unwrap();
+        let add = |name: &str, comp: &str| {
+            std::fs::write(dir.join(name), b"1234").unwrap();
+            let file = DownloadedFile {
+                path: dir.join(name),
+                sha256: "cd".repeat(32),
+                size_bytes: 4,
+            };
+            let reg = Registration {
+                kind: ModelKind::Captioner,
+                friendly_name: "helper".into(),
+                family: None,
+                component_id: Some(comp.into()),
+                civitai: None,
+                dtype: None,
+            };
+            register_download(&core, &file, reg).unwrap();
+        };
+        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("p7.gguf", "qwen25_vl_7b_mmproj");
+        // Only the Safe-mode-Off helper is listed, with the shared vision file.
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["qwen25_vl_7b_abliterated"]
+        );
+        assert_eq!(rows[0].size_bytes, 8);
+        // Automatic uses it while Safe mode is Off.
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Improve);
+        assert_eq!(s.source.as_deref(), Some("reuse"));
+
+        // With the 7B installed too, each row is removable, the vision file is counted once,
+        // and removing one helper keeps it.
+        add("m7.gguf", "qwen25_vl_7b_q8");
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.id.as_str(), r.size_bytes))
+                .collect::<Vec<_>>(),
+            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_abliterated", 4)]
+        );
+        assert!(crate::describe::list_helper_models(&core)
+            .iter()
+            .filter(|m| m.id != "describe")
+            .all(|m| m.installed && m.removable));
+        delete_helper(&core, "qwen25_vl_7b_abliterated")
+            .await
+            .unwrap();
+        assert!(!dir.join("ab.gguf").exists());
+        assert!(dir.join("p7.gguf").exists() && dir.join("m7.gguf").exists());
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].id.as_str(), rows[0].size_bytes),
+            ("qwen25_vl_7b", 8)
+        );
+
+        // Safe mode On: the Safe-mode-Off helper is never picked, even when installed.
+        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        delete_helper(&core, "qwen25_vl_7b").await.unwrap();
+        assert!(
+            dir.join("p7.gguf").exists(),
+            "still used by the other helper"
+        );
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
+        assert_eq!(s.source.as_deref(), Some("reuse"));
+        let mut st = core.settings.read().clone();
+        st.content_mode = "safe".into();
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::describe::list_helper_models(&core)
+            .iter()
+            .all(|m| m.id != "qwen25_vl_7b_abliterated"));
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
+        assert!(s.source.is_none(), "nothing else is installed");
+        // Installed helpers still lists it, so it can be removed.
+        assert_eq!(
+            list_helpers(&core).unwrap()[0].id,
+            "qwen25_vl_7b_abliterated"
         );
     }
 }
