@@ -480,7 +480,7 @@ try {
   await step("use-notice", async () => {
     await waitText("Before you start");
     await shot("00-before-you-start");
-    await clickButton("I agree");
+    await clickButton("Agree and continue");
   });
 
   await step("firstrun-welcome", async (note) => {
