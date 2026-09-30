@@ -549,7 +549,7 @@ pub fn list_helper_models(core: &AppCore) -> Vec<HelperModel> {
 /// `None` without a graphics card or before hardware is known.
 fn helper_fit(size_bytes: u64, vram_gb: f32, ram_gb: f32) -> Option<pinhole_registry::vram::Fit> {
     use pinhole_registry::vram::Fit;
-    if !(vram_gb > 0.0) {
+    if vram_gb.is_nan() || vram_gb <= 0.0 {
         return None;
     }
     let need_gb = size_bytes as f32 / 1e9 * 1.15 + 0.5;

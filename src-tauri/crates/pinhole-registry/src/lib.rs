@@ -265,7 +265,7 @@ impl Registry {
             if !helper_ids.insert(h.id.as_str()) {
                 problems.push(format!("captioner helper `{}` is listed twice", h.id));
             }
-            if h.default == h.components.is_empty() {
+            if h.default != h.components.is_empty() {
                 problems.push(format!(
                     "captioner helper `{}`: set either `default: true` or two `components`",
                     h.id
