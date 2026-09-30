@@ -202,8 +202,13 @@ export function EditTab() {
   // Set before the first await (the mask export), so a second click or Ctrl+Enter
   // during the export doesn't get as far as the job and report "still working".
   const running = useRef(false);
-  // What "Retry" on an error repeats.
-  const lastAgain = useRef(false);
+  // What "Retry" on an error repeats (the last edit, Try again, upscale or save).
+  // Kept as data, not a closure, so Retry runs with the current screen's state.
+  const retry = useRef<
+    | { kind: "edit"; again: boolean }
+    | { kind: "upscale"; factor: 2 | 4 }
+    | { kind: "action"; f: () => Promise<unknown> }
+  >({ kind: "edit", again: false });
   // `again`: redo the shown edit from the step before it, with a new seed ("Try again").
   const run = async (again = false) => {
     if (
@@ -218,7 +223,7 @@ export function EditTab() {
     const source = e.chain[from] ? images[e.chain[from].imageId] : undefined;
     if (!source || (again && !canTryAgain)) return;
     running.current = true;
-    lastAgain.current = again;
+    retry.current = { kind: "edit", again };
     setError(null);
     try {
       const m = again
@@ -257,6 +262,7 @@ export function EditTab() {
 
   const upscale = async (factor: 2 | 4) => {
     if (store.getState().job || importing || !current) return;
+    retry.current = { kind: "upscale", factor };
     setError(null);
     try {
       await actions.upscaleEdit(factor);
@@ -265,6 +271,7 @@ export function EditTab() {
     }
   };
   const runAction = async (f: () => Promise<unknown>) => {
+    retry.current = { kind: "action", f };
     setError(null);
     try {
       await f();
@@ -806,7 +813,12 @@ export function EditTab() {
             <ErrorWithFix
               error={error}
               onDismiss={() => setError(null)}
-              onRetry={() => void run(lastAgain.current)}
+              onRetry={() => {
+                const r = retry.current;
+                if (r.kind === "upscale") void upscale(r.factor);
+                else if (r.kind === "action") void runAction(r.f);
+                else void run(r.again);
+              }}
             />
           )}
         </div>
