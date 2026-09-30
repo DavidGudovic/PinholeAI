@@ -616,7 +616,7 @@ export function EditTab() {
                       minRows={2}
                       maxRows={6}
                       value={e.fixPrompt}
-                      placeholder="e.g. a smiling face, or a hand holding a cup"
+                      placeholder="e.g. a hand holding a cup, or a street sign"
                       onChange={(ev) =>
                         dispatch({
                           type: "patchEdit",

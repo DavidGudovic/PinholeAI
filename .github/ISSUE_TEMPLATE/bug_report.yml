@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks! Please **don't paste private prompts** — describe them instead (Pinhole never puts your
+        Thanks! Please **don't paste your prompts** — describe them instead (Pinhole never puts your
         prompt in the error Details, but double-check anything you paste). Screenshots must be safe for
         work with fictional subjects (see CLAUDE.md wording rules).
   - type: textarea
