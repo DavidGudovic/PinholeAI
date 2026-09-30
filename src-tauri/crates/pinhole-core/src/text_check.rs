@@ -1,7 +1,8 @@
 //! Local word check: text that pairs an under-18 term with a sexual term is blocked,
-//! whatever Safe mode says. Runs on the prompt sent to the image engine (after styles and
-//! trigger words are combined), on the idea sent to "Improve my prompt" and on what the
-//! Describe model writes back (Describe and Improve). See RELEASE-SPEC §11.
+//! whatever Safe mode says. Runs on the prompt sent to the image engine in Create and every
+//! Edit mode (after styles, trigger words and add-ons are combined), on the idea sent to
+//! "Improve my prompt", on what the Describe model writes back (Describe and Improve) and on
+//! Browse search text. See RELEASE-SPEC §11.
 //!
 //! Deliberately plain: fixed word lists in code (not YAML, so a config edit can't turn it
 //! off), whole words only, both lists must match. It is a first line, not the §3 image check:
