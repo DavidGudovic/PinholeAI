@@ -588,6 +588,9 @@ families:
     style_template: natural
     activation_gb: 3.0
     license_note: "Qwen Research License"
+    # Can also edit (docs/qwen_image_2.1.md), but only with Qwen3-VL-8B's vision
+    # weights (--llm_vision; conditioner.hpp errors without them). Add `edit` here
+    # once that file's URL/size/SHA-256 are verified with the API probe.
     modes: [txt2img, img2img]
     detect:
       # get_sd_version(): exact `model.diffusion_model.txt_in.text_norm.weight`
@@ -623,7 +626,7 @@ families:
     style_template: natural
     activation_gb: 2.0
     license_note: "Apache 2.0"
-    modes: [txt2img, img2img]
+    modes: [txt2img, img2img, edit]   # edit = reference image + instruction (docs/edit.md)
     detect:
       any_tensor: ["double_stream_modulation_img.lin.weight"]
       none_tensor: ["single_blocks.47.linear1.weight", "dual_time_embed.semantic_embedder."]
@@ -659,7 +662,7 @@ families:
     style_template: natural
     activation_gb: 2.5
     license_note: "Non-commercial license"
-    modes: [txt2img, img2img]
+    modes: [txt2img, img2img, edit]   # edit = reference image + instruction (docs/edit.md)
     detect:
       any_tensor: ["double_stream_modulation_img.lin.weight"]
       none_tensor: ["single_blocks.47.linear1.weight", "dual_time_embed.semantic_embedder."]
@@ -698,7 +701,7 @@ families:
     style_template: natural
     activation_gb: 4.0
     license_note: "Non-commercial license"
-    modes: [txt2img, img2img]
+    modes: [txt2img, img2img, edit]   # edit = reference image + instruction (docs/edit.md)
     detect:
       any_tensor: ["double_stream_modulation_img.lin.weight"]
       all_tensor: ["single_blocks.47.linear1.weight"]

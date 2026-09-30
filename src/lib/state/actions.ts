@@ -347,7 +347,9 @@ export function makeActions(store: Store) {
     const all = list.length ? list : editModels(get().models);
     const rank = (m: InstalledModel) => (m.familyId === "qwen_image_edit_2511" ? 0 : m.familyId === "flux1_kontext" ? 1 : 2);
     const fitRank = (m: InstalledModel) => (m.fit === "fits" ? 0 : m.fit === "tight" ? 1 : m.fit === "tooBig" ? 3 : 2);
-    return [...all].sort((a, b) => fitRank(a) - fitRank(b) || rank(a) - rank(b))[0] ?? null;
+    // Dedicated edit models first unless they're too big; then generators that can edit (FLUX.2).
+    const tier = (m: InstalledModel) => (m.isEditModel && m.fit !== "tooBig" ? 0 : 1);
+    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || rank(a) - rank(b))[0] ?? null;
   }
 
   // ---------------------------------------------------------------- session

@@ -75,10 +75,13 @@ tags:
     tags: [edit, "image edit", "image editing", image-edit, image-editing, kontext, "flux kontext",
            qwen-image-edit, qwen-edit, "qwen edit", qwen-image-edit-2509, "qwen edit v2511"]
     name_words: [edit, kontext]
-    base_models: ["Flux.1 Kontext"]
+    # Families that also generate but can edit too (models.yaml `modes: [..., edit]`).
+    base_models: ["Flux.1 Kontext", "Flux.2 Klein 4B", "Flux.2 Klein 4B-base",
+                  "Flux.2 Klein 9B", "Flux.2 Klein 9B-base", "Flux.2 D"]
     # Sent to CivitAI as `baseModels` (narrowed to what Pinhole runs), so it only pages
     # through models that can be edit models at all.
-    api_base_models: ["Qwen", "Qwen 2.1", "Flux.1 Kontext", "Flux.2 Klein 4B", "Flux.2 Klein 9B", "Flux.2 D"]
+    api_base_models: ["Qwen", "Qwen 2.1", "Flux.1 Kontext", "Flux.2 Klein 4B", "Flux.2 Klein 4B-base",
+                      "Flux.2 Klein 9B", "Flux.2 Klein 9B-base", "Flux.2 D"]
   portraits:
     label: "Portraits"
     tags: [portrait, portraits, "portrait photography", headshot]

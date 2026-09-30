@@ -12,7 +12,7 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly } from "../models/lib/words";
 import * as api from "../../lib/api";
-import { defaultStickPosition, sizeMultiple } from "../../lib/paste/map";
+import { defaultStayClosePosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, Quality } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
@@ -157,7 +157,9 @@ export function EditTab() {
             <p className="mt-1.5 text-xs text-neutral-500">
               {e.mode == null
                 ? autoEdit
-                  ? "Picked automatically — you have an edit model."
+                  ? autoEdit.isEditModel
+                    ? "Picked automatically — you have an edit model."
+                    : "Picked automatically — one of your models can edit."
                   : "Picked automatically — Restyle works with your Create model."
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."
@@ -208,16 +210,18 @@ export function EditTab() {
                     onChange={(ev) => dispatch({ type: "patchEdit", patch: { instruction: ev.target.value } })}
                   />
                 </div>
-                <div>
-                  <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">Stay close to original</div>
-                  <Slider
-                    ariaLabel="Stay close to original"
-                    value={e.stayClose ?? defaultStickPosition(ui)}
-                    onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
-                    left="Loose"
-                    right="Close"
-                  />
-                </div>
+                {(ui?.stayCloseShown ?? true) && (
+                  <div>
+                    <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">Stay close to original</div>
+                    <Slider
+                      ariaLabel="Stay close to original"
+                      value={e.stayClose ?? defaultStayClosePosition(ui)}
+                      onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
+                      left="Loose"
+                      right="Close"
+                    />
+                  </div>
+                )}
               </>
             )
           ) : (

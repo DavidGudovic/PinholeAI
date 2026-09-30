@@ -814,8 +814,7 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
         f.family
             .as_deref()
             .and_then(|id| reg.family(id))
-            .map(|fam| fam.role.as_deref() == Some("edit"))
-            .unwrap_or(false)
+            .is_some_and(pinhole_registry::wiring::can_edit)
     };
 
     let model = if req.mode == GenMode::Edit {

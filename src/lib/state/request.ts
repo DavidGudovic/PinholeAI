@@ -1,7 +1,7 @@
 // Pure builders: app state → GenerateRequest, presets ↔ Create params.
 // PRIVACY: requests contain prompt text — memory only. Presets never do.
 
-import { defaultStickPosition, shapeFor } from "../paste/map";
+import { defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
 import type {
   Dials,
   FamilyUi,
@@ -149,7 +149,7 @@ export function buildEditRequest(
       mode: "edit",
       prompt: e.instruction.trim(),
       styleId: e.styleId,
-      dials: { shape, quality: e.quality, stick: e.stayClose ?? defaultStickPosition(opts.ui), count: 1 },
+      dials: { shape, quality: e.quality, stick: e.stayClose ?? defaultStayClosePosition(opts.ui), count: 1 },
       fineTune,
       loras: [],
       addTriggerWords: false,

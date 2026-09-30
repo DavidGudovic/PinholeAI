@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -254,6 +254,19 @@ describe("requests", () => {
     expect(ins.dials.stick).toBe(0.8);
     const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: null, size: [512, 512] });
     expect(rs).toMatchObject({ mode: "img2img", prompt: "oil painting", initImageId: "src", strength: 0.75 });
+  });
+
+  it("offers generators that can edit in both Create and Edit", () => {
+    const klein = model("k", "flux2_klein_9b_base", { modes: ["txt2img", "img2img", "edit"] });
+    const qwenEdit = model("q", "qwen_image_edit_2511", { modes: ["edit"], isEditModel: true });
+    const sdxl = model("s", "sdxl");
+    expect(editModels([klein, qwenEdit, sdxl]).map((m) => m.id)).toEqual(["k", "q"]);
+    expect(createModels([klein, qwenEdit, sdxl]).map((m) => m.id)).toEqual(["k", "s"]);
+    // "Stay close" defaults to the edit-direction dial position, not the Create one.
+    const ui = { ...FAMILY_UI.sdxl, familyId: "flux2_klein_9b_base", modes: ["txt2img", "img2img", "edit"], stickDefault: 0.3, stayCloseDefault: 0.7 };
+    const e = { ...withModels().edit, instruction: "make it evening" };
+    const req = buildEditRequest(e, { mode: "instruction", source: ref("src"), model: klein, ui, maskImageId: null, size: [1024, 1024] });
+    expect(req.dials.stick).toBe(0.7);
   });
 
   it("fits edit sizes to ~1 MP in multiples of 16", () => {

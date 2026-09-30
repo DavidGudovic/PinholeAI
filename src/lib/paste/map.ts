@@ -231,6 +231,12 @@ export function defaultStickPosition(ui: FamilyUi | null | undefined): number {
   return clamp01(ui.stickDefault);
 }
 
+/** Dial position (0…1) of the family's default "Stay close to original" (edits). */
+export function defaultStayClosePosition(ui: FamilyUi | null | undefined): number {
+  if (!ui || !Number.isFinite(ui.stayCloseDefault)) return defaultStickPosition(ui);
+  return clamp01(ui.stayCloseDefault);
+}
+
 /** Concrete CFG/guidance value for a dial position. */
 export function stickValue(ui: FamilyUi, position: number): number {
   const [lo, hi] = ui.stickRange;

@@ -526,6 +526,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn instruction_edit_uses_a_generator_that_can_edit() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(256, 256, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let edit_req = |model: String| {
+            let mut req = GenerateRequest::txt2img(model, "make it evening");
+            req.mode = GenMode::Edit;
+            req.ref_image_ids = vec![src.id.clone()];
+            req.dials.quality = Quality::Fast;
+            req
+        };
+
+        // SDXL can only restyle: no instruction edit without an edit-capable model.
+        let sdxl = register_fake_model(&core, "sdxl");
+        let err = generate::generate(&core, edit_req(sdxl.clone()))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("No edit model"), "{}", err.message);
+
+        // FLUX.2 klein generates and edits: picked when chosen, and as the fallback.
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        for chosen in [klein.clone(), sdxl] {
+            let res = generate::generate(&core, edit_req(chosen)).await.unwrap();
+            assert_eq!(res.images[0].family_id, "flux2_klein_4b");
+        }
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
+
+        // A dedicated edit model still wins the fallback.
+        let _qwen_edit = register_fake_model(&core, "qwen_image_edit_2511");
+        let res = generate::generate(&core, edit_req(klein.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            res.images[0].family_id, "flux2_klein_4b",
+            "the chosen one runs"
+        );
+        let mut req = edit_req(klein);
+        req.model_id = "gone".into();
+        let res = generate::generate(&core, req).await.unwrap();
+        assert_eq!(res.images[0].family_id, "qwen_image_edit_2511");
+    }
+
+    #[tokio::test]
     async fn cancel_and_failures_map_to_plain_errors() {
         let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start_with(MockOptions {

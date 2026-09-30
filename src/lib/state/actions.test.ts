@@ -242,3 +242,17 @@ describe("Use a style add-on", () => {
     expect(store.getState().toasts.at(-1)?.text).toMatch(/made for SDXL 1.0 models/);
   });
 });
+
+describe("autoEditModel", () => {
+  it("prefers a dedicated edit model over a generator that can edit, unless it is too big", () => {
+    const { store, actions } = setup();
+    const klein: InstalledModel = { ...model, id: "k", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], fit: "fits" };
+    const qwen: InstalledModel = { ...model, id: "q", familyId: "qwen_image_edit_2511", modes: ["edit"], isEditModel: true, fit: "tight" };
+    store.dispatch({ type: "setModels", models: [klein, qwen] });
+    expect(actions.autoEditModel()?.id).toBe("q");
+    store.dispatch({ type: "setModels", models: [klein, { ...qwen, fit: "tooBig" }] });
+    expect(actions.autoEditModel()?.id).toBe("k");
+    store.dispatch({ type: "setModels", models: [klein] });
+    expect(actions.autoEditModel()?.id).toBe("k");
+  });
+});
