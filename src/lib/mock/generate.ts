@@ -400,6 +400,11 @@ const table: MockTable = {
     await sleep(150);
     return { path: String(a.path) };
   },
+  save_images_to: async (a) => {
+    const ids = a.ids as string[];
+    await sleep(150);
+    return { saved: ids.map((id) => ({ id, path: `${String(a.dir)}/pinhole_${stamp()}_${mustGet(id).seed}.png` })), failed: 0 };
+  },
   copy_image: async (a) => {
     const im = mustGet(a.id);
     try {

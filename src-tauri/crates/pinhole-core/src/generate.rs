@@ -333,6 +333,22 @@ pub struct SavedImage {
     pub path: String,
 }
 
+/// One file written by "Save all".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedEntry {
+    pub id: String,
+    pub path: String,
+}
+
+/// `SavedBatch`: what "Save all" wrote; `failed` counts images that couldn't be saved.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedBatch {
+    pub saved: Vec<SavedEntry>,
+    pub failed: usize,
+}
+
 // ================================================================ state
 
 /// Memory-saving launch choices made automatically for one model (RAM only,

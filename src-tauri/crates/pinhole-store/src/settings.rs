@@ -24,6 +24,8 @@ pub struct Settings {
     pub theme: String,
     /// LoRA trigger words added automatically.
     pub add_trigger_words: bool,
+    /// Soft sound when pictures finish while Pinhole is in the background (off by default).
+    pub sound_on_done: bool,
     /// First-run flow finished or skipped.
     pub first_run_done: bool,
     /// Engine backend override: `auto` | `cuda` | `vulkan` | `cpu`
@@ -62,6 +64,7 @@ impl Default for Settings {
             saved_metadata: "none".into(),
             theme: "system".into(),
             add_trigger_words: true,
+            sound_on_done: false,
             first_run_done: false,
             engine_backend: "auto".into(),
             text_encoder_on_cpu: "auto".into(),
@@ -221,6 +224,7 @@ mod tests {
             saved_metadata: "settings".into(),
             theme: "dark".into(),
             add_trigger_words: false,
+            sound_on_done: true,
             first_run_done: true,
             engine_backend: "vulkan".into(),
             text_encoder_on_cpu: "on".into(),

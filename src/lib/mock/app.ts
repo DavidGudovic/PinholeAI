@@ -55,6 +55,7 @@ export function mockSettings(): Settings {
       savedMetadata: "none",
       theme: f.theme ?? "system",
       addTriggerWords: true,
+      soundOnDone: false,
       firstRunDone: f.skipFirstRun,
       engineBackend: "auto",
       textEncoderOnCpu: "auto",

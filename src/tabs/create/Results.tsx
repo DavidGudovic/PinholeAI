@@ -6,6 +6,7 @@ import {
   ImageUp,
   Layers,
   Maximize2,
+  Save,
   ScanText,
   Shuffle,
   Trash,
@@ -21,8 +22,8 @@ import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
-import type { ImgRef } from "../../lib/state/model";
-import { modKey } from "../../lib/state/platform";
+import { unsavedIds, type ImgRef } from "../../lib/state/model";
+import { canSaveAs, modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
 import { TipLine } from "./TipLine";
 import { useAppState, useDispatch } from "../../lib/state/store";
@@ -129,6 +130,7 @@ function Preview({
   const actions = useActions();
   const busy = useAppState((s) => !!s.job);
   const hasBatch = useAppState((s) => !!s.resultBatch[result.id]);
+  const unsavedCount = useAppState((s) => unsavedIds(s).length);
   const [error, setError] = useState<CoreError | null>(null);
 
   const run = async (f: () => Promise<unknown>) => {
@@ -160,6 +162,14 @@ function Preview({
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
         <SaveButton id={result.id} seed={result.seed} run={run} tab="create" />
+        {canSaveAs() && unsavedCount > 1 && (
+          <Button
+            title="Save every unsaved picture into a folder you choose"
+            onClick={() => void run(() => actions.saveAll())}
+          >
+            <Save className="h-4 w-4" /> Save all ({unsavedCount})
+          </Button>
+        )}
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
