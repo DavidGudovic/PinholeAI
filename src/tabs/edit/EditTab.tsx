@@ -12,7 +12,7 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly } from "../models/lib/words";
 import * as api from "../../lib/api";
-import { defaultStickPosition, sizeMultiple } from "../../lib/paste/map";
+import { defaultStayClosePosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, Quality } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
@@ -208,16 +208,18 @@ export function EditTab() {
                     onChange={(ev) => dispatch({ type: "patchEdit", patch: { instruction: ev.target.value } })}
                   />
                 </div>
-                <div>
-                  <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">Stay close to original</div>
-                  <Slider
-                    ariaLabel="Stay close to original"
-                    value={e.stayClose ?? defaultStickPosition(ui)}
-                    onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
-                    left="Loose"
-                    right="Close"
-                  />
-                </div>
+                {(ui?.stayCloseShown ?? true) && (
+                  <div>
+                    <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">Stay close to original</div>
+                    <Slider
+                      ariaLabel="Stay close to original"
+                      value={e.stayClose ?? defaultStayClosePosition(ui)}
+                      onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
+                      left="Loose"
+                      right="Close"
+                    />
+                  </div>
+                )}
               </>
             )
           ) : (

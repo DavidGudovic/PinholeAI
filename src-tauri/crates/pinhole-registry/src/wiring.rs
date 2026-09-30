@@ -884,25 +884,40 @@ pub struct FamilyUi {
     pub auto_prompt_prefix: Option<String>,
     pub hires_at_best: bool,
     pub license_note: Option<String>,
+    /// A dedicated edit model (Edit tab only).
     pub is_edit_family: bool,
+    /// Show the "Stay close to original" dial when editing with this family.
+    pub stay_close_shown: bool,
+    /// Default "Stay close to original" dial POSITION (0.0..=1.0, inverted like
+    /// `stick_default` for edit families). Differs from `stick_default` for
+    /// families that both generate and edit (Qwen-Image 2.1, FLUX.2).
+    pub stay_close_default: f32,
 }
 
-/// `true` for instruction-edit families (`role: edit` or mode `edit`).
+/// `true` for dedicated instruction-edit families (`role: edit`, or `edit` is
+/// their only mode). Families that also generate (Qwen-Image 2.1, FLUX.2) are
+/// not: they stay in Create and are offered in Edit via [`can_edit`].
 pub fn is_edit_family(family: &Family) -> bool {
-    family.role.as_deref() == Some("edit") || family.modes.iter().any(|m| m == "edit")
+    family.role.as_deref() == Some("edit")
+        || (!family.modes.is_empty() && family.modes.iter().all(|m| m == "edit"))
 }
 
-pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
-    let _ = registry;
+/// `true` when the family can do instruction edits (reference image + prompt):
+/// dedicated edit families and generators that list the `edit` mode.
+pub fn can_edit(family: &Family) -> bool {
+    is_edit_family(family) || family.modes.iter().any(|m| m == "edit")
+}
+
+/// The "Stick to prompt" / "Stay close to original" dial for `family`:
+/// `(shown, maps_to, range, default position)`. `edit` inverts the dial.
+fn stick_dial(family: &Family, edit: bool) -> (bool, &str, [f32; 2], f32) {
     let d = &family.dials;
-    let edit = is_edit_family(family);
     let target = stick_target(family, edit);
     let default_cfg = d
         .cfg_fixed
         .or(d.cfg_default)
         .unwrap_or_else(|| d.cfg_range.map_or(DEFAULT_CFG, |r| lerp(r, 0.5)));
-
-    let (show_stick, range, default_value) = match target {
+    let (show, range, default_value) = match target {
         "guidance" => match d.guidance_range {
             Some(r) => (
                 true,
@@ -916,11 +931,24 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
             _ => (false, [default_cfg, default_cfg], default_cfg),
         },
     };
-    let stick_default = if show_stick {
+    let pos = if show {
         position(range, default_value, edit)
     } else {
         0.5
     };
+    (show, target, range, pos)
+}
+
+pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
+    let _ = registry;
+    let d = &family.dials;
+    let edit = is_edit_family(family);
+    let default_cfg = d
+        .cfg_fixed
+        .or(d.cfg_default)
+        .unwrap_or_else(|| d.cfg_range.map_or(DEFAULT_CFG, |r| lerp(r, 0.5)));
+    let (show_stick, target, range, stick_default) = stick_dial(family, edit);
+    let (stay_close_shown, _, _, stay_close_default) = stick_dial(family, true);
 
     let quality_steps = d
         .quality
@@ -957,5 +985,7 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
         hires_at_best: d.hires_at_best.as_ref().is_some_and(|h| h.enabled),
         license_note: family.license_note.clone(),
         is_edit_family: edit,
+        stay_close_shown,
+        stay_close_default,
     }
 }

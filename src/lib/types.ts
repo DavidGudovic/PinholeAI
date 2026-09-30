@@ -277,7 +277,12 @@ export interface FamilyUi {
   autoPromptPrefix: string | null;
   hiresAtBest: boolean;
   licenseNote: string | null;
+  /** A dedicated edit model (Edit tab only). Families that also generate can still edit: `modes` has "edit". */
   isEditFamily: boolean;
+  /** Show "Stay close to original" when editing with this family. */
+  stayCloseShown: boolean;
+  /** Default "Stay close to original" dial position (0…1) for edits. */
+  stayCloseDefault: number;
 }
 
 export interface Dials {

@@ -37,9 +37,11 @@ const base: FamilyUi = {
   hiresAtBest: false,
   licenseNote: null,
   isEditFamily: false,
+  stayCloseShown: true,
+  stayCloseDefault: 0.5,
 };
 
-export const FAMILY_UI: Record<string, FamilyUi> = {
+const FIXTURES: Record<string, FamilyUi> = {
   sd15: {
     ...base,
     familyId: "sd15",
@@ -148,6 +150,7 @@ export const FAMILY_UI: Record<string, FamilyUi> = {
     defaultFlowShift: 3,
     defaultCfg: 2.5,
     isEditFamily: true,
+    stayCloseDefault: 0.6,
   },
   flux1_kontext: {
     ...base,
@@ -167,5 +170,14 @@ export const FAMILY_UI: Record<string, FamilyUi> = {
     defaultGuidance: 2.5,
     licenseNote: "Non-commercial license",
     isEditFamily: true,
+    stayCloseDefault: 0.6,
   },
 };
+
+// Generators edit with the same dial inverted ("Stay close" = low CFG/guidance), like `family_ui`.
+export const FAMILY_UI: Record<string, FamilyUi> = Object.fromEntries(
+  Object.entries(FIXTURES).map(([id, ui]) => [
+    id,
+    ui.isEditFamily ? ui : { ...ui, stayCloseShown: ui.showStick, stayCloseDefault: ui.showStick ? 1 - ui.stickDefault : 0.5 },
+  ]),
+);
