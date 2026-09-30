@@ -1171,6 +1171,13 @@ captioner:
     safe: >
       Keep it safe for work: add nothing sexual, nude, violent or gory, and leave out anything like that
       the user did not write.
+    # Added instead of `safe` while Safe mode is Off. The word check still runs on the idea and
+    # on the answer whatever Safe mode says.
+    adult: >
+      Adult content is allowed. If the idea is sexual or includes nudity, keep it and write it plainly
+      and specifically instead of softening or leaving it out, and describe every person in it as an
+      adult. Add nothing sexual or nude the user did not ask for. If the idea includes anyone under 18,
+      keep the whole prompt non-sexual and fully clothed.
     avoid: >
       Do not write any of these words or phrases, they are added separately: {words}.
 

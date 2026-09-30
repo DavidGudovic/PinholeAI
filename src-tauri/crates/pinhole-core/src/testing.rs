@@ -2022,6 +2022,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn improve_prompt_with_safe_mode_off_allows_adult_and_catches_refusals() {
+        let (_tmp, core, _rec) = new_core();
+        core.settings.write().content_mode = "all".into();
+        let llama = MockLlamaServer::start(
+            "I'm sorry, but I can't help with that request. Please ask something else.",
+            0,
+        )
+        .await;
+        use_external_captioner(&core, &llama.base_url());
+        let out = describe::improve_prompt(&core, "a nude figure study", None, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            out.text, "a nude figure study",
+            "a refusal never replaces the prompt"
+        );
+        assert!(out.note.is_some());
+        let system = llama.requests()[0]
+            .pointer("/messages/0/content")
+            .and_then(|t| t.as_str())
+            .unwrap()
+            .to_string();
+        assert!(system.contains("Adult content is allowed"), "{system}");
+        assert!(system.contains("anyone under 18"), "{system}");
+        assert!(!system.contains("safe for work"), "{system}");
+    }
+
+    #[tokio::test]
     async fn improve_prompt_falls_back_when_the_model_loops() {
         let (_tmp, core, _rec) = new_core();
         let looped = vec!["bedroom"; 60].join(", ");
