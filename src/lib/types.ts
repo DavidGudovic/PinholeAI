@@ -382,7 +382,11 @@ export interface ResultImage {
   scheduler: string | null;
   /** Parent image id for edit chains. */
   parentId: string | null;
+  /** Made in Pinhole, or made from a picture the user added (RELEASE-SPEC §3.1). */
+  origin?: ImageOrigin;
 }
+
+export type ImageOrigin = "generated" | "imported";
 
 export interface GenerateResult {
   images: ResultImage[];
@@ -554,6 +558,8 @@ export interface CatalogCard {
   vram: VramNeed | null;
   fit: Fit | null;
   earlyAccess: boolean;
+  /** The creator asks for no adult content with it ("Safe images only" badge). */
+  sfwOnly?: boolean;
   commercialOk: boolean;
   licenseNote: string | null;
   installed: boolean;

@@ -104,8 +104,15 @@ pub struct Model {
     pub nsfw: bool,
     #[serde(deserialize_with = "lenient::nsfw_level")]
     pub nsfw_level: Option<u32>,
+    /// CivitAI: depicts a real person.
     #[serde(deserialize_with = "lenient::bool")]
     pub poi: bool,
+    /// CivitAI: depicts someone under 18 (usually a child character).
+    #[serde(deserialize_with = "lenient::bool")]
+    pub minor: bool,
+    /// The creator asks for no adult content with this model.
+    #[serde(deserialize_with = "lenient::bool")]
+    pub sfw_only: bool,
     /// `Archived` / `TakenDown` → no downloadable files.
     #[serde(deserialize_with = "lenient::opt_string")]
     pub mode: Option<String>,
@@ -140,7 +147,16 @@ impl Model {
             Some("archived") | Some("takendown")
         )
     }
+
+    /// CivitAI marks it as showing a real person or someone under 18 (RELEASE-SPEC §5).
+    pub fn is_person_or_minor(&self) -> bool {
+        self.poi || self.minor
+    }
 }
+
+/// Why a model CivitAI marks `poi` / `minor` can't be installed (RELEASE-SPEC §5, Level 1).
+pub const PERSON_OR_MINOR_REASON: &str =
+    "Pinhole doesn't install models that CivitAI marks as showing a real person or someone under 18.";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -291,6 +307,8 @@ pub struct VersionModel {
     pub nsfw: bool,
     #[serde(deserialize_with = "lenient::bool")]
     pub poi: bool,
+    #[serde(deserialize_with = "lenient::bool")]
+    pub minor: bool,
     #[serde(deserialize_with = "lenient::opt_string")]
     pub mode: Option<String>,
 }

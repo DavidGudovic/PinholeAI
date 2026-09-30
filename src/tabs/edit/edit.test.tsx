@@ -237,7 +237,8 @@ describe("Edit tab", () => {
       store.dispatch({ type: "patchEdit", patch: { instruction: "put the bottle from image 2 on the shelf" } });
     });
     expect(await screen.findByRole("switch", { name: /Only change here/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Add another image/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Add another image/ })).toBeNull();
+    expect(screen.getByText(/Use as image 2/)).toBeTruthy();
 
     act(() => store.dispatch({ type: "editSetSecond", ref: ref("b") }));
     expect(screen.queryByRole("switch", { name: /Only change here/ })).toBeNull();

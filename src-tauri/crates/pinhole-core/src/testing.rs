@@ -853,7 +853,15 @@ mod tests {
             .unwrap()
             .id
         };
-        let (a, b) = (img(10), img(200));
+        let a = img(10);
+        // Image 2 has to be made in Pinhole (RELEASE-SPEC §5).
+        let sdxl = register_fake_model(&core, "sdxl");
+        let b = generate::generate(&core, GenerateRequest::txt2img(sdxl, "a green bottle"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
         let edit_req = |model: String| {
             let mut req =
                 GenerateRequest::txt2img(model, "put the bottle from image 2 on the shelf");
@@ -881,6 +889,81 @@ mod tests {
             let body = mock.requests().last().cloned().unwrap();
             assert_eq!(body["ref_images"].as_array().unwrap().len(), 2);
         }
+    }
+
+    #[tokio::test]
+    async fn origin_follows_every_image_a_result_is_made_from() {
+        use crate::generate::Origin;
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let sdxl = register_fake_model(&core, "sdxl");
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        let origin = |id: &str| core.session.get(id).unwrap().origin;
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(256, 256, [10, 20, 30, 255]),
+        )
+        .unwrap()
+        .id;
+        assert_eq!(origin(&photo), Origin::Imported);
+
+        // Create: made in Pinhole; with a brought-in reference picture it isn't.
+        let made = generate::generate(&core, GenerateRequest::txt2img(sdxl.clone(), "a boat"))
+            .await
+            .unwrap()
+            .images[0]
+            .clone();
+        assert_eq!(made.origin, Origin::Generated);
+        assert_eq!(origin(&made.id), Origin::Generated);
+        let mut req = GenerateRequest::txt2img(klein.clone(), "a boat like this");
+        req.ref_image_ids = vec![photo.clone()];
+        let res = generate::generate(&core, req).await.unwrap();
+        assert_eq!(res.images[0].origin, Origin::Imported);
+
+        // Restyle and Edit keep the source's origin.
+        let restyle = |src: &str| {
+            let mut req = GenerateRequest::txt2img(sdxl.clone(), "at sunset");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.to_string());
+            req.strength = Some(0.5);
+            req
+        };
+        let r = generate::generate(&core, restyle(&made.id)).await.unwrap();
+        assert_eq!(r.images[0].origin, Origin::Generated);
+        let r = generate::generate(&core, restyle(&photo)).await.unwrap();
+        let restyled_photo = r.images[0].id.clone();
+        assert_eq!(r.images[0].origin, Origin::Imported);
+        // ... and so does a result made from that result.
+        let r = generate::generate(&core, restyle(&restyled_photo))
+            .await
+            .unwrap();
+        assert_eq!(r.images[0].origin, Origin::Imported);
+
+        // Edit: image 1 may be brought in; image 2 must be made in Pinhole.
+        let edit = |ids: Vec<String>| {
+            let mut req = GenerateRequest::txt2img(klein.clone(), "put the boat from image 2 here");
+            req.mode = GenMode::Edit;
+            req.ref_image_ids = ids;
+            req.dials.quality = Quality::Fast;
+            req
+        };
+        let r = generate::generate(&core, edit(vec![photo.clone(), made.id.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(r.images[0].origin, Origin::Imported);
+        let r = generate::generate(&core, edit(vec![made.id.clone()]))
+            .await
+            .unwrap();
+        assert_eq!(r.images[0].origin, Origin::Generated);
+        let sent = mock.requests().len();
+        for image2 in [photo.clone(), restyled_photo.clone()] {
+            let err = generate::generate(&core, edit(vec![made.id.clone(), image2]))
+                .await
+                .unwrap_err();
+            assert_eq!(err.message, generate::SECOND_IMAGE_IMPORTED);
+        }
+        assert_eq!(mock.requests().len(), sent, "refused before the engine");
     }
 
     #[tokio::test]
@@ -1704,6 +1787,11 @@ mod tests {
         let src = &res.images[0];
         let before = rec.0.lock().len();
         let up4 = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+        assert_eq!(
+            up4.origin,
+            generate::Origin::Generated,
+            "keeps the source's origin"
+        );
         let phases: Vec<GenPhase> = rec.0.lock()[before..]
             .iter()
             .filter_map(|e| {

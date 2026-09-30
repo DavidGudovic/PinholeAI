@@ -301,6 +301,7 @@ function Header({
           {card.downloadBytes != null && <span title="Download size">{formatBytes(card.downloadBytes)}</span>}
           {card.styleBadge && <Badge>{card.styleBadge}</Badge>}
           {isLora && <Badge>Style add-on</Badge>}
+          {card.sfwOnly && <Badge>Safe images only</Badge>}
           {sparse ? null : card.commercialOk ? <Badge tone="green">OK for client work</Badge> : <Badge>Not for client work</Badge>}
         </div>
         {card.vram ? <VramLine vram={card.vram} fit={card.fit} /> : isLora ? <p className="text-xs text-neutral-500">Adds a look to {card.baseModel} models</p> : null}
