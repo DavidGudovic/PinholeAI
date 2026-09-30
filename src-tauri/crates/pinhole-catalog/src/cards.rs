@@ -218,6 +218,9 @@ pub fn card_for_version(
         blocked_reason =
             Some("This model was archived by its creator and can't be downloaded.".into());
     }
+    if m.is_person_or_minor() {
+        blocked_reason = Some(crate::api::PERSON_OR_MINOR_REASON.into());
+    }
     let download_bytes = file
         .as_ref()
         .ok()
@@ -254,6 +257,7 @@ pub fn card_for_version(
         vram: vram.map(|(n, _)| n),
         fit: vram.map(|(_, f)| f),
         early_access: v.is_early_access(now),
+        sfw_only: m.sfw_only,
         commercial_ok,
         license_note: family.as_ref().and_then(|f| f.license_note.clone()),
         installed: env.is_installed(v.id, sha.as_deref()),
@@ -529,6 +533,42 @@ pub(crate) mod tests {
         assert!(!flux.commercial_ok);
         assert_eq!(flux.preview_url, None);
         assert_eq!(flux.thumbs_up_ratio, None);
+    }
+
+    #[test]
+    fn real_person_and_minor_models_are_not_offered() {
+        let f = filters();
+        let q = BrowseQuery {
+            compatible_only: false,
+            ..Default::default()
+        };
+        let ctx = CardContext {
+            filters: &f,
+            query: &q,
+            now: now(),
+        };
+        let page = page();
+        let base = page.items.iter().find(|m| m.id == 618692).unwrap().clone();
+        assert!(build_card(&ctx, &env(), &base).is_some());
+        let v = &base.model_versions[0];
+        for flag in ["poi", "minor"] {
+            let mut m = base.clone();
+            m.poi = flag == "poi";
+            m.minor = flag == "minor";
+            // Hidden in Browse, and blocked where a card is built directly (details, paste).
+            assert!(build_card(&ctx, &env(), &m).is_none(), "{flag}");
+            let card = card_for_version(&f, ContentMode::Safe, &env(), &m, v, now());
+            assert_eq!(
+                card.blocked_reason.as_deref(),
+                Some(crate::api::PERSON_OR_MINOR_REASON),
+                "{flag}"
+            );
+        }
+        let mut sfw = base.clone();
+        sfw.sfw_only = true;
+        let card = build_card(&ctx, &env(), &sfw).unwrap();
+        assert!(card.sfw_only);
+        assert_eq!(card.blocked_reason, None);
     }
 
     #[test]

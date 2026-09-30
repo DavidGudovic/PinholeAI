@@ -120,6 +120,7 @@ export const CatalogCardView = memo(function CatalogCardView({
         <div className="absolute top-2 left-2 flex flex-wrap gap-1">
           {card.styleBadge && <Overlay>{card.styleBadge}</Overlay>}
           {isLora && <Overlay>Style add-on</Overlay>}
+          {card.sfwOnly && <Overlay>Safe images only</Overlay>}
           {card.previewIsVideo && preview.src && (
             <Overlay>
               <Film className="h-3 w-3" /> Video

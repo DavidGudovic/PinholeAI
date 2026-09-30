@@ -1112,7 +1112,7 @@ recommended:
     - { family: krea2_turbo, source: registry, title: "Krea 2 Turbo — more detail, slower" }
   anime:
     - { family: sdxl_illustrious, source: civitai, civitai_model_id: 376130, civitai_version_id: 2940478, title: "Nova Anime XL (IL v19.0)", size_mb: 6939, vram_gb: { min: 6, recommended: 10 }, note: "top-rated Illustrious checkpoint" }
-    - { family: sdxl_pony, source: civitai, civitai_model_id: 257749, civitai_version_id: 290640, title: "Pony Diffusion V6 XL", size_mb: 6938, vram_gb: { min: 6, recommended: 10 } }
+    # Pony stays a supported family, but isn't a one-click pick (RELEASE-SPEC §5).
   edit:
     - { family: qwen_image_edit_2511, source: registry }
     - { family: flux1_kontext, source: registry }

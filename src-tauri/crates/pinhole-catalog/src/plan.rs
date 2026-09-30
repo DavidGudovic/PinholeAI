@@ -266,6 +266,9 @@ pub fn build_plan(
         blocked_reason =
             Some("This model was archived by its creator and can't be downloaded.".into());
     }
+    if crate::api::version_is_person_or_minor(version, model) {
+        blocked_reason = Some(crate::api::PERSON_OR_MINOR_REASON.into());
+    }
 
     // Components for the resolved family (or the first candidate, as an estimate).
     let comp_family = family
@@ -554,6 +557,38 @@ mod tests {
         assert_eq!(p.total_download_bytes, 7_105_349_736);
         assert!(!p.enough_disk);
         assert!(p.needs_api_key);
+    }
+
+    #[test]
+    fn real_person_and_minor_models_cant_be_installed() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(16.0);
+        let env = PlanEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let (v, m) = jugg();
+        let reason = Some(crate::api::PERSON_OR_MINOR_REASON);
+        let mut poi = m.clone();
+        poi.poi = true;
+        let p = build_plan(&env, &v, Some(&poi), 100_000_000_000, false, None);
+        assert_eq!(p.blocked_reason.as_deref(), reason);
+        let mut minor = m.clone();
+        minor.minor = true;
+        let p = build_plan(&env, &v, Some(&minor), 100_000_000_000, false, None);
+        assert_eq!(p.blocked_reason.as_deref(), reason);
+        // Only the version's `model` object (the `/models` fetch is best effort).
+        let mut v2 = v.clone();
+        v2.model = Some(crate::api::VersionModel {
+            poi: true,
+            ..Default::default()
+        });
+        let p = build_plan(&env, &v2, None, 100_000_000_000, false, None);
+        assert_eq!(p.blocked_reason.as_deref(), reason);
     }
 
     #[test]

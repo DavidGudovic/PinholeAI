@@ -75,6 +75,8 @@ pub struct CatalogCard {
     pub vram: Option<VramNeed>,
     pub fit: Option<Fit>,
     pub early_access: bool,
+    /// The creator asks for no adult content ("Safe images only" badge).
+    pub sfw_only: bool,
     pub commercial_ok: bool,
     pub license_note: Option<String>,
     pub installed: bool,

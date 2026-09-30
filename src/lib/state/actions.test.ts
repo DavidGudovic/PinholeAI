@@ -85,6 +85,7 @@ describe("use as image 2", () => {
     store.dispatch({ type: "patchEdit", patch: { mode: "restyle" } });
     store.dispatch({ type: "editSetSecond", ref: ref("b") });
     store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "addResults", batch: null, images: [{ ...img("b"), origin: "generated" }], refs: [ref("b")] });
     actions.sendToEditSecond("b");
     const s = store.getState();
     expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a"]);
@@ -98,6 +99,14 @@ describe("use as image 2", () => {
     store.dispatch({ type: "editSetSecond", ref: ref("b") });
     actions.sendToEditSecond("b");
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(store.getState().edit.secondImageId).toBeNull();
+  });
+
+  it("refuses a result made from a picture the user added", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "addResults", batch: null, images: [{ ...img("b"), origin: "imported" }], refs: [ref("b")] });
+    actions.sendToEditSecond("b");
     expect(store.getState().edit.secondImageId).toBeNull();
   });
 

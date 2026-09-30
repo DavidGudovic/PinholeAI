@@ -99,6 +99,9 @@ unloaded when idle (like the captioner). Scores and verdicts are held in memory 
 
 ### 3.1 Where each image came from
 
+Built 2026-09-30: `generate::Origin` on every session image (`session.rs`), set at input and
+result intake, sent to the UI as `ResultImage.origin`.
+
 Every image in the session carries its origin, inherited by everything made from it:
 
 - **Generated:** the chain starts with a Create generation. Variations, Upscale, Restyle and Edit
@@ -218,9 +221,12 @@ blocking logic with mocked classifier scores; measure false positives on harmles
     install it themselves).
   - `recommended.realistic_detail` (Krea 2) and `recommended.edit` / `edit_alt` (FLUX.1 Kontext):
     one-click only once §3 ships and §6 licence acceptance is in place.
-- **Edit references:** capped at **one** reference image (Level 1). The core accepts up to four
-  (`pinhole-core/src/generate.rs`, `take(4)`) while the UI sends one. A future multi-reference edit
-  (e.g. "put this bottle on that table") refuses any extra reference that contains a face.
+- **Edit references** (changed 2026-09-30; two-image "Describe a change" and Create's reference
+  picture were built): the picture being edited may be Imported; **image 2 must be Generated**
+  (made in Pinhole), checked in the core (`generate.rs`, `SECOND_IMAGE_IMPORTED`) and in the UI
+  (no file picker for image 2; "Use as image 2" refuses an Imported result). Once the face
+  detector (§3) exists, an Imported image 2 without a face is allowed. A Create run with an
+  Imported reference picture makes an Imported result (§3.1), so rule 1 covers it.
 - **"Edit this image" on CivitAI examples** stays; the image counts as Imported (§3.1).
 
 ---
@@ -383,9 +389,9 @@ templates, posts and UI.
 
 ### 12.1 Level 1 — public repo
 
-- [ ] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
-- [ ] §5 `sdxl_pony` removed from `recommended.anime`
-- [ ] §5 Edit capped at one reference image
+- [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
+- [x] §5 `sdxl_pony` removed from `recommended.anime`
+- [x] §5 Edit image 2 must be made in Pinhole (replaces the one-reference cap)
 - [ ] §7 acceptable-use section in the README
 - [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and

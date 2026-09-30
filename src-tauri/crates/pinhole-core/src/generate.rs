@@ -248,6 +248,31 @@ pub enum ResultKind {
     Upscaled,
 }
 
+/// Where a session image came from (RELEASE-SPEC §3.1). Anything made from an
+/// `Imported` image stays `Imported`, through every mode; a marker inside a file
+/// never makes an import `Generated`. Unknown (e.g. deserialized without the
+/// field) counts as `Imported`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Origin {
+    /// The chain starts with a Create run without a brought-in reference picture.
+    Generated,
+    /// Brought in (file, paste, drag, CivitAI example, a reopened save), or made from such an image.
+    #[default]
+    Imported,
+}
+
+impl Origin {
+    /// Origin of a result made from `inputs`: `Imported` if any input is.
+    pub fn of_result<'a>(inputs: impl IntoIterator<Item = &'a Origin>) -> Origin {
+        if inputs.into_iter().any(|o| *o == Origin::Imported) {
+            Origin::Imported
+        } else {
+            Origin::Generated
+        }
+    }
+}
+
 /// `ResultImage`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -267,6 +292,8 @@ pub struct ResultImage {
     pub sampler: Option<String>,
     pub scheduler: Option<String>,
     pub parent_id: Option<String>,
+    #[serde(default)]
+    pub origin: Origin,
 }
 
 /// `GenerateResult`
@@ -1963,6 +1990,8 @@ async fn generate_inner(
     let mut ref_images = Vec::new();
     let mut mask_image = None;
     let mut source: Option<SessionImage> = None;
+    // Origins of every picture the result is made from (not the mask: that is only a shape).
+    let mut input_origins: Vec<Origin> = Vec::new();
     match req.mode {
         // Create's reference picture ("in the style of this picture"): sent like an edit's
         // image, but the size comes from the dials, not from the picture.
@@ -1973,7 +2002,9 @@ async fn generate_inner(
                         "This model can't use a reference picture. Pick a FLUX.2 model, or remove the picture.",
                     ));
                 }
-                ref_images.push(b64_image(core, id)?.0);
+                let (b64, img) = b64_image(core, id)?;
+                input_origins.push(img.origin);
+                ref_images.push(b64);
             }
         }
         GenMode::Img2img => {
@@ -1982,6 +2013,7 @@ async fn generate_inner(
                 .as_deref()
                 .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
             let (b64, img) = b64_image(core, id)?;
+            input_origins.push(img.origin);
             init_image = Some(b64);
             source = Some(img);
         }
@@ -1996,6 +2028,12 @@ async fn generate_inner(
             // The Edit tab sends the image being edited plus at most one more.
             for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
+                if source.is_some() && img.origin == Origin::Imported {
+                    // RELEASE-SPEC §5: a second picture could bring a real person's face
+                    // into the edit. Until the face check exists, it must be made in Pinhole.
+                    return Err(CoreError::invalid(SECOND_IMAGE_IMPORTED));
+                }
+                input_origins.push(img.origin);
                 if source.is_none() {
                     source = Some(img);
                 }
@@ -2301,6 +2339,7 @@ async fn generate_inner(
             sampler: params.sampler.clone(),
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
+            origin: Origin::of_result(&input_origins),
         };
         if !core
             .session
@@ -2538,6 +2577,9 @@ fn touch_last_used(core: &AppCore, model_id: &str) {
 
 // ================================================================ upscale
 
+/// Refusal for an Edit's second picture that was brought in (RELEASE-SPEC §5).
+pub(crate) const SECOND_IMAGE_IMPORTED: &str = "The second picture has to be one made in Pinhole. Pictures from your computer can only be the picture you edit.";
+
 /// Refusal for sources the upscaler can't take: 2× also runs at 4× first.
 pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: the upscaler works at 4× first, up to 8192 pixels per side. Try a smaller image.";
 
@@ -2750,9 +2792,11 @@ async fn upscale_inner(
         sampler: None,
         scheduler: None,
         parent_id: None,
+        origin: src.origin,
     });
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
+    meta.origin = src.origin;
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
@@ -3525,6 +3569,7 @@ mod tests {
             sampler: None,
             scheduler: None,
             parent_id: None,
+            origin: Origin::Generated,
         };
         let v = serde_json::to_value(&r).unwrap();
         for k in [

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use pinhole_engine::image::{self as img, Kind};
 
-use crate::generate::{ImportedImage, ResultImage, SavedImage};
+use crate::generate::{ImportedImage, Origin, ResultImage, SavedImage};
 use crate::{AppCore, CoreError, CoreResult};
 
 /// One image held in RAM.
@@ -30,6 +30,8 @@ pub struct SessionImage {
     pub height: u32,
     /// Generation settings (no prompt) for generated / upscaled images.
     pub meta: Option<ResultImage>,
+    /// Made in Pinhole or brought in (RELEASE-SPEC §3.1). Held in memory only.
+    pub origin: Origin,
 }
 
 impl SessionImage {
@@ -61,6 +63,7 @@ impl Session {
             kind: Kind::Png,
             width: meta.width,
             height: meta.height,
+            origin: meta.origin,
             meta: Some(meta),
         };
         images.insert(img.id.clone(), img);
@@ -134,6 +137,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         width,
         height,
         meta: None,
+        origin: Origin::Imported,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -334,6 +338,7 @@ mod tests {
             sampler: Some("euler".into()),
             scheduler: None,
             parent_id: Some("p".into()),
+            origin: Origin::Generated,
         }
     }
 

@@ -18,6 +18,7 @@ import type {
   ImportedImage,
   InstalledLora,
   InstalledModel,
+  ImageOrigin,
   ResultImage,
 } from "../types";
 
@@ -245,6 +246,13 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
       if (!session.get(req.refImageIds[0])) throw err("not_found", "The reference picture is no longer in memory. Add it again.");
     }
     const mask = req.maskImageId ? (session.get(req.maskImageId) ?? null) : null;
+    // Like Rust: image 2 must be made in Pinhole; a result is "imported" if any input is.
+    const inputs = [...(req.refImageIds ?? []).slice(0, req.mode === "edit" ? 2 : 1), ...(req.mode === "img2img" && req.initImageId ? [req.initImageId] : [])];
+    const originOf = (id: string) => session.get(id)?.meta?.origin ?? "imported";
+    if (req.mode === "edit" && inputs.length > 1 && originOf(inputs[1]) !== "generated") {
+      throw err("invalid", "The second picture has to be one made in Pinhole. Pictures from your computer can only be the picture you edit.");
+    }
+    const origin: ImageOrigin = inputs.some((id) => originOf(id) !== "generated") ? "imported" : "generated";
 
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).
     // Rust measures other programs' graphics memory (nvidia-smi) before a launch.
@@ -306,6 +314,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
         sampler: req.fineTune.sampler ?? ui.defaultSampler,
         scheduler: req.fineTune.scheduler ?? ui.defaultScheduler,
         parentId: src ? (req.refImageIds?.[0] ?? req.initImageId ?? null) : null,
+        origin,
       };
       session.set(id, { bytes: await toPng(c), width: w, height: h, seed, meta });
       images.push(meta);
@@ -444,7 +453,7 @@ const table: MockTable = {
         scheduler: null,
         parentId: null,
       };
-      const meta: ResultImage = { ...base, id, kind: "upscaled", width: w, height: h, parentId: String(a.id) };
+      const meta: ResultImage = { ...base, id, kind: "upscaled", width: w, height: h, parentId: String(a.id), origin: im.meta?.origin ?? "imported" };
       session.set(id, { bytes: await toPng(c), width: w, height: h, seed: base.seed, meta });
       progress({ phase: "done" }, started);
       return meta;

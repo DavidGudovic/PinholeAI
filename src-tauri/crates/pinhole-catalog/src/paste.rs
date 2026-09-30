@@ -175,6 +175,9 @@ fn from_version(
         return installed_resolved(env, r, installed, cat);
     }
     let mut problem = picked.as_ref().err().cloned();
+    if crate::api::version_is_person_or_minor(v, None) {
+        problem = Some(crate::api::PERSON_OR_MINOR_REASON.into());
+    }
     let family_id =
         match families::resolve_family(env.registry, sha.as_deref(), Some(&v.base_model), None) {
             FamilyResolution::Resolved(id) => Some(id),
@@ -612,6 +615,43 @@ mod resolve_tests {
             timeout,
             versions: Default::default(),
             hashes: Default::default(),
+        }
+    }
+
+    /// RELEASE-SPEC §5: a pasted real-person / minor model gets no "Get" button.
+    #[tokio::test]
+    async fn real_person_and_minor_models_are_not_installable() {
+        let (reg, f, idx, h) = (registry(), filters(), index(vec![]), hw(12.0));
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let ok = resolve_resources(
+            &env,
+            Some(&lookup(false)),
+            &[res("checkpoint", Some(1759168), None)],
+        )
+        .await;
+        assert_eq!(ok.checkpoint.unwrap().installable_version_id, Some(1759168));
+        for flag in ["poi", "minor"] {
+            let mut l = lookup(false);
+            let v = l.by_id.get_mut(&1759168).unwrap();
+            let m = v.model.get_or_insert_with(Default::default);
+            m.poi = flag == "poi";
+            m.minor = flag == "minor";
+            let out =
+                resolve_resources(&env, Some(&l), &[res("checkpoint", Some(1759168), None)]).await;
+            assert_eq!(
+                out.checkpoint.as_ref().unwrap().installable_version_id,
+                None,
+                "{flag}"
+            );
+            assert_eq!(
+                out.checkpoint.as_ref().unwrap().problem.as_deref(),
+                Some(crate::api::PERSON_OR_MINOR_REASON)
+            );
         }
     }
 

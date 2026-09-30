@@ -365,6 +365,12 @@ pub async fn install_civitai(
     let client = civitai_client(core).await;
     let fetched = fetch_version(&core.models.versions, &client, version_id).await?;
     let (version, model) = (&fetched.0, &fetched.1);
+    // RELEASE-SPEC §5: every CivitAI install (Browse, paste, presets) ends here.
+    if pinhole_catalog::api::version_is_person_or_minor(version, model.as_ref()) {
+        return Err(CoreError::invalid(
+            pinhole_catalog::api::PERSON_OR_MINOR_REASON,
+        ));
+    }
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
     let index = core.installed.lock().clone();
