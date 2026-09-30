@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
-import { previewFinalPrompt } from "../../lib/api";
+import { asCoreError, previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
 import { useDebounced } from "../../lib/state/hooks";
@@ -420,7 +420,8 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
     : "";
   const debouncedKey = useDebounced(key, 350);
   const [preview, setPreview] = useState<{ prompt: string; negative: string | null } | null>(null);
-  const [failed, setFailed] = useState(false);
+  // Why the preview failed: the word check's own message, else a generic line.
+  const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     if (!req) {
@@ -432,10 +433,14 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
       .then((p) => {
         if (alive) {
           setPreview(p);
-          setFailed(false);
+          setFailed(null);
         }
       })
-      .catch(() => alive && setFailed(true));
+      .catch((e) => {
+        if (!alive) return;
+        const err = asCoreError(e);
+        setFailed(err.code === "blocked" ? err.message : "Preview isn’t available right now.");
+      });
     return () => {
       alive = false;
     };
@@ -448,7 +453,7 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
         {!req ? (
           <span className="text-neutral-400">{empty}</span>
         ) : failed ? (
-          <span className="text-neutral-400">Preview isn’t available right now.</span>
+          <span className="text-neutral-400">{failed}</span>
         ) : !preview ? (
           <span className="text-neutral-400">…</span>
         ) : (

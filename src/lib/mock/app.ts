@@ -32,6 +32,8 @@ export function mockFlags() {
     lowDisk: p.has("lowdisk"),
     /** Other programs hold graphics memory: the first model load shows a note. */
     busyGpu: p.has("busygpu"),
+    /** Adds an installed FLUX.2 klein model (reference picture in Create). */
+    flux2: p.has("flux2"),
     theme: theme === "dark" || theme === "light" || theme === "system" ? (theme as Settings["theme"]) : null,
   };
 }
@@ -56,6 +58,8 @@ export function mockSettings(): Settings {
       engineBackend: "auto",
       textEncoderOnCpu: "auto",
       modelsFolder: null,
+      describeModel: "auto",
+      improveModel: "auto",
     };
     settings = initial;
     return initial;
@@ -77,6 +81,8 @@ function normalizeSettings(s: Settings): Settings {
     theme: pick(s.theme, ["system", "light", "dark"], "system"),
     engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),
     textEncoderOnCpu: pick(s.textEncoderOnCpu, ["auto", "on", "off"], "auto"),
+    describeModel: String(s.describeModel ?? "").trim() || "auto",
+    improveModel: String(s.improveModel ?? "").trim() || "auto",
   };
 }
 

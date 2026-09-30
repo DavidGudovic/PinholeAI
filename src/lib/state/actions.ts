@@ -11,6 +11,7 @@ import {
   editModels,
   isActiveDownload,
   loraCompatible,
+  takesReference,
   willQueue,
   type EditMode,
   type ImgRef,
@@ -206,10 +207,14 @@ export function makeActions(store: Store) {
     const model = currentCreateModel();
     if (!model) throw { code: "not_found", message: "Pick a model first — or get one of the recommended models.", details: null } as CoreError;
     if (!s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
+    if (s.create.refImageId && !takesReference(model)) {
+      throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Switch to a model that can, or remove the picture.`, details: null } as CoreError;
+    }
     const { create, loras, settings } = s;
+    const imageIds = create.refImageId ? [create.refImageId] : [];
     await queueBatch(
       create.count,
-      queueEntry("create", create.prompt, model, create.count),
+      queueEntry("create", create.prompt, model, create.count, imageIds),
       async () => {
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
         return buildCreateRequest(create, { ui, loras, model, settings });
@@ -227,16 +232,19 @@ export function makeActions(store: Store) {
   async function queueBatch(count: number, entry: Omit<QueuedJob, "id">, makeRequest: () => Promise<GenerateRequest>) {
     try {
       await enqueue(entry, async () => {
-        const { req, images, refs } = await withJob(
+        await withJob(
           "create",
           async () => {
             const nonce = get().sessionNonce;
             const req = await makeRequest();
-            return { req, ...(await generateNow(req, nonce)) };
+            const { images, refs } = await generateNow(req, nonce);
+            // Added while the job still holds its images: the batch keeps its reference picture
+            // (for Variations) even if the slot was cleared meanwhile.
+            if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
           },
           count,
+          entry.imageIds,
         );
-        if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
         // The model's lastUsed changed; refresh quietly so the picker order stays right.
         void refreshModels().catch(() => undefined);
       });
@@ -249,7 +257,7 @@ export function makeActions(store: Store) {
 
   function runBatch(req: GenerateRequest) {
     const model = (get().models ?? []).find((m) => m.id === req.modelId);
-    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count), async () => req);
+    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count, req.refImageIds ?? []), async () => req);
   }
 
   /** Same prompt and settings, new seeds. */
@@ -358,6 +366,30 @@ export function makeActions(store: Store) {
     setTab("edit");
   }
 
+  /** "Use as image 2": opens "Describe a change" with this image as image 2. With no image 1 yet it becomes image 1. */
+  function sendToEditSecond(id: string) {
+    const ref = get().images[id];
+    if (!ref) return;
+    if (editBusy(get())) {
+      toast("Wait for the edits in progress to finish first.");
+      return;
+    }
+    const edit = get().edit;
+    if (edit.chain.length && edit.chain[edit.index]?.imageId === id) {
+      toast("That's already image 1. Pick a different image for image 2.");
+      return;
+    }
+    if (!edit.chain.length) {
+      dispatch({ type: "editLoad", ref });
+      if (edit.secondImageId === id) dispatch({ type: "editSetSecond", ref: null });
+      toast("Loaded as image 1. Pick another image to use as image 2.");
+    } else {
+      dispatch({ type: "editSetSecond", ref });
+      dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    }
+    setTab("edit");
+  }
+
   function sendToDescribe(id: string) {
     const ref = get().images[id];
     if (!ref) return;
@@ -387,6 +419,20 @@ export function makeActions(store: Store) {
       throw busyError();
     }
     dispatch({ type: "editLoad", ref });
+  }
+
+  /** Create's optional reference picture. */
+  async function importCreateReference(blob: Blob) {
+    const nonce = get().sessionNonce;
+    const ref = await importBlob(blob).catch((e) => {
+      throw api.asCoreError(e);
+    });
+    // Reset pressed while it was being read: it belongs to the cleared session.
+    if (resetting || get().sessionNonce !== nonce) {
+      releaseRefs([ref], true);
+      return;
+    }
+    dispatch({ type: "createSetRef", ref });
   }
 
   /** The optional second image for "Describe a change". */
@@ -581,11 +627,13 @@ export function makeActions(store: Store) {
     addLora,
     setLoraTriggerWords,
     sendToEdit,
+    sendToEditSecond,
     sendToDescribe,
     useAsPrompt,
     removeResult,
     importToEdit,
     importSecondToEdit,
+    importCreateReference,
     importToDescribe,
     runEdit,
     upscaleEdit,

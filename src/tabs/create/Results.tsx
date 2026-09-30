@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from "react";
 import {
   Copy,
   ImageUp,
+  Layers,
   Maximize2,
   ScanText,
   Shuffle,
@@ -17,6 +18,7 @@ import { Logo } from "../../components/Logo";
 import { Button, IconButton, Kbd, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
+import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
 import type { ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
@@ -136,6 +138,12 @@ function Preview({
     }
   };
 
+  useShortcuts("create", {
+    edit: () => actions.sendToEdit(result.id),
+    describe: () => actions.sendToDescribe(result.id),
+    fullscreen: onExpand,
+  });
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 pt-5 pb-3">
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
@@ -149,7 +157,7 @@ function Preview({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <SaveButton id={result.id} seed={result.seed} run={run} />
+        <SaveButton id={result.id} seed={result.seed} run={run} tab="create" />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
@@ -222,6 +230,7 @@ const Strip = memo(function Strip({
   pending: number;
 }) {
   const dispatch = useDispatch();
+  const actions = useActions();
   return (
     <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
       <div
@@ -242,37 +251,54 @@ const Strip = memo(function Strip({
           if (!img) return null;
           const active = r.id === selectedId;
           return (
-            <button
+            <div
               key={r.id}
-              type="button"
-              role="option"
-              aria-selected={active}
-              aria-label={`Image ${r.width}×${r.height}, seed ${r.seed}${r.parentId ? ", upscaled" : ""}`}
-              onClick={() => dispatch({ type: "selectResult", id: r.id })}
-              className={cx(
-                "relative h-18 w-18 shrink-0 overflow-hidden rounded-lg ring-2 transition-all",
-                focusRing,
-                active
-                  ? "ring-amber-500"
-                  : "ring-transparent opacity-80 hover:opacity-100 hover:ring-neutral-300 dark:hover:ring-neutral-600",
-              )}
+              role="presentation"
+              className="group relative h-18 w-18 shrink-0"
             >
-              <img
-                src={img.url}
-                alt=""
-                className="h-full w-full object-cover"
-                draggable={false}
-              />
-              {r.parentId && (
-                <span
-                  className="absolute right-1 bottom-1 rounded bg-black/60 p-0.5 text-white"
-                  title="Upscaled"
-                  aria-hidden
-                >
-                  <ImageUp className="h-3 w-3" />
-                </span>
-              )}
-            </button>
+              <button
+                type="button"
+                role="option"
+                aria-selected={active}
+                aria-label={`Image ${r.width}×${r.height}, seed ${r.seed}${r.parentId ? ", upscaled" : ""}`}
+                onClick={() => dispatch({ type: "selectResult", id: r.id })}
+                className={cx(
+                  "relative h-full w-full overflow-hidden rounded-lg ring-2 transition-all",
+                  focusRing,
+                  active
+                    ? "ring-amber-500"
+                    : "ring-transparent opacity-80 hover:opacity-100 hover:ring-neutral-300 dark:hover:ring-neutral-600",
+                )}
+              >
+                <img
+                  src={img.url}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  draggable={false}
+                />
+                {r.parentId && (
+                  <span
+                    className="absolute right-1 bottom-1 rounded bg-black/60 p-0.5 text-white"
+                    title="Upscaled"
+                    aria-hidden
+                  >
+                    <ImageUp className="h-3 w-3" />
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                title="Use as image 2 in Edit"
+                aria-label="Use as image 2 in Edit"
+                onClick={() => actions.sendToEditSecond(r.id)}
+                className={cx(
+                  "absolute top-1 left-1 rounded bg-black/60 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100",
+                  focusRing,
+                )}
+              >
+                <Layers className="h-3 w-3" aria-hidden />
+              </button>
+            </div>
           );
         })}
       </div>

@@ -239,6 +239,11 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
 
     const src = req.mode === "edit" ? session.get(req.refImageIds?.[0] ?? "") : req.mode === "img2img" ? session.get(req.initImageId ?? "") : undefined;
     if (req.mode !== "txt2img" && !src) throw err("not_found", "The image to edit is no longer in memory. Add it again.");
+    // Create's reference picture (mirrors generate.rs): only generators that can also edit take one.
+    if (req.mode === "txt2img" && req.refImageIds?.length) {
+      if (!model.modes.includes("edit")) throw err("invalid", "This model can't use a reference picture. Pick a FLUX.2 model, or remove the picture.");
+      if (!session.get(req.refImageIds[0])) throw err("not_found", "The reference picture is no longer in memory. Add it again.");
+    }
     const mask = req.maskImageId ? (session.get(req.maskImageId) ?? null) : null;
 
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).

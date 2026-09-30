@@ -52,6 +52,7 @@ import { isCpuOnly } from "../models/lib/words";
 import * as api from "../../lib/api";
 import { defaultStayClosePosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, ExtendCanvas, Quality } from "../../lib/types";
+import { useShortcuts } from "../../lib/shortcuts";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
@@ -355,6 +356,10 @@ export function EditTab() {
     e.index > 0 &&
     !!node?.meta &&
     node.meta.kind !== "upscaled";
+  useShortcuts("edit", {
+    tryAgain: canTryAgain ? () => void run(true) : undefined,
+    describe: current ? () => actions.sendToDescribe(current.id) : undefined,
+  });
   const loras = useAppState((s) => s.loras);
   const addTriggerWords = useAppState(
     (s) => s.settings?.addTriggerWords ?? true,
@@ -1092,6 +1097,7 @@ export function EditTab() {
                   onPick={(f) => void upscale(f)}
                 />
                 <SaveButton
+                  tab="edit"
                   size="sm"
                   id={current.id}
                   seed={node?.meta?.seed ?? null}
@@ -1249,6 +1255,7 @@ function Stage({
       }
     : { left: 0, top: 0, width: box.width, height: box.height };
   const [viewing, setViewing] = useState(false);
+  useShortcuts("edit", { fullscreen: maskOn ? undefined : () => setViewing(true) });
   return (
     <div
       ref={container}

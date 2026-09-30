@@ -731,6 +731,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_sends_a_reference_picture_to_models_that_take_one() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(600, 300, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let with_ref = |model: String| {
+            let mut req =
+                GenerateRequest::txt2img(model, "a lighthouse in the style of the picture");
+            req.ref_image_ids = vec![reference.id.clone()];
+            req
+        };
+
+        // SDXL can't take one: a plain error instead of quietly ignoring the picture.
+        let sdxl = register_fake_model(&core, "sdxl");
+        let err = generate::generate(&core, with_ref(sdxl)).await.unwrap_err();
+        assert!(err.message.contains("reference picture"), "{}", err.message);
+        assert!(mock.requests().is_empty());
+
+        // FLUX.2 klein: the picture goes in ref_images; the size follows the dials (square), and
+        // it isn't the result's parent (that's for edits).
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        let res = generate::generate(&core, with_ref(klein)).await.unwrap();
+        assert_eq!(res.images[0].family_id, "flux2_klein_4b");
+        assert!(res.images[0].parent_id.is_none());
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
+        assert!(body.get("init_image").is_none());
+        assert_eq!(body["width"], body["height"]);
+    }
+
+    #[tokio::test]
     async fn edit_add_ons_go_only_to_the_model_they_were_picked_for() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;
@@ -1710,14 +1745,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn word_check_leaves_the_users_own_prompt_alone() {
-        // Only text the Describe model writes is checked (David, 2026-09-30); the prompt at
-        // Generate is left to the release image check.
+    async fn word_check_blocks_generate_before_the_engine() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
-        let req = GenerateRequest::txt2img(model, "a child, nude");
+        // The sexual half comes from a saved style: the combined prompt is what is checked.
+        let style = crate::library::save_style(
+            &core,
+            pinhole_store::styles::Style {
+                id: String::new(),
+                name: "Check".into(),
+                positive: "nude".into(),
+                negative: None,
+                families: vec![],
+                thumbnail: None,
+                builtin: false,
+            },
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(model.clone(), "a child");
+        req.style_id = Some(style.id.clone());
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(e.details.is_none());
+        assert!(mock.requests().is_empty(), "nothing reaches the engine");
+
+        // Edit (Restyle, Fix details and Describe a change) goes through the same check.
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(model.clone(), "make her a teenager, topless");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(src.id.clone());
+        assert_eq!(
+            generate::generate(&core, req).await.unwrap_err().code,
+            "blocked"
+        );
+        let mut req = GenerateRequest::txt2img(model.clone(), "make them look 12 years old, naked");
+        req.mode = GenMode::Edit;
+        req.ref_image_ids = vec![src.id.clone()];
+        assert_eq!(
+            generate::generate(&core, req).await.unwrap_err().code,
+            "blocked"
+        );
+        assert!(mock.requests().is_empty());
+
+        // An add-on's trigger words count even when they aren't added to the prompt.
+        let lora = register_fake_lora(&core, "sdxl", &["loli"]);
+        let mut req = GenerateRequest::txt2img(model.clone(), "1girl, nude");
+        req.loras = vec![generate::LoraUse {
+            lora_id: lora,
+            weight: 1.0,
+            words: None,
+        }];
+        req.add_trigger_words = false;
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+
+        // Under-18 terms in the negative prompt are how people keep them out.
+        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        req.fine_tune.negative_prompt = Some("child, loli".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
     }
@@ -1740,6 +1831,16 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, "blocked", "the improved text isn't shown");
+        let sent = llama.requests().len();
+        let e = describe::improve_prompt(&core, "loli, lewd", None, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(
+            llama.requests().len(),
+            sent,
+            "the idea isn't sent to the model"
+        );
     }
 
     #[tokio::test]
@@ -1765,7 +1866,7 @@ mod tests {
             instruction.contains("Describe this image"),
             "registry instruction is used"
         );
-        assert!(describe::captioner_status(&core).available);
+        assert!(describe::captioner_status(&core, describe::Purpose::Describe).available);
     }
 
     #[tokio::test]
@@ -2750,7 +2851,7 @@ mod tests {
         let st = crate::engine_setup::engine_status(&core);
         assert!(!st.installed && !st.running);
         assert!(st.version.as_deref().unwrap_or("").starts_with("master-"));
-        let cs = describe::captioner_status(&core);
+        let cs = describe::captioner_status(&core, describe::Purpose::Describe);
         assert!(!cs.available);
         assert!(
             cs.download_bytes > 1_000_000_000,

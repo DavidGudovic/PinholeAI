@@ -315,53 +315,101 @@ pub struct InstalledHelper {
 /// Helper id of the default Describe model (its model + vision files together).
 pub const DESCRIBE_HELPER_ID: &str = "describe";
 
+/// Component ids of a catalog helper (`captioner.helpers`), `None` for other helper files.
+fn helper_group(core: &AppCore, helper_id: &str) -> Option<Vec<String>> {
+    core.registry()
+        .captioner()
+        .helpers
+        .iter()
+        .find(|h| h.id == helper_id)
+        .map(|h| {
+            let (m, p) = crate::describe::helper_components(h);
+            vec![m, p]
+        })
+}
+
+/// Files of one helper that Pinhole downloaded as a helper (kind Captioner / Upscaler).
+/// A Describe model's files that arrived with another model (Qwen Image Edit's encoder)
+/// belong to that model and are not listed.
 fn helper_files<'a>(
+    core: &AppCore,
     index: &'a pinhole_store::InstalledIndex,
     helper_id: &str,
 ) -> Vec<&'a InstalledFile> {
-    let describe = [
-        crate::describe::DEFAULT_MODEL_ID,
-        crate::describe::DEFAULT_MMPROJ_ID,
-    ];
+    let group = helper_group(core, helper_id);
+    let all_groups: Vec<String> = core
+        .registry()
+        .captioner()
+        .helpers
+        .iter()
+        .flat_map(|h| {
+            let (m, p) = crate::describe::helper_components(h);
+            [m, p]
+        })
+        .collect();
     index
         .files
         .iter()
         .filter(|f| matches!(f.kind, ModelKind::Captioner | ModelKind::Upscaler))
-        .filter(|f| {
-            let is_describe = f
+        .filter(|f| match &group {
+            Some(g) => f
                 .component_id
                 .as_deref()
-                .is_some_and(|c| describe.contains(&c));
-            if helper_id == DESCRIBE_HELPER_ID {
-                is_describe
-            } else {
-                !is_describe && f.id == helper_id
+                .is_some_and(|c| g.iter().any(|x| x == c)),
+            None => {
+                f.id == helper_id
+                    && !f
+                        .component_id
+                        .as_deref()
+                        .is_some_and(|c| all_groups.iter().any(|x| x == c))
             }
         })
         .collect()
 }
 
-/// Installed helpers: the Describe model (one row for its two files) and
+/// Installed helpers: one row per Describe / Improve model (its two files together) and
 /// upscalers / other captioner files.
 pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
     let index = snapshot(core);
     let mut out = Vec::new();
-    let describe = helper_files(&index, DESCRIBE_HELPER_ID);
-    if !describe.is_empty() {
+    let mut listed: Vec<&str> = Vec::new();
+    for h in core.registry().captioner().helpers.iter() {
+        let files = helper_files(core, &index, &h.id);
+        if files.is_empty() {
+            continue;
+        }
+        listed.extend(files.iter().map(|f| f.id.as_str()));
         out.push(InstalledHelper {
-            id: DESCRIBE_HELPER_ID.into(),
-            friendly_name: "Describe model".into(),
+            id: h.id.clone(),
+            friendly_name: if h.default {
+                "Describe model".into()
+            } else {
+                h.title.clone()
+            },
             purpose: "describe".into(),
-            size_bytes: describe.iter().map(|f| f.size_bytes).sum(),
+            size_bytes: files.iter().map(|f| f.size_bytes).sum(),
         });
     }
-    let describe_ids: Vec<&str> = describe.iter().map(|f| f.id.as_str()).collect();
+    let all_groups: Vec<String> = core
+        .registry()
+        .captioner()
+        .helpers
+        .iter()
+        .flat_map(|h| {
+            let (m, p) = crate::describe::helper_components(h);
+            [m, p]
+        })
+        .collect();
     for f in index
         .files
         .iter()
         .filter(|f| matches!(f.kind, ModelKind::Captioner | ModelKind::Upscaler))
     {
-        if describe_ids.contains(&f.id.as_str()) {
+        if listed.contains(&f.id.as_str())
+            || f.component_id
+                .as_deref()
+                .is_some_and(|c| all_groups.iter().any(|x| x == c))
+        {
             continue;
         }
         out.push(InstalledHelper {
@@ -385,7 +433,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
     {
         let index = core.installed.lock();
-        if helper_files(&index, helper_id).is_empty() {
+        if helper_files(core, &index, helper_id).is_empty() {
             return Err(CoreError::not_found(
                 "That helper isn't installed any more.",
             ));
@@ -393,7 +441,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;
     }
-    if helper_id == DESCRIBE_HELPER_ID {
+    if helper_group(core, helper_id).is_some() {
         if core.describe.is_busy() {
             return Err(CoreError::invalid(
                 "Wait for the picture description to finish, then delete the Describe model.",
@@ -411,7 +459,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let failed;
     {
         let mut index = core.installed.lock();
-        let ids: Vec<String> = helper_files(&index, helper_id)
+        let ids: Vec<String> = helper_files(core, &index, helper_id)
             .into_iter()
             .map(|f| f.id.clone())
             .collect();
@@ -498,7 +546,7 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
             version_id,
             family_id,
         } => crate::catalog::install_civitai(core, version_id, Some(family_id), None).await,
-        PickAction::Captioner => crate::describe::install_captioner(core).await,
+        PickAction::Captioner => crate::describe::install_captioner(core, None).await,
         PickAction::Nothing => Err(CoreError::internal("Nothing to install.")),
     }
 }
@@ -1899,5 +1947,63 @@ mod tests {
         assert!(list_helpers(&core).unwrap().is_empty());
         assert!(!dir.join("m.gguf").exists() && !dir.join("p.gguf").exists());
         assert!(delete_helper(&core, DESCRIBE_HELPER_ID).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_picked_helper_model_is_used_only_while_installed() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let models = crate::describe::list_helper_models(&core);
+        assert_eq!(
+            models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["describe", "qwen25_vl_7b"]
+        );
+        assert!(models.iter().all(|m| !m.installed && m.download_bytes > 0));
+        let seven = &models[1];
+        assert!(seven.size_bytes > 8_000_000_000, "{seven:?}");
+
+        let dir = core.data.models(ModelKind::Captioner);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, comp) in [
+            ("m7.gguf", "qwen25_vl_7b_q8"),
+            ("p7.gguf", "qwen25_vl_7b_mmproj"),
+        ] {
+            std::fs::write(dir.join(name), b"1234").unwrap();
+            let file = DownloadedFile {
+                path: dir.join(name),
+                sha256: "cd".repeat(32),
+                size_bytes: 4,
+            };
+            let reg = Registration {
+                kind: ModelKind::Captioner,
+                friendly_name: "Qwen2.5-VL 7B".into(),
+                family: None,
+                component_id: Some(comp.into()),
+                civitai: None,
+                dtype: None,
+            };
+            register_download(&core, &file, reg).unwrap();
+        }
+        let models = crate::describe::list_helper_models(&core);
+        assert!(models[1].installed && models[1].removable && models[1].download_bytes == 0);
+        assert!(!models[0].installed);
+        // One row for the two files, with the registry's name.
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "qwen25_vl_7b");
+        assert_eq!(rows[0].friendly_name, "Qwen2.5-VL 7B");
+
+        // The picked helper is used while installed; removing it reads as automatic.
+        let mut st = core.settings.read().clone();
+        st.improve_model = "qwen25_vl_7b".into();
+        crate::app::set_settings(&core, st).unwrap();
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Improve);
+        assert_eq!(s.source.as_deref(), Some("reuse"));
+        delete_helper(&core, "qwen25_vl_7b").await.unwrap();
+        assert!(list_helpers(&core).unwrap().is_empty());
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Improve);
+        assert!(
+            s.source.is_none(),
+            "falls back to automatic, which has nothing installed"
+        );
     }
 }

@@ -210,6 +210,18 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Reference picture** (optional, under the prompt): "make something in the style of this picture"
+or "the same character somewhere else". Shown only for models whose architecture takes reference
+images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev today); **Add a reference
+picture** opens a file, and a picture can also be dropped, pasted (Ctrl/Cmd+V) or picked from this
+session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+`ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
+result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
+queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
+it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
+picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
+recently used); Generate then says the same instead of quietly dropping it.
+
 **Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
 model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
 is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
@@ -311,6 +323,16 @@ Actions on the shown image: **Save** (with **Save as…** in the desktop app) ·
 brush area included, and replaces it and any later steps; not for the original or an upscale step). Fine-tune shows the
 read-only "Final prompt sent to the model" like Create, since the style and trigger words are added
 at request time.
+
+**Helper models** (Describe and Improve): the language models behind both come from Pinhole's own
+list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, which is also
+Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
+**Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
+sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
+else the 3B. Only installed helpers can be picked; a removed one reads as Automatic. **Models →
+Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
+Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
+mode is Off (none yet). The word check runs on the output of every helper model.
 
 ### 5.3 Describe (img2text)
 
@@ -650,7 +672,7 @@ build is shared.
 - **Background remover** for product shots (brand work).
 - **Batch edit**: apply the same instruction to several images (e.g. a product line).
 - **Seed grid**: 4 seeds side by side, pick one to continue.
-- **Keyboard-first flow**: Ctrl+Enter generate, E edit, S save, D describe.
+- **Keyboard-first flow** (built): Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
 
 ---
 
@@ -686,8 +708,9 @@ build is shared.
 - **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
   Prompts are never sent to a server for moderation. Already in: a word check
   (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,
-  whatever Safe mode says, on what the Describe model writes (Describe and Improve my prompt).
-  The user's own prompt isn't checked; that is left to the release image check.
+  whatever Safe mode says: the prompt at Generate in Create and every Edit mode (after styles,
+  trigger words and add-ons), the idea sent to Improve my prompt, what Describe / Improve write
+  back, and Browse search text.
 
 ### Implementation decisions (v1 build-out)
 - **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the

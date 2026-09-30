@@ -35,6 +35,8 @@ const { SavePresetDialog } = await import("./PresetPicker");
 const { FinalPromptPreview } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
+const { ReferenceSlot } = await import("./ReferenceSlot");
+const { makeActions } = await import("../../lib/state/actions");
 type Store = ReturnType<typeof createStore>;
 
 beforeAll(async () => {
@@ -316,5 +318,45 @@ describe("Results", () => {
     expect(store.getState().toasts.map((t) => t.text)).toEqual(["Saved to /out/pinhole_1.png"]);
     expect(screen.queryByText(/Saved to/)).toBeNull();
     expect((screen.getByRole("button", { name: /^Save$/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("reference picture", () => {
+  const klein = { ...model, id: "k", friendlyName: "FLUX.2 klein", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"] } as InstalledModel;
+  const sdxl = { ...model, id: "s", friendlyName: "Juggernaut", familyId: "sdxl", modes: ["txt2img", "img2img"] } as InstalledModel;
+
+  it("is offered only for models that take one, and a session picture can be picked", () => {
+    const store = storeWithResults(result("a", 64, 64));
+    store.dispatch({ type: "setModels", models: [sdxl, klein] });
+    const { rerender } = withApp(store, <ReferenceSlot model={sdxl} />);
+    expect(screen.queryByRole("button", { name: /Add a reference picture/ })).toBeNull();
+
+    rerender(
+      <AppProvider store={store}>
+        <ReferenceSlot model={klein} />
+      </AppProvider>,
+    );
+    expect(screen.getByRole("button", { name: /Add a reference picture/ })).toBeTruthy();
+    act(() => fireEvent.click(screen.getByRole("button", { name: "Use as the reference picture" })));
+    expect(store.getState().create.refImageId).toBe("a");
+    expect(screen.getByAltText("Reference picture")).toBeTruthy();
+  });
+
+  it("with a model that can't use it: says so, offers a model that can, and Generate explains", async () => {
+    const store = storeWithResults(result("a", 64, 64));
+    store.dispatch({ type: "setModels", models: [sdxl, klein] });
+    store.dispatch({ type: "selectModel", modelId: "s" });
+    store.dispatch({ type: "createSetRef", ref: store.getState().images.a });
+    store.dispatch({ type: "patchCreate", patch: { prompt: "a lighthouse" } });
+    withApp(store, <ReferenceSlot model={sdxl} />);
+    expect(screen.getByText(/Juggernaut can't use a reference picture/)).toBeTruthy();
+
+    const actions = makeActions(store);
+    await expect(actions.generateCreate()).rejects.toMatchObject({ message: expect.stringContaining("can't use a reference picture") });
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to FLUX.2 klein" }));
+    expect(store.getState().create.modelId).toBe("k");
+    fireEvent.click(screen.getByRole("button", { name: "Remove the reference picture" }));
+    expect(store.getState().create.refImageId).toBeNull();
   });
 });

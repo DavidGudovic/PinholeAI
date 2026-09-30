@@ -78,6 +78,37 @@ function setup() {
   return { store, actions };
 }
 
+describe("use as image 2", () => {
+  it("keeps image 1, sets image 2 and opens Describe a change", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { mode: "restyle" } });
+    store.dispatch({ type: "editSetSecond", ref: ref("b") });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    actions.sendToEditSecond("b");
+    const s = store.getState();
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+    expect(s.edit.secondImageId).toBe("b");
+    expect(s.edit.mode).toBe("instruction");
+    expect(s.tab).toBe("edit");
+  });
+
+  it("becomes image 1 when Edit is empty", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editSetSecond", ref: ref("b") });
+    actions.sendToEditSecond("b");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(store.getState().edit.secondImageId).toBeNull();
+  });
+
+  it("does nothing when the image is already image 1", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    actions.sendToEditSecond("a");
+    expect(store.getState().edit.secondImageId).toBeNull();
+  });
+});
+
 describe("async results after the screen moved on", () => {
   it("drops an edit result when another image was loaded while it ran", async () => {
     const { store, actions } = setup();
@@ -471,6 +502,38 @@ describe("queue", () => {
     pending!({ images: [img("r")] } as GenerateResult);
     await queued;
     expect(store.getState().images.two).toBeUndefined();
+  });
+
+  it("keeps Create's reference picture for Variations when the slot was cleared during the job", async () => {
+    const { store, actions } = setup();
+    const klein: InstalledModel = { ...model, modes: ["txt2img", "img2img", "edit"] };
+    store.dispatch({ type: "setModels", models: [klein] });
+    store.dispatch({ type: "createSetRef", ref: ref("pic") });
+    const run = actions.generateCreate();
+    await tick();
+    store.dispatch({ type: "createSetRef", ref: null });
+    expect(store.getState().images.pic).toBeDefined(); // the running job holds it
+    pending!({ images: [img("a")] } as GenerateResult);
+    await run;
+    await tick();
+    expect(store.getState().images.pic).toBeDefined(); // now the batch does
+    expect(discarded).not.toContain("pic");
+    const again = actions.variations("a");
+    await tick();
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].refImageIds).toEqual(["pic"]);
+    pending!({ images: [img("b")] } as GenerateResult);
+    await again;
+  });
+
+  it("drops a reference picture that finishes loading after Reset", async () => {
+    const { store, actions } = setup();
+    vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "late", width: 8, height: 8 } as never);
+    const load = actions.importCreateReference(new Blob([new Uint8Array(4)]));
+    await actions.clearSession();
+    await load;
+    await tick();
+    expect(store.getState().create.refImageId).toBeNull();
+    expect(discarded).toContain("late");
   });
 
   it("ignores a Generate pressed while Reset is clearing the session", async () => {

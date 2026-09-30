@@ -16,6 +16,8 @@ import {
 } from "../lib/api";
 import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
+import { ShortcutsList } from "../components/ShortcutsList";
+import { useHelperModels } from "../lib/helpers";
 import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from "../components/ui";
 import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/controls";
 import { cancelGroup } from "../tabs/models/lib/downloads";
@@ -145,6 +147,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
     }
   }, [refreshEngine, loadHw, onSaveState]);
 
+  const helperModels = useHelperModels();
   const update = (patch: Partial<Settings>) => {
     if (!latest.current) return;
     const next = { ...latest.current, ...patch };
@@ -400,6 +403,30 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         />
       </Section>
 
+      <Section title="Helper models">
+        {(["describe", "improve"] as const).map((purpose) => {
+          const key = purpose === "improve" ? "improveModel" : "describeModel";
+          const label = purpose === "improve" ? "Improve model" : "Describe model";
+          const installed = (helperModels ?? []).filter((m) => m.installed);
+          const value = installed.some((m) => m.id === settings[key]) ? settings[key] : "auto";
+          return (
+            <Labeled
+              key={purpose}
+              label={label}
+              hint={purpose === "improve" ? "The language model that writes the fuller prompt. Automatic uses the larger model when it is installed." : "The language model that describes pictures. Automatic uses the larger model when it is installed."}
+            >
+              <Select
+                label={label}
+                value={value}
+                onChange={(v) => update({ [key]: v })}
+                options={[{ value: "auto", label: "Automatic" }, ...installed.map((m) => ({ value: m.id, label: m.title }))]}
+              />
+            </Labeled>
+          );
+        })}
+        <p className="text-xs text-neutral-500">Get more helper models on Models → Helpers.</p>
+      </Section>
+
       <Section title="Saved pictures">
         <Labeled
           label="Information inside saved pictures"
@@ -454,6 +481,10 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
 
       <Section title="Updates">
         <UpdateSection offline={settings.offline} />
+      </Section>
+
+      <Section title="Keyboard shortcuts">
+        <ShortcutsList />
       </Section>
 
       <Section title="Appearance">

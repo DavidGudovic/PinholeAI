@@ -144,22 +144,99 @@ impl Source {
     }
 }
 
-/// Installed captioner files (model, mmproj), reuse preferred.
-fn captioner_files(core: &AppCore) -> Option<(Source, PathBuf, PathBuf)> {
-    let reg = core.registry();
+/// Which setting picks the helper model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Describe,
+    Improve,
+}
+
+impl Purpose {
+    /// `describe` | `improve` (anything else reads as Describe).
+    pub fn parse(s: &str) -> Self {
+        if s == "improve" {
+            Purpose::Improve
+        } else {
+            Purpose::Describe
+        }
+    }
+}
+
+fn component_path(core: &AppCore, component: &str) -> Option<PathBuf> {
     let idx = core.installed.lock();
-    let path_of = |component: &str| -> Option<PathBuf> {
-        let f = idx.find_component(component)?;
-        let p = idx.abs_path(&core.data, f);
-        p.is_file().then_some(p)
+    let f = idx.find_component(component)?;
+    let p = idx.abs_path(&core.data, f);
+    p.is_file().then_some(p)
+}
+
+/// (model, vision projector) component ids of a helper.
+pub(crate) fn helper_components(spec: &pinhole_registry::model::HelperSpec) -> (String, String) {
+    if spec.default {
+        (DEFAULT_MODEL_ID.into(), DEFAULT_MMPROJ_ID.into())
+    } else {
+        (
+            spec.components.first().cloned().unwrap_or_default(),
+            spec.components.get(1).cloned().unwrap_or_default(),
+        )
+    }
+}
+
+/// Helpers that may be offered now (Safe mode hides `needs_safe_off` ones).
+pub(crate) fn offered_helpers(core: &AppCore) -> Vec<pinhole_registry::model::HelperSpec> {
+    let safe = core.settings.read().content_mode != "all";
+    core.registry()
+        .captioner()
+        .helpers
+        .iter()
+        .filter(|h| !(safe && h.needs_safe_off))
+        .cloned()
+        .collect()
+}
+
+/// The helper picked in Settings / the pickers for `purpose`, when it is offered and installed;
+/// `None` = automatic (a removed or unknown choice reads as automatic too).
+fn chosen_helper(core: &AppCore, purpose: Purpose) -> Option<String> {
+    let id = {
+        let s = core.settings.read();
+        match purpose {
+            Purpose::Describe => s.describe_model.clone(),
+            Purpose::Improve => s.improve_model.clone(),
+        }
     };
+    if id == "auto" {
+        return None;
+    }
+    let spec = offered_helpers(core).into_iter().find(|h| h.id == id)?;
+    let (m, p) = helper_components(&spec);
+    (component_path(core, &m).is_some() && component_path(core, &p).is_some()).then_some(id)
+}
+
+/// Installed captioner files (model, mmproj): the chosen helper's, else reuse preferred.
+fn captioner_files(core: &AppCore, helper: Option<&str>) -> Option<(Source, PathBuf, PathBuf)> {
+    if let Some(id) = helper {
+        let spec = offered_helpers(core).into_iter().find(|h| h.id == id)?;
+        let (m, p) = helper_components(&spec);
+        let source = if spec.default {
+            Source::Default
+        } else {
+            Source::Reuse
+        };
+        return Some((source, component_path(core, &m)?, component_path(core, &p)?));
+    }
+    let reg = core.registry();
     let reuse = &reg.captioner().prefer_reuse;
     if reuse.len() >= 2 {
-        if let (Some(m), Some(p)) = (path_of(&reuse[0]), path_of(&reuse[1])) {
+        if let (Some(m), Some(p)) = (
+            component_path(core, &reuse[0]),
+            component_path(core, &reuse[1]),
+        ) {
             return Some((Source::Reuse, m, p));
         }
     }
-    match (path_of(DEFAULT_MODEL_ID), path_of(DEFAULT_MMPROJ_ID)) {
+    match (
+        component_path(core, DEFAULT_MODEL_ID),
+        component_path(core, DEFAULT_MMPROJ_ID),
+    ) {
         (Some(m), Some(p)) => Some((Source::Default, m, p)),
         _ => None,
     }
@@ -171,38 +248,87 @@ fn verified(sha: &str) -> Option<String> {
 }
 
 /// What `install_captioner` would download: (spec, role).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Part {
-    Model,
-    Mmproj,
+    /// A model file, registered under this component id with this name.
+    File {
+        component: String,
+        name: String,
+    },
     Engine,
 }
 
-fn missing_parts(core: &AppCore) -> CoreResult<Vec<(DownloadSpec, Part)>> {
+fn missing_parts(core: &AppCore, helper: Option<&str>) -> CoreResult<Vec<(DownloadSpec, Part)>> {
     let mut out = Vec::new();
-    if captioner_files(core).is_none() {
-        let reg = core.registry();
-        let def = reg.captioner().default.clone().ok_or_else(|| {
-            CoreError::not_found(
-                "No describe model is listed in Pinhole's model list. Update Pinhole.",
-            )
-        })?;
-        let dir = core.data.models(ModelKind::Captioner);
-        let idx = core.installed.lock();
-        for (file, part, label) in [
-            (&def.model, Part::Model, "Describe model"),
-            (&def.mmproj, Part::Mmproj, "Describe model (vision)"),
-        ] {
-            let comp = if part == Part::Model {
-                DEFAULT_MODEL_ID
+    let reg = core.registry();
+    let spec = match helper {
+        Some(id) => Some(
+            offered_helpers(core)
+                .into_iter()
+                .find(|h| h.id == id)
+                .ok_or_else(|| {
+                    CoreError::not_found(
+                        "That helper model isn't in Pinhole's list. Update Pinhole.",
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    // (component id, file, label) of the files this install needs.
+    let wanted: Vec<(String, pinhole_registry::model::CaptionerFile, String)> = match &spec {
+        Some(h) if !h.default => {
+            let mut v = Vec::new();
+            for (i, c) in h.components.iter().enumerate() {
+                let comp = reg.component(c).ok_or_else(|| {
+                    CoreError::not_found(
+                        "That helper model isn't in Pinhole's list. Update Pinhole.",
+                    )
+                })?;
+                v.push((
+                    c.clone(),
+                    pinhole_registry::model::CaptionerFile {
+                        file: comp.file.clone(),
+                        url: comp.url.clone(),
+                        sha256: comp.sha256.clone(),
+                        size_mb: comp.size_mb,
+                    },
+                    if i == 0 {
+                        h.title.clone()
+                    } else {
+                        format!("{} (vision)", h.title)
+                    },
+                ));
+            }
+            v
+        }
+        _ => {
+            if spec.is_none() && captioner_files(core, None).is_some() {
+                Vec::new()
             } else {
-                DEFAULT_MMPROJ_ID
-            };
-            if idx
-                .find_component(comp)
-                .map(|f| idx.abs_path(&core.data, f).is_file())
-                .unwrap_or(false)
-            {
+                let def = reg.captioner().default.clone().ok_or_else(|| {
+                    CoreError::not_found(
+                        "No describe model is listed in Pinhole's model list. Update Pinhole.",
+                    )
+                })?;
+                vec![
+                    (
+                        DEFAULT_MODEL_ID.to_string(),
+                        def.model,
+                        "Describe model".to_string(),
+                    ),
+                    (
+                        DEFAULT_MMPROJ_ID.to_string(),
+                        def.mmproj,
+                        "Describe model (vision)".to_string(),
+                    ),
+                ]
+            }
+        }
+    };
+    if !wanted.is_empty() {
+        let dir = core.data.models(ModelKind::Captioner);
+        for (comp, file, label) in wanted {
+            if component_path(core, &comp).is_some() {
                 continue;
             }
             out.push((
@@ -213,10 +339,13 @@ fn missing_parts(core: &AppCore) -> CoreResult<Vec<(DownloadSpec, Part)>> {
                     // `size_mb` is rounded: an estimate only, never the exact size.
                     size_bytes: None,
                     approx_size_bytes: Some(file.size_mb * 1_000_000),
-                    label: label.into(),
+                    label: label.clone(),
                     ..Default::default()
                 },
-                part,
+                Part::File {
+                    component: comp,
+                    name: label,
+                },
             ));
         }
     }
@@ -228,9 +357,10 @@ fn missing_parts(core: &AppCore) -> CoreResult<Vec<(DownloadSpec, Part)>> {
 
 // ---------------------------------------------------------------- status / install
 
-pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
+pub fn captioner_status(core: &AppCore, purpose: Purpose) -> CaptionerStatus {
     let external = core.describe.external.lock().is_some();
-    let files = captioner_files(core);
+    let helper = chosen_helper(core, purpose);
+    let files = captioner_files(core, helper.as_deref());
     let running = match core.describe.slot.try_lock() {
         Ok(mut g) => g.as_mut().map(|s| s.proc.is_running()).unwrap_or(false),
         Err(_) => true, // busy starting / describing
@@ -243,7 +373,7 @@ pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
             running,
         };
     }
-    let download_bytes = missing_parts(core)
+    let download_bytes = missing_parts(core, helper.as_deref())
         .map(|p| p.iter().filter_map(|(s, _)| s.size_hint()).sum())
         .unwrap_or(0);
     let engine_ok = engine_setup::installed_engine(core, EngineKind::Llama).is_some();
@@ -257,7 +387,11 @@ pub fn captioner_status(core: &AppCore) -> CaptionerStatus {
 
 /// Queue the default captioner (+ the llama.cpp engine if missing) as one
 /// download group; files are registered / unpacked when it finishes.
-pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted> {
+/// `helper`: a `captioner.helpers` id, or `None` = the default one.
+pub async fn install_captioner(
+    core: &Arc<AppCore>,
+    helper: Option<&str>,
+) -> CoreResult<InstallStarted> {
     let explicit = matches!(
         core.settings.read().engine_backend.as_str(),
         "cuda" | "vulkan" | "cpu"
@@ -265,7 +399,7 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
     if !explicit && core.hardware.read().is_none() {
         crate::app::wait_for_hardware(core, Duration::from_secs(30)).await;
     }
-    let parts = missing_parts(core)?;
+    let parts = missing_parts(core, helper)?;
     let (specs, roles): (Vec<DownloadSpec>, Vec<Part>) = parts.into_iter().unzip();
     crate::models::models_dir_for_write(core, ModelKind::Captioner)?;
     let group_id = core.downloads.enqueue_kind(
@@ -288,19 +422,11 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
                     engine_files.push(file);
                     continue;
                 }
-                Part::Model => Registration {
+                Part::File { component, name } => Registration {
                     kind: ModelKind::Captioner,
-                    friendly_name: "Describe model".into(),
+                    friendly_name: name,
                     family: None,
-                    component_id: Some(DEFAULT_MODEL_ID.into()),
-                    civitai: None,
-                    dtype: None,
-                },
-                Part::Mmproj => Registration {
-                    kind: ModelKind::Captioner,
-                    friendly_name: "Describe model (vision)".into(),
-                    family: None,
-                    component_id: Some(DEFAULT_MMPROJ_ID.into()),
+                    component_id: Some(component),
                     civitai: None,
                     dtype: None,
                 },
@@ -329,6 +455,113 @@ pub async fn install_captioner(core: &Arc<AppCore>) -> CoreResult<InstallStarted
         core2.emit(crate::CoreEvent::ModelsChanged);
     });
     Ok(InstallStarted { group_id })
+}
+
+// ---------------------------------------------------------------- helper models
+
+/// `HelperModel` in src/lib/types.ts: one row of Models → Helpers and the pickers.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HelperModel {
+    pub id: String,
+    pub title: String,
+    pub note: String,
+    /// Both files together (installed size, else the registry's rounded estimate).
+    pub size_bytes: u64,
+    /// Bytes still to download to use it (0 when installed).
+    pub download_bytes: u64,
+    pub installed: bool,
+    /// Pinhole downloaded it as a helper, so Remove is offered (an encoder that came with
+    /// Qwen Image Edit belongs to that model).
+    pub removable: bool,
+    pub fit: Option<pinhole_registry::vram::Fit>,
+    pub needs_safe_off: bool,
+}
+
+/// Helper models for Models → Helpers and the pickers, in registry order.
+pub fn list_helper_models(core: &AppCore) -> Vec<HelperModel> {
+    let reg = core.registry();
+    let hw = crate::app::hw_context(core);
+    let index = core.installed.lock().clone();
+    offered_helpers(core)
+        .into_iter()
+        .map(|h| {
+            let (m, p) = helper_components(&h);
+            let installed =
+                component_path(core, &m).is_some() && component_path(core, &p).is_some();
+            let estimate: u64 = if h.default {
+                reg.captioner()
+                    .default
+                    .as_ref()
+                    .map(|d| (d.model.size_mb + d.mmproj.size_mb) * 1_000_000)
+                    .unwrap_or(0)
+            } else {
+                h.components
+                    .iter()
+                    .filter_map(|c| reg.component(c))
+                    .map(|c| c.size_mb * 1_000_000)
+                    .sum()
+            };
+            let on_disk: u64 = [&m, &p]
+                .iter()
+                .filter_map(|c| index.find_component(c))
+                .map(|f| f.size_bytes)
+                .sum();
+            let size_bytes = if installed && on_disk > 0 {
+                on_disk
+            } else {
+                estimate
+            };
+            let removable = [&m, &p].iter().any(|c| {
+                index
+                    .find_component(c)
+                    .is_some_and(|f| f.kind == ModelKind::Captioner)
+            });
+            let download_bytes = if installed {
+                0
+            } else {
+                missing_parts(core, Some(&h.id))
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter(|(_, r)| !matches!(r, Part::Engine))
+                            .filter_map(|(s, _)| s.size_hint())
+                            .sum()
+                    })
+                    .unwrap_or(estimate)
+            };
+            HelperModel {
+                id: h.id.clone(),
+                title: h.title.clone(),
+                note: h.note.clone(),
+                size_bytes,
+                download_bytes,
+                installed,
+                removable,
+                fit: helper_fit(size_bytes, hw.vram_gb, hw.ram_gb),
+                needs_safe_off: h.needs_safe_off,
+            }
+        })
+        .collect()
+}
+
+/// Fits / Tight (some layers run on the processor, slower) / Too big (more than the RAM).
+/// `None` without a graphics card or before hardware is known.
+fn helper_fit(size_bytes: u64, vram_gb: f32, ram_gb: f32) -> Option<pinhole_registry::vram::Fit> {
+    use pinhole_registry::vram::Fit;
+    if vram_gb.is_nan() || vram_gb <= 0.0 {
+        return None;
+    }
+    let need_gb = size_bytes as f32 / 1e9 * 1.15 + 0.5;
+    Some(
+        if ram_gb > 0.0 && size_bytes as f32 / 1e9 * 1.1 > ram_gb + vram_gb {
+            Fit::TooBig
+        } else if need_gb <= vram_gb {
+            Fit::Fits
+        } else {
+            Fit::Tight
+        },
+    )
 }
 
 // ---------------------------------------------------------------- describe
@@ -380,7 +613,8 @@ pub async fn describe_image(
     };
 
     let _busy = BusyGuard::new(&core.describe);
-    let text = describe_inner(core, &instruction, mime, &bytes, style).await?;
+    let helper = chosen_helper(core, Purpose::Describe);
+    let text = describe_inner(core, &instruction, mime, &bytes, style, helper).await?;
     crate::text_check::check(&text)?;
     Ok(text)
 }
@@ -391,8 +625,9 @@ async fn describe_inner(
     mime: &str,
     bytes: &[u8],
     style: DescribeStyle,
+    helper: Option<String>,
 ) -> CoreResult<String> {
-    let client = ensure_llama(core).await?;
+    let client = ensure_llama(core, helper.as_deref()).await?;
     let max_tokens = if style == DescribeStyle::Tags {
         200
     } else {
@@ -572,6 +807,7 @@ pub async fn improve_prompt(
             "That prompt is already long. Improve works on shorter ideas.",
         ));
     }
+    crate::text_check::check(idea)?;
     let _folder = crate::models::folder_read(core)?;
     let reg = core.registry();
     let template = family_id
@@ -586,7 +822,7 @@ pub async fn improve_prompt(
     let max_tokens = if template == "tags" { 120 } else { 200 };
 
     let _busy = BusyGuard::new(&core.describe);
-    let client = ensure_llama(core).await?;
+    let client = ensure_llama(core, chosen_helper(core, Purpose::Improve).as_deref()).await?;
     let text = client.rewrite(&instruction, idea, max_tokens).await.map_err(|e| {
         let tail = core.describe.logs.tail_text(30);
         match classify(&tail, None) {
@@ -650,14 +886,14 @@ pub(crate) async fn verify_llama_identity(
 }
 
 /// Start llama-server if needed; returns a client for it (with its API key).
-async fn ensure_llama(core: &Arc<AppCore>) -> CoreResult<LlamaClient> {
+async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<LlamaClient> {
     if let Some(url) = core.describe.external.lock().clone() {
         return Ok(LlamaClient::new(core.local.clone(), url));
     }
     if let Some(msg) = core.describe.last_error.lock().clone() {
         return Err(CoreError::new("engine_failed", msg));
     }
-    let (_, model, mmproj) = captioner_files(core).ok_or_else(|| {
+    let (_, model, mmproj) = captioner_files(core, helper).ok_or_else(|| {
         CoreError::not_found(
             "The describe model isn't installed yet. Click Get on the Describe tab.",
         )
@@ -916,6 +1152,15 @@ mod tests {
             t,
             "A portrait shot at f/1.8 in warm light. The background is soft and calm."
         );
+    }
+
+    #[test]
+    fn helper_fit_reads_size_against_memory() {
+        use pinhole_registry::vram::Fit;
+        assert_eq!(helper_fit(2_800_000_000, 16.0, 32.0), Some(Fit::Fits));
+        assert_eq!(helper_fit(8_900_000_000, 8.0, 32.0), Some(Fit::Tight));
+        assert_eq!(helper_fit(8_900_000_000, 4.0, 4.0), Some(Fit::TooBig));
+        assert_eq!(helper_fit(2_800_000_000, 0.0, 16.0), None);
     }
 
     #[test]
