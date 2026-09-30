@@ -157,6 +157,17 @@ components:
     url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3VL-8B-Instruct-Q4_K_M.gguf
     sha256: 67d1659bfe71b89d50b45a4ad1a9e5b997e5bb16ce5da66a6a6167abd569e9e2
     size_mb: 5028
+  # Vision tower for Qwen-Image 2.1 edits (--llm_vision; the GGUF LLMs above have no
+  # vision weights). docs/qwen_image_2.1.md names this file. Loads as Qwen3-VL vision
+  # (name_conversion.cpp qwen3_vl_vision_name_map, 27 layers → deepstack {8, 16, 24}).
+  # SHA-256 / size from the HF file page (commit 00e7d63), 2026-09-30; size_mb rounded
+  # up from "1.16 GB". Not downloaded from the session (huggingface.co blocked).
+  qwen3vl_8b_mmproj:
+    kind: llm_vision
+    file: mmproj-Qwen3VL-8B-Instruct-F16.gguf
+    url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf
+    sha256: ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38
+    size_mb: 1165
   # Mistral-Small-3.2 24B for FLUX.2 dev (docs/flux2.md example uses this Q4_K_M).
   mistral_small_32_q4km:
     kind: llm
@@ -591,10 +602,10 @@ families:
     style_template: natural
     activation_gb: 3.0
     license_note: "Qwen Research License"
-    # Can also edit (docs/qwen_image_2.1.md), but only with Qwen3-VL-8B's vision
-    # weights (--llm_vision; conditioner.hpp errors without them). Add `edit` here
-    # once that file's URL/size/SHA-256 are verified with the API probe.
-    modes: [txt2img, img2img]
+    # Edits need Qwen3-VL-8B's vision weights (--llm_vision; conditioner.hpp errors
+    # without them), so they are a component: installs made before it show "Missing parts".
+    modes: [txt2img, img2img, edit]   # docs/qwen_image_2.1.md "Image editing"
+    multi_ref: true                   # docs: repeat -r for several reference images
     detect:
       # get_sd_version(): exact `model.diffusion_model.txt_in.text_norm.weight`
       # → VERSION_QWEN_IMAGE_2_1 (qwen_image / mage_flow exclude it).
@@ -604,6 +615,7 @@ families:
     components:
       vae: qwen_image_21_vae            # docs: older Qwen-Image / Wan VAEs are not interchangeable
       llm: { vram_gte_20: qwen3vl_8b_q8, else: qwen3vl_8b_q4km }
+      llm_vision: qwen3vl_8b_mmproj
     uses_negative_prompt: true
     # docs/qwen_image_2.1.md uses --fa (its prefix cache stores FP16 only with flash attention).
     flags: ["--fa"]

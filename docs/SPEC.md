@@ -255,8 +255,8 @@ Two modes, picked automatically:
    edit family (Qwen Image Edit 2511 preferred, Flux.1 Kontext as the lower-VRAM option) with
    the image passed as `ref_images[0]`. Installed generators whose architecture can also edit
    from a reference image are offered too (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein
-   and dev); they rank after the dedicated edit models and stay in Create. Qwen-Image 2.1 can
-   edit as well but needs Qwen3-VL's vision weights, which are not in the registry yet.
+   and dev, Qwen-Image 2.1); they rank after the dedicated edit models and stay in Create.
+   Qwen-Image 2.1 needs Qwen3-VL-8B's vision weights for edits, installed as one of its parts.
    - Dial: **Stay close to original** (maps to the family's guidance setting; hidden when the
      family has a fixed CFG and no guidance, e.g. distilled FLUX.2 klein).
    - Optional **"Only change here"** brush: paint a mask → `mask_image`.
