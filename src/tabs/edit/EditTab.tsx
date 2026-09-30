@@ -9,6 +9,7 @@ import {
   Copy,
   Eraser,
   ImagePlus,
+  ListPlus,
   Maximize2,
   Redo2,
   RefreshCw,
@@ -28,6 +29,7 @@ import {
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { LiveJobProgress } from "../../components/JobProgress";
+import { QueueButton } from "../../components/QueueButton";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
 import { ImageViewer } from "../../components/ImageViewer";
@@ -54,8 +56,10 @@ import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
   createModels,
+  editBusy,
   editModels,
   isEditJob,
+  willQueue,
   type ChangeAmount,
   type EditMode,
 } from "../../lib/state/model";
@@ -89,13 +93,16 @@ export function EditTab() {
   // Only the kind: the progress card subscribes to the job itself (LiveJobProgress).
   const jobKind = useAppState((s) => s.job?.kind ?? null);
   const job = !!jobKind;
+  // An edit running or waiting: the history stays put until they are done.
+  const locked = useAppState(editBusy);
+  const queues = useAppState(willQueue);
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
 
   const [error, setError] = useState<CoreError | null>(null);
   const [importing, setImporting] = useState(false);
-  const [maskOn, setMaskOn] = useState(false);
+  const [maskToggle, setMaskOn] = useState(false);
   const [brush, setBrush] = useState(40);
   const [erase, setErase] = useState(false);
   const [painted, setPainted] = useState(false);
@@ -119,6 +126,9 @@ export function EditTab() {
     [actions, models],
   );
   const mode: EditMode = e.mode ?? (autoEditOne ? "instruction" : "restyle");
+  // Fix details always uses the brush.
+  const fixing = mode === "fix";
+  const maskOn = fixing || maskToggle;
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
@@ -160,7 +170,7 @@ export function EditTab() {
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
-    if (isEditJob(store.getState().job?.kind)) return;
+    if (editBusy(store.getState())) return;
     setError(null);
     setImporting(true);
     try {
@@ -176,7 +186,7 @@ export function EditTab() {
   const picker = useFilePicker((f) => void load(f));
 
   const loadSecond = async (f: File) => {
-    if (isEditJob(store.getState().job?.kind)) return;
+    if (editBusy(store.getState())) return;
     setError(null);
     setImporting(true); // Apply waits for image 2
     try {
@@ -211,14 +221,7 @@ export function EditTab() {
   >({ kind: "edit", again: false });
   // `again`: redo the shown edit from the step before it, with a new seed ("Try again").
   const run = async (again = false) => {
-    if (
-      running.current ||
-      store.getState().job ||
-      importing ||
-      !current ||
-      !model
-    )
-      return;
+    if (running.current || importing || !current || !model) return;
     const from = again ? e.index - 1 : e.index;
     const source = e.chain[from] ? images[e.chain[from].imageId] : undefined;
     if (!source || (again && !canTryAgain)) return;
@@ -231,13 +234,22 @@ export function EditTab() {
         : maskOn && painted && !twoImages
           ? ((await mask.current?.exportPng()) ?? null)
           : null;
+      if (fixing && !m) {
+        setError({
+          code: "invalid",
+          message: "Paint over the spot to fix first.",
+          details: null,
+        });
+        return;
+      }
       const outFrom = editOutputSize(
         source.width,
         source.height,
         size,
         sizeMultiple(model.familyId),
       );
-      await actions.runEdit({
+      // Queued or started by now: the next press may queue another edit.
+      const done = actions.runEdit({
         mode,
         model,
         mask: m,
@@ -245,6 +257,8 @@ export function EditTab() {
         from,
         newSeed: again,
       });
+      running.current = false;
+      await done;
       const now = store.getState().edit;
       const made = now.chain[now.index];
       if (now.index === from + 1 && made && made.imageId !== current.id) {
@@ -294,7 +308,7 @@ export function EditTab() {
       )
         return;
       ev.preventDefault();
-      if (isEditJob(store.getState().job?.kind)) return;
+      if (editBusy(store.getState())) return;
       const s = store.getState().edit;
       dispatch({ type: "editGoto", index: s.index + (ev.shiftKey ? 1 : -1) });
     };
@@ -303,24 +317,31 @@ export function EditTab() {
   }, [tab, dispatch, store]);
 
   const needsEditModel = mode === "instruction" && !autoEdit;
-  const text = mode === "instruction" ? e.instruction : e.restylePrompt;
+  const text =
+    mode === "instruction"
+      ? e.instruction
+      : fixing
+        ? e.fixPrompt
+        : e.restylePrompt;
+  const ready = !!current && !!model && !importing && !needsEditModel;
   const canRun =
-    !!current &&
-    !!model &&
-    !job &&
-    !importing &&
-    (text.trim().length > 0 || !!e.styleId) &&
-    !needsEditModel;
+    ready && (fixing ? painted : text.trim().length > 0 || !!e.styleId);
   // An upscale step has nothing to redo; the original has no step before it.
+  // Fix details redoes the step with the spot painted for it. Not while edits run or wait:
+  // redoing a step drops the steps after it, which could be their results.
   const canTryAgain =
-    canRun && e.index > 0 && !!node?.meta && node.meta.kind !== "upscaled";
+    (fixing ? ready && !!masks.current.get(current?.id ?? "") : canRun) &&
+    !locked &&
+    e.index > 0 &&
+    !!node?.meta &&
+    node.meta.kind !== "upscaled";
   const loras = useAppState((s) => s.loras);
   const addTriggerWords = useAppState(
     (s) => s.settings?.addTriggerWords ?? true,
   );
   const previewReq = useMemo(
     () =>
-      current && model && outSize && (text.trim() || e.styleId)
+      current && model && outSize && (text.trim() || e.styleId || fixing)
         ? buildEditRequest(e, {
             mode,
             source: current,
@@ -372,6 +393,11 @@ export function EditTab() {
                   label: "Restyle",
                   title: "Redraw the whole image in a new look",
                 },
+                {
+                  value: "fix" as EditMode,
+                  label: "Fix details",
+                  title: "Redraw a small spot, like a face or hand, sharper",
+                },
               ]}
             />
             <p className="mt-1.5 text-xs text-neutral-500">
@@ -383,7 +409,9 @@ export function EditTab() {
                   : "Picked automatically — Restyle works with your Create model."
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."
-                  : "Redraws the whole picture with your description."}
+                  : fixing
+                    ? "Paint over a small spot, like a face or hand. It's redrawn larger, then blended back in."
+                    : "Redraws the whole picture with your description."}
             </p>
           </div>
 
@@ -498,25 +526,54 @@ export function EditTab() {
                 <RecommendedCards roles={["realistic", "anime"]} compact />
               )}
               <div>
-                <label
-                  htmlFor="edit-restyle"
-                  className="mb-1.5 block text-sm font-medium"
-                >
-                  What should it look like?
-                </label>
-                <AutoTextarea
-                  id="edit-restyle"
-                  minRows={3}
-                  maxRows={10}
-                  value={e.restylePrompt}
-                  placeholder="e.g. a watercolor painting of the same scene"
-                  onChange={(ev) =>
-                    dispatch({
-                      type: "patchEdit",
-                      patch: { restylePrompt: ev.target.value },
-                    })
-                  }
-                />
+                {fixing ? (
+                  <>
+                    <label
+                      htmlFor="edit-fix"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      What is it?{" "}
+                      <span className="font-normal text-neutral-500">
+                        (optional)
+                      </span>
+                    </label>
+                    <AutoTextarea
+                      id="edit-fix"
+                      minRows={2}
+                      maxRows={6}
+                      value={e.fixPrompt}
+                      placeholder="e.g. a smiling face, or a hand holding a cup"
+                      onChange={(ev) =>
+                        dispatch({
+                          type: "patchEdit",
+                          patch: { fixPrompt: ev.target.value },
+                        })
+                      }
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label
+                      htmlFor="edit-restyle"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      What should it look like?
+                    </label>
+                    <AutoTextarea
+                      id="edit-restyle"
+                      minRows={3}
+                      maxRows={10}
+                      value={e.restylePrompt}
+                      placeholder="e.g. a watercolor painting of the same scene"
+                      onChange={(ev) =>
+                        dispatch({
+                          type: "patchEdit",
+                          patch: { restylePrompt: ev.target.value },
+                        })
+                      }
+                    />
+                  </>
+                )}
               </div>
               <div>
                 <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">
@@ -575,7 +632,7 @@ export function EditTab() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={myJob || importing}
+                  disabled={locked || importing}
                   onClick={secondPicker.open}
                   title="Use something from another picture, like an object or a logo"
                 >
@@ -603,20 +660,33 @@ export function EditTab() {
 
           {!twoImages && (
             <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-              <Toggle
-                checked={maskOn}
-                onChange={setMaskOn}
-                label={
-                  <span className="inline-flex items-center gap-1.5 font-medium">
-                    <Brush className="h-3.5 w-3.5" /> Only change here
-                  </span>
-                }
-                hint={
-                  maskOn
-                    ? "Paint over the part of the image that may change."
-                    : "Optional: paint the area to change."
-                }
-              />
+              {fixing ? (
+                <div>
+                  <div className="inline-flex items-center gap-1.5 text-sm font-medium">
+                    <Brush className="h-3.5 w-3.5" /> Spot to fix
+                  </div>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    {painted
+                      ? "Paint a little past the edges so it blends in."
+                      : "Paint over the face, hand or detail to redraw."}
+                  </p>
+                </div>
+              ) : (
+                <Toggle
+                  checked={maskOn}
+                  onChange={setMaskOn}
+                  label={
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <Brush className="h-3.5 w-3.5" /> Only change here
+                    </span>
+                  }
+                  hint={
+                    maskOn
+                      ? "Paint over the part of the image that may change."
+                      : "Optional: paint the area to change."
+                  }
+                />
+              )}
               {maskOn && (
                 <div className="mt-3 space-y-2.5">
                   <div className="flex items-center gap-2">
@@ -708,27 +778,34 @@ export function EditTab() {
                       }),
                     )}
                   />
-                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                    Output size
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Segmented
-                      size="sm"
-                      ariaLabel="Output size"
-                      value={size}
-                      onChange={setSize}
-                      options={[
-                        { value: "smaller" as SizeChoice, label: "Smaller" },
-                        { value: "normal" as SizeChoice, label: "Normal" },
-                        { value: "larger" as SizeChoice, label: "Larger" },
-                      ]}
-                    />
-                    {outSize && (
-                      <span className="text-xs text-neutral-500 tabular-nums">
-                        {outSize[0]}×{outSize[1]}
+                  {!fixing && (
+                    <>
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                        Output size
                       </span>
-                    )}
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <Segmented
+                          size="sm"
+                          ariaLabel="Output size"
+                          value={size}
+                          onChange={setSize}
+                          options={[
+                            {
+                              value: "smaller" as SizeChoice,
+                              label: "Smaller",
+                            },
+                            { value: "normal" as SizeChoice, label: "Normal" },
+                            { value: "larger" as SizeChoice, label: "Larger" },
+                          ]}
+                        />
+                        {outSize && (
+                          <span className="text-xs text-neutral-500 tabular-nums">
+                            {outSize[0]}×{outSize[1]}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
                   <label
                     htmlFor="edit-seed"
                     className="text-xs font-medium text-neutral-600 dark:text-neutral-400"
@@ -762,7 +839,9 @@ export function EditTab() {
                   />
                 </div>
                 <p className="text-[11px] text-neutral-400">
-                  Size keeps your image’s shape.{" "}
+                  {fixing
+                    ? "The picture keeps its size; only the painted spot changes. "
+                    : "Size keeps your image’s shape. "}
                   {ui
                     ? `${ui.label} defaults are used for everything else.`
                     : ""}
@@ -773,7 +852,7 @@ export function EditTab() {
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 px-5 py-4 dark:border-neutral-800">
-          {myJob ? (
+          {myJob && (
             <LiveJobProgress
               kinds={EDIT_JOBS}
               cancelling={cancelling}
@@ -783,22 +862,34 @@ export function EditTab() {
                 setCancelling(false);
               }}
             />
-          ) : (
+          )}
+          <div className="flex gap-2">
             <Button
               variant="primary"
               size="lg"
-              className="w-full"
+              className="min-w-0 flex-1"
               disabled={!canRun}
               onClick={() => void run()}
             >
-              <WandSparkles className="h-4 w-4" />
-              {mode === "instruction" ? "Apply edit" : "Restyle"}
+              {queues ? (
+                <ListPlus className="h-4 w-4" />
+              ) : (
+                <WandSparkles className="h-4 w-4" />
+              )}
+              {queues
+                ? "Add to queue"
+                : mode === "instruction"
+                  ? "Apply edit"
+                  : fixing
+                    ? "Fix details"
+                    : "Restyle"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
               </span>
             </Button>
-          )}
+            <QueueButton />
+          </div>
           {!current && !myJob && (
             <p className="text-center text-xs text-neutral-500">
               Add an image to start.
@@ -806,7 +897,7 @@ export function EditTab() {
           )}
           {job && !myJob && (
             <p className="text-center text-xs text-neutral-500">
-              Busy creating — editing is available when it finishes.
+              Busy creating. Edits wait for it to finish.
             </p>
           )}
           {error && (
@@ -845,7 +936,7 @@ export function EditTab() {
             <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
               <IconButton
                 label="Undo"
-                disabled={e.index === 0 || myJob}
+                disabled={e.index === 0 || locked}
                 onClick={() =>
                   dispatch({ type: "editGoto", index: e.index - 1 })
                 }
@@ -854,7 +945,7 @@ export function EditTab() {
               </IconButton>
               <IconButton
                 label="Redo"
-                disabled={e.index >= e.chain.length - 1 || myJob}
+                disabled={e.index >= e.chain.length - 1 || locked}
                 onClick={() =>
                   dispatch({ type: "editGoto", index: e.index + 1 })
                 }
@@ -863,7 +954,7 @@ export function EditTab() {
               </IconButton>
               <IconButton
                 label="Delete this edit"
-                disabled={e.index === 0 || job}
+                disabled={e.index === 0 || job || locked}
                 onClick={() => dispatch({ type: "editDelete", index: e.index })}
               >
                 <Trash2 className="h-4 w-4" />
@@ -909,7 +1000,7 @@ export function EditTab() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={myJob}
+                  disabled={locked}
                   onClick={picker.open}
                   title="Edit a different image"
                   aria-label="New image"
@@ -995,7 +1086,7 @@ export function EditTab() {
                       <button
                         type="button"
                         aria-current={i === e.index ? "step" : undefined}
-                        disabled={myJob && i !== e.index}
+                        disabled={locked && i !== e.index}
                         onClick={() => dispatch({ type: "editGoto", index: i })}
                         className={cx(
                           "group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50",

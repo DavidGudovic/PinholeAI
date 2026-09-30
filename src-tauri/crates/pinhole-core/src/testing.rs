@@ -527,6 +527,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fix_details_redraws_the_painted_box_and_blends_it_back() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(1200, 900, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        // A small painted spot (a "face") at (600..660, 300..380).
+        let mut px = Vec::new();
+        for y in 0..900u32 {
+            for x in 0..1200u32 {
+                let on = (600..660).contains(&x) && (300..380).contains(&y);
+                px.extend_from_slice(if on { &[255u8; 4] } else { &[0, 0, 0, 255] });
+            }
+        }
+        let mask_png = pinhole_engine::image::encode_png_rgba(&px, 1200, 900).unwrap();
+        let mask = session::import_image(&core, mask_png).unwrap();
+        let fix_req = |mask_id: Option<String>| {
+            let mut req = GenerateRequest::txt2img(model.clone(), "");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.id.clone());
+            req.strength = Some(0.45);
+            req.mask_image_id = mask_id;
+            req.fix_details = true;
+            req.dials.count = 4;
+            req
+        };
+
+        let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
+            .await
+            .unwrap();
+        assert_eq!(res.images.len(), 1);
+        let out = &res.images[0];
+        assert_eq!(
+            (out.width, out.height),
+            (1200, 900),
+            "the whole image comes back"
+        );
+        assert_eq!(out.parent_id.as_deref(), Some(src.id.as_str()));
+        let body = &mock.requests()[0];
+        let (w, h) = (
+            body["width"].as_u64().unwrap(),
+            body["height"].as_u64().unwrap(),
+        );
+        // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
+        assert!(
+            w >= 768 && h >= 768 && w % 64 == 0 && h % 64 == 0,
+            "{w}x{h}"
+        );
+        assert_eq!(body["batch_count"], 1);
+        assert!(body.get("hires").is_none_or(|v| v.is_null()));
+        assert!(body["mask_image"].as_str().unwrap().len() > 50);
+        use base64::Engine as _;
+        let init = base64::engine::general_purpose::STANDARD
+            .decode(body["init_image"].as_str().unwrap())
+            .unwrap();
+        let info = pinhole_engine::image::sniff(&init).unwrap();
+        assert_eq!((u64::from(info.width), u64::from(info.height)), (w, h));
+
+        // The redraw landed inside the painted spot only.
+        let img = core.session.get(&out.id).unwrap();
+        let (px, _, _) = pinhole_engine::image::decode_rgba(img.bytes.as_slice()).unwrap();
+        let at = |x: usize, y: usize| &px[(y * 1200 + x) * 4..][..4];
+        assert_eq!(at(10, 10), &[10, 20, 30, 255]);
+        assert_ne!(at(630, 340), &[10, 20, 30, 255]);
+
+        // Without a mask there is nothing to fix.
+        let err = generate::generate(&core, fix_req(None)).await.unwrap_err();
+        assert!(err.message.contains("Paint over"), "{}", err.message);
+    }
+
+    #[tokio::test]
     async fn instruction_edit_uses_a_generator_that_can_edit() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;

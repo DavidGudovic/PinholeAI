@@ -13,6 +13,7 @@
 //! body, have a redacting `Debug`, and the engine output ring buffer
 //! ([`logbuf::LogBuffer`]) redacts prompt text before storing a line.
 
+pub mod detail;
 pub mod failure;
 pub mod image;
 pub mod install;

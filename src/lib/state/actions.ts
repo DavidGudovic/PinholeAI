@@ -5,7 +5,20 @@
 
 import * as api from "../api";
 import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, LoraUse, ResultImage } from "../types";
-import { DEFAULT_LORA_WEIGHT, editModels, isActiveDownload, isEditJob, loraCompatible, type EditMode, type ImgRef, type JobKind, type TabId, type Toast } from "./model";
+import {
+  DEFAULT_LORA_WEIGHT,
+  editBusy,
+  editModels,
+  isActiveDownload,
+  loraCompatible,
+  willQueue,
+  type EditMode,
+  type ImgRef,
+  type JobKind,
+  type QueuedJob,
+  type TabId,
+  type Toast,
+} from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
@@ -80,18 +93,70 @@ export function makeActions(store: Store) {
   /** Cancel (or Reset) was pressed during the current job, maybe before the engine had it. */
   let cancelRequested = false;
 
-  /** Mark a job as running for the whole of `work` (only one at a time). */
-  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number): Promise<T> {
+  /**
+   * Mark a job as running for the whole of `work` (only one at a time). Must be called before
+   * the caller's first await, so the queue hands over to the next job without a gap.
+   */
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[]): Promise<T> {
     if (get().job) throw busyError();
     cancelRequested = false;
-    dispatch({ type: "jobStart", kind, at: Date.now(), count });
+    dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
     try {
       return await work();
     } catch (e) {
       throw api.asCoreError(e);
     } finally {
       dispatch({ type: "jobEnd" });
+      startNextQueued();
     }
+  }
+
+  // ---------------------------------------------------------------- queue
+  // Generate/Edit pressed while a job runs: the job waits here (memory only) and starts when
+  // the running one ends. Its promise settles when it has run, so the tab that queued it can
+  // show its error. Removed or Reset jobs resolve quietly without running.
+  let resetting = false;
+  const waiting = new Map<string, { run: () => Promise<void>; resolve: () => void; reject: (e: unknown) => void }>();
+
+  /** Run `run` now if nothing is running, else queue it. `run` must start its job (withJob) before its first await. */
+  function enqueue(entry: Omit<QueuedJob, "id">, run: () => Promise<void>): Promise<void> {
+    // Pressed while Reset is clearing the session: it belongs to the cleared session.
+    if (resetting) return Promise.resolve();
+    if (!willQueue(get())) return run();
+    const id = uid("q");
+    return new Promise<void>((resolve, reject) => {
+      waiting.set(id, { run, resolve, reject });
+      dispatch({ type: "queueAdd", job: { ...entry, id } });
+      toast(get().queue.length === 1 ? "Added to the queue. It starts when the current one finishes." : "Added to the queue.", { ms: 2500 });
+    });
+  }
+
+  function startNextQueued() {
+    if (get().job) return;
+    const next = get().queue[0];
+    if (!next) return;
+    const w = waiting.get(next.id);
+    waiting.delete(next.id);
+    // Start it before dropping it from the queue: the running job references its images from then on.
+    const p = w ? w.run() : Promise.resolve();
+    dispatch({ type: "queueRemove", id: next.id });
+    if (w) p.then(w.resolve, w.reject);
+    else startNextQueued();
+  }
+
+  /** Take a waiting job out of the queue (it never runs). */
+  function removeQueued(id: string) {
+    const w = waiting.get(id);
+    waiting.delete(id);
+    dispatch({ type: "queueRemove", id });
+    w?.resolve();
+  }
+
+  function clearQueue() {
+    const all = [...waiting.values()];
+    waiting.clear();
+    for (const q of get().queue) dispatch({ type: "queueRemove", id: q.id });
+    for (const w of all) w.resolve();
   }
 
   /**
@@ -116,7 +181,6 @@ export function makeActions(store: Store) {
     return { images: res.images, refs: await jobRefs(res.images, nonce) };
   }
 
-  const runJob = (kind: JobKind, req: GenerateRequest) => withJob(kind, () => generateNow(req), req.dials.count);
 
   /** Blob refs for new session images. If one can't be read, the others are released too and the error is thrown. */
   async function refsFromSession(images: ResultImage[]): Promise<ImgRef[]> {
@@ -133,28 +197,59 @@ export function makeActions(store: Store) {
     return (s.models ?? []).find((m) => m.id === s.create.modelId) ?? null;
   }
 
-  /** Generate from the Create tab. Resolves quietly on cancel. */
+  /**
+   * Generate from the Create tab, with the settings as they are now (queued if a job is
+   * running). Resolves when it has run; quietly on cancel.
+   */
   async function generateCreate(): Promise<void> {
     const s = get();
     const model = currentCreateModel();
     if (!model) throw { code: "not_found", message: "Pick a model first — or get one of the recommended models.", details: null } as CoreError;
     if (!s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
-    const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
-    const req = buildCreateRequest(s.create, { ui, loras: s.loras, model, settings: s.settings });
-    await runBatch(req);
+    const { create, loras, settings } = s;
+    await queueBatch(
+      create.count,
+      queueEntry("create", create.prompt, model, create.count),
+      async () => {
+        const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+        return buildCreateRequest(create, { ui, loras, model, settings });
+      },
+    );
   }
 
-  async function runBatch(req: GenerateRequest) {
+  function queueEntry(kind: QueuedJob["kind"], prompt: string, model: InstalledModel | undefined, count: number, imageIds: string[] = []): Omit<QueuedJob, "id"> {
+    const text = prompt.trim().replace(/\s+/g, " ");
+    const images = kind === "edit" ? "" : ` · ${count} image${count === 1 ? "" : "s"}`;
+    return { kind, label: text || (kind === "edit" ? "Edit" : "Picture"), detail: `${model?.friendlyName ?? "Model"}${images}`, imageIds };
+  }
+
+  /** A Create batch: `makeRequest` runs once the job has started. */
+  async function queueBatch(count: number, entry: Omit<QueuedJob, "id">, makeRequest: () => Promise<GenerateRequest>) {
     try {
-      const { images, refs } = await runJob("create", req);
-      if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
-      // The model's lastUsed changed; refresh quietly so the picker order stays right.
-      void refreshModels().catch(() => undefined);
+      await enqueue(entry, async () => {
+        const { req, images, refs } = await withJob(
+          "create",
+          async () => {
+            const nonce = get().sessionNonce;
+            const req = await makeRequest();
+            return { req, ...(await generateNow(req, nonce)) };
+          },
+          count,
+        );
+        if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+        // The model's lastUsed changed; refresh quietly so the picker order stays right.
+        void refreshModels().catch(() => undefined);
+      });
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code === "cancelled") return;
       throw err;
     }
+  }
+
+  function runBatch(req: GenerateRequest) {
+    const model = (get().models ?? []).find((m) => m.id === req.modelId);
+    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count), async () => req);
   }
 
   /** Same prompt and settings, new seeds. */
@@ -255,8 +350,8 @@ export function makeActions(store: Store) {
   function sendToEdit(id: string) {
     const ref = get().images[id];
     if (!ref) return;
-    if (isEditJob(get().job?.kind)) {
-      toast("Wait for the current edit to finish first.");
+    if (editBusy(get())) {
+      toast("Wait for the edits in progress to finish first.");
       return;
     }
     dispatch({ type: "editLoad", ref });
@@ -282,12 +377,12 @@ export function makeActions(store: Store) {
 
   // ---------------------------------------------------------------- import
   async function importToEdit(blob: Blob) {
-    if (isEditJob(get().job?.kind)) throw busyError();
+    if (editBusy(get())) throw busyError();
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
     // An edit started while the image was being read: keep its history.
-    if (isEditJob(get().job?.kind)) {
+    if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
     }
@@ -296,11 +391,11 @@ export function makeActions(store: Store) {
 
   /** The optional second image for "Describe a change". */
   async function importSecondToEdit(blob: Blob) {
-    if (isEditJob(get().job?.kind)) throw busyError();
+    if (editBusy(get())) throw busyError();
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
-    if (isEditJob(get().job?.kind)) {
+    if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
     }
@@ -316,7 +411,8 @@ export function makeActions(store: Store) {
 
   // ---------------------------------------------------------------- edit
   /**
-   * `from`: the history step to edit (default: the shown one); the result replaces every later step.
+   * Edit a history step with the settings as they are now (queued if a job is running).
+   * `from`: the step to edit (default: the shown one); the result replaces every later step.
    * `newSeed`: ignore a fixed Seed ("Try again").
    */
   async function runEdit(opts: { mode: EditMode; model: InstalledModel; mask: Blob | null; size: [number, number]; from?: number; newSeed?: boolean }) {
@@ -325,45 +421,59 @@ export function makeActions(store: Store) {
     const at = opts.from ?? shown;
     const node = s.edit.chain[at];
     const source = node ? s.images[node.imageId] : undefined;
-    if (!source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
-    const text = opts.mode === "instruction" ? s.edit.instruction : s.edit.restylePrompt;
-    if (!text.trim() && !s.edit.styleId) {
+    if (!node || !source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
+    const text = opts.mode === "instruction" ? s.edit.instruction : opts.mode === "fix" ? s.edit.fixPrompt : s.edit.restylePrompt;
+    if (opts.mode === "fix" && !opts.mask) {
+      throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
+    }
+    if (opts.mode !== "fix" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
         message: opts.mode === "instruction" ? "Say what should change first." : "Describe how it should look (or pick a style) first.",
         details: null,
       } as CoreError;
     }
+    const { edit, loras, settings } = s;
+    const second = opts.mode === "instruction" && edit.secondImageId ? [edit.secondImageId] : [];
     let maskId: string | null = null;
     try {
-      // The job (and with it the history lock) starts before the first await.
-      await withJob("edit", async () => {
-        const nonce = get().sessionNonce;
-        const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
-        if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
-        const st = get();
-        const req = buildEditRequest(opts.newSeed ? { ...st.edit, seed: null } : st.edit, {
-          mode: opts.mode,
-          source,
-          model: opts.model,
-          ui,
-          maskImageId: maskId,
-          size: opts.size,
-          loras: st.loras,
-          autoAdd: st.settings?.addTriggerWords ?? true,
-        });
-        const { images, refs } = await generateNow(req, nonce);
-        // The history is locked while an edit runs; if the image on screen changed anyway,
-        // don't attach the result to another image's history.
-        const now = get().edit;
-        if (refs[0] && now.index === shown && now.chain[at]?.imageId === node.imageId) {
-          dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: at });
-          releaseRefs(refs.slice(1), true);
-        } else {
-          releaseRefs(refs, true);
-          if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
-        }
-      });
+      await enqueue(queueEntry("edit", text, opts.model, 1, [source.id, ...second]), () =>
+        // The job (and with it the history lock) starts before the first await.
+        withJob(
+          "edit",
+          async () => {
+            const nonce = get().sessionNonce;
+            const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
+            if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
+            const req = buildEditRequest(opts.newSeed ? { ...edit, seed: null } : edit, {
+              mode: opts.mode,
+              source,
+              model: opts.model,
+              ui,
+              maskImageId: maskId,
+              size: opts.size,
+              loras,
+              autoAdd: settings?.addTriggerWords ?? true,
+            });
+            const { images, refs } = await generateNow(req, nonce);
+            // Added after the step it was made from, replacing later steps. A queued edit of an
+            // earlier step goes at the end instead, keeping the edits made since; if that step is
+            // gone, the result is dropped.
+            const now = get().edit;
+            const pos = now.chain.findIndex((n) => n.imageId === node.imageId);
+            if (refs[0] && pos >= 0) {
+              if (opts.from != null || pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: pos });
+              else dispatch({ type: "editAppend", ref: refs[0], meta: images[0] ?? null });
+              releaseRefs(refs.slice(1), true);
+            } else {
+              releaseRefs(refs, true);
+              if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
+            }
+          },
+          1,
+          [source.id, ...second],
+        ).then(() => undefined),
+      );
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
@@ -416,10 +526,16 @@ export function makeActions(store: Store) {
 
   // ---------------------------------------------------------------- session
   async function clearSession() {
-    if (get().job) await cancel();
-    await api.clearSession().catch(() => undefined);
-    clearGenerationHandoff();
-    dispatch({ type: "clearSession" });
+    resetting = true;
+    try {
+      clearQueue();
+      if (get().job) await cancel();
+      await api.clearSession().catch(() => undefined);
+      clearGenerationHandoff();
+      dispatch({ type: "clearSession" });
+    } finally {
+      resetting = false;
+    }
     toast("Reset: prompt fields and unsaved images were cleared.");
   }
 
@@ -446,6 +562,7 @@ export function makeActions(store: Store) {
     ensureFamilyUi,
     generateCreate,
     runBatch,
+    removeQueued,
     variations,
     upscale,
     cancel,

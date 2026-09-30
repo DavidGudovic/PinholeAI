@@ -256,6 +256,16 @@ describe("requests", () => {
     expect(rs).toMatchObject({ mode: "img2img", prompt: "oil painting", initImageId: "src", strength: 0.75 });
   });
 
+  it("builds a Fix details request: whole image back, no output size, optional prompt", () => {
+    const e = { ...withModels().edit, fixPrompt: "  a smiling face ", seed: 7, change: "medium" as const };
+    const fx = buildEditRequest(e, { mode: "fix", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
+    expect(fx).toMatchObject({ mode: "img2img", prompt: "a smiling face", initImageId: "src", maskImageId: "mask", fixDetails: true, strength: 0.45 });
+    expect(fx.fineTune).toEqual({ seed: 7 });
+    expect(fx.dials.count).toBe(1);
+    const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
+    expect(rs.fixDetails).toBeUndefined();
+  });
+
   it("offers generators that can edit in both Create and Edit", () => {
     const klein = model("k", "flux2_klein_9b_base", { modes: ["txt2img", "img2img", "edit"] });
     const qwenEdit = model("q", "qwen_image_edit_2511", { modes: ["edit"], isEditModel: true });
@@ -460,5 +470,38 @@ describe("settingsSummary", () => {
     expect(settingsSummary(result("u", 0, { kind: "upscaled", modelId: "", modelLabel: "Upscaled image", steps: 0, cfg: 0, sampler: null, scheduler: null }))).toBe(
       "Upscaled · 1024×1024",
     );
+  });
+});
+
+describe("queue state", () => {
+  const q = (id: string, imageIds: string[] = []) => ({ id, kind: "edit" as const, label: "x", detail: "m", imageIds });
+
+  it("keeps images a queued job reads until it leaves the queue", () => {
+    let s = reducer(initialState(), { type: "editLoad", ref: { id: "a", url: "blob:a", width: 1, height: 1 } });
+    s = reducer(s, { type: "queueAdd", job: q("q1", ["a"]) });
+    s = reducer(s, { type: "editClear" });
+    expect(s.images.a).toBeDefined();
+    s = reducer(s, { type: "queueRemove", id: "q1" });
+    expect(s.images.a).toBeUndefined();
+  });
+
+  it("Reset empties the queue", () => {
+    let s = reducer(initialState(), { type: "queueAdd", job: q("q1") });
+    s = reducer(s, { type: "clearSession" });
+    expect(s.queue).toEqual([]);
+  });
+
+  it("adds a queued edit of an earlier image at the end of the history", () => {
+    const r = (id: string) => ({ id, url: `blob:${id}`, width: 1, height: 1 });
+    let s = reducer(initialState(), { type: "editLoad", ref: r("a") });
+    s = reducer(s, { type: "editPush", ref: r("b") });
+    s = reducer(s, { type: "editGoto", index: 0 });
+    s = reducer(s, { type: "editAppend", ref: r("c") });
+    expect(s.edit.chain.map((n) => [n.imageId, n.label])).toEqual([
+      ["a", "Original"],
+      ["b", "Edit 1"],
+      ["c", "Edit 2"],
+    ]);
+    expect(s.edit.index).toBe(2);
   });
 });

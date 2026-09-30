@@ -235,6 +235,14 @@ what was applied and what was skipped. The pasted text is never stored or logged
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
 
+**Queue:** pressing Generate (or Apply edit / Restyle in Edit, or Variations) while a job runs adds
+it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
+moment it was pressed and runs, in order, when the one before it ends (switching models in between
+as needed). A small button next to Generate shows how many are waiting and opens the list, where
+each can be removed. Cancel stops only the running job; Reset empties the queue. Queued jobs live in
+memory only. While an edit runs or waits, the edit history stays put; a queued edit of an earlier
+image is added at the end of the history.
+
 ### 5.2 Edit (img2img + instruction editing)
 
 Entry points: **Edit this** on any result, drag-and-drop, paste from clipboard, file picker.
@@ -259,8 +267,16 @@ Two modes, picked automatically:
      the edit chain until it is removed or Reset.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
+3. **Fix details** (same models as Restyle): the user paints over a small spot such as a face or
+   hand; an optional "What is it?" text is the prompt. Rust takes a padded box around the mask
+   (a quarter of its longer side, at least 32 px; at least 128 px and no more than 2:1 where the
+   image allows),
+   scales it to about the Quality dial's native area, inpaints only that box (img2img +
+   `mask_image`, one image, no hires fix), scales the result back down and pastes it into the
+   source with a feathered edge. The result keeps the source's size; no face detector is used.
+   All of it happens in memory. **How much to change** maps to `strength` 0.3/0.45/0.6.
 
-Both modes take style add-ons (LoRAs) like Create: added in Edit's Fine-tune (with Quality,
+All modes take style add-ons (LoRAs) like Create: added in Edit's Fine-tune (with Quality,
 Output size and Seed), shown as chips under the text, trigger words picked on the chip. Only
 add-ons made for the edit's model (same architecture) are used. Edit keeps its own add-on list
 (Reset keeps it, like Create). Pasting CivitAI generation data stays in Create: it describes a
