@@ -1,11 +1,21 @@
-// The full usage guidelines (RELEASE-SPEC §7), linked from the first-launch notice and Settings.
+// The full usage guidelines (RELEASE-SPEC §7), linked from the first-launch notice and shown
+// again when the check stops something (<BlockedNotice />, with the block message on top).
 // Shown in the app, so reading them needs no network.
+import type { ReactNode } from "react";
 import { Button, Dialog } from "./ui";
 
-export function UsageGuidelines({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onClose: () => void; notice?: ReactNode }) {
   return (
     <Dialog open={open} onClose={onClose} title="Usage guidelines" footer={<Button onClick={onClose}>Close</Button>}>
       <div className="space-y-4 text-sm text-neutral-700 dark:text-neutral-300">
+        {notice && (
+          <div
+            role="status"
+            className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            {notice}
+          </div>
+        )}
         <p>
           Pinhole is for creative work: art, illustration, design, concepts and photo edits. These guidelines apply to
           everything you make with it.
@@ -36,10 +46,10 @@ export function UsageGuidelines({ open, onClose }: { open: boolean; onClose: () 
         <section>
           <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">The safety check</h3>
           <p className="mt-1.5">
-            A small checker runs on your computer and looks at each picture before it's shown. It stops sexual images
-            of anyone who looks under 18, nude or intimate edits of photos of real people, and adult images from models
-            marked for safe images only. It works offline, can't be turned off and keeps no record. It can make
-            mistakes; when it stops a picture, your prompt and settings are kept.
+            Pinhole checks prompts and pictures on your computer. It stops sexual content involving anyone who looks
+            under 18, nude or intimate edits of photos of real people, and adult pictures from models marked for safe
+            images only. The check works offline, can't be turned off and keeps no record. Like any automatic check, it
+            can sometimes stop a harmless picture.
           </p>
         </section>
       </div>

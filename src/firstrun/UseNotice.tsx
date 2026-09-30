@@ -45,8 +45,8 @@ export function UseNotice(props: { onAgreed: () => void }) {
             <ShieldCheck className="h-4 w-4 text-emerald-600" /> Built-in safety check
           </h2>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-            A small checker runs on your computer and looks at each picture before it's shown. It stops pictures that
-            break the usage guidelines. It works offline, can't be turned off, and keeps no record.
+            Pinhole checks prompts and pictures on your computer and stops the most harmful content, such as sexual
+            images of anyone who looks under 18. The check works offline, can't be turned off and keeps no record.
           </p>
         </div>
 
