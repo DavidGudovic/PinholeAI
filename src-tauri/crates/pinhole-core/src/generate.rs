@@ -33,6 +33,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
+use pinhole_engine::detail::{DetailError, DetailPlan};
 use pinhole_engine::failure::{classify, memory_failure, Failure, Stage};
 use pinhole_engine::install::EngineKind;
 use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
@@ -174,6 +175,10 @@ pub struct GenerateRequest {
     pub ref_image_ids: Vec<String>,
     #[serde(default)]
     pub mask_image_id: Option<String>,
+    /// Edit "Fix details" (img2img + mask): redraw only a padded box around the
+    /// mask at the model's native size, then blend it back into the source.
+    #[serde(default)]
+    pub fix_details: bool,
 }
 
 impl GenerateRequest {
@@ -197,6 +202,7 @@ impl GenerateRequest {
             strength: None,
             ref_image_ids: Vec::new(),
             mask_image_id: None,
+            fix_details: false,
         }
     }
 }
@@ -1934,11 +1940,22 @@ async fn generate_inner(
             }
         }
     }
+    let mut mask_src = None;
     if req.mode != GenMode::Txt2img {
         if let Some(mid) = req.mask_image_id.as_deref() {
-            mask_image = Some(b64_image(core, mid)?.0);
+            let (b64, img) = b64_image(core, mid)?;
+            mask_image = Some(b64);
+            mask_src = Some(img);
         }
     }
+    let fix_source = if req.fix_details {
+        match (req.mode, &source, mask_src) {
+            (GenMode::Img2img, Some(src), Some(mask)) => Some((src, mask)),
+            _ => return Err(CoreError::invalid("Paint over the spot to fix first.")),
+        }
+    } else {
+        None
+    };
 
     let files = model_files(core, &prep.model, &prep.family, &hw)?;
     let extras = LaunchExtras {
@@ -1969,6 +1986,28 @@ async fn generate_inner(
             );
         }
     }
+    // "Fix details": the engine only draws the box around the mask, scaled to
+    // about the dial's area (so a small face is redrawn at the model's size).
+    let fix = match fix_source {
+        Some((src, mask)) => {
+            let area = u64::from(params.width) * u64::from(params.height);
+            let multiple = wiring::size_multiple(&prep.family);
+            let plan = DetailPlan::new(src.bytes.as_slice(), mask.bytes.as_slice(), |w, h| {
+                size_like(w, h, area, multiple)
+            })
+            .map_err(|e| match e {
+                DetailError::NothingPainted => {
+                    CoreError::invalid("Paint over the spot to fix first.")
+                }
+                DetailError::Image(e) => CoreError::invalid(e.to_string()),
+            })?;
+            (width, height) = plan.work;
+            init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
+            mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
+            Some(plan)
+        }
+        None => None,
+    };
     let seed: i64 = match req.fine_tune.seed {
         Some(s) if s >= 0 => s,
         _ => i64::from(rand::random::<u32>() >> 1),
@@ -1977,7 +2016,11 @@ async fn generate_inner(
     let mut body = ImgGenRequest::new(prep.final_prompt.prompt.clone(), width, height, seed);
     body.negative_prompt = prep.final_prompt.negative.clone().unwrap_or_default();
     body.clip_skip = params.clip_skip.unwrap_or(-1);
-    body.batch_count = params.batch_count.clamp(1, 8);
+    body.batch_count = if fix.is_some() {
+        1
+    } else {
+        params.batch_count.clamp(1, 8)
+    };
     body.sample_params = SampleParams {
         sample_method: params.sampler.clone(),
         scheduler: params.scheduler.clone(),
@@ -1989,10 +2032,9 @@ async fn generate_inner(
             distilled_guidance: params.guidance,
         },
     };
-    body.hires = params
-        .hires
-        .as_ref()
-        .map(|h| HiresRequest::image_space(h.scale, h.steps, h.denoising_strength));
+    // Hires fix would redraw the crop again; "Fix details" already works at the model's size.
+    let hires = params.hires.as_ref().filter(|_| fix.is_none());
+    body.hires = hires.map(|h| HiresRequest::image_space(h.scale, h.steps, h.denoising_strength));
     body.vae_tiling_params = if params.vae_tiling {
         Some(VaeTilingRequest { enabled: true })
     } else if req.fine_tune.vae_tiling == Some(false) {
@@ -2028,7 +2070,7 @@ async fn generate_inner(
     let fb = memory_choices(core, &prep.model.id, gpu_backend, hw.vram_gb);
     let mut fb = with_remembered_offload(core, &prep.model.id, &wiring_args, fb, gpu_backend);
     let steps = params.steps.max(1);
-    let batches = u32::from(params.hires.is_none()) * params.batch_count.clamp(1, 8);
+    let batches = u32::from(hires.is_none()) * body.batch_count;
     let job = loop {
         let args = with_memory_choices(&wiring_args, fb);
         let base = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
@@ -2103,12 +2145,21 @@ async fn generate_inner(
                     "The engine returned a damaged image. Try again.",
                 )
             })?;
-        let png = pinhole_engine::png::scrub(&raw).map_err(|_| {
+        let mut png = pinhole_engine::png::scrub(&raw).map_err(|_| {
             CoreError::new(
                 "engine_failed",
                 "The engine returned a damaged image. Try again.",
             )
         })?;
+        if let Some(plan) = &fix {
+            // Paste the redrawn box back into the whole image.
+            png = plan.blend(&png).map_err(|_| {
+                CoreError::new(
+                    "engine_failed",
+                    "The engine returned a damaged image. Try again.",
+                )
+            })?;
+        }
         let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),

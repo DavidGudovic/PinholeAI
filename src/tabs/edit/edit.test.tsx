@@ -111,6 +111,33 @@ describe("Edit tab", () => {
     expect(renders.mock.calls.length).toBe(before);
   });
 
+  it("Fix details uses the brush without a toggle and sends the mask", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+    });
+    fireEvent.click(await screen.findByRole("radio", { name: "Fix details" }));
+    await flush();
+    expect(screen.queryByRole("switch", { name: /Only change here/ })).toBeNull();
+    expect(screen.getByLabelText(/What is it\?/)).toBeTruthy();
+    // No prompt needed: the painted spot is enough.
+    const fix = screen.getByRole("button", { name: /^Fix details/ });
+    expect((fix as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(fix);
+    await act(async () => maskExport.resolve(new Blob([new Uint8Array(4)])));
+    await flush();
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    const req = vi.mocked(api.generate).mock.calls[0][0];
+    expect(req).toMatchObject({ mode: "img2img", fixDetails: true, maskImageId: "mask", initImageId: "a", prompt: "" });
+  });
+
   it("runs one edit when Restyle is pressed twice while the mask is exported", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

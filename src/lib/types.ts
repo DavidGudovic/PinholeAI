@@ -342,6 +342,8 @@ export interface GenerateRequest {
   refImageIds?: string[];
   /** Optional "Only change here" mask (session image id, white = change). */
   maskImageId?: string | null;
+  /** Edit "Fix details" (img2img + mask): redraw only a box around the mask at the model's size, then blend it back. */
+  fixDetails?: boolean;
 }
 
 /** generated = txt2img/img2img/edit; upscaled = upscaleImage (model/seed/sampling copied from the source image). */

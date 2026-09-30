@@ -92,7 +92,7 @@ export function EditTab() {
 
   const [error, setError] = useState<CoreError | null>(null);
   const [importing, setImporting] = useState(false);
-  const [maskOn, setMaskOn] = useState(false);
+  const [maskToggle, setMaskOn] = useState(false);
   const [brush, setBrush] = useState(40);
   const [erase, setErase] = useState(false);
   const [painted, setPainted] = useState(false);
@@ -114,6 +114,9 @@ export function EditTab() {
     [actions, models],
   );
   const mode: EditMode = e.mode ?? (autoEditOne ? "instruction" : "restyle");
+  // Fix details always uses the brush.
+  const fixing = mode === "fix";
+  const maskOn = fixing || maskToggle;
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
@@ -209,6 +212,10 @@ export function EditTab() {
           ? await mask.current?.exportPng()
           : null;
       const startIndex = store.getState().edit.index;
+      if (fixing && !m) {
+        setError({ code: "invalid", message: "Paint over the spot to fix first.", details: null });
+        return;
+      }
       await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
       if (store.getState().edit.index > startIndex) {
         setCompare(true);
@@ -251,7 +258,7 @@ export function EditTab() {
     !!model &&
     !job &&
     !importing &&
-    (text.trim().length > 0 || !!e.styleId) &&
+    (fixing ? painted : text.trim().length > 0 || !!e.styleId) &&
     !needsEditModel;
 
   return (
@@ -280,6 +287,11 @@ export function EditTab() {
                   label: "Restyle",
                   title: "Redraw the whole image in a new look",
                 },
+                {
+                  value: "fix" as EditMode,
+                  label: "Fix details",
+                  title: "Redraw a small spot, like a face or hand, sharper",
+                },
               ]}
             />
             <p className="mt-1.5 text-xs text-neutral-500">
@@ -291,7 +303,9 @@ export function EditTab() {
                   : "Picked automatically — Restyle works with your Create model."
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."
-                  : "Redraws the whole picture with your description."}
+                  : fixing
+                    ? "Paint over a small spot, like a face or hand. It's redrawn larger, then blended back in."
+                    : "Redraws the whole picture with your description."}
             </p>
           </div>
 
@@ -406,25 +420,54 @@ export function EditTab() {
                 <RecommendedCards roles={["realistic", "anime"]} compact />
               )}
               <div>
-                <label
-                  htmlFor="edit-restyle"
-                  className="mb-1.5 block text-sm font-medium"
-                >
-                  What should it look like?
-                </label>
-                <AutoTextarea
-                  id="edit-restyle"
-                  minRows={3}
-                  maxRows={10}
-                  value={e.restylePrompt}
-                  placeholder="e.g. a watercolor painting of the same scene"
-                  onChange={(ev) =>
-                    dispatch({
-                      type: "patchEdit",
-                      patch: { restylePrompt: ev.target.value },
-                    })
-                  }
-                />
+                {fixing ? (
+                  <>
+                    <label
+                      htmlFor="edit-fix"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      What is it?{" "}
+                      <span className="font-normal text-neutral-500">
+                        (optional)
+                      </span>
+                    </label>
+                    <AutoTextarea
+                      id="edit-fix"
+                      minRows={2}
+                      maxRows={6}
+                      value={e.fixPrompt}
+                      placeholder="e.g. a smiling face, or a hand holding a cup"
+                      onChange={(ev) =>
+                        dispatch({
+                          type: "patchEdit",
+                          patch: { fixPrompt: ev.target.value },
+                        })
+                      }
+                    />
+                  </>
+                ) : (
+                  <>
+                    <label
+                      htmlFor="edit-restyle"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      What should it look like?
+                    </label>
+                    <AutoTextarea
+                      id="edit-restyle"
+                      minRows={3}
+                      maxRows={10}
+                      value={e.restylePrompt}
+                      placeholder="e.g. a watercolor painting of the same scene"
+                      onChange={(ev) =>
+                        dispatch({
+                          type: "patchEdit",
+                          patch: { restylePrompt: ev.target.value },
+                        })
+                      }
+                    />
+                  </>
+                )}
               </div>
               <div>
                 <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">
@@ -511,20 +554,33 @@ export function EditTab() {
 
           {!twoImages && (
             <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-              <Toggle
-                checked={maskOn}
-                onChange={setMaskOn}
-                label={
-                  <span className="inline-flex items-center gap-1.5 font-medium">
-                    <Brush className="h-3.5 w-3.5" /> Only change here
-                  </span>
-                }
-                hint={
-                  maskOn
-                    ? "Paint over the part of the image that may change."
-                    : "Optional: paint the area to change."
-                }
-              />
+              {fixing ? (
+                <div>
+                  <div className="inline-flex items-center gap-1.5 text-sm font-medium">
+                    <Brush className="h-3.5 w-3.5" /> Spot to fix
+                  </div>
+                  <p className="mt-0.5 text-xs text-neutral-500">
+                    {painted
+                      ? "Paint a little past the edges so it blends in."
+                      : "Paint over the face, hand or detail to redraw."}
+                  </p>
+                </div>
+              ) : (
+                <Toggle
+                  checked={maskOn}
+                  onChange={setMaskOn}
+                  label={
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <Brush className="h-3.5 w-3.5" /> Only change here
+                    </span>
+                  }
+                  hint={
+                    maskOn
+                      ? "Paint over the part of the image that may change."
+                      : "Optional: paint the area to change."
+                  }
+                />
+              )}
               {maskOn && (
                 <div className="mt-3 space-y-2.5">
                   <div className="flex items-center gap-2">
@@ -616,6 +672,8 @@ export function EditTab() {
                       }),
                     )}
                   />
+                  {!fixing && (
+                    <>
                   <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
                     Output size
                   </span>
@@ -637,6 +695,8 @@ export function EditTab() {
                       </span>
                     )}
                   </div>
+                    </>
+                  )}
                   <label
                     htmlFor="edit-seed"
                     className="text-xs font-medium text-neutral-600 dark:text-neutral-400"
@@ -662,7 +722,9 @@ export function EditTab() {
                   <LoraSection model={model} target="edit" />
                 </div>
                 <p className="text-[11px] text-neutral-400">
-                  Size keeps your image’s shape.{" "}
+                  {fixing
+                    ? "The picture keeps its size; only the painted spot changes. "
+                    : "Size keeps your image’s shape. "}
                   {ui
                     ? `${ui.label} defaults are used for everything else.`
                     : ""}
@@ -692,7 +754,11 @@ export function EditTab() {
               onClick={() => void run()}
             >
               <WandSparkles className="h-4 w-4" />
-              {mode === "instruction" ? "Apply edit" : "Restyle"}
+              {mode === "instruction"
+                ? "Apply edit"
+                : fixing
+                  ? "Fix details"
+                  : "Restyle"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
