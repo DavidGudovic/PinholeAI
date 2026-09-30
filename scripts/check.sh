@@ -11,6 +11,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Rust builds on a small machine: rustc and the linker can each take 1-2 GB, so cap the parallel
+# jobs by available memory (about 2 GB per job) unless the caller already set CARGO_BUILD_JOBS.
+if [ -z "${CARGO_BUILD_JOBS:-}" ] && [ -r /proc/meminfo ]; then
+  mem_gb=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
+  cpus=$(nproc 2>/dev/null || echo 2)
+  jobs=$(( mem_gb / 2 )); [ "$jobs" -lt 1 ] && jobs=1; [ "$jobs" -gt "$cpus" ] && jobs=$cpus
+  export CARGO_BUILD_JOBS="$jobs"
+fi
+
 smoke=0
 [ "${1:-}" = "--smoke" ] && smoke=1
 
