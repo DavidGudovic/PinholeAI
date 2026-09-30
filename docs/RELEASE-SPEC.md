@@ -345,7 +345,7 @@ templates, posts and UI.
   at Generate in Create and every Edit mode, queued jobs included (style, trigger words and the
   picked add-ons' names and trigger words included; not the negative prompt), the idea sent to
   "Improve my prompt", what Describe / Improve write back, and Browse search text. David first
-  limited it to Describe output (#68), then asked for it everywhere (#70). Unlike the dropped
+  limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
   anime prompts pass. Word lists are compiled in (not YAML), so a config edit can't turn it off.
   It ignores zero-width characters and fullwidth letters but misses misspellings, look-alike
