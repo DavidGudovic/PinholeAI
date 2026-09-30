@@ -18,10 +18,13 @@ afterEach(() => {
 });
 
 describe("Before you start", () => {
-  it("says what the check does, that it can't be turned off, and stores only the notice version", async () => {
+  it("says the safeguards run on this computer, and stores only the notice version", async () => {
     const onAgreed = vi.fn();
     render(<UseNotice onAgreed={onAgreed} />);
-    expect(screen.getByText(/can't be turned off/)).toBeTruthy();
+    expect(screen.getByText("Safety, built in")).toBeTruthy();
+    expect(screen.getByText(/with AI running entirely on your own computer, so your work never leaves your device/)).toBeTruthy();
+    expect(screen.getByText(/^Do not use Pinhole for anything illegal/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/keeps no record|be turned off/);
     fireEvent.click(screen.getByRole("button", { name: "usage guidelines" }));
     expect(screen.getByText(/sexualizes minors, or anyone/)).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);

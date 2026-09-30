@@ -264,8 +264,11 @@ blocking logic with mocked classifier scores; measure false positives on harmles
   built-in local check, GitHub private reporting); add a link to `SAFETY.md` (§9) once it exists.
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
-  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
-  box (local, can't be turned off) and "By continuing, you agree to the usage
+  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
+  ("Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
+  this with AI running entirely on your own computer, so your work never leaves your device.",
+  David's pick 2026-09-30) and "Do not use Pinhole for anything illegal, harmful or
+  non-consensual. By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
   involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
