@@ -756,7 +756,17 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
             let Some(f) = idx.get(&l.lora_id).filter(|f| f.kind == ModelKind::Lora) else {
                 return Err(CoreError::not_found("A style add-on (LoRA) you picked isn't installed anymore. Remove it in Fine-tune."));
             };
-            let abs = idx.abs_path(&core.data, f);
+            let mut abs = idx.abs_path(&core.data, f);
+            if f.is_linked() {
+                if !abs.is_file() {
+                    return Err(CoreError::not_found(format!(
+                        "The add-on “{}” isn't in the other app's folder any more. Check that its drive is connected, or remove it in Fine-tune.",
+                        f.friendly_name
+                    )));
+                }
+                // sd-server only loads add-ons from Pinhole's add-on folder.
+                abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+            }
             let rel = abs
                 .strip_prefix(&lora_dir)
                 .ok()
@@ -986,6 +996,12 @@ pub(crate) fn model_files(
     };
     let required = wiring::required_components_with(&reg, family, hw, &installed);
     let main = idx.abs_path(&core.data, model);
+    if !main.is_file() && model.is_linked() {
+        return Err(CoreError::not_found(format!(
+            "The file for “{}” isn't in the other app's folder any more. Check that its drive is connected, then try again.",
+            model.friendly_name
+        )));
+    }
     if !main.is_file() {
         return Err(CoreError::not_found(format!(
             "The file for “{}” is missing from the Data folder. Reinstall it from Models.",

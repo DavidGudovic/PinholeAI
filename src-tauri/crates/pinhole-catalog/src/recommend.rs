@@ -251,17 +251,35 @@ fn component_files(
 ) -> Vec<FileToGet> {
     families::missing_components(registry, family, hw, index, true)
         .into_iter()
-        .map(|(id, c)| FileToGet {
-            url: c.url.clone(),
-            file_name: c.file.clone(),
-            sha256: normalize_sha(&c.sha256),
-            size_bytes: mb_to_bytes(c.size_mb),
-            kind: families::component_model_kind(&c.kind),
-            friendly_name: families::component_label(c),
-            family: None,
-            component_id: Some(id),
-            dtype: None,
-        })
+        .map(|(id, c)| component_file(id, c))
+        .collect()
+}
+
+fn component_file(id: String, c: &pinhole_registry::Component) -> FileToGet {
+    FileToGet {
+        url: c.url.clone(),
+        file_name: c.file.clone(),
+        sha256: normalize_sha(&c.sha256),
+        size_bytes: mb_to_bytes(c.size_mb),
+        kind: families::component_model_kind(&c.kind),
+        friendly_name: families::component_label(c),
+        family: None,
+        component_id: Some(id),
+        dtype: None,
+    }
+}
+
+/// The parts an installed model of `family` still needs before it can run
+/// (the ones its Installed row lists), as downloads.
+pub fn parts_to_run(
+    registry: &Registry,
+    family: &Family,
+    hw: &HwContext,
+    index: &InstalledIndex,
+) -> Vec<FileToGet> {
+    families::missing_to_run(registry, family, hw, index)
+        .into_iter()
+        .map(|(id, c)| component_file(id, c))
         .collect()
 }
 

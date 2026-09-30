@@ -412,6 +412,44 @@ mod tests {
         assert!(!body["prompt"].as_str().unwrap().contains("<lora:"));
     }
 
+    #[tokio::test]
+    async fn models_from_another_apps_folder_generate_in_place() {
+        let (tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        // Installs the SDXL parts (VAE) the linked checkpoint needs.
+        register_fake_model(&core, "sdxl");
+        let comfy = tmp.path().join("ComfyUI");
+        crate::linked::fixtures::comfy(&comfy);
+        crate::linked::add(&core, &comfy.display().to_string()).unwrap();
+        let start = std::time::Instant::now();
+        while crate::linked::list(&core).iter().any(|f| f.scanning) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(30));
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let models = crate::models::list_models(&core).unwrap();
+        let model = models.iter().find(|m| m.linked_folder.is_some()).unwrap();
+        assert!(model.missing_components.is_empty(), "{model:?}");
+        let lora = crate::models::list_loras(&core).unwrap()[0].id.clone();
+
+        let mut req = GenerateRequest::txt2img(model.id.clone(), "a red boat");
+        req.loras = vec![generate::LoraUse {
+            lora_id: lora,
+            weight: 0.8,
+            words: None,
+        }];
+        generate::generate(&core, req).await.unwrap();
+        let body = &mock.requests()[0];
+        let path = body["lora"][0]["path"].as_str().unwrap();
+        assert!(path.starts_with(".pinhole-linked/"), "{path}");
+        assert!(
+            path.ends_with("models/loras/watercolor.safetensors"),
+            "{path}"
+        );
+        // The folder itself is untouched.
+        assert!(!comfy.join("models/loras/.pinhole-linked").exists());
+    }
+
     #[test]
     fn trigger_words_follow_the_chip_and_the_users_list() {
         let (_tmp, core, _rec) = new_core();

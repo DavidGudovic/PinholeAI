@@ -130,6 +130,37 @@ restarts Pinhole. It is refused while downloads or generation run. A picked fold
 error messages. The folder is not locked: two Pinhole installs running **at the same time** on one
 folder can overwrite each other's index (dual boot never does that).
 
+**Models from another app (optional).** Models → Installed → **Use models from another app** lets
+the user pick a ComfyUI, A1111, Forge or Stability Matrix models folder (or any folder of model
+files). Pinhole uses what it can run **in place**: nothing in that folder is ever written, moved,
+copied or deleted, and no index is written into it. There is no mapping screen; each file is
+recognised automatically:
+- Every `.safetensors` / `.gguf` below the folder is found (links followed; tool, output and
+  unusable-kind folders such as `custom_nodes`, `controlnet`, `upscale_models`, `embeddings` are
+  skipped). Only headers are read (§6 step 3).
+- **Main models:** the header's family candidates, narrowed by the notes other apps keep next to
+  their files (A1111/Forge Civitai Helper `.civitai.info`, ComfyUI LoRA Manager `.metadata.json`,
+  Stability Matrix `.cm-info.json`, A1111 `.json`: CivitAI `baseModel`, SHA-256, name, trigger
+  words), then by words in the file or folder name (`name_hints` in models.yaml: `pony`,
+  `illustrious`, `kontext`, `turbo`…), else the base family.
+- **Style add-ons (LoRAs):** family from a note, else the kohya training metadata inside the file
+  (`ss_base_model_version` / `modelspec.architecture`, `lora_metadata` in models.yaml), else a name
+  hint; unknown = usable with any model, as with "Add a file". They show under Style add-ons.
+- **Parts (VAE, text encoders):** used only when the file is byte-for-byte a part Pinhole knows:
+  same kind and size, then the same SHA-256 (the only full read of a file, and only for such size
+  matches). Main models and add-ons are not hashed.
+- Not used: anything else, and models a note says CivitAI marks as a real person or someone under
+  18 (RELEASE-SPEC §5: only data the other app already fetched; no lookups).
+What was found is kept per install in `Data/catalog/linked-folders.json` (never in the shared
+Models folder's index: paths differ per OS), with each file's size and time so unchanged files are
+not read again. The folder is looked through again at start, when Installed opens and on
+**Check again**. The files show in Installed with an "In <folder>" badge and no Delete; removing
+the folder from the list only forgets them. Fit badges and recommendations count them like
+installed files; a model that lacks parts gets **Get missing parts** (from the registry). sd-server
+loads add-ons only from one folder, so a linked add-on used in a picture is hard-linked (else
+symlinked, else copied) into `models/loras/.pinhole-linked/`, which is emptied at every start.
+Moving Pinhole's Models folder leaves linked files where they are.
+
 ---
 
 ## 4. Privacy rules (hard requirements — tests must enforce them)
@@ -458,7 +489,7 @@ add-on row has **Use** (see Install step 6).
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
 after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
 Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file
-chooser → detected). Dropping files onto the window is not supported: the native drop handler
+chooser → detected), and **Use models from another app** (§3). Dropping files onto the window is not supported: the native drop handler
 is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
 ---

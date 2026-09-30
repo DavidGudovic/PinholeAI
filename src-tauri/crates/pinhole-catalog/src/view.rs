@@ -231,6 +231,10 @@ pub struct InstalledModel {
     /// `Q4`, `Q3`… when the file's weights are 4-bit or smaller (from its header).
     #[serde(default)]
     pub low_bit: Option<String>,
+    /// Name of the other app's models folder the file is in (used in place;
+    /// Pinhole never deletes it). `None` for files Pinhole installed.
+    #[serde(default)]
+    pub linked_folder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -244,6 +248,9 @@ pub struct InstalledLora {
     pub size_bytes: u64,
     pub civitai_model_id: Option<u64>,
     pub civitai_version_id: Option<u64>,
+    /// See [`InstalledModel::linked_folder`].
+    #[serde(default)]
+    pub linked_folder: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

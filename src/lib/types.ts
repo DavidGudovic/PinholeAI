@@ -169,6 +169,8 @@ export interface InstalledModel {
   baseModel: string | null;
   /** "Q4", "Q3"… when the file is 4-bit or smaller (read from its header). */
   lowBit?: string | null;
+  /** Name of the other app's models folder the file is in (used in place, never deleted by Pinhole). */
+  linkedFolder?: string | null;
 }
 
 export interface InstalledLora {
@@ -180,6 +182,26 @@ export interface InstalledLora {
   sizeBytes: number;
   civitaiModelId: number | null;
   civitaiVersionId: number | null;
+  /** See InstalledModel.linkedFolder. */
+  linkedFolder?: string | null;
+}
+
+/** Another app's models folder (ComfyUI, A1111, Forge…) Pinhole uses in place. */
+export interface LinkedFolder {
+  id: string;
+  path: string;
+  /** Last part of the path. */
+  name: string;
+  /** The folder is there (its drive is connected). */
+  available: boolean;
+  /** Pinhole is looking through it. */
+  scanning: boolean;
+  models: number;
+  addons: number;
+  /** Parts (VAE, text encoders) its models share with Pinhole's. */
+  parts: number;
+  /** Files Pinhole can't use (ControlNets, upscalers…). */
+  notUsed: number;
 }
 
 /** A helper model that isn't picked on Generate (Describe model, upscaler). */

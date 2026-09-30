@@ -102,6 +102,16 @@ pub struct Family {
     pub detect: DetectRules,
     #[serde(default)]
     pub civitai_base_models: Vec<String>,
+    /// Words in a file or folder name that pick this family among families
+    /// whose files look the same (`pony`, `kontext`, `turbo`…). Used for models
+    /// found in another app's models folder. Whole words, lower case.
+    #[serde(default)]
+    pub name_hints: Vec<String>,
+    /// LoRA training metadata that says a LoRA is made for this family: the
+    /// start of `ss_base_model_version` / `modelspec.architecture` (kohya
+    /// sd-scripts), e.g. `sdxl_base`, `stable-diffusion-xl`.
+    #[serde(default)]
+    pub lora_metadata: Vec<String>,
     pub layout: Layout,
     /// kind → component choice. Special key `vae_override` for all-in-one files.
     #[serde(default)]
