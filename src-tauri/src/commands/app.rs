@@ -148,6 +148,12 @@ pub async fn open_release_page(
         })
 }
 
+/// "Quit" on the first-launch notice.
+#[tauri::command]
+pub fn quit_app(handle: AppHandle) {
+    handle.exit(0);
+}
+
 // Declared last so every command (and its generated `__cmd__*` macro) is defined above.
 super::area_commands![
     app_info,
@@ -161,5 +167,6 @@ super::area_commands![
     open_release_page,
     has_github_token,
     set_github_token,
-    clear_github_token
+    clear_github_token,
+    quit_app
 ];

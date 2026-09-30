@@ -261,12 +261,14 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 ## 7. Terms and notices
 
 - **Level 1:** an acceptable-use section in the README, linking to `SAFETY.md` (§9).
-- **Level 2: first-run acceptable-use screen** (click-through). Prohibits: child sexual abuse
+- **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
+  start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`; it also says a
+  local check looks at every picture, can't be turned off and records nothing). Prohibits: child sexual abuse
   material; sexual or intimate images of real people without consent; deepfakes of real people
   meant to deceive or harass; forged documents, receipts or evidence; harassment. The user is
   responsible for what they make, for model licences and for local law. Store only
   `aup_accepted: <version>`.
-- **Level 2: Edit notice**, the first time an Imported image is opened in Edit: "Only edit photos of
+- **Level 2: Edit notice** (built 2026-09-30, `editNoticeSeen`), the first time an Imported image is opened in Edit: "Only edit photos of
   people who have agreed to it. Making sexual or humiliating images of real people without consent
   is a crime in many countries."
 - These notices support the safeguards; they don't replace them (§11).

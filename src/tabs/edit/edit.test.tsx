@@ -85,6 +85,31 @@ const flush = () => act(() => new Promise((r) => setTimeout(r, 0)));
 const ref = (id: string) => ({ id, url: `blob:${id}`, width: 64, height: 64 });
 
 describe("Edit tab", () => {
+  it("shows the Edit notice once, for a picture from the computer only", async () => {
+    const settings = { ...(await api.getSettings()), editNoticeSeen: false };
+    const store = createStore();
+    store.dispatch({ type: "setSettings", settings });
+    store.dispatch({
+      type: "addResults",
+      batch: null,
+      images: [{ id: "made", width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "M", familyId: "sdxl", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: null, origin: "generated" }],
+      refs: [ref("made")],
+    });
+    store.dispatch({ type: "editLoad", ref: ref("made") });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(screen.queryByText(/Only edit photos of people who have agreed/)).toBeNull();
+    act(() => store.dispatch({ type: "editLoad", ref: ref("photo") }));
+    expect(await screen.findByText(/Only edit photos of people who have agreed/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByText(/Only edit photos of people who have agreed/)).toBeNull();
+    await waitFor(() => expect(store.getState().settings?.editNoticeSeen).toBe(true));
+  });
+
   it("doesn't re-render while hidden during a Create job's progress ticks", async () => {
     const store = createStore();
     store.dispatch({ type: "editLoad", ref: ref("a") });

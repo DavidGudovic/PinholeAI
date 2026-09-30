@@ -7,6 +7,7 @@ import { TopBar } from "./components/TopBar";
 import { ShortcutsList } from "./components/ShortcutsList";
 import { Button, Dialog, Spinner } from "./components/ui";
 import { FirstRun } from "./firstrun/FirstRun";
+import { NOTICE_VERSION, UseNotice } from "./firstrun/UseNotice";
 import { runShortcut } from "./lib/shortcuts";
 import type { Settings } from "./lib/types";
 import { AppProvider, runPrimaryAction, useActions } from "./lib/state/AppProvider";
@@ -49,6 +50,7 @@ function Shell() {
   const actions = useActions();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [firstRunClosed, setFirstRunClosed] = useState(false);
+  const [noticeAgreed, setNoticeAgreed] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useTheme(settings?.theme);
 
@@ -89,6 +91,16 @@ function Shell() {
       <div className="flex h-full flex-col items-center justify-center gap-4 text-neutral-500">
         <Logo className="h-12 w-12" />
         <Spinner />
+      </div>
+    );
+  }
+
+  // First launch (or a changed notice): "Before you start" comes before anything else.
+  if ((settings.noticeAccepted ?? 0) < NOTICE_VERSION && !noticeAgreed) {
+    return (
+      <div className="h-full overflow-auto">
+        <UseNotice onAgreed={() => setNoticeAgreed(true)} />
+        <Toasts />
       </div>
     );
   }
