@@ -336,6 +336,10 @@ pub struct CaptionerSpec {
     /// `sentence` | `tags` → VLM instruction.
     #[serde(default)]
     pub prompts: BTreeMap<String, String>,
+    /// "Improve my prompt": `natural` | `tags` instructions, `safe` (Safe mode on) and
+    /// `avoid` (`{words}` = add-on trigger words) rules appended to them.
+    #[serde(default)]
+    pub improve: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

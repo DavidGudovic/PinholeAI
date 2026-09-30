@@ -1,8 +1,9 @@
 //! llama-server (llama.cpp) for the Describe tab: launch args and an
 //! OpenAI-compatible chat call with one image as a base64 data URL.
 //!
-//! The only text Pinhole sends is the fixed captioner instruction from the
-//! registry (`captioner.prompts`) — never user prompt text.
+//! Describe sends only the fixed captioner instruction from the registry
+//! (`captioner.prompts`). "Improve my prompt" also sends the user's prompt, to this
+//! loopback server only; it is held in memory and never logged or written.
 //!
 //! Every launch gets a fresh random API key, passed in the environment
 //! ([`API_KEY_ENV`], the env form of llama-server's `--api-key`, so it doesn't
@@ -196,16 +197,40 @@ impl LlamaClient {
             "data:{mime};base64,{}",
             base64::engine::general_purpose::STANDARD.encode(image)
         );
+        let messages = serde_json::json!([{
+            "role": "user",
+            "content": [
+                { "type": "image_url", "image_url": { "url": data_url } },
+                { "type": "text", "text": instruction }
+            ]
+        }]);
+        self.chat(messages, max_tokens, 0.2).await
+    }
+
+    /// Text in, text out: `system` instruction plus the user's `text` as the chat message.
+    pub async fn rewrite(
+        &self,
+        system: &str,
+        text: &str,
+        max_tokens: u32,
+    ) -> Result<String, ApiError> {
+        let messages = serde_json::json!([
+            { "role": "system", "content": system },
+            { "role": "user", "content": text }
+        ]);
+        self.chat(messages, max_tokens, 0.7).await
+    }
+
+    async fn chat(
+        &self,
+        messages: serde_json::Value,
+        max_tokens: u32,
+        temperature: f32,
+    ) -> Result<String, ApiError> {
         let body = serde_json::json!({
-            "messages": [{
-                "role": "user",
-                "content": [
-                    { "type": "image_url", "image_url": { "url": data_url } },
-                    { "type": "text", "text": instruction }
-                ]
-            }],
+            "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.2,
+            "temperature": temperature,
             "stream": false,
             "cache_prompt": false
         });
