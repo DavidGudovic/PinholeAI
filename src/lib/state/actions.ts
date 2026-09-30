@@ -327,7 +327,10 @@ export function makeActions(store: Store) {
     const source = node ? s.images[node.imageId] : undefined;
     if (!source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
     const text = opts.mode === "instruction" ? s.edit.instruction : s.edit.restylePrompt;
-    if (!text.trim() && !s.edit.styleId) {
+    if (opts.mode === "fix" && !opts.mask) {
+      throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
+    }
+    if (opts.mode !== "fix" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
         message: opts.mode === "instruction" ? "Say what should change first." : "Describe how it should look (or pick a style) first.",

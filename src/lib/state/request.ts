@@ -16,7 +16,7 @@ import type {
   ResultImage,
   Settings,
 } from "../types";
-import { CHANGE_STRENGTH, compactFineTune, loraCompatible, pickedTriggerWords, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
+import { CHANGE_STRENGTH, FIX_STRENGTH, compactFineTune, loraCompatible, pickedTriggerWords, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
 
 /** Fine-tune values that may be stored in a preset (never the negative prompt). */
 export const PRESET_FINE_TUNE_KEYS = [
@@ -160,6 +160,24 @@ export function buildEditRequest(
       // Image 1 = the one being edited; image 2 = the optional second image (no mask with two).
       refImageIds: e.secondImageId ? [opts.source.id, e.secondImageId] : [opts.source.id],
       maskImageId: e.secondImageId ? null : opts.maskImageId,
+    };
+  }
+  if (opts.mode === "fix") {
+    // Rust sizes the work area from the Quality dial and returns the whole image at its own size.
+    const fixFineTune: FineTune = e.seed != null ? { seed: e.seed } : {};
+    return {
+      modelId: opts.model.id,
+      mode: "img2img",
+      prompt: e.fixPrompt.trim(),
+      styleId: e.styleId,
+      dials: { shape: "square", quality: e.quality, stick: defaultStickPosition(opts.ui), count: 1 },
+      fineTune: fixFineTune,
+      loras,
+      addTriggerWords: true,
+      initImageId: opts.source.id,
+      strength: FIX_STRENGTH[e.change],
+      maskImageId: opts.maskImageId,
+      fixDetails: true,
     };
   }
   return {
