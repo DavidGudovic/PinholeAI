@@ -54,6 +54,7 @@ this with AI running entirely on your own computer, so your work never leaves yo
 When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
 and to each model's licence. You are responsible for what you make.
 
+[SAFETY.md](SAFETY.md) explains what the safeguards do and where automatic checks fall short.
 The safeguards are part of Pinhole. Modified versions are the responsibility of whoever makes and
 distributes them.
 
