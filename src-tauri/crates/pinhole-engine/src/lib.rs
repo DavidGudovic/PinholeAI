@@ -27,6 +27,7 @@ pub mod process;
 pub mod sdapi;
 #[cfg(feature = "test-util")]
 pub mod testutil;
+pub mod watermark;
 
 pub use failure::{classify, failed_stage, memory_failure, Failure, Stage};
 pub use install::{EngineKind, InstalledEngine};
