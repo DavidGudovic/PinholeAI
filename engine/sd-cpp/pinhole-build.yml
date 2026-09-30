@@ -1,7 +1,8 @@
-# Builds the patched sd-server for Pinhole. Lives in Pinhole's own PUBLIC engine repo
-# (a fork of leejet/stable-diffusion.cpp or any new public repo), NOT in PinholeAI: public
-# repos get free Actions minutes, Windows included. Copy it there as
-# .github/workflows/pinhole-build.yml, next to pinhole/*.patch (see engine/sd-cpp/README.md).
+# Builds the patched sd-server for Pinhole. Lives in Pinhole's PUBLIC fork of
+# leejet/stable-diffusion.cpp, NOT in PinholeAI: public repos get free Actions minutes,
+# Windows included. Copy it to the fork's default branch as .github/workflows/pinhole-build.yml
+# (GitHub only offers "Run workflow" for workflows on the default branch), next to
+# pinhole/*.patch (see engine/sd-cpp/README.md).
 #
 # Actions → Pinhole engine build → Run workflow (upstream tag, release tag). It checks out
 # upstream stable-diffusion.cpp at the tag, applies every pinhole/*.patch, builds the same
@@ -47,7 +48,7 @@ jobs:
           # download small: 86 = RTX 30xx, 89 = RTX 40xx, 120 = RTX 50xx (Blackwell).
           # Older cards keep using the Vulkan build.
           - build: cuda12
-            flags: -DSD_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86;89;120
+            flags: -DSD_CUDA=ON "-DCMAKE_CUDA_ARCHITECTURES=86;89;120"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,7 +72,7 @@ jobs:
         with:
           cuda: "12.8.1"
           method: network
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+          sub-packages: '["nvcc", "cudart", "cudart-dev", "cccl"]'
           non-cuda-sub-packages: '["libcublas", "libcublas-dev"]'
       - name: Build
         working-directory: src
@@ -80,7 +81,7 @@ jobs:
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN'
           cmake --build build --config Release -j "$(nproc)"
       - name: Check the patch is in
-        run: src/build/bin/sd-server --help | grep -q -- --reject-origin
+        run: src/build/bin/sd-server --help | grep -- --reject-origin > /dev/null
       - name: Pack
         run: |
           cp src/ggml/LICENSE src/build/bin/ggml.txt
@@ -90,7 +91,8 @@ jobs:
         if: matrix.build == 'cuda12'
         run: |
           mkdir cudart
-          cp -L "$CUDA_PATH"/lib64/libcudart.so.12 "$CUDA_PATH"/lib64/libcublas.so.12 "$CUDA_PATH"/lib64/libcublasLt.so.12 cudart/
+          lib="$CUDA_PATH/targets/x86_64-linux/lib"
+          cp -L "$lib"/libcudart.so.12 "$lib"/libcublas.so.12 "$lib"/libcublasLt.so.12 cudart/
           zip -j "cudart-sd-bin-Linux-Ubuntu-24.04-x86_64-cu12.zip" cudart/*
       - uses: actions/upload-artifact@v4
         with:
@@ -149,7 +151,7 @@ jobs:
           cmake --build build
       - name: Check the patch is in
         shell: bash
-        run: src/build/bin/sd-server.exe --help | grep -q -- --reject-origin
+        run: src/build/bin/sd-server.exe --help | grep -- --reject-origin > /dev/null
       - name: Pack
         run: |
           Copy-Item src/ggml/LICENSE src/build/bin/ggml.txt
@@ -159,8 +161,9 @@ jobs:
         if: matrix.build == 'cuda12'
         run: |
           robocopy "${{ steps.cuda-toolkit.outputs.CUDA_PATH }}\bin" cudart cudart64_*.dll cublas64_*.dll cublasLt64_*.dll
+          if ($LASTEXITCODE -ge 8) { exit 1 }  # robocopy: 0-7 = success
           7z a cudart-sd-bin-win-cu12-x64.zip .\cudart\*
-          exit 0
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.build }}
