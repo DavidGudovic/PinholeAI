@@ -9,6 +9,7 @@ import {
   ScanText,
   Shuffle,
   Trash,
+  UserRound,
   WandSparkles,
 } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
@@ -23,6 +24,7 @@ import { useActions } from "../../lib/state/AppProvider";
 import type { ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
+import { TipLine } from "./TipLine";
 import { useAppState, useDispatch } from "../../lib/state/store";
 
 export function Results() {
@@ -177,6 +179,9 @@ function Preview({
         >
           <Shuffle className="h-4 w-4" /> Variations
         </Button>
+        <Button title="New pictures with the same character or subject in a different scene" onClick={() => actions.sameCharacter(result.id)}>
+          <UserRound className="h-4 w-4" /> Same character
+        </Button>
         <UpscaleMenu
           width={result.width}
           height={result.height}
@@ -209,6 +214,7 @@ function Preview({
       <p className="text-center text-xs text-neutral-500 tabular-nums">
         {settingsSummary(result)}
       </p>
+      <TipLine hasBatch={hasBatch} />
       {error && (
         <div className="mx-auto w-full max-w-xl">
           <ErrorWithFix error={error} onDismiss={() => setError(null)} />

@@ -62,6 +62,8 @@ export interface Settings {
   noticeAccepted?: number;
   /** The one-time Edit notice was shown. */
   editNoticeSeen?: boolean;
+  /** Show the quiet "Tip" line under a result (default on). */
+  showTips?: boolean;
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";

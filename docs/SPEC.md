@@ -172,6 +172,11 @@ Moving Pinhole's Models folder leaves linked files where they are.
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
    layer. The catalog shows "Offline" and only installed models.
+   A small **Offline / Online** badge in the top bar shows the state at all times; clicking it opens
+   **What goes online**, a plain list of every call the app can make (what you did, which site, what is
+   sent) and what never leaves the computer, with a button to switch Offline mode. Settings → Privacy links
+   to the same page. The list lives in `src/components/WhatGoesOnline.tsx`: **add to it in the same PR
+   whenever a new network call is added.**
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
@@ -243,17 +248,39 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Named sizes** (Fine-tune, above Width and Height): **My screen** (the monitor's shape), **Phone**
+(9:16), **Instagram** (4:5) and **Thumbnail** (16:9). One click sets Width and Height to that shape at
+about the model's usual picture area (its Square size), in multiples of 64. "My screen" notes that
+Upscale reaches the monitor's own resolution.
+
+**Starter ideas**: while the prompt box is empty, a few plain example chips ("Cabin in the snow",
+"Watercolor fox"…) fill it on click, with a hint to try Improve. Examples stay fictional and safe for work.
+
+**Tip line**: one quiet "Tip" under a picture in Create about a feature that is easy to miss (Keep this
+look, Variations, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
+per app session; × closes it, **Don't show tips** (or Settings → Show tips) turns it off for good.
+
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
 or "the same character somewhere else". Shown only for models whose architecture takes reference
-images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev today); **Add a reference
-picture** opens a file, and a picture can also be dropped, pasted (Ctrl/Cmd+V) or picked from this
-session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
+file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
+(Ctrl/Cmd+V) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
 `ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
 result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
 it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
 picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
-recently used); Generate then says the same instead of quietly dropping it.
+recently used), or **Use it in Edit** when none is installed; Generate then says the same instead
+of quietly dropping it.
+
+**Same character** (result card): new pictures of the character or subject in that image, with one
+button and no new mode or setting. It uses the first of: the Create model, if it takes a reference
+picture; another installed one that does and can run now (ready, not "Too big"; switched to); else
+Edit → **Describe a change** with the image loaded (any image 2 cleared), which offers the one-click
+edit model when none is installed. An Imported result (made from a picture the user added) always
+goes to Edit, so the Edit notice about photos of people shows. A short note says to describe the
+new scene ("the same character on a beach"). The image keeps its id, so its origin
+(Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
 **Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
 model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
@@ -271,7 +298,7 @@ the one-time download, then improves. Not in Edit: instruction edits are short c
 sky a sunset") and a fuller rewrite would drift from what should change.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
+new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**.
 
 **Paste from CivitAI**: CivitAI's "Copy generation data" button yields A1111-style text (prompt,
 `Negative prompt:`, `Steps: …, Sampler: …, CFG scale: …, Seed: …, Size: …, Clip skip: …, Civitai
@@ -366,10 +393,13 @@ list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, 
 Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
 **Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
 sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
-else the 3B. Only installed helpers can be picked; a removed one reads as Automatic. **Models →
+else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off (none yet). The word check runs on the output of every helper model.
+mode is Off, and while Off, Automatic uses it first once installed: Qwen2.5-VL 7B abliterated
+(Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
+another installed helper still uses). Installed models still lists it while Safe mode is On, so it
+can be removed. The word check runs on the output of every helper model.
 
 ### 5.3 Describe (img2text)
 
@@ -642,6 +672,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
+- Show tips (on by default)
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
