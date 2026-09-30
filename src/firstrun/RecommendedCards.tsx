@@ -160,7 +160,10 @@ function GetAllBar({
     return !!starting[role] || (!!g && isActive(g));
   };
   const todo = picks.filter((p) => !busy(p.role));
-  const total = todo.reduce((a, p) => a + p.downloadBytes, 0);
+  // Realistic and Edit can be the same model (Qwen-Image 2.1): it downloads once, so count it once.
+  const total = todo
+    .filter((p, i) => todo.findIndex((o) => o.familyId === p.familyId && o.quant === p.quant) === i)
+    .reduce((a, p) => a + p.downloadBytes, 0);
   const names = GET_ALL_ROLES.map((r) => allPicks.find((p) => p.role === r)?.roleLabel ?? r).join(" + ");
   const todoNames = todo.map((p) => p.roleLabel).join(" + ");
   const allDone = GET_ALL_ROLES.every((r) => allPicks.find((p) => p.role === r)?.installed);

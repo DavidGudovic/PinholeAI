@@ -327,7 +327,13 @@ fn registry_pick(
     };
     // `min_quant`: only versions at least this good, and only when one Fits.
     let floor = cand.min_quant.as_deref().map(families::quant_rank);
-    let good_enough = |quant: &str| floor.is_none_or(|f| families::quant_rank(quant) <= f);
+    // A weight type the table doesn't know (`iq4_xs`, a file without one) doesn't pass a floor.
+    let good_enough = |quant: &str| {
+        floor.is_none_or(|f| {
+            let q = families::quant_of_file(quant);
+            q != "unknown" && families::quant_rank(&q) <= f
+        })
+    };
     let eligible: Vec<QuantOption> = options
         .iter()
         .filter(|o| good_enough(&o.quant))
@@ -1017,6 +1023,12 @@ mod tests {
         let e = recommend_role(&reg, &idx, &hw(16.0), "edit").unwrap();
         assert!(e.pick.installed);
         assert_eq!(e.action, PickAction::Nothing);
+        // A weight type the quant table doesn't know (IQ4_XS) doesn't pass the floor either.
+        let mut iq = q21("iq", "qwen_image_2.1-IQ4_XS.gguf", 3_900_000_000);
+        iq.dtype = Some("iq4_xs".into());
+        let r = recommend_role(&reg, &index(vec![iq]), &hw(16.0), "realistic").unwrap();
+        assert!(!r.pick.installed);
+        assert_eq!(r.pick.quant.as_deref(), Some("q8_0"));
         // Installed Q8_0 on a 10 GB card: Tight, so Create falls back to Z-Image.
         let idx = index(vec![q21("q8", "qwen_image_2.1-Q8_0.gguf", 7_687_155_744)]);
         let r = recommend_role(&reg, &idx, &hw(10.0), "realistic").unwrap();

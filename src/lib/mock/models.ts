@@ -63,6 +63,13 @@ export const FAMILIES: Record<string, MockFamily> = {
   flux2_klein_4b: { label: "FLUX.2 klein 4B", components: [], vram: { min: 8, rec: 12 }, license: "Apache 2.0", modes: ["txt2img", "img2img", "edit"] },
   z_image_turbo: { label: "Z-Image Turbo", components: ["flux_ae", "qwen3_4b"], vram: { min: 12, rec: 16 }, license: "Apache 2.0", modes: ["txt2img", "img2img"] },
   qwen_image: { label: "Qwen-Image", components: ["qwen_image_vae", "qwen25_vl_7b_q8"], vram: { min: 12, rec: 16 }, license: "Apache 2.0", modes: ["txt2img", "img2img"] },
+  qwen_image_21: {
+    label: "Qwen-Image 2.1",
+    components: ["qwen_image_21_vae", "qwen3vl_8b_q4km", "qwen3vl_8b_mmproj"],
+    vram: { min: 7, rec: 12 },
+    license: "Qwen Research License",
+    modes: ["txt2img", "img2img", "edit"],
+  },
   qwen_image_edit_2511: {
     label: "Qwen Image Edit",
     components: ["qwen_image_vae", "qwen25_vl_7b_q8", "qwen25_vl_7b_mmproj"],
@@ -80,6 +87,9 @@ export const COMPONENTS: Record<string, { label: string; mb: number; path: strin
   t5xxl_fp8: { label: "T5-XXL text encoder (compact)", mb: 4890, path: "models/text_encoders/t5xxl_fp8_e4m3fn.safetensors" },
   qwen3_4b: { label: "Qwen3 4B text encoder", mb: 8040, path: "models/text_encoders/qwen_3_4b.safetensors" },
   qwen_image_vae: { label: "Qwen-Image VAE", mb: 254, path: "models/vae/qwen_image_vae.safetensors" },
+  qwen_image_21_vae: { label: "Qwen-Image 2.1 VAE", mb: 676, path: "models/vae/qwen_image_2.1_vae_bf16.safetensors" },
+  qwen3vl_8b_q4km: { label: "Qwen3-VL 8B text encoder", mb: 5028, path: "models/text_encoders/Qwen3VL-8B-Instruct-Q4_K_M.gguf" },
+  qwen3vl_8b_mmproj: { label: "Qwen3-VL 8B vision encoder", mb: 1159, path: "models/text_encoders/mmproj-Qwen3VL-8B-Instruct-F16.gguf" },
   qwen25_vl_7b_q8: { label: "Qwen2.5-VL 7B text encoder", mb: 8100, path: "models/text_encoders/Qwen2.5-VL-7B-Instruct-Q8_0.gguf" },
   qwen25_vl_7b_mmproj: { label: "Qwen2.5-VL vision adapter", mb: 850, path: "models/text_encoders/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf" },
   sdxl_vae_fp16_fix: { label: "SDXL VAE (fp16 fix)", mb: 335, path: "models/vae/sdxl_vae_fp16_fix.safetensors" },
@@ -410,8 +420,19 @@ interface RecCandidate {
 
 function pickFor(role: string): RecCandidate | null {
   const v = effectiveVramGb();
+  // Like config/models.yaml → recommended: Qwen-Image 2.1 for Create from 12 GB and for Edit on every GPU.
+  const q21 = (r: string, roleLabel: string, goodAt: string): RecCandidate => {
+    const base = { role: r, roleLabel, title: "Qwen-Image 2.1", familyId: "qwen_image_21", goodAt, licenseNote: "Qwen Research License" };
+    if (v >= 20) return { ...base, quant: "bf16", mainMb: 14230, vram: { min: 10.2, rec: 17.4 } };
+    if (v >= 12) return { ...base, quant: "q8_0", mainMb: 7687, vram: { min: 7.1, rec: 11.3 } };
+    if (v >= 11) return { ...base, quant: "q6_k", mainMb: 5997, vram: { min: 6.3, rec: 9.8 } };
+    return { ...base, quant: "q4_k", mainMb: 4197, vram: { min: 5.5, rec: 8.1 } };
+  };
   switch (role) {
-    case "realistic": {
+    case "realistic":
+    case "realistic_fast": {
+      if (role === "realistic" && v >= 11) return q21(role, "Realistic", "Photos and lifelike pictures");
+      if (role === "realistic_fast" && v < 11) return null;
       const base = {
         role,
         roleLabel: "Realistic",
@@ -452,31 +473,7 @@ function pickFor(role: string): RecCandidate | null {
       };
     case "edit":
       if (v < 6) return null;
-      if (v >= 12)
-        return {
-          role,
-          roleLabel: "Edit",
-          title: "Qwen Image Edit 2511",
-          familyId: "qwen_image_edit_2511",
-          goodAt: "Change a photo by describing it — objects, backgrounds, lighting or style.",
-          quant: "q4_k",
-          mainMb: 13100,
-          vram: { min: 12, rec: 16 },
-          licenseNote: "Apache 2.0 — fine for client work",
-          isEdit: true,
-        };
-      return {
-        role,
-        roleLabel: "Edit",
-        title: "FLUX.1 Kontext",
-        familyId: "flux1_kontext",
-        goodAt: "Edit a picture by describing the change. Lighter on graphics memory.",
-        quant: "q4_k",
-        mainMb: 6900,
-        vram: { min: 6, rec: 10 },
-        licenseNote: "Non-commercial license",
-        isEdit: true,
-      };
+      return q21(role, "Edit", "Changing a picture by describing the change");
     default:
       return null;
   }
@@ -484,7 +481,7 @@ function pickFor(role: string): RecCandidate | null {
 
 function recommendedFor(role: string): RecommendedPick {
   const s = state();
-  const roleLabel = { realistic: "Realistic", anime: "Anime", edit: "Edit", describe: "Describe" }[role] ?? role;
+  const roleLabel = { realistic: "Realistic", realistic_fast: "Realistic", anime: "Anime", edit: "Edit", describe: "Describe" }[role] ?? role;
   if (role === "describe") {
     const editInstalled = s.models.some((m) => m.familyId === "qwen_image_edit_2511");
     if (editInstalled)
@@ -603,6 +600,10 @@ async function installRecommended(role: string) {
       ? c.quant === "bf16"
         ? "z_image_turbo_bf16.safetensors"
         : `z_image_turbo-${c.quant?.toUpperCase()}.gguf`
+      : c.familyId === "qwen_image_21"
+        ? c.quant === "bf16"
+          ? "qwen_image_2.1_bf16.safetensors"
+          : `qwen_image_2.1-${c.quant?.toUpperCase()}.gguf`
       : c.familyId === "qwen_image_edit_2511"
         ? "qwen-image-edit-2511-Q4_K_M.gguf"
         : c.familyId === "flux1_kontext"
@@ -616,7 +617,7 @@ async function installRecommended(role: string) {
         familyId: c.familyId,
         familyLabel: FAMILIES[c.familyId].label,
         // Rust gives the badge only to the family that heads the role (not the SD 1.5 fallback).
-        styleBadge: role === "anime" ? "Anime" : role === "realistic" && c.familyId !== "sd15" ? "Realistic" : null,
+        styleBadge: role === "anime" ? "Anime" : role.startsWith("realistic") && c.familyId !== "sd15" ? "Realistic" : null,
         modes: FAMILIES[c.familyId].modes,
         isEditModel: !!c.isEdit,
         sizeBytes: c.mainMb * MB,
@@ -807,7 +808,7 @@ const table: MockTable = {
   open_models_folder: async () => undefined,
   get_recommended: async () => {
     await sleep(250);
-    return ["realistic", "anime", "edit", "describe"].map(recommendedFor);
+    return ["realistic", "realistic_fast", "anime", "edit", "describe"].map(recommendedFor).filter((p) => p.role !== "realistic_fast" || p.title);
   },
   install_recommended: (a) => installRecommended(String(a.role)),
   add_local_model: (a) => addLocalModel(String(a.path)),
