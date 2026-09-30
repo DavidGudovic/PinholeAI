@@ -262,12 +262,19 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 
 - **Level 1:** an acceptable-use section in the README, linking to `SAFETY.md` (§9).
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
-  start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`; it also says a
-  local check looks at every picture, can't be turned off and records nothing). Prohibits: child sexual abuse
-  material; sexual or intimate images of real people without consent; deepfakes of real people
-  meant to deceive or harass; forged documents, receipts or evidence; harassment. The user is
-  responsible for what they make, for model licences and for local law. Store only
-  `aup_accepted: <version>`.
+  start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
+  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
+  box (local, can't be turned off, keeps no record) and "By continuing, you agree to the usage
+  guidelines and to each model's licence. You're responsible for what you make." The full rules
+  are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
+  involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
+  without consent; no pictures of real people made to deceive, embarrass or harass; no forged
+  documents, IDs, receipts or evidence; don't pass made pictures off as real photos; follow model
+  licences; what the check stops. The owner dropped "local law" wording (2026-09-30).
+- **Block screen:** whenever the check stops something (error code `blocked`), the usage guidelines
+  open again with the fixed block message on top (`src/components/BlockedNotice.tsx`, via the
+  command wrapper in `src/lib/api.ts`). Never says what triggered it, no retry hint. Calls made
+  while typing (prompt preview, Browse search) show the message in place instead.
 - **Level 2: Edit notice** (built 2026-09-30, `editNoticeSeen`), the first time an Imported image is opened in Edit: "Only edit photos of
   people who have agreed to it. Making sexual or humiliating images of real people without consent
   is a crime in many countries."

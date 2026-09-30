@@ -9,8 +9,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type * as T from "./types";
 import { showBlocked } from "./blocked";
 
-/** Commands whose "blocked" error is shown in place, not with the usage guidelines (typing previews). */
-const QUIET_BLOCKS = new Set(["preview_final_prompt"]);
+/** Commands run while typing or paging (prompt preview, Browse search): a "blocked" error is
+ *  shown in place, not with the usage guidelines, so the dialog never pops up mid-typing. */
+const QUIET_BLOCKS = new Set(["preview_final_prompt", "browse_catalog"]);
 
 /** Every command goes through here: when the safety check stops something (code "blocked"), the
  *  usage guidelines open again with the block message; the caller still gets the error. */

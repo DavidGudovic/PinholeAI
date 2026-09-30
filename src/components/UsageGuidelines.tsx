@@ -32,8 +32,8 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
         <section>
           <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">Sharing</h3>
           <p className="mt-1.5">
-            Saved pictures carry a small "made with AI" note. Don't present a made or edited picture as a real photo in
-            a way that could mislead people.
+            Saved pictures are marked as made with AI, in the file details and with an invisible watermark. Don't
+            present a made or edited picture as a real photo in a way that could mislead people.
           </p>
         </section>
         <section>
@@ -49,7 +49,7 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
             Pinhole checks prompts and pictures on your computer. It stops sexual content involving anyone who looks
             under 18, nude or intimate edits of photos of real people, and adult pictures from models marked for safe
             images only. The check works offline, can't be turned off and keeps no record. Like any automatic check, it
-            can sometimes stop a harmless picture.
+            can sometimes stop something harmless.
           </p>
         </section>
       </div>

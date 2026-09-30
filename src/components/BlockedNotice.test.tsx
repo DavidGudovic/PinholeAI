@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const BLOCKED = { code: "blocked", message: "Pinhole doesn't make sexual images or text involving anyone under 18.", details: null };
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(async () => Promise.reject(BLOCKED)) }));
+const core = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => core);
 
-import { generate, previewFinalPrompt } from "../lib/api";
+import { browseCatalog, generate, previewFinalPrompt } from "../lib/api";
 import { dismissBlocked } from "../lib/blocked";
 import type { GenerateRequest } from "../lib/types";
 import { BlockedNotice } from "./BlockedNotice";
@@ -13,6 +14,10 @@ import { BlockedNotice } from "./BlockedNotice";
 afterEach(() => {
   act(() => dismissBlocked());
   cleanup();
+});
+
+beforeEach(() => {
+  core.invoke.mockImplementation(async () => Promise.reject(BLOCKED));
 });
 
 describe("BlockedNotice", () => {
@@ -28,10 +33,20 @@ describe("BlockedNotice", () => {
     expect(screen.queryByText("Usage guidelines")).toBeNull();
   });
 
-  it("stays closed for the prompt preview while typing", async () => {
+  it("stays closed for calls made while typing (prompt preview, Browse search)", async () => {
     render(<BlockedNotice />);
     await act(async () => {
       await expect(previewFinalPrompt({} as GenerateRequest)).rejects.toMatchObject({ code: "blocked" });
+      await expect(browseCatalog({} as never)).rejects.toMatchObject({ code: "blocked" });
+    });
+    expect(screen.queryByText("Usage guidelines")).toBeNull();
+  });
+
+  it("stays closed for other errors", async () => {
+    core.invoke.mockImplementation(async () => Promise.reject({ code: "io", message: "Disk full.", details: null }));
+    render(<BlockedNotice />);
+    await act(async () => {
+      await expect(generate({} as GenerateRequest)).rejects.toMatchObject({ code: "io" });
     });
     expect(screen.queryByText("Usage guidelines")).toBeNull();
   });
