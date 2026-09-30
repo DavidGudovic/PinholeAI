@@ -23,6 +23,8 @@ pub mod licence;
 pub mod linked;
 pub mod models;
 pub mod models_folder;
+#[cfg(test)]
+mod one_way;
 pub mod session;
 #[cfg(feature = "test-util")]
 pub mod testing;

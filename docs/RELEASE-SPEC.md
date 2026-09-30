@@ -57,6 +57,26 @@ instead of a refactor:
    they are ever turned on, passes through one function before the UI sees it. → image check (§3).
 4. **Export** — Save and Copy to clipboard both go through one function. → AI marker (§2).
 
+**Enforced by type (done).** The two checks can't be skipped by a new code path:
+- Text: `pinhole_engine::sdapi::ImgGenRequest::new` takes only a `CheckedPrompt`, which only the
+  word check makes (`pinhole_engine::words`, wrapped by `pinhole_core::text_check`). `prepare`
+  in generate.rs checks the final prompt (idea + style + prefix + trigger words) with the
+  add-on names; the request's prompt field is private.
+- Pictures: `Session::insert_generated` takes only a `CheckedPng`, which only
+  `imagecheck::check_results` makes. Every made picture (Create, Edit in every mode, batches,
+  Upscale) reaches the UI through it; imported pictures go in through `import_image` only.
+- `pinhole-core/src/one_way.rs` fails if a session picture or a checked value is built
+  anywhere else, if the engine's `submit`/`upscale`/`job` is called outside generate.rs, if
+  anything but `sdapi.rs` names the engine's picture endpoints, or if the app's Cargo.toml
+  turns on the test-only constructors (`test-util`). Release builds build the app package
+  alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
+  `test-util` in through `tests/`, so never ship a workspace build.
+- Upscale now needs the check's files and can be blocked like any made picture (so an
+  upscale of a brought-in photo can hit a false block on a borderline picture).
+- Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
+  output are checked with `text_check::check` in describe.rs; that text only reaches the
+  image engine through Create, where the type applies.
+
 ---
 
 ## 2. AI-generated marking (EU AI Act Art. 50) — Level 2
@@ -170,7 +190,7 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
 - **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
   before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the
-  UI. Upscale is not re-checked: it has the same content as its (checked or brought-in) source.
+  UI. Upscale results are checked too (one way in for every made picture).
   There are no live previews; if they are ever turned on they must pass the check too.
 - **Fail closed:** Create and Edit stop with `check_missing` ("Set up safety check", one click)
   while any file is absent or has the wrong size; every file is SHA-256 checked as it loads, and a

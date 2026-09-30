@@ -255,7 +255,13 @@ pub async fn txt2img(
     timeout: Duration,
 ) -> Result<Vec<Vec<u8>>, String> {
     // ADAPT: ImgGenRequest::new(prompt, w, h, seed) + public sample_params / negative_prompt
-    let mut req = ImgGenRequest::new(prompt, size.0, size.1, seed);
+    let mut req = ImgGenRequest::new(
+        pinhole_engine::words::CheckedPrompt::check(prompt)
+            .expect("smoke prompt passes the word check"),
+        size.0,
+        size.1,
+        seed,
+    );
     req.negative_prompt = negative.to_string();
     req.sample_params.sample_steps = steps;
     if req.embeds_metadata() {

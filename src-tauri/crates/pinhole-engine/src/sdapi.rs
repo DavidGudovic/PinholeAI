@@ -12,6 +12,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::words::CheckedPrompt;
+
 // ---------------------------------------------------------------- request
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -84,7 +86,8 @@ pub struct VaeTilingRequest {
 /// Body of `POST /sdcpp/v1/img_gen`. Build with [`ImgGenRequest::new`].
 #[derive(Clone, Serialize)]
 pub struct ImgGenRequest {
-    pub prompt: String,
+    /// Private: set only by [`ImgGenRequest::new`] from a word-checked prompt.
+    prompt: String,
     pub negative_prompt: String,
     /// -1 = model default.
     pub clip_skip: i32,
@@ -116,9 +119,10 @@ pub struct ImgGenRequest {
 
 impl ImgGenRequest {
     /// New request: PNG output, metadata embedding OFF, one image, 20 steps.
-    pub fn new(prompt: impl Into<String>, width: u32, height: u32, seed: i64) -> Self {
+    /// The prompt must have passed the word check ([`CheckedPrompt`]).
+    pub fn new(prompt: CheckedPrompt, width: u32, height: u32, seed: i64) -> Self {
         Self {
-            prompt: prompt.into(),
+            prompt: prompt.into_string(),
             negative_prompt: String::new(),
             clip_skip: -1,
             width,
@@ -144,6 +148,10 @@ impl ImgGenRequest {
             output_format: "png",
             output_compression: 100,
         }
+    }
+
+    pub fn prompt(&self) -> &str {
+        &self.prompt
     }
 
     pub fn embeds_metadata(&self) -> bool {
@@ -586,7 +594,12 @@ mod tests {
 
     #[test]
     fn img_gen_body_never_embeds_metadata() {
-        let mut req = ImgGenRequest::new("a cat", 512, 768, 42);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            512,
+            768,
+            42,
+        );
         req.negative_prompt = "blurry".into();
         req.lora.push(LoraRef {
             path: "styles/film.safetensors".into(),
@@ -626,7 +639,12 @@ mod tests {
     /// garbled copied CivitAI settings (hires ×2 at strength 0.35).
     #[test]
     fn hires_uses_an_image_space_upscaler() {
-        let mut req = ImgGenRequest::new("a cat", 1024, 1024, 1);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            1024,
+            1024,
+            1,
+        );
         req.hires = Some(HiresRequest::image_space(2.0, 0, 0.35));
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["hires"]["enabled"], true);
@@ -638,7 +656,12 @@ mod tests {
 
     #[test]
     fn debug_never_prints_prompt() {
-        let mut req = ImgGenRequest::new("PINHOLE_SENTINEL_7f3a", 64, 64, 1);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("PINHOLE_SENTINEL_7f3a").unwrap(),
+            64,
+            64,
+            1,
+        );
         req.negative_prompt = "NEG_SENTINEL".into();
         req.init_image = Some("aGVsbG8=".into());
         let dbg = format!("{req:?}");
