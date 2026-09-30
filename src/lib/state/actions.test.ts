@@ -3,6 +3,7 @@ import type { GenerateResult, InstalledModel, ResultImage } from "../types";
 
 // The IPC layer, faked: each generate call waits until the test resolves it.
 let pending: ((r: GenerateResult) => void) | null = null;
+let pendingFail: ((e: unknown) => void) | null = null;
 let pendingUpscale: ((r: ResultImage) => void) | null = null;
 const discarded: string[] = [];
 let failGetImage = new Set<string>();
@@ -10,7 +11,13 @@ vi.mock("../api", async (orig) => {
   const real = await orig<typeof import("../api")>();
   return {
     ...real,
-    generate: vi.fn(() => new Promise<GenerateResult>((res) => (pending = res))),
+    generate: vi.fn(
+      () =>
+        new Promise<GenerateResult>((res, rej) => {
+          pending = res;
+          pendingFail = rej;
+        }),
+    ),
     upscaleImage: vi.fn(() => new Promise<ResultImage>((res) => (pendingUpscale = res))),
     getImage: vi.fn(async (id: string) => {
       if (failGetImage.has(id)) throw { code: "not_found", message: "gone", details: null };
@@ -337,5 +344,147 @@ describe("setLoraTriggerWords", () => {
     expect(store.getState().create.loras).toEqual([{ loraId: "l1", weight: 1 }]);
     expect(store.getState().edit.loras).toEqual([{ loraId: "l1", weight: 0.5 }]);
     spy.mockRestore();
+  });
+});
+
+describe("queue", () => {
+  const prompts = () => vi.mocked(apiMod.generate).mock.calls.map((c) => c[0].prompt);
+
+  it("runs a Generate pressed during a job afterwards, with the settings from when it was pressed", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const second = actions.generateCreate();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "changed later" } });
+    expect(store.getState().queue).toHaveLength(1);
+    expect(store.getState().queue[0]).toMatchObject({ kind: "create", label: "a lighthouse" });
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    // The queued one started as soon as the first ended.
+    expect(store.getState().job?.kind).toBe("create");
+    expect(store.getState().queue).toEqual([]);
+    await tick();
+    pending!({ images: [img("b")] } as GenerateResult);
+    await second;
+    expect(prompts()).toEqual(["a lighthouse", "a lighthouse"]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["b", "a"]);
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("drops a job removed from the queue without running it", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const second = actions.generateCreate();
+    actions.removeQueued(store.getState().queue[0].id);
+    await second;
+    expect(store.getState().queue).toEqual([]);
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    await tick();
+    expect(apiMod.generate).toHaveBeenCalledTimes(1);
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("Cancel stops only the running job; the next one starts", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const second = actions.generateCreate();
+    await actions.cancel();
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await first;
+    expect(store.getState().job?.kind).toBe("create");
+    await tick();
+    pending!({ images: [img("b")] } as GenerateResult);
+    await second;
+    expect(store.getState().results.map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("keeps going after a job fails, and the failed one reports its error", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const second = actions.generateCreate();
+    pendingFail!({ code: "out_of_memory", message: "Not enough memory.", details: null });
+    await expect(first).rejects.toMatchObject({ code: "out_of_memory" });
+    await tick();
+    pending!({ images: [img("b")] } as GenerateResult);
+    await second;
+    expect(store.getState().results.map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("Reset empties the queue", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const second = actions.generateCreate();
+    await actions.clearSession();
+    await second;
+    expect(store.getState().queue).toEqual([]);
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    await tick();
+    expect(apiMod.generate).toHaveBeenCalledTimes(1);
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("queues edits of the same image and keeps both results in the history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const first = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "oil paint" } });
+    const second = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    expect(store.getState().queue[0]).toMatchObject({ kind: "edit", label: "oil paint", imageIds: ["a"] });
+    // The history stays put while an edit waits, too.
+    await expect(actions.importToEdit(new Blob([new Uint8Array(4)]))).rejects.toMatchObject({ code: "invalid" });
+    await tick();
+    pending!({ images: [img("r1")] } as GenerateResult);
+    await first;
+    await tick();
+    pending!({ images: [img("r2")] } as GenerateResult);
+    await second;
+    expect(prompts()).toEqual(["watercolor", "oil paint"]);
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].initImageId).toBe("a");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r1", "r2"]);
+    expect(store.getState().edit.index).toBe(2);
+  });
+
+  it("keeps a queued edit's second image until the edit has run, even if it was removed meanwhile", async () => {
+    const { store, actions } = setup();
+    const edit: InstalledModel = { ...model, id: "e", modes: ["edit"], isEditModel: true };
+    store.dispatch({ type: "setModels", models: [model, edit] });
+    const first = actions.generateCreate();
+    await tick();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetSecond", ref: ref("two") });
+    store.dispatch({ type: "patchEdit", patch: { instruction: "put the logo on the mug" } });
+    const queued = actions.runEdit({ mode: "instruction", model: edit, mask: null, size: [64, 64] });
+    store.dispatch({ type: "editSetSecond", ref: null });
+    pending!({ images: [img("c")] } as GenerateResult);
+    await first;
+    await tick();
+    // Running now: image 2 is still held (not discarded in the engine's session).
+    expect(store.getState().images.two).toBeDefined();
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].refImageIds).toEqual(["a", "two"]);
+    pending!({ images: [img("r")] } as GenerateResult);
+    await queued;
+    expect(store.getState().images.two).toBeUndefined();
+  });
+
+  it("ignores a Generate pressed while Reset is clearing the session", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const reset = actions.clearSession();
+    await actions.generateCreate();
+    expect(store.getState().queue).toEqual([]);
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await first;
+    await reset;
+    await tick();
+    expect(apiMod.generate).toHaveBeenCalledTimes(1);
+    expect(store.getState().job).toBeNull();
   });
 });

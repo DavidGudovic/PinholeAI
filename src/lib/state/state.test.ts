@@ -472,3 +472,36 @@ describe("settingsSummary", () => {
     );
   });
 });
+
+describe("queue state", () => {
+  const q = (id: string, imageIds: string[] = []) => ({ id, kind: "edit" as const, label: "x", detail: "m", imageIds });
+
+  it("keeps images a queued job reads until it leaves the queue", () => {
+    let s = reducer(initialState(), { type: "editLoad", ref: { id: "a", url: "blob:a", width: 1, height: 1 } });
+    s = reducer(s, { type: "queueAdd", job: q("q1", ["a"]) });
+    s = reducer(s, { type: "editClear" });
+    expect(s.images.a).toBeDefined();
+    s = reducer(s, { type: "queueRemove", id: "q1" });
+    expect(s.images.a).toBeUndefined();
+  });
+
+  it("Reset empties the queue", () => {
+    let s = reducer(initialState(), { type: "queueAdd", job: q("q1") });
+    s = reducer(s, { type: "clearSession" });
+    expect(s.queue).toEqual([]);
+  });
+
+  it("adds a queued edit of an earlier image at the end of the history", () => {
+    const r = (id: string) => ({ id, url: `blob:${id}`, width: 1, height: 1 });
+    let s = reducer(initialState(), { type: "editLoad", ref: r("a") });
+    s = reducer(s, { type: "editPush", ref: r("b") });
+    s = reducer(s, { type: "editGoto", index: 0 });
+    s = reducer(s, { type: "editAppend", ref: r("c") });
+    expect(s.edit.chain.map((n) => [n.imageId, n.label])).toEqual([
+      ["a", "Original"],
+      ["b", "Edit 1"],
+      ["c", "Edit 2"],
+    ]);
+    expect(s.edit.index).toBe(2);
+  });
+});

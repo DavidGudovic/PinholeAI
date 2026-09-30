@@ -56,6 +56,11 @@ function Shell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        // Holding the keys would add a job to the queue per key repeat.
+        if (e.repeat) {
+          e.preventDefault();
+          return;
+        }
         if (document.querySelector('[role="dialog"]')) return;
         if (runPrimaryAction(tab)) e.preventDefault();
       }
