@@ -194,6 +194,9 @@ struct TagYaml {
     name_words: Vec<String>,
     #[serde(default)]
     base_models: Vec<String>,
+    /// Ask CivitAI only for these base models (the tag can only match there).
+    #[serde(default)]
+    api_base_models: Vec<String>,
 }
 
 /// One entry of the Tags multi-select.
@@ -207,6 +210,8 @@ pub struct TagFilter {
     /// Lowercased words (phrases split into words), see [`crate::safe::name_words`].
     pub name_words: Vec<Vec<String>>,
     pub base_models: Vec<String>,
+    /// CivitAI `baseModels` this tag can match in; empty = any.
+    pub api_base_models: Vec<String>,
 }
 
 impl TagFilter {
@@ -444,6 +449,11 @@ impl CatalogFilters {
                     .filter(|w| !w.is_empty())
                     .collect(),
                 base_models: t.base_models.iter().map(|b| b.trim().to_string()).collect(),
+                api_base_models: t
+                    .api_base_models
+                    .iter()
+                    .map(|b| b.trim().to_string())
+                    .collect(),
             });
         }
         if raw.sort.is_empty() || raw.period.is_empty() {
@@ -624,10 +634,37 @@ impl CatalogFilters {
         if self.commercial_required(q).is_some() {
             push("allowCommercialUse", "Image");
         }
-        if q.compatible_only {
-            for b in base_models {
-                push("baseModels", b);
-            }
+        // Base models to ask for: what Pinhole runs (when "Works with Pinhole" is on),
+        // narrowed to what every picked tag can match in (Edit: only Qwen and FLUX
+        // Kontext-style bases), so CivitAI does the narrowing instead of us paging.
+        let mut asked: Option<Vec<String>> = q.compatible_only.then(|| base_models.to_vec());
+        for key in &q.tags {
+            let Some(tag) = self.tag(key).filter(|t| !t.api_base_models.is_empty()) else {
+                continue;
+            };
+            asked = Some(match asked {
+                None => tag.api_base_models.clone(),
+                Some(cur) => {
+                    let both: Vec<String> = cur
+                        .iter()
+                        .filter(|b| {
+                            tag.api_base_models
+                                .iter()
+                                .any(|t| t.eq_ignore_ascii_case(b))
+                        })
+                        .cloned()
+                        .collect();
+                    // Nothing in common: the tag's own list, the client-side filter decides.
+                    if both.is_empty() {
+                        tag.api_base_models.clone()
+                    } else {
+                        both
+                    }
+                }
+            });
+        }
+        for b in asked.iter().flatten() {
+            push("baseModels", b);
         }
         if let Some(c) = cursor.map(str::trim).filter(|c| !c.is_empty()) {
             // A text search is paged by number (see `ModelsPage::next_cursor`).
@@ -880,6 +917,34 @@ pub(crate) mod tests {
         assert!(
             get(&p, "page").is_empty(),
             "browsing pages by cursor; only text searches use `page`"
+        );
+    }
+
+    #[test]
+    fn edit_tag_asks_civitai_for_edit_capable_base_models_only() {
+        let f = filters();
+        let bases = vec![
+            "SDXL 1.0".to_string(),
+            "Qwen".to_string(),
+            "Flux.1 Kontext".to_string(),
+        ];
+        let mut q = BrowseQuery {
+            tags: vec!["edit".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            get(&f.query_params(&q, &bases, None), "baseModels"),
+            ["Qwen", "Flux.1 Kontext"]
+        );
+        q.compatible_only = false;
+        assert!(get(&f.query_params(&q, &bases, None), "baseModels").contains(&"Qwen 2.1"));
+        assert!(!get(&f.query_params(&q, &bases, None), "baseModels").contains(&"SDXL 1.0"));
+        q.tags = vec!["portraits".into()];
+        q.compatible_only = true;
+        assert_eq!(
+            get(&f.query_params(&q, &bases, None), "baseModels"),
+            ["SDXL 1.0", "Qwen", "Flux.1 Kontext"],
+            "other tags don't narrow"
         );
     }
 
