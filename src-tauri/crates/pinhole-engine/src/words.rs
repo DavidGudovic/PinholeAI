@@ -13,6 +13,8 @@
 //! misspellings and made-up words. PRIVACY: the text and which words matched are
 //! never logged, stored or put in an error.
 
+use unicode_normalization::UnicodeNormalization;
+
 /// Shown when the check stops something (the text check here, the image check too). Neutral on
 /// purpose: no details (they would have to quote the text), no retry hint (it read like an
 /// invitation to reword around the check) and no naming of harmful content, so a false block
@@ -240,24 +242,34 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
 }
 
 /// The text as several lists of lowercase words, all checked:
-/// - as written (invisible characters dropped, fullwidth letters made plain);
-/// - accents removed and look-alike letters (Cyrillic, Greek, styled Unicode) made Latin;
+/// - as written, with invisible characters, accents and apostrophes dropped and compatibility
+///   forms (fullwidth, superscript, squared, letterlike, ligatures) made plain;
+/// - look-alike letters (Cyrillic and Greek capitals and small letters, small capitals, styled
+///   and boxed letters) made Latin;
 /// - twice more with numbers and symbols read as letters (`0`→o, `1`→i, then `1`→l, `3`→e,
-///   `4`/`@`→a, `5`/`$`→s, `7`→t, `!`/`|`), only inside words that also have letters.
+///   `4`/`@`→a, `5`/`$`→s, `7`→t, `|`, and `!` inside a word), only in words that also have
+///   letters.
 ///
 /// In every list, spaced-out letters are joined ("l o l i", "l.o.l.i") and a word made of two
-/// listed words glued together is split in two.
+/// listed words glued together is split in two; a listed phrase also matches glued into one word.
 fn views(text: &str) -> Vec<Vec<String>> {
-    let clean: String = text
+    // Compatibility forms (fullwidth, superscript, squared, letterlike, ligatures…) become
+    // plain letters; accents come apart from their letters and are dropped. Apostrophes are
+    // dropped so "Kim's ex" reads "kims ex", not "s ex".
+    let plain: String = text
+        .nfkd()
+        .filter(|c| !is_invisible(*c) && !is_accent(*c) && !is_apostrophe(*c))
+        .collect();
+    let clean = plain.to_lowercase();
+    // Capital look-alikes are read before lowercasing: a Greek capital Eta looks like "H", its
+    // lowercase doesn't.
+    let folded: String = plain
         .chars()
-        .filter(|c| !is_invisible(*c))
-        .map(|c| match c {
-            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-            _ => c,
+        .flat_map(|c| match fold_capital(c) {
+            Some(l) => vec![l],
+            None => c.to_lowercase().flat_map(fold).collect(),
         })
-        .collect::<String>()
-        .to_lowercase();
-    let folded: String = clean.chars().flat_map(fold).collect();
+        .collect();
     let words = |text: &str, keep: &dyn Fn(char) -> bool| -> Vec<String> {
         text.split(|c: char| !keep(c))
             .filter(|w| !w.is_empty())
@@ -279,13 +291,57 @@ fn views(text: &str) -> Vec<Vec<String>> {
 }
 
 /// Characters that show nothing: soft hyphen, zero-width and joiner characters, direction
-/// marks, variation selectors, Hangul fillers, tag characters.
+/// marks, variation selectors, Hangul fillers, blank Braille, format controls, tag characters.
 fn is_invisible(c: char) -> bool {
     matches!(c,
         '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
         | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
-        | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}'
-        | '\u{FFA0}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E007F}')
+        | '\u{2060}'..='\u{206F}' | '\u{2800}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}'
+        | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{13430}'..='\u{1343F}'
+        | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E007F}'
+        | '\u{E0100}'..='\u{E01EF}')
+}
+
+/// Combining accents (left over once letters are taken apart).
+fn is_accent(c: char) -> bool {
+    matches!(c, '\u{0300}'..='\u{036F}' | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}'
+        | '\u{20D0}'..='\u{20FF}' | '\u{FE20}'..='\u{FE2F}')
+}
+
+fn is_apostrophe(c: char) -> bool {
+    matches!(
+        c,
+        '\'' | '\u{2018}' | '\u{2019}' | '\u{02BC}' | '`' | '\u{00B4}'
+    )
+}
+
+/// A Cyrillic or Greek capital that looks like a Latin capital whose lowercase doesn't.
+fn fold_capital(c: char) -> Option<char> {
+    const CAPITALS: &[(&str, char)] = &[
+        ("АΑ", 'a'),
+        ("ВΒ", 'b'),
+        ("СϹ", 'c'),
+        ("ЕЁΕ", 'e'),
+        ("НΗ", 'h'),
+        ("ІЇΙӀ", 'i'),
+        ("Ј", 'j'),
+        ("КΚ", 'k'),
+        ("МΜ", 'm'),
+        ("Ν", 'n'),
+        ("ОΟ", 'o'),
+        ("РΡ", 'p'),
+        ("Ԛ", 'q'),
+        ("Ѕ", 's'),
+        ("ТΤ", 't'),
+        ("Ԝ", 'w'),
+        ("ХΧ", 'x'),
+        ("ҮΥ", 'y'),
+        ("Ζ", 'z'),
+    ];
+    CAPITALS
+        .iter()
+        .find(|(from, _)| from.contains(c))
+        .map(|(_, to)| *to)
 }
 
 /// One lowercase character without its accent, or its Latin look-alike.
@@ -333,6 +389,31 @@ fn fold(c: char) -> Vec<char> {
         ("ѡω", 'w'),
         ("хχ", 'x'),
         ("уγ", 'y'),
+        // Small capitals.
+        ("ᴀ", 'a'),
+        ("ʙ", 'b'),
+        ("ᴄ", 'c'),
+        ("ᴅ", 'd'),
+        ("ᴇ", 'e'),
+        ("ꜰ", 'f'),
+        ("ɢ", 'g'),
+        ("ʜ", 'h'),
+        ("ɪ", 'i'),
+        ("ᴊ", 'j'),
+        ("ᴋ", 'k'),
+        ("ʟ", 'l'),
+        ("ᴍ", 'm'),
+        ("ɴ", 'n'),
+        ("ᴏ", 'o'),
+        ("ᴘ", 'p'),
+        ("ʀ", 'r'),
+        ("ꜱ", 's'),
+        ("ᴛ", 't'),
+        ("ᴜ", 'u'),
+        ("ᴠ", 'v'),
+        ("ᴡ", 'w'),
+        ("ʏ", 'y'),
+        ("ᴢ", 'z'),
     ];
     match c {
         // Combining accents (text typed as letter + accent).
@@ -344,6 +425,9 @@ fn fold(c: char) -> Vec<char> {
         'ⓐ'..='ⓩ' => return vec![char::from(b'a' + (c as u32 - 0x24D0) as u8)],
         'Ⓐ'..='Ⓩ' => return vec![char::from(b'a' + (c as u32 - 0x24B6) as u8)],
         '\u{1F1E6}'..='\u{1F1FF}' => return vec![char::from(b'a' + (c as u32 - 0x1F1E6) as u8)],
+        // Negative circled and negative squared letters.
+        '\u{1F150}'..='\u{1F169}' => return vec![char::from(b'a' + (c as u32 - 0x1F150) as u8)],
+        '\u{1F170}'..='\u{1F189}' => return vec![char::from(b'a' + (c as u32 - 0x1F170) as u8)],
         '\u{1D400}'..='\u{1D6A3}' => {
             let i = ((c as u32 - 0x1D400) % 52) as u8;
             return vec![char::from(b'a' + i % 26)];
@@ -364,7 +448,9 @@ fn leet(word: &str, one: char) -> String {
     if !word.chars().any(|c| c.is_alphabetic()) {
         return word.to_string();
     }
-    word.chars()
+    // "!" is a letter only inside a word ("lol!" stays "lol").
+    word.trim_matches('!')
+        .chars()
         .map(|c| match c {
             '0' => 'o',
             '1' | '|' => one,
@@ -477,14 +563,30 @@ fn same_word(token: &str, word: &str) -> bool {
             && squeeze(token) == squeeze(word))
 }
 
+/// The word, stretched or not, with or without a plural "s"/"es". A stretched plural needs a
+/// letter three times ("kiiids"), so ordinary double letters ("annals") stay apart.
 fn word_matches(token: &str, word: &str) -> bool {
     same_word(token, word)
-        || token
-            .strip_prefix(word)
-            .is_some_and(|rest| rest == "s" || rest == "es")
+        || ["s", "es"].iter().any(|end| {
+            token.strip_suffix(end).is_some_and(|stem| {
+                stem == word || (has_triple_letter(stem) && same_word(stem, word))
+            })
+        })
 }
 
+fn has_triple_letter(w: &str) -> bool {
+    let c: Vec<char> = w.chars().collect();
+    c.windows(3).any(|t| t[0] == t[1] && t[1] == t[2])
+}
+
+/// The phrase word by word, or glued into one word ("littlegirls").
 fn has_phrase(words: &[String], phrase: &str) -> bool {
+    if phrase.contains(' ') {
+        let glued = phrase.replace(' ', "");
+        if words.iter().any(|w| word_matches(w, &glued)) {
+            return true;
+        }
+    }
     let parts: Vec<&str> = phrase.split(' ').collect();
     let last = parts.len() - 1;
     words.windows(parts.len()).any(|win| {
@@ -643,6 +745,20 @@ mod tests {
             "sexyteen",
             "lolinude, 1girl",
             "teenporn",
+            // Capital look-alikes, small capitals, boxed, superscript and letterlike forms.
+            "\u{0421}\u{041D}\u{0406}LD, \u{039D}UDE",
+            "\u{029F}\u{1D0F}\u{029F}\u{026A}, \u{0274}\u{1D1C}\u{1D05}\u{1D07}",
+            "\u{1F13B}\u{1F13E}\u{1F13B}\u{1F138}, nude",
+            "\u{1F17B}\u{1F17E}\u{1F17B}\u{1F178}, nude",
+            "\u{02E1}\u{1D52}\u{02E1}\u{2071}, nude",
+            "\u{2113}oli, nude",
+            "\u{FF4C}\u{FF4F}\u{FF4C}\u{FF49}, nude",
+            // More invisible characters.
+            "lo\u{2800}li, nu\u{FFF9}de",
+            // Stretched plurals, glued phrases.
+            "kiiids, nude",
+            "littlegirls, nude",
+            "youngboy, naked",
             // Mixed.
             "L\u{00D6}\u{00D6}L1, NS\u{0192}W, n\u{00FC}d3",
         ]
@@ -676,6 +792,10 @@ mod tests {
             "ten apples, nude still life",
             "b a b y shower decorations",
             "o k, kids, let's go",
+            "lol! nude-colored heels, lol!!",
+            "Kim's ex took the kids to the zoo",
+            "Sm\u{00F6}rg\u{00E5}sbord for the kids' party",
+            "\u{2116} 5 school bus, \u{2122} logo, \u{00BD} price",
         ]
         .into_iter()
         .filter(|t| pairs_minor_with_sexual(t))
