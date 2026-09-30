@@ -235,7 +235,7 @@ fn upscaled_import(m: &ResultImage) -> bool {
 
 /// Export (RELEASE-SPEC §1 item 4): the one function behind Save, Save as and
 /// Copy. Images made by Pinhole (generated, edited, upscaled) always get the
-/// AI-generated marker (there is no setting for it) plus the optional
+/// AI-generated marker (invisible watermark + XMP) (there is no setting for it) plus the optional
 /// "settings (no prompt)" chunk. A picture the user added and didn't change
 /// leaves as it came in (already scrubbed at import).
 pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
@@ -243,7 +243,16 @@ pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
         return Ok(im.bytes.as_ref().clone());
     };
     let damaged = |_| CoreError::internal("The image in memory is damaged.");
-    let clean = pinhole_engine::png::scrub(&im.bytes).map_err(damaged)?;
+    // Layer 1: the invisible pixel watermark (survives screenshots and re-saving). The PNG
+    // is re-encoded from the watermarked pixels, which also drops every other chunk.
+    let (mut rgba, w, h) = img::decode_rgba(&im.bytes).map_err(|e| {
+        CoreError::internal("The image in memory is damaged.").with_details(e.to_string())
+    })?;
+    pinhole_engine::watermark::embed(&mut rgba, w, h);
+    let clean = img::encode_png_rgba(&rgba, w, h).map_err(|e| {
+        CoreError::internal("Couldn't prepare the image.").with_details(e.to_string())
+    })?;
+    // Layer 2: the XMP marker.
     let marked = pinhole_engine::png::add_itxt_chunk(
         &clean,
         "XML:com.adobe.xmp",
