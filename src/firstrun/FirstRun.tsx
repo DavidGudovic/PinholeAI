@@ -355,7 +355,8 @@ function Stat({ icon, label, value }: { icon: ReactNode; label: string; value: s
   );
 }
 
-function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine>; hw: HardwareView | null }) {
+/** Exported for tests. */
+export function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine>; hw: HardwareView | null }) {
   const { status, error, busy, group } = engine;
   const backend = status?.installed ? status.backend : hw?.backend;
   return (
@@ -369,8 +370,17 @@ function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine>; hw: 
           <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700 dark:text-emerald-400">
             <CircleCheck className="h-4 w-4" /> Ready
           </span>
-        ) : !busy && status ? (
-          <Button variant="primary" onClick={() => void engine.install()}>
+        ) : !busy && (status || error) ? (
+          <Button
+            variant="primary"
+            onClick={() => {
+              // The status check itself failed: check again before downloading anything.
+              if (!status) {
+                engine.setError(null);
+                void engine.refresh();
+              } else void engine.install();
+            }}
+          >
             {error ? <RotateCw className="h-4 w-4" /> : <Download className="h-4 w-4" />}
             {error ? "Try again" : "Download engine"}
           </Button>

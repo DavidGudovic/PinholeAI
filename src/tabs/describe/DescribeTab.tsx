@@ -19,7 +19,6 @@ export function DescribeTab() {
   const tab = useAppState((s) => s.tab);
   const d = useAppState((s) => s.describe);
   const img = useAppState((s) => (s.describe.imageId ? s.images[s.describe.imageId] : undefined));
-  const downloads = useAppState((s) => s.downloads);
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
@@ -30,6 +29,14 @@ export function DescribeTab() {
   const [error, setError] = useState<CoreError | null>(null);
   const [importing, setImporting] = useState(false);
   const [installGroup, setInstallGroup] = useState<string | null>(null);
+  // The describer download started here, or anywhere else (Recommended cards, First run):
+  // its group kind is "captioner". Only that group, so other downloads' progress ticks
+  // don't re-render this (often hidden) tab.
+  const dl = useAppState(
+    (s) =>
+      (installGroup ? s.downloads.find((x) => x.groupId === installGroup) : undefined) ??
+      [...s.downloads].reverse().find((x) => x.kind === "captioner" && isActiveDownload(x)),
+  );
   const [installing, setInstalling] = useState(false);
   const elapsed = useElapsed(busy?.at ?? null, !!busy);
   const runId = useRef(0);
@@ -42,19 +49,13 @@ export function DescribeTab() {
       setStatusError(true);
     }
   }, []);
-  useEffect(() => {
-    if (tab === "describe") void refreshStatus();
-  }, [tab, refreshStatus]);
-  // Models changed (e.g. the edit model's encoder arrived) → captioner may be available now.
+  // On opening the tab, and when models change while it is open (e.g. the edit model's
+  // encoder arrived → the captioner may be available now). Not while hidden: every
+  // Create batch refreshes the models.
   const models = useAppState((s) => s.models);
   useEffect(() => {
-    void refreshStatus();
-  }, [models, refreshStatus]);
-  // The describer download started here, or anywhere else (Recommended cards, First run):
-  // its group kind is "captioner".
-  const dl =
-    (installGroup ? downloads.find((x) => x.groupId === installGroup) : undefined) ??
-    [...downloads].reverse().find((x) => x.kind === "captioner" && isActiveDownload(x));
+    if (tab === "describe") void refreshStatus();
+  }, [tab, models, refreshStatus]);
   useEffect(() => {
     if (dl?.state === "done") void refreshStatus();
   }, [dl?.state, refreshStatus]);
@@ -96,7 +97,10 @@ export function DescribeTab() {
       if (id === runId.current) setBusy(null);
     }
   };
-  usePrimaryAction("describe", () => void describe());
+  // Same rule as the Describe button: not while the describer isn't installed.
+  usePrimaryAction("describe", () => {
+    if (!unavailable) void describe();
+  });
 
   const install = async () => {
     setInstalling(true);

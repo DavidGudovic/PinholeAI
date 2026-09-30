@@ -963,6 +963,27 @@ impl DownloadManager {
         }
     }
 
+    /// Mark a group that finished downloading as failed after all, e.g. when
+    /// its files couldn't be registered. `wait` then returns this error too.
+    /// No-op unless the group is `Done`.
+    pub fn fail_done(&self, group_id: &str, code: &str, message: &str) {
+        let emitted = {
+            let mut st = self.shared.state.lock();
+            let Some(g) = st.groups.get_mut(group_id) else {
+                return;
+            };
+            if g.status.state != DownloadState::Done {
+                return;
+            }
+            g.status.state = DownloadState::Failed;
+            g.status.error = Some(message.to_string());
+            g.done
+                .send_replace(Some(Err(GroupError::new(code, message))));
+            g.status.clone()
+        };
+        let _ = self.shared.events.send(emitted);
+    }
+
     /// Active groups (running + queued) and the last 20 finished, in enqueue order.
     pub fn status(&self) -> Vec<GroupStatus> {
         let st = self.shared.state.lock();

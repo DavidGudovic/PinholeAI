@@ -136,6 +136,9 @@ export function MaskCanvas({
         onPointerUp={() => {
           last.current = null;
         }}
+        onPointerCancel={() => {
+          last.current = null;
+        }}
         onPointerLeave={() => {
           setCursor(null);
           last.current = null;

@@ -4,6 +4,8 @@
 
 use std::future::Future;
 
+use futures_util::stream::{self, StreamExt};
+
 use pinhole_net::NetError;
 use pinhole_registry::wiring::HwContext;
 use pinhole_registry::Registry;
@@ -230,6 +232,12 @@ fn from_version(
     }
 }
 
+/// CivitAI lookups a paste runs at the same time.
+const LOOKUPS_AT_ONCE: usize = 4;
+
+const UNREACHABLE: &str =
+    "Couldn't reach CivitAI to look this up. Check your connection and try again.";
+
 async fn resolve_one<L: VersionLookup>(
     env: &PasteEnv<'_>,
     lookup: Option<&L>,
@@ -262,6 +270,10 @@ async fn resolve_one<L: VersionLookup>(
         match lookup.version(id).await {
             Ok(v) => return from_version(env, r, &v, cat),
             Err(NetError::Status(404)) => {}
+            // CivitAI unreachable: a by-hash lookup would only wait as long again.
+            Err(NetError::Timeout | NetError::Transport(_) | NetError::Offline) => {
+                return unresolved(UNREACHABLE)
+            }
             Err(_) => network_error = true,
         }
     }
@@ -273,7 +285,7 @@ async fn resolve_one<L: VersionLookup>(
         }
     }
     if network_error {
-        unresolved("Couldn't reach CivitAI to look this up. Check your connection and try again.")
+        unresolved(UNREACHABLE)
     } else {
         unresolved("Not installed, and CivitAI doesn't know this file.")
     }
@@ -290,11 +302,16 @@ pub async fn resolve_resources<L: VersionLookup + Sync>(
         loras: Vec::new(),
         ignored: Vec::new(),
     };
+    // The checkpoint (first one) and the LoRAs are looked up a few at a time,
+    // each list keeping its pasted order.
+    let mut to_resolve: Vec<(&PastedResource, Category)> = Vec::new();
+    let mut has_checkpoint = false;
     for r in resources.iter().take(64) {
         let cat = category(env.filters, &r.kind);
         match cat {
-            Category::Checkpoint if out.checkpoint.is_none() => {
-                out.checkpoint = Some(resolve_one(env, lookup, r, cat).await)
+            Category::Checkpoint if !has_checkpoint => {
+                has_checkpoint = true;
+                to_resolve.push((r, cat));
             }
             Category::Checkpoint => out.ignored.push(ResolvedResource {
                 resource: r.clone(),
@@ -306,7 +323,7 @@ pub async fn resolve_resources<L: VersionLookup + Sync>(
                 fit: None,
                 problem: Some("Only one model can be used at a time.".into()),
             }),
-            Category::Lora => out.loras.push(resolve_one(env, lookup, r, cat).await),
+            Category::Lora => to_resolve.push((r, cat)),
             Category::Other => out.ignored.push(ResolvedResource {
                 resource: r.clone(),
                 installed_id: None,
@@ -317,6 +334,22 @@ pub async fn resolve_resources<L: VersionLookup + Sync>(
                 fit: None,
                 problem: Some(ignored_problem(&r.kind)),
             }),
+        }
+    }
+    // Futures collected first: a lazy `map` closure in the stream would make
+    // the whole future not `Send` (higher-ranked lifetime limits).
+    let lookups: Vec<_> = to_resolve
+        .iter()
+        .map(|&(r, cat)| resolve_one(env, lookup, r, cat))
+        .collect();
+    let resolved: Vec<ResolvedResource> = stream::iter(lookups)
+        .buffered(LOOKUPS_AT_ONCE)
+        .collect()
+        .await;
+    for ((_, cat), res) in to_resolve.iter().zip(resolved) {
+        match cat {
+            Category::Checkpoint => out.checkpoint = Some(res),
+            _ => out.loras.push(res),
         }
     }
     let ckpt_family = out.checkpoint.as_ref().and_then(|c| c.family_id.clone());
@@ -534,6 +567,99 @@ mod resolve_tests {
             weight: Some(0.8),
             ..Default::default()
         }
+    }
+
+    /// Answers every version id after `delay` (or times out), counting calls.
+    struct SlowLookup {
+        delay: std::time::Duration,
+        timeout: bool,
+        versions: std::sync::atomic::AtomicUsize,
+        hashes: std::sync::atomic::AtomicUsize,
+    }
+
+    impl VersionLookup for SlowLookup {
+        fn version(&self, id: u64) -> impl Future<Output = Result<ModelVersion, NetError>> + Send {
+            use std::sync::atomic::Ordering;
+            self.versions.fetch_add(1, Ordering::SeqCst);
+            let (delay, timeout) = (self.delay, self.timeout);
+            async move {
+                tokio::time::sleep(delay).await;
+                if timeout {
+                    return Err(NetError::Timeout);
+                }
+                Ok(ModelVersion {
+                    id,
+                    name: format!("v{id}"),
+                    ..Default::default()
+                })
+            }
+        }
+        fn by_hash(
+            &self,
+            _hash: &str,
+        ) -> impl Future<Output = Result<Option<ModelVersion>, NetError>> + Send {
+            self.hashes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async { Ok(None) }
+        }
+    }
+
+    fn slow(delay_ms: u64, timeout: bool) -> SlowLookup {
+        SlowLookup {
+            delay: std::time::Duration::from_millis(delay_ms),
+            timeout,
+            versions: Default::default(),
+            hashes: Default::default(),
+        }
+    }
+
+    /// Pasted LoRAs are looked up a few at a time, in their pasted order.
+    #[tokio::test]
+    async fn lookups_run_concurrently_in_order() {
+        let (reg, f, idx, h) = (registry(), filters(), index(vec![]), hw(12.0));
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let l = slow(300, false);
+        let pasted: Vec<PastedResource> = (1..=4)
+            .map(|i| res("lora", Some(i), None))
+            .chain([res("checkpoint", Some(9), None)])
+            .collect();
+        let t0 = std::time::Instant::now();
+        let out = resolve_resources(&env, Some(&l), &pasted).await;
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(1100),
+            "5 lookups of 300 ms took {:?}",
+            t0.elapsed()
+        );
+        let ids: Vec<Option<u64>> = out
+            .loras
+            .iter()
+            .map(|r| r.resource.model_version_id)
+            .collect();
+        assert_eq!(ids, [Some(1), Some(2), Some(3), Some(4)]);
+        assert_eq!(out.checkpoint.unwrap().resource.model_version_id, Some(9));
+    }
+
+    /// CivitAI didn't answer the version lookup: no by-hash lookup after it.
+    #[tokio::test]
+    async fn unreachable_civitai_skips_the_hash_lookup() {
+        let (reg, f, idx, h) = (registry(), filters(), index(vec![]), hw(12.0));
+        let env = PasteEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let l = slow(0, true);
+        let out =
+            resolve_resources(&env, Some(&l), &[res("lora", Some(1), Some("ABCDEF1234"))]).await;
+        assert_eq!(out.loras[0].problem.as_deref(), Some(UNREACHABLE));
+        assert_eq!(l.hashes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(l.versions.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

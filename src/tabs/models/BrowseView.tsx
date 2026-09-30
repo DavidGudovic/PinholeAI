@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
 import { asCoreError, browseCatalog, catalogFilters, listLoras, listModels, onModelsChanged } from "../../lib/api";
 import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
-import { Button, ErrorNotice, Segmented, Toggle, inputClass } from "../../components/ui";
+import { Button, ErrorNotice, Segmented, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
 import { CatalogCardView } from "./CatalogCardView";
 import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, Select, Skeleton } from "./controls";
@@ -17,6 +17,7 @@ import { ModelDetails } from "./ModelDetails";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
 import { PageStore } from "./lib/pageStore";
 import { measureSince } from "./lib/perf";
+import { useScrollRoot } from "./lib/preview";
 import {
   COMMERCIAL_OPTIONS,
   KIND_OPTIONS,
@@ -43,6 +44,8 @@ const FILTER_DEBOUNCE_MS = 200;
 const SEARCH_DEBOUNCE_MS = 400;
 /** Ask for the next page this far before the end of the grid comes into view. */
 const SCROLL_AHEAD = "1600px 0px";
+// Automatic "keep looking" rounds when nothing matches yet (about 6 CivitAI requests each).
+const AUTO_LOOK_ROUNDS = 8;
 
 /** Recent pages for this session (RAM only). */
 const pages = new PageStore();
@@ -144,11 +147,16 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     shownKey.current = key;
   }, []);
 
+  // Rounds of "nothing matched yet, look further" run without a click (one round = up to
+  // a few CivitAI requests); after that the "Keep looking" button takes over.
+  const autoRounds = useRef(0);
+
   const fetchPage = useCallback(
     async (cursor: string | null, retry = true) => {
       const f = filtersRef.current;
       const key = filtersKey(f);
       const id = ++reqId.current;
+      if (!cursor) autoRounds.current = 0;
       setPhase(cursor ? "more" : "loading");
       setError(null);
       const started = performance.now();
@@ -186,6 +194,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     const chain = pages.chain(liveKey);
     if (!chain) return;
     reqId.current += 1;
+    autoRounds.current = 0;
     showPages(liveKey, chain.pages);
     setError(null);
     setPhase("idle");
@@ -209,15 +218,28 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     return () => clearTimeout(t);
   }, [phase, nextCursor, partial, error, offline]);
 
+  // Nothing matched in the pages checked so far: keep looking on our own.
+  useEffect(() => {
+    if (phase !== "idle" || items.length > 0 || !nextCursor || !partial || error || offline) return;
+    if (autoRounds.current >= AUTO_LOOK_ROUNDS) return;
+    autoRounds.current += 1;
+    void fetchPage(nextCursor);
+  }, [phase, items.length, nextCursor, partial, error, offline, fetchPage]);
+
   // Infinite scroll (not when the backend hit its extra-request cap: then "Load more").
   const sentinel = useRef<HTMLDivElement>(null);
+  // Observe relative to the tab's own scroller: with the viewport as root the margin is ignored.
+  const scrollRoot = useScrollRoot();
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !nextCursor || partial || phase !== "idle" || error || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), { rootMargin: SCROLL_AHEAD });
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), {
+      root: scrollRoot,
+      rootMargin: SCROLL_AHEAD,
+    });
     io.observe(el);
     return () => io.disconnect();
-  }, [nextCursor, partial, phase, error, fetchPage]);
+  }, [nextCursor, partial, phase, error, fetchPage, scrollRoot]);
 
   const update = (patch: Partial<BrowseFilters>) => {
     pristine.current = false;
@@ -325,7 +347,11 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm">Runs on my card</span>} />
           )}
           {changed > 0 && (
-            <button type="button" onClick={clearFilters} className="ml-auto inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100">
+            <button
+              type="button"
+              onClick={clearFilters}
+              className={cx("ml-auto inline-flex items-center gap-1 rounded text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100", focusRing)}
+            >
               <X className="h-3.5 w-3.5" /> Clear filters
             </button>
           )}
@@ -352,7 +378,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             <RotateCw className="h-4 w-4" /> Try again
           </Button>
         </div>
-      ) : phase === "loading" && items.length === 0 ? (
+      ) : (phase === "loading" || phase === "more") && items.length === 0 ? (
         <Grid>
           <SkeletonCards count={12} />
         </Grid>
@@ -370,7 +396,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               </>
             }
           >
-            Pinhole checked {totals.checked.toLocaleString("en-US")} {noun} and none matched your filters. There may be more further down the list.
+            Pinhole looked through {totals.checked.toLocaleString("en-US")} {noun} and none matched your filters yet. Keep looking to check more.
           </EmptyState>
         ) : (
           <EmptyState
