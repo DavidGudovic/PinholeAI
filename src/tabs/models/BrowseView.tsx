@@ -44,6 +44,8 @@ const FILTER_DEBOUNCE_MS = 200;
 const SEARCH_DEBOUNCE_MS = 400;
 /** Ask for the next page this far before the end of the grid comes into view. */
 const SCROLL_AHEAD = "1600px 0px";
+// Automatic "keep looking" rounds when nothing matches yet (about 6 CivitAI requests each).
+const AUTO_LOOK_ROUNDS = 8;
 
 /** Recent pages for this session (RAM only). */
 const pages = new PageStore();
@@ -145,11 +147,16 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     shownKey.current = key;
   }, []);
 
+  // Rounds of "nothing matched yet, look further" run without a click (one round = up to
+  // a few CivitAI requests); after that the "Keep looking" button takes over.
+  const autoRounds = useRef(0);
+
   const fetchPage = useCallback(
     async (cursor: string | null, retry = true) => {
       const f = filtersRef.current;
       const key = filtersKey(f);
       const id = ++reqId.current;
+      if (!cursor) autoRounds.current = 0;
       setPhase(cursor ? "more" : "loading");
       setError(null);
       const started = performance.now();
@@ -187,6 +194,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     const chain = pages.chain(liveKey);
     if (!chain) return;
     reqId.current += 1;
+    autoRounds.current = 0;
     showPages(liveKey, chain.pages);
     setError(null);
     setPhase("idle");
@@ -209,6 +217,14 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     const t = setTimeout(() => void pages.load(k, nextCursor, () => browseCatalog(toBrowseQuery(f, nextCursor))).catch(() => undefined), 250);
     return () => clearTimeout(t);
   }, [phase, nextCursor, partial, error, offline]);
+
+  // Nothing matched in the pages checked so far: keep looking on our own.
+  useEffect(() => {
+    if (phase !== "idle" || items.length > 0 || !nextCursor || !partial || error || offline) return;
+    if (autoRounds.current >= AUTO_LOOK_ROUNDS) return;
+    autoRounds.current += 1;
+    void fetchPage(nextCursor);
+  }, [phase, items.length, nextCursor, partial, error, offline, fetchPage]);
 
   // Infinite scroll (not when the backend hit its extra-request cap: then "Load more").
   const sentinel = useRef<HTMLDivElement>(null);
@@ -362,7 +378,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             <RotateCw className="h-4 w-4" /> Try again
           </Button>
         </div>
-      ) : phase === "loading" && items.length === 0 ? (
+      ) : (phase === "loading" || phase === "more") && items.length === 0 ? (
         <Grid>
           <SkeletonCards count={12} />
         </Grid>
@@ -380,7 +396,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               </>
             }
           >
-            Pinhole checked {totals.checked.toLocaleString("en-US")} {noun} and none matched your filters. There may be more further down the list.
+            Pinhole looked through {totals.checked.toLocaleString("en-US")} {noun} and none matched your filters yet. Keep looking to check more.
           </EmptyState>
         ) : (
           <EmptyState
