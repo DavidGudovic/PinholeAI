@@ -845,8 +845,9 @@ pub async fn improve_prompt(
     Ok(ImprovedPrompt { text, note: None })
 }
 
-/// 32 random bytes as hex: llama-server's API key for one launch.
-fn new_api_key() -> String {
+/// 32 random bytes as hex: an engine's API key for one launch (llama-server
+/// and sd-server).
+pub(crate) fn new_api_key() -> String {
     rand::random::<[u8; 32]>()
         .iter()
         .map(|b| format!("{b:02x}"))

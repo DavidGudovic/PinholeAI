@@ -41,7 +41,7 @@ use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
 use pinhole_engine::pins::EngineConfig;
 use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
 use pinhole_engine::sdapi::{
-    ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef,
+    self, ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef,
     SampleParams, SdClient, UpscaleRequest, VaeTilingRequest,
 };
 use pinhole_hardware::OtherGpuUse;
@@ -393,6 +393,8 @@ pub(crate) struct EngineSlot {
     /// An img_gen job was submitted to this process, so it may hold finished
     /// results (see [`IDLE_STOP_AFTER`]).
     pub results_cached: bool,
+    /// This process's per-launch API key ([`sdapi::API_KEY_ENV`]).
+    pub api_key: Option<String>,
 }
 
 /// sd-server process + current generation job.
@@ -1529,6 +1531,15 @@ fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
     }
 }
 
+/// The pinned sd-server is locked down (RELEASE-SPEC §12): it refuses requests
+/// from web pages ([`sdapi::REJECT_ORIGIN_FLAG`]) and requests without this
+/// launch's API key. Compiled in, not a setting: with `true` an engine build
+/// without the patch can't start, so the checks can't be skipped by pointing
+/// engine.yaml at an upstream build. Stays `false` until engine.yaml pins the
+/// patched engine (upstream at the current pin rejects the unknown flag). The
+/// key and bearer header are sent either way; upstream ignores both.
+pub(crate) const ENGINE_LOCKDOWN: bool = false;
+
 /// Full sd-server argv (without the port): wiring args + pinned defaults, forced
 /// to listen on 127.0.0.1, with LoRA / upscaler folders.
 pub(crate) fn full_sd_args(
@@ -1545,10 +1556,18 @@ pub(crate) fn full_sd_args(
             "--listen-port",
             "--log-level",
             "--serve-html-path",
+            "--api-key",
         ],
     );
+    args.retain(|a| a != sdapi::REJECT_ORIGIN_FLAG);
     let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
-    strip_flag(&mut defaults, &["--listen-ip", "-l", "--listen-port"]);
+    // The key only travels in the environment (a command line is visible to
+    // other programs); the lock-down flag only follows `ENGINE_LOCKDOWN`.
+    strip_flag(
+        &mut defaults,
+        &["--listen-ip", "-l", "--listen-port", "--api-key"],
+    );
+    defaults.retain(|a| a != sdapi::REJECT_ORIGIN_FLAG);
     // Log level: the pin's last `--log-level` (sd.cpp: the last one wins),
     // never below info — verbose / debug print the request, prompt included.
     let level = defaults
@@ -1584,6 +1603,9 @@ pub(crate) fn full_sd_args(
                 .to_string_lossy()
                 .into_owned(),
         ]);
+    }
+    if ENGINE_LOCKDOWN {
+        args.push(sdapi::REJECT_ORIGIN_FLAG.into());
     }
     args.extend(["--listen-ip".into(), "127.0.0.1".into()]);
     args
@@ -1651,7 +1673,7 @@ async fn ensure_engine(
     label: &str,
     cancel: &CancellationToken,
     t0: Instant,
-) -> CoreResult<String> {
+) -> CoreResult<SdClient> {
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
         core.gen.external_launches.lock().push(wiring_args.to_vec());
@@ -1659,7 +1681,7 @@ async fn ensure_engine(
         slot.args = wiring_args.to_vec();
         slot.model_id = Some(model_id.to_string());
         note_offload(core, model_id, wiring_args);
-        return Ok(url);
+        return Ok(SdClient::new(core.local.clone(), url));
     }
     let cfg = engine_setup::engine_config(core)?;
     let args = full_sd_args(core, wiring_args, &cfg);
@@ -1675,7 +1697,7 @@ async fn ensure_engine(
             // Same args AND the same engine build (the backend may have changed in Settings).
             let same_build = installed.as_ref().is_some_and(|i| i.exe == p.exe());
             if p.is_running() && s.args == args && same_build {
-                return Ok(p.base_url());
+                return Ok(slot_client(core, p, s.api_key.as_deref()));
             }
         }
     }
@@ -1731,7 +1753,15 @@ async fn ensure_engine(
     let mut argv = args.clone();
     argv.extend(["--listen-port".into(), port.to_string()]);
     core.gen.logs.clear();
-    let mut proc = EngineProcess::spawn(&installed.exe, &argv, port, core.gen.logs.clone()).map_err(|e| {
+    let api_key = crate::describe::new_api_key();
+    let mut proc = EngineProcess::spawn_with_env(
+        &installed.exe,
+        &argv,
+        &[(sdapi::API_KEY_ENV, api_key.as_str())],
+        port,
+        core.gen.logs.clone(),
+    )
+    .map_err(|e| {
         CoreError::new("engine_failed", "The image engine couldn't be started. Your antivirus may have blocked it — try setting up the engine again.").with_details(e.to_string())
     })?;
     {
@@ -1742,7 +1772,7 @@ async fn ensure_engine(
     engine_setup::emit_status(core);
     emit_progress(core, GenPhase::LoadingModel, label, None, None, t0);
 
-    let client = SdClient::new(core.local.clone(), proc.base_url());
+    let client = SdClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
     let logs = core.gen.logs.clone();
     let mut last_emit = Instant::now();
     let ready = proc
@@ -1782,13 +1812,14 @@ async fn ensure_engine(
             slot.proc = Some(proc);
             slot.args = args;
             slot.model_id = Some(model_id.to_string());
+            slot.api_key = Some(api_key);
             {
                 let mut f = core.gen.flags.lock();
                 f.running = true;
                 f.loaded_model_id = Some(model_id.to_string());
             }
             engine_setup::emit_status(core);
-            Ok(format!("http://127.0.0.1:{port}"))
+            Ok(client)
         }
         Err(e) => {
             let code = proc.exit_code();
@@ -2226,8 +2257,7 @@ async fn generate_inner(
     let batches = u32::from(hires.is_none()) * body.batch_count;
     let job = loop {
         let args = with_memory_choices(&wiring_args, fb);
-        let base = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
-        let client = SdClient::new(core.local.clone(), base);
+        let client = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
         match run_job(
             core,
             &client,
@@ -2663,7 +2693,7 @@ async fn upscale_inner(
     session_epoch: u64,
     label: &mut String,
 ) -> CoreResult<ResultImage> {
-    let base = match running_engine_url(core).await {
+    let client = match running_engine(core).await {
         Some(u) => {
             *label = loaded_model_label(core).await;
             u
@@ -2716,7 +2746,6 @@ async fn upscale_inner(
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
     emit_progress(core, GenPhase::Generating, label, None, None, t0);
-    let client = SdClient::new(core.local.clone(), base);
     let b64 = base64::engine::general_purpose::STANDARD.encode(src.bytes.as_slice());
     let req = UpscaleRequest::new(b64, Some(upscaler_stem.to_string()), 1);
     let resp = tokio::select! {
@@ -2818,13 +2847,24 @@ fn model_and_family(core: &AppCore, model_id: &str) -> CoreResult<(InstalledFile
     Ok((m, fam))
 }
 
-async fn running_engine_url(core: &AppCore) -> Option<String> {
+/// A client for the running sd-server (with its API key), if one runs.
+async fn running_engine(core: &AppCore) -> Option<SdClient> {
     if let Some(u) = core.gen.external.lock().clone() {
-        return Some(u);
+        return Some(SdClient::new(core.local.clone(), u));
     }
     let mut slot = core.gen.slot.lock().await;
-    let p = slot.proc.as_mut()?;
-    p.is_running().then(|| p.base_url())
+    let s = &mut *slot;
+    let p = s.proc.as_mut()?;
+    p.is_running()
+        .then(|| slot_client(core, p, s.api_key.as_deref()))
+}
+
+fn slot_client(core: &AppCore, p: &EngineProcess, api_key: Option<&str>) -> SdClient {
+    let client = SdClient::new(core.local.clone(), p.base_url());
+    match api_key {
+        Some(k) => client.with_api_key(k),
+        None => client,
+    }
 }
 
 fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> {

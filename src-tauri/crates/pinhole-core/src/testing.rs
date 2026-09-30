@@ -2114,6 +2114,61 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn api_key_goes_in_the_bearer_header() {
+        use pinhole_engine::testutil::{MockOptions, MockSdServer};
+        let mock = MockSdServer::start_with(MockOptions {
+            api_key: Some("k3y".into()),
+            ..MockOptions::default()
+        })
+        .await;
+        let without = pinhole_engine::SdClient::new_plain_for_tests(mock.base_url());
+        assert!(!without.is_ready().await);
+        assert!(without.capabilities().await.is_err());
+        let wrong =
+            pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("nope");
+        assert!(!wrong.is_ready().await);
+        let with =
+            pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("k3y");
+        assert!(with.is_ready().await);
+        let id = with
+            .submit(&pinhole_engine::ImgGenRequest::new("a cat", 64, 64, 1))
+            .await
+            .unwrap();
+        assert!(with.job(&id).await.is_ok());
+        assert!(
+            !format!("{with:?}").contains("k3y"),
+            "Debug leaves out the key"
+        );
+    }
+
+    #[tokio::test]
+    async fn sd_args_keep_the_api_key_off_the_command_line() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp
+            .launch_defaults
+            .extend(["--api-key", "from-yaml", "--reject-origin"].map(String::from));
+        let wiring: Vec<String> = ["--model", "/m.safetensors", "--api-key", "from-wiring"]
+            .map(String::from)
+            .to_vec();
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--api-key" || a.starts_with("from-")),
+            "{args:?}"
+        );
+        // The lock-down flag comes from the compiled-in switch only, once.
+        assert_eq!(
+            args.iter()
+                .filter(|a| *a == pinhole_engine::sdapi::REJECT_ORIGIN_FLAG)
+                .count(),
+            usize::from(crate::generate::ENGINE_LOCKDOWN),
+            "{args:?}"
+        );
+    }
+
     /// Drives the REAL sd-server (Linux) through `generate` when
     /// `PINHOLE_SD_ARCHIVE` points at the pinned `…-bin-Linux-Ubuntu-24.04-x86_64.zip`:
     /// install from the archive, launch with a bogus model file, expect the
@@ -2365,6 +2420,7 @@ mod tests {
             args: vec![],
             model_id: Some("m".into()),
             results_cached,
+            api_key: None,
         };
     }
 

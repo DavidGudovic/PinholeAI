@@ -778,6 +778,12 @@ build is shared.
   `LLAMA_API_KEY` and only `/health` stays public. **Real fix (follow-up):** ship a patched
   `sd-server` build that rejects any request carrying an `Origin` header and requires a
   per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
+  Pinhole's side is in place: every launch gets a random key in `SD_API_KEY` and every request
+  sends it as `Authorization: Bearer` (upstream ignores both). The patch (`--api-key` / env
+  `SD_API_KEY`, `--reject-origin`) is kept in a public fork until upstream takes it. When
+  `engine.yaml` pins that build, set `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` to `true`:
+  it is compiled in (not a setting), adds `--reject-origin`, and an unpatched engine then can't
+  start.
 
 ## 14. Open questions
 
