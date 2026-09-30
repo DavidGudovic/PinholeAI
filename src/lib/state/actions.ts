@@ -97,10 +97,10 @@ export function makeActions(store: Store) {
    * Mark a job as running for the whole of `work` (only one at a time). Must be called before
    * the caller's first await, so the queue hands over to the next job without a gap.
    */
-  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number): Promise<T> {
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[]): Promise<T> {
     if (get().job) throw busyError();
     cancelRequested = false;
-    dispatch({ type: "jobStart", kind, at: Date.now(), count });
+    dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
     try {
       return await work();
     } catch (e) {
@@ -115,10 +115,13 @@ export function makeActions(store: Store) {
   // Generate/Edit pressed while a job runs: the job waits here (memory only) and starts when
   // the running one ends. Its promise settles when it has run, so the tab that queued it can
   // show its error. Removed or Reset jobs resolve quietly without running.
+  let resetting = false;
   const waiting = new Map<string, { run: () => Promise<void>; resolve: () => void; reject: (e: unknown) => void }>();
 
   /** Run `run` now if nothing is running, else queue it. `run` must start its job (withJob) before its first await. */
   function enqueue(entry: Omit<QueuedJob, "id">, run: () => Promise<void>): Promise<void> {
+    // Pressed while Reset is clearing the session: it belongs to the cleared session.
+    if (resetting) return Promise.resolve();
     if (!willQueue(get())) return run();
     const id = uid("q");
     return new Promise<void>((resolve, reject) => {
@@ -134,7 +137,7 @@ export function makeActions(store: Store) {
     if (!next) return;
     const w = waiting.get(next.id);
     waiting.delete(next.id);
-    // Start it before dropping it from the queue, so its images stay referenced throughout.
+    // Start it before dropping it from the queue: the running job references its images from then on.
     const p = w ? w.run() : Promise.resolve();
     dispatch({ type: "queueRemove", id: next.id });
     if (w) p.then(w.resolve, w.reject);
@@ -427,7 +430,9 @@ export function makeActions(store: Store) {
     try {
       await enqueue(queueEntry("edit", text, opts.model, 1, [source.id, ...second]), () =>
         // The job (and with it the history lock) starts before the first await.
-        withJob("edit", async () => {
+        withJob(
+          "edit",
+          async () => {
           const nonce = get().sessionNonce;
           const ui = opts.model.familyId ? await ensureFamilyUi(opts.model.familyId).catch(() => null) : null;
           if (opts.mask) maskId = (await api.importImage(new Uint8Array(await opts.mask.arrayBuffer()))).id;
@@ -453,7 +458,10 @@ export function makeActions(store: Store) {
             releaseRefs(refs, true);
             if (refs[0]) toast("The edit finished after the image changed, so it wasn't added.");
           }
-        }).then(() => undefined),
+          },
+          1,
+          [source.id, ...second],
+        ).then(() => undefined),
       );
     } catch (e) {
       const err = api.asCoreError(e);
@@ -478,11 +486,16 @@ export function makeActions(store: Store) {
 
   // ---------------------------------------------------------------- session
   async function clearSession() {
-    clearQueue();
-    if (get().job) await cancel();
-    await api.clearSession().catch(() => undefined);
-    clearGenerationHandoff();
-    dispatch({ type: "clearSession" });
+    resetting = true;
+    try {
+      clearQueue();
+      if (get().job) await cancel();
+      await api.clearSession().catch(() => undefined);
+      clearGenerationHandoff();
+      dispatch({ type: "clearSession" });
+    } finally {
+      resetting = false;
+    }
     toast("Reset: prompt fields and unsaved images were cleared.");
   }
 

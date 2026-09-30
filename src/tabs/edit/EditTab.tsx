@@ -209,7 +209,15 @@ export function EditTab() {
           ? await mask.current?.exportPng()
           : null;
       const startIndex = store.getState().edit.index;
-      await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
+      // Queued or started by now: the next press may queue another edit.
+      const done = actions.runEdit({
+        mode,
+        model,
+        mask: m ?? null,
+        size: outSize!,
+      });
+      running.current = false;
+      await done;
       if (store.getState().edit.index > startIndex) {
         setCompare(true);
         setCompareWith("previous");

@@ -119,6 +119,8 @@ export interface Job {
   startedAt: number;
   /** How many images the job makes (the strip's placeholders); not the current dial. */
   count?: number;
+  /** Session images it reads (kept until it ends). */
+  imageIds?: string[];
 }
 
 /**
@@ -258,7 +260,7 @@ export type Action =
   | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[] }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
-  | { type: "jobStart"; kind: JobKind; at: number; count?: number }
+  | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
   | { type: "queueAdd"; job: QueuedJob }
@@ -334,8 +336,9 @@ export function loraCompatible(lora: InstalledLora, modelFamily: string | null |
 }
 
 /** Every session image id the UI still shows. */
-export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue">>): Set<string> {
+export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job">>): Set<string> {
   const ids = new Set<string>();
+  for (const id of s.job?.imageIds ?? []) ids.add(id);
   for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);
   for (const n of s.edit.chain) ids.add(n.imageId);
@@ -531,7 +534,10 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, results, selectedResultId };
     }
     case "jobStart":
-      return { ...s, job: { kind: a.kind, progress: null, startedAt: a.at, ...(a.count != null ? { count: a.count } : {}) } };
+      return {
+        ...s,
+        job: { kind: a.kind, progress: null, startedAt: a.at, ...(a.count != null ? { count: a.count } : {}), ...(a.imageIds ? { imageIds: a.imageIds } : {}) },
+      };
     case "jobProgress":
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
     case "jobEnd":

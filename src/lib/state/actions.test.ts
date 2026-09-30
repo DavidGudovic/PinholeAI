@@ -396,4 +396,41 @@ describe("queue", () => {
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r1", "r2"]);
     expect(store.getState().edit.index).toBe(2);
   });
+
+  it("keeps a queued edit's second image until the edit has run, even if it was removed meanwhile", async () => {
+    const { store, actions } = setup();
+    const edit: InstalledModel = { ...model, id: "e", modes: ["edit"], isEditModel: true };
+    store.dispatch({ type: "setModels", models: [model, edit] });
+    const first = actions.generateCreate();
+    await tick();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetSecond", ref: ref("two") });
+    store.dispatch({ type: "patchEdit", patch: { instruction: "put the logo on the mug" } });
+    const queued = actions.runEdit({ mode: "instruction", model: edit, mask: null, size: [64, 64] });
+    store.dispatch({ type: "editSetSecond", ref: null });
+    pending!({ images: [img("c")] } as GenerateResult);
+    await first;
+    await tick();
+    // Running now: image 2 is still held (not discarded in the engine's session).
+    expect(store.getState().images.two).toBeDefined();
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].refImageIds).toEqual(["a", "two"]);
+    pending!({ images: [img("r")] } as GenerateResult);
+    await queued;
+    expect(store.getState().images.two).toBeUndefined();
+  });
+
+  it("ignores a Generate pressed while Reset is clearing the session", async () => {
+    const { store, actions } = setup();
+    const first = actions.generateCreate();
+    await tick();
+    const reset = actions.clearSession();
+    await actions.generateCreate();
+    expect(store.getState().queue).toEqual([]);
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await first;
+    await reset;
+    await tick();
+    expect(apiMod.generate).toHaveBeenCalledTimes(1);
+    expect(store.getState().job).toBeNull();
+  });
 });
