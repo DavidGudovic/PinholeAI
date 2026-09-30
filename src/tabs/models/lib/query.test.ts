@@ -3,6 +3,7 @@ import type { CatalogCard } from "../../../lib/types";
 import {
   addTotals,
   changedFilterCount,
+  forModelOf,
   defaultFilters,
   FALLBACK_OPTIONS,
   filtersKey,
@@ -117,6 +118,15 @@ describe("filtersKey / changedFilterCount", () => {
     expect(changedFilterCount({ ...base, tags: ["edit", "animals"] }, base)).toBe(1);
     expect(changedFilterCount({ ...base, runsOnMyCard: true }, base)).toBe(1);
     expect(changedFilterCount({ ...base, kind: "styleAddons", runsOnMyCard: true }, { ...base, kind: "styleAddons" })).toBe(0);
+  });
+  it("narrows style add-ons to one model, and only style add-ons", () => {
+    const addons = { ...base, kind: "styleAddons" as const };
+    expect(forModelOf({ ...addons, forModel: "juggernaut" })).toBe("juggernaut");
+    expect(forModelOf({ ...base, forModel: "juggernaut" })).toBeNull();
+    expect(filtersKey({ ...addons, forModel: "juggernaut" })).not.toBe(filtersKey(addons));
+    expect(filtersKey({ ...base, forModel: "juggernaut" })).toBe(filtersKey(base));
+    // Picking the model isn't a filter to clear: it stays like the kind does.
+    expect(changedFilterCount({ ...addons, forModel: "juggernaut" }, addons)).toBe(0);
   });
 });
 

@@ -16,6 +16,7 @@ import { sendGenerationToCreate } from "../create/handoff";
 import { GroupProgress, Skeleton, VramLine } from "./controls";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { isActive, ratioPercent } from "./lib/words";
+import { UseAddonButton, useInstalledLoraId } from "./UseAddon";
 
 // Image loading is local to this page (not ./lib/preview) so it doesn't depend
 // on the Browse grid's loader. At most a few fetches run at once. Bytes come
@@ -247,6 +248,7 @@ function Header({
   const ratio = ratioPercent(card.thumbsUpRatio);
   // Opened from Installed: only what the local file knows, so leave out what would read as 0 or "OK" by default.
   const sparse = card.downloadCount === 0 && card.creator === null;
+  const loraId = useInstalledLoraId(isLora && installed ? card.versionId : null);
 
   let action: ReactNode;
   if (card.blockedReason)
@@ -259,8 +261,11 @@ function Header({
   else if (downloading && group) action = <GroupProgress group={group} onCancel={() => void cancelGroup(group.groupId)} />;
   else if (installed)
     action = (
-      <div className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-4 text-sm font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-        <Check className="h-4 w-4" /> Installed
+      <div className="flex items-center gap-2">
+        <div className="flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-50 px-4 text-sm font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+          <Check className="h-4 w-4" /> Installed
+        </div>
+        {loraId && <UseAddonButton loraId={loraId} name={card.name} size="md" />}
       </div>
     );
   else

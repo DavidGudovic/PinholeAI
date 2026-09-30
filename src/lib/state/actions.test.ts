@@ -169,3 +169,40 @@ describe("Paste from CivitAI", () => {
     expect(store.getState().create.prompt).toBe("a castle in fog");
   });
 });
+
+describe("Use a style add-on", () => {
+  const lora = (id: string, familyId: string | null) => ({
+    id,
+    friendlyName: id,
+    familyId,
+    baseModel: familyId ? "SDXL 1.0" : null,
+    trainedWords: [],
+    sizeBytes: 1,
+    civitaiModelId: null,
+    civitaiVersionId: null,
+  });
+
+  it("adds it to Create once, at the default strength, and opens Create", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setTab", tab: "models" });
+    store.dispatch({ type: "setLoras", loras: [lora("film", null)] });
+    actions.addLora("film");
+    actions.addLora("film");
+    expect(store.getState().create.loras).toEqual([{ loraId: "film", weight: 0.8 }]);
+    expect(store.getState().tab).toBe("create");
+  });
+
+  it("ignores an add-on that isn't installed", () => {
+    const { store, actions } = setup();
+    actions.addLora("gone");
+    expect(store.getState().create.loras).toEqual([]);
+  });
+
+  it("says when the add-on is made for other models", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models: [{ ...model, familyId: "flux1_dev" }] });
+    store.dispatch({ type: "setLoras", loras: [lora("xl", "sdxl")] });
+    actions.addLora("xl");
+    expect(store.getState().toasts.at(-1)?.text).toMatch(/made for SDXL 1.0 models/);
+  });
+});

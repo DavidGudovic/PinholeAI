@@ -282,6 +282,9 @@ export function baseArch(familyId: string | null | undefined): string | null {
   return familyId;
 }
 
+/** Strength a newly added style add-on starts at. */
+export const DEFAULT_LORA_WEIGHT = 0.8;
+
 export function loraCompatible(lora: InstalledLora, modelFamily: string | null | undefined): boolean {
   if (!lora.familyId || !modelFamily) return true;
   return baseArch(lora.familyId) === baseArch(modelFamily);

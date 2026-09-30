@@ -21,8 +21,9 @@ pub async fn catalog_filters(
 pub async fn browse_catalog(
     core: State<'_, Arc<AppCore>>,
     query: BrowseQuery,
+    for_family: Option<String>,
 ) -> Result<BrowsePage, CoreError> {
-    pinhole_core::catalog::browse(&core, query).await
+    pinhole_core::catalog::browse(&core, query, for_family).await
 }
 
 /// Preview image bytes → `ArrayBuffer` in JS (the WebView makes no network calls).

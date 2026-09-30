@@ -109,6 +109,33 @@ impl CatalogEnv for RegistryEnv<'_> {
     }
 }
 
+/// Narrows another environment to a few CivitAI base models ("style add-ons
+/// for this model"): a version with any other base model counts as incompatible.
+pub struct OnlyBaseModels<'a, E: CatalogEnv + ?Sized> {
+    pub inner: &'a E,
+    pub base_models: &'a [String],
+}
+
+impl<E: CatalogEnv + ?Sized> CatalogEnv for OnlyBaseModels<'_, E> {
+    fn family_for(&self, base_model: &str, sha256: Option<&str>) -> Option<FamilyInfo> {
+        self.inner.family_for(base_model, sha256)
+    }
+
+    fn is_compatible(&self, base_model: &str) -> bool {
+        let b = base_model.trim();
+        self.base_models.iter().any(|x| x.eq_ignore_ascii_case(b))
+            && self.inner.is_compatible(base_model)
+    }
+
+    fn vram_for(&self, family_id: &str, main_bytes: u64) -> Option<(VramNeed, Fit)> {
+        self.inner.vram_for(family_id, main_bytes)
+    }
+
+    fn is_installed(&self, version_id: u64, sha256: Option<&str>) -> bool {
+        self.inner.is_installed(version_id, sha256)
+    }
+}
+
 /// Browse-time context.
 pub struct CardContext<'a> {
     pub filters: &'a CatalogFilters,
@@ -399,6 +426,24 @@ pub(crate) mod tests {
         fn is_installed(&self, version_id: u64, _sha: Option<&str>) -> bool {
             self.installed_versions.contains(&version_id)
         }
+    }
+
+    #[test]
+    fn only_base_models_narrows_compatibility() {
+        let inner = env();
+        let bases = vec!["SDXL 1.0".to_string(), "Pony".to_string()];
+        let narrowed = OnlyBaseModels {
+            inner: &inner,
+            base_models: &bases,
+        };
+        assert!(narrowed.is_compatible("SDXL 1.0"));
+        assert!(narrowed.is_compatible("Pony"));
+        assert!(
+            !narrowed.is_compatible("SD 1.5"),
+            "runs in Pinhole, but not this model's add-on"
+        );
+        assert!(!narrowed.is_compatible("Unknown"));
+        assert!(narrowed.is_installed(789646, None));
     }
 
     fn page() -> ModelsPage {

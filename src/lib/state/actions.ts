@@ -5,7 +5,7 @@
 
 import * as api from "../api";
 import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, ResultImage } from "../types";
-import { editModels, isActiveDownload, type EditMode, type ImgRef, type JobKind, type TabId, type Toast } from "./model";
+import { DEFAULT_LORA_WEIGHT, editModels, isActiveDownload, loraCompatible, type EditMode, type ImgRef, type JobKind, type TabId, type Toast } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
@@ -216,6 +216,23 @@ export function makeActions(store: Store) {
     dispatch({ type: "setTab", tab });
   }
 
+  /** Use an installed style add-on in Create (strength 0.8, adjustable under the prompt). */
+  function addLora(loraId: string) {
+    const s = get();
+    const lora = s.loras.find((l) => l.id === loraId);
+    if (!lora) return;
+    if (!s.create.loras.some((u) => u.loraId === loraId)) {
+      dispatch({ type: "patchCreate", patch: { loras: [...s.create.loras, { loraId, weight: DEFAULT_LORA_WEIGHT }] } });
+    }
+    setTab("create");
+    const model = s.models?.find((m) => m.id === s.create.modelId);
+    toast(
+      model && !loraCompatible(lora, model.familyId)
+        ? `Added “${lora.friendlyName}”, but it's made for ${lora.baseModel ?? "other"} models. Pick one of those to use it.`
+        : `Added “${lora.friendlyName}”.`,
+    );
+  }
+
   function sendToEdit(id: string) {
     const ref = get().images[id];
     if (!ref) return;
@@ -356,6 +373,7 @@ export function makeActions(store: Store) {
     copyImage,
     copyTextToClipboard,
     setTab,
+    addLora,
     sendToEdit,
     sendToDescribe,
     useAsPrompt,

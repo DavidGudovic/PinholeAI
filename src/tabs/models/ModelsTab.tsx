@@ -10,12 +10,12 @@ import { DownloadsPanel } from "./DownloadsPanel";
 import { InstalledView } from "./InstalledView";
 import { useTauriEvent } from "./lib/hooks";
 import { useIsVisible } from "./lib/preview";
-import { getLastView, rememberView } from "./lib/session";
+import { getLastView, hasAddonRequest, onAddonRequest, rememberView } from "./lib/session";
 
 type View = "browse" | "installed";
 
 export function ModelsTab() {
-  const [view, setViewState] = useState<View>(() => getLastView() ?? "browse");
+  const [view, setViewState] = useState<View>(() => (hasAddonRequest() ? "browse" : (getLastView() ?? "browse")));
   const [settings, setLocalSettings] = useState<Settings | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
   const [installedCount, setInstalledCount] = useState<number | null>(null);
@@ -32,6 +32,16 @@ export function ModelsTab() {
     rememberView(v);
     setViewState(v);
   };
+
+  // "Find style add-ons" from Create or Installed opens Browse.
+  useEffect(
+    () =>
+      onAddonRequest(() => {
+        rememberView("browse");
+        setViewState("browse");
+      }),
+    [],
+  );
 
   useEffect(() => {
     getSettings()

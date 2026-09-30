@@ -1,6 +1,7 @@
 // Mock handlers for the catalog area (CivitAI browser, previews, install plans, API key).
 // See ./index.ts. No network: preview images are drawn on a canvas.
 import type { MockTable } from "./index";
+import { baseArch } from "../state/model";
 import type { BrowsePage, BrowseQuery, CatalogCard, CatalogFilterOptions, CoreError, InstallPlan, VramNeed } from "../types";
 import { mockFlags, mockSettings } from "./app";
 import { COMPONENTS, FAMILIES, installedComponents, sizeFor, isVersionInstalled, modelsChanged, registerLora, registerModel, startMockDownload } from "./models";
@@ -277,7 +278,7 @@ const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
 const mockTagMatches = (e: Entry, tag: string) =>
   tag === "nsfw" ? isAdultEntry(e) : tag === "edit" ? /\bedit\b|kontext/i.test(e.name) || e.baseModel === "Flux.1 Kontext" : (e.versionId + tag.length) % 3 === 0;
 
-async function browse(q: BrowseQuery): Promise<BrowsePage> {
+async function browse(q: BrowseQuery, forFamily: string | null = null): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
   // Rust: no request; the cursor is handed back unchanged.
   if (mockSettings().offline) return { items: [], nextCursor: q.cursor, offline: true, partial: false, checked: 0, hiddenByContent: 0, hiddenByFilters: 0, hiddenBySize: 0 };
@@ -293,6 +294,7 @@ async function browse(q: BrowseQuery): Promise<BrowsePage> {
   let server = allEntries().filter((e) => {
     if (q.kind === "models" ? e.type !== "Checkpoint" : e.type !== "LORA") return false;
     if (q.compatibleOnly && !e.compatible) return false;
+    if (forFamily && (!e.familyId || baseArch(e.familyId) !== baseArch(forFamily))) return false;
     if (commercial && !e.commercialOk) return false;
     if (maxDays != null && e.createdDaysAgo > maxDays) return false;
     if (text && !`${e.name} ${e.creator} ${e.baseModel}`.toLowerCase().includes(text)) return false;
@@ -659,7 +661,7 @@ const FILTERS: CatalogFilterOptions = {
 
 const table: MockTable = {
   catalog_filters: async () => FILTERS,
-  browse_catalog: (a) => browse(a.query as BrowseQuery),
+  browse_catalog: (a) => browse(a.query as BrowseQuery, (a.forFamily as string | null | undefined) ?? null),
   fetch_preview: (a) => fetchPreview(String(a.url)),
   plan_civitai_install: async (a) => {
     await sleep(500);

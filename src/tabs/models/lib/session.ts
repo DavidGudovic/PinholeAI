@@ -17,6 +17,26 @@ export const rememberFilters = (f: BrowseFilters) => {
   lastFilters = f;
 };
 
+/** "Find style add-ons for this model" from Create or Installed: Browse picks it up. */
+let pendingAddons: string | null = null;
+const addonListeners = new Set<(modelId: string) => void>();
+
+export const requestAddonBrowse = (modelId: string) => {
+  pendingAddons = modelId;
+  for (const l of addonListeners) l(modelId);
+};
+export const hasAddonRequest = () => pendingAddons !== null;
+/** The model id asked for (once), or null. */
+export const takeAddonRequest = () => {
+  const id = pendingAddons;
+  pendingAddons = null;
+  return id;
+};
+export const onAddonRequest = (cb: (modelId: string) => void) => {
+  addonListeners.add(cb);
+  return () => void addonListeners.delete(cb);
+};
+
 export const getLastView = () => lastView;
 export const rememberView = (v: "browse" | "installed") => {
   lastView = v;
