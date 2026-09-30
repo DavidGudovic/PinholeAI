@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { Logo } from "./components/Logo";
 import { Toasts } from "./components/Toasts";
 import { TopBar } from "./components/TopBar";
-import { Spinner } from "./components/ui";
+import { ShortcutsList } from "./components/ShortcutsList";
+import { Button, Dialog, Spinner } from "./components/ui";
 import { FirstRun } from "./firstrun/FirstRun";
+import { runShortcut } from "./lib/shortcuts";
 import type { Settings } from "./lib/types";
 import { AppProvider, runPrimaryAction, useActions } from "./lib/state/AppProvider";
 import type { TabId } from "./lib/state/model";
@@ -47,14 +49,27 @@ function Shell() {
   const actions = useActions();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [firstRunClosed, setFirstRunClosed] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   useTheme(settings?.theme);
 
   // Settings saved anywhere in the UI (sheet, first run) → apply immediately (theme, trigger words…).
   useEffect(() => onSettingsChanged((s) => dispatch({ type: "setSettings", settings: s })), [dispatch]);
 
-  // Ctrl/Cmd+Enter → the current tab's main action (Generate / Edit / Describe).
+  // Ctrl/Cmd+Enter → the current tab's main action (Generate / Edit / Describe);
+  // E / D / S / F / R and Ctrl/Cmd+Shift+S → see lib/shortcuts.ts; ? → the shortcuts list.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable);
+      if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing && !document.querySelector('[role="dialog"]')) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (runShortcut(e, tab)) {
+        e.preventDefault();
+        return;
+      }
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
         // Holding the keys would add a job to the queue per key repeat.
         if (e.repeat) {
@@ -120,6 +135,14 @@ function Shell() {
           void actions.refreshSettings().catch(() => undefined);
         }}
       />
+      <Dialog
+        open={shortcutsOpen}
+        onClose={() => setShortcutsOpen(false)}
+        title="Keyboard shortcuts"
+        footer={<Button onClick={() => setShortcutsOpen(false)}>Close</Button>}
+      >
+        <ShortcutsList />
+      </Dialog>
       <Toasts />
     </div>
   );
