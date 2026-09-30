@@ -26,6 +26,9 @@ import { useFitBox } from "./useFitBox";
 
 type SizeChoice = EditSizeChoice;
 
+// Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
+const TWO_IMAGE_PICKS = ["qwen_image_edit_2511"];
+
 const EDIT_JOBS = ["edit"] as const;
 
 export function EditTab() {
@@ -98,10 +101,13 @@ export function EditTab() {
   const loadSecond = async (f: File) => {
     if (store.getState().job?.kind === "edit") return;
     setError(null);
+    setImporting(true); // Apply waits for image 2
     try {
       await actions.importSecondToEdit(f);
     } catch (err) {
       setError(api.asCoreError(err));
+    } finally {
+      setImporting(false);
     }
   };
   const secondPicker = useFilePicker((f) => void loadSecond(f));
@@ -197,14 +203,15 @@ export function EditTab() {
                         : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
-                <RecommendedCards roles={twoImages ? ["edit"] : ["edit", "edit_alt"]} compact />
+                <RecommendedCards roles={twoImages ? ["edit"] : ["edit", "edit_alt"]} families={twoImages ? TWO_IMAGE_PICKS : undefined} compact />
               </div>
             ) : (
               <>
                 <ModelPicker models={edits} value={editModelId} onChange={(id) => dispatch({ type: "patchEdit", patch: { editModelId: id } })} label="Edit model" />
                 {editFit && editFit !== "fits" && !noGpu && (
                   <RecommendedCards
-                    roles={["edit", "edit_alt"]}
+                    roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                    families={twoImages ? TWO_IMAGE_PICKS : undefined}
                     compact
                     offers="all"
                     heading={
@@ -298,7 +305,7 @@ export function EditTab() {
                   </IconButton>
                 </div>
               ) : (
-                <Button size="sm" variant="ghost" disabled={myJob} onClick={secondPicker.open} title="Use something from another picture, like an object or a logo">
+                <Button size="sm" variant="ghost" disabled={myJob || importing} onClick={secondPicker.open} title="Use something from another picture, like an object or a logo">
                   <ImagePlus className="h-3.5 w-3.5" /> Add another image
                 </Button>
               )}
