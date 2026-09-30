@@ -40,7 +40,7 @@ export function UseNotice(props: { onAgreed: () => void }) {
           Pinhole makes pictures on your computer. Your prompts and images stay on your computer.
         </p>
 
-        <h2 className="mt-6 text-sm font-semibold">Please don't use Pinhole to make:</h2>
+        <h2 className="mt-6 text-sm font-semibold">Pinhole isn't for making:</h2>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-neutral-700 dark:text-neutral-300">
           <li>sexual images of anyone under 18, or of anyone who looks under 18</li>
           <li>sexual or intimate images of a real person without their consent</li>
@@ -48,8 +48,7 @@ export function UseNotice(props: { onAgreed: () => void }) {
           <li>fake documents, IDs, receipts or evidence</li>
         </ul>
         <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
-          You're responsible for the pictures you make, for following the laws where you live, and for each model's
-          licence.
+          You're responsible for the pictures you make and for following each model's licence.
         </p>
 
         <div className="mt-6 rounded-xl border border-neutral-200 bg-white p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
