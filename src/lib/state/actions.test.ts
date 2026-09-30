@@ -98,6 +98,14 @@ describe("use as image 2", () => {
     store.dispatch({ type: "editSetSecond", ref: ref("b") });
     actions.sendToEditSecond("b");
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(store.getState().edit.secondImageId).toBeNull();
+  });
+
+  it("does nothing when the image is already image 1", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    actions.sendToEditSecond("a");
+    expect(store.getState().edit.secondImageId).toBeNull();
   });
 });
 

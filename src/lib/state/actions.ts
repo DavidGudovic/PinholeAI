@@ -366,8 +366,14 @@ export function makeActions(store: Store) {
       toast("Wait for the edits in progress to finish first.");
       return;
     }
-    if (!get().edit.chain.length) {
+    const edit = get().edit;
+    if (edit.chain.length && edit.chain[edit.index]?.imageId === id) {
+      toast("That's already image 1. Pick a different image for image 2.");
+      return;
+    }
+    if (!edit.chain.length) {
       dispatch({ type: "editLoad", ref });
+      if (edit.secondImageId === id) dispatch({ type: "editSetSecond", ref: null });
       toast("Loaded as image 1. Pick another image to use as image 2.");
     } else {
       dispatch({ type: "editSetSecond", ref });
