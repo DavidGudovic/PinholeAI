@@ -2,33 +2,24 @@
 // and a strip of every image made this session (in memory until Save).
 import { memo, useEffect, useState } from "react";
 import {
-  ChevronDown,
   Copy,
   ImageUp,
   Maximize2,
-  Save,
   ScanText,
   Shuffle,
   Trash,
   WandSparkles,
 } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
+import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { ImageViewer } from "../../components/ImageViewer";
 import { Logo } from "../../components/Logo";
-import {
-  Button,
-  IconButton,
-  Kbd,
-  MenuItem,
-  Popover,
-  cx,
-  focusRing,
-} from "../../components/ui";
+import { Button, IconButton, Kbd, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
 import type { ImgRef } from "../../lib/state/model";
-import { canSaveAs, modKey } from "../../lib/state/platform";
+import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 
@@ -122,9 +113,6 @@ function EmptyResults() {
   );
 }
 
-/** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
-const UPSCALE_MAX_SIDE = 8192;
-
 function Preview({
   result,
   img,
@@ -138,10 +126,6 @@ function Preview({
   const busy = useAppState((s) => !!s.job);
   const hasBatch = useAppState((s) => !!s.resultBatch[result.id]);
   const [error, setError] = useState<CoreError | null>(null);
-  const [saving, setSaving] = useState(false);
-  // The upscaler always runs at 4× first (2× is 4× halved), up to 8192 px per side.
-  const tooBigToUpscale =
-    result.width * 4 > UPSCALE_MAX_SIDE || result.height * 4 > UPSCALE_MAX_SIDE;
 
   const run = async (f: () => Promise<unknown>) => {
     setError(null);
@@ -165,53 +149,7 @@ function Preview({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <div className="inline-flex">
-          <Button
-            variant="secondary"
-            className={cx(canSaveAs() && "rounded-r-none")}
-            disabled={saving}
-            onClick={() => {
-              // The toast from actions.save confirms it; a double-click must not write two files.
-              if (saving) return;
-              setSaving(true);
-              void run(() => actions.save(result.id)).finally(() =>
-                setSaving(false),
-              );
-            }}
-          >
-            <Save className="h-4 w-4" /> Save
-          </Button>
-          {canSaveAs() && (
-            <Popover
-              align="end"
-              width={180}
-              trigger={(p) => (
-                <button
-                  {...p}
-                  type="button"
-                  aria-label="More save options"
-                  className={cx(
-                    "inline-flex h-9 items-center rounded-r-lg border border-l-0 border-neutral-200 bg-white px-1.5 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:hover:bg-neutral-700",
-                    focusRing,
-                  )}
-                >
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-              )}
-            >
-              {(close) => (
-                <MenuItem
-                  onClick={() => {
-                    close();
-                    void run(() => actions.saveAs(result.id, result.seed));
-                  }}
-                >
-                  Save as…
-                </MenuItem>
-              )}
-            </Popover>
-          )}
-        </div>
+        <SaveButton id={result.id} seed={result.seed} run={run} />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
@@ -229,37 +167,12 @@ function Preview({
         >
           <Shuffle className="h-4 w-4" /> Variations
         </Button>
-        <Popover
-          width={200}
-          trigger={(p) => (
-            <Button {...p} disabled={busy}>
-              <ImageUp className="h-4 w-4" /> Upscale{" "}
-              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-            </Button>
-          )}
-        >
-          {(close) => (
-            <>
-              {([2, 4] as const).map((f) => (
-                <MenuItem
-                  key={f}
-                  disabled={tooBigToUpscale}
-                  hint={
-                    tooBigToUpscale
-                      ? `Too large to upscale (max ${UPSCALE_MAX_SIDE / 4} px per side)`
-                      : `${result.width * f}×${result.height * f}`
-                  }
-                  onClick={() => {
-                    close();
-                    void run(() => actions.upscale(result.id, f));
-                  }}
-                >
-                  Upscale {f}×
-                </MenuItem>
-              ))}
-            </>
-          )}
-        </Popover>
+        <UpscaleMenu
+          width={result.width}
+          height={result.height}
+          disabled={busy}
+          onPick={(f) => void run(() => actions.upscale(result.id, f))}
+        />
         <IconButton
           label="View full screen"
           variant="secondary"

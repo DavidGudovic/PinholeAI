@@ -11,7 +11,7 @@ import {
   ImagePlus,
   Maximize2,
   Redo2,
-  Save,
+  RefreshCw,
   ScanText,
   SlidersHorizontal,
   Trash,
@@ -26,6 +26,7 @@ import {
   useImagePaste,
 } from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
+import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { LiveJobProgress } from "../../components/JobProgress";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
@@ -54,18 +55,20 @@ import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
   createModels,
   editModels,
+  isEditJob,
   type ChangeAmount,
   type EditMode,
 } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import {
+  buildEditRequest,
   editOutputSize,
   settingsSummary,
   type EditSizeChoice,
 } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "../create/AddonChips";
-import { LoraSection } from "../create/FineTune";
+import { LoraSection, PromptPreview } from "../create/FineTune";
 import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
@@ -75,7 +78,7 @@ type SizeChoice = EditSizeChoice;
 // Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
 const TWO_IMAGE_PICKS = ["qwen_image_edit_2511"];
 
-const EDIT_JOBS = ["edit"] as const;
+const EDIT_JOBS = ["edit", "editUpscale"] as const;
 
 export function EditTab() {
   const tab = useAppState((s) => s.tab);
@@ -104,6 +107,8 @@ export function EditTab() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const mask = useRef<MaskHandle>(null);
+  // The mask each edit was made with (by result image), so "Try again" repaints the same area.
+  const masks = useRef(new Map<string, Blob | null>());
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
 
@@ -154,11 +159,11 @@ export function EditTab() {
         sizeMultiple(model?.familyId),
       )
     : null;
-  const myJob = jobKind === "edit";
+  const myJob = isEditJob(jobKind);
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
-    if (store.getState().job?.kind === "edit") return;
+    if (isEditJob(store.getState().job?.kind)) return;
     setError(null);
     setImporting(true);
     try {
@@ -174,7 +179,7 @@ export function EditTab() {
   const picker = useFilePicker((f) => void load(f));
 
   const loadSecond = async (f: File) => {
-    if (store.getState().job?.kind === "edit") return;
+    if (isEditJob(store.getState().job?.kind)) return;
     setError(null);
     setImporting(true); // Apply waits for image 2
     try {
@@ -191,11 +196,24 @@ export function EditTab() {
   useEffect(() => {
     mask.current?.clear();
   }, [node?.imageId]);
+  // Another image (or Reset) starts a new history.
+  const originalId = e.chain[0]?.imageId;
+  useEffect(() => {
+    masks.current.clear();
+  }, [originalId]);
 
   // Set before the first await (the mask export), so a second click or Ctrl+Enter
   // during the export doesn't get as far as the job and report "still working".
   const running = useRef(false);
-  const run = async () => {
+  // What "Retry" on an error repeats (the last edit, Try again, upscale or save).
+  // Kept as data, not a closure, so Retry runs with the current screen's state.
+  const retry = useRef<
+    | { kind: "edit"; again: boolean }
+    | { kind: "upscale"; factor: 2 | 4 }
+    | { kind: "action"; f: () => Promise<unknown> }
+  >({ kind: "edit", again: false });
+  // `again`: redo the shown edit from the step before it, with a new seed ("Try again").
+  const run = async (again = false) => {
     if (
       running.current ||
       store.getState().job ||
@@ -204,14 +222,18 @@ export function EditTab() {
       !model
     )
       return;
+    const from = again ? e.index - 1 : e.index;
+    const source = e.chain[from] ? images[e.chain[from].imageId] : undefined;
+    if (!source || (again && !canTryAgain)) return;
     running.current = true;
+    retry.current = { kind: "edit", again };
     setError(null);
     try {
-      const m =
-        maskOn && painted && !twoImages
-          ? await mask.current?.exportPng()
+      const m = again
+        ? (masks.current.get(current.id) ?? null)
+        : maskOn && painted && !twoImages
+          ? ((await mask.current?.exportPng()) ?? null)
           : null;
-      const startIndex = store.getState().edit.index;
       if (fixing && !m) {
         setError({
           code: "invalid",
@@ -220,8 +242,24 @@ export function EditTab() {
         });
         return;
       }
-      await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
-      if (store.getState().edit.index > startIndex) {
+      const outFrom = editOutputSize(
+        source.width,
+        source.height,
+        size,
+        sizeMultiple(model.familyId),
+      );
+      await actions.runEdit({
+        mode,
+        model,
+        mask: m,
+        size: outFrom,
+        from,
+        newSeed: again,
+      });
+      const now = store.getState().edit;
+      const made = now.chain[now.index];
+      if (now.index === from + 1 && made && made.imageId !== current.id) {
+        masks.current.set(made.imageId, m);
         setCompare(true);
         setCompareWith("previous");
       }
@@ -232,6 +270,26 @@ export function EditTab() {
     }
   };
   usePrimaryAction("edit", () => void run());
+
+  const upscale = async (factor: 2 | 4) => {
+    if (store.getState().job || importing || !current) return;
+    retry.current = { kind: "upscale", factor };
+    setError(null);
+    try {
+      await actions.upscaleEdit(factor);
+    } catch (err) {
+      setError(api.asCoreError(err));
+    }
+  };
+  const runAction = async (f: () => Promise<unknown>) => {
+    retry.current = { kind: "action", f };
+    setError(null);
+    try {
+      await f();
+    } catch (err) {
+      setError(api.asCoreError(err));
+    }
+  };
 
   // Ctrl/Cmd+Z / Shift+Z for the edit chain (not while typing).
   useEffect(() => {
@@ -247,7 +305,7 @@ export function EditTab() {
       )
         return;
       ev.preventDefault();
-      if (store.getState().job?.kind === "edit") return;
+      if (isEditJob(store.getState().job?.kind)) return;
       const s = store.getState().edit;
       dispatch({ type: "editGoto", index: s.index + (ev.shiftKey ? 1 : -1) });
     };
@@ -256,14 +314,53 @@ export function EditTab() {
   }, [tab, dispatch, store]);
 
   const needsEditModel = mode === "instruction" && !autoEdit;
-  const text = mode === "instruction" ? e.instruction : e.restylePrompt;
+  const text =
+    mode === "instruction"
+      ? e.instruction
+      : fixing
+        ? e.fixPrompt
+        : e.restylePrompt;
+  const ready = !!current && !!model && !job && !importing && !needsEditModel;
   const canRun =
-    !!current &&
-    !!model &&
-    !job &&
-    !importing &&
-    (fixing ? painted : text.trim().length > 0 || !!e.styleId) &&
-    !needsEditModel;
+    ready && (fixing ? painted : text.trim().length > 0 || !!e.styleId);
+  // An upscale step has nothing to redo; the original has no step before it.
+  // Fix details redoes the step with the spot painted for it.
+  const canTryAgain =
+    (fixing ? ready && !!masks.current.get(current?.id ?? "") : canRun) &&
+    e.index > 0 &&
+    !!node?.meta &&
+    node.meta.kind !== "upscaled";
+  const loras = useAppState((s) => s.loras);
+  const addTriggerWords = useAppState(
+    (s) => s.settings?.addTriggerWords ?? true,
+  );
+  const previewReq = useMemo(
+    () =>
+      current && model && outSize && (text.trim() || e.styleId || fixing)
+        ? buildEditRequest(e, {
+            mode,
+            source: current,
+            model,
+            ui,
+            maskImageId: null,
+            size: outSize,
+            loras,
+            autoAdd: addTriggerWords,
+          })
+        : null,
+    [
+      e,
+      mode,
+      current,
+      model,
+      ui,
+      outSize?.[0],
+      outSize?.[1],
+      loras,
+      addTriggerWords,
+      text,
+    ],
+  );
 
   return (
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
@@ -727,6 +824,14 @@ export function EditTab() {
                     }}
                   />
                   <LoraSection model={model} target="edit" />
+                  <PromptPreview
+                    req={previewReq}
+                    empty={
+                      mode === "instruction"
+                        ? "Say what should change to see exactly what is sent."
+                        : "Describe how it should look to see exactly what is sent."
+                    }
+                  />
                 </div>
                 <p className="text-[11px] text-neutral-400">
                   {fixing
@@ -786,7 +891,12 @@ export function EditTab() {
             <ErrorWithFix
               error={error}
               onDismiss={() => setError(null)}
-              onRetry={() => void run()}
+              onRetry={() => {
+                const r = retry.current;
+                if (r.kind === "upscale") void upscale(r.factor);
+                else if (r.kind === "action") void runAction(r.f);
+                else void run(r.again);
+              }}
             />
           )}
         </div>
@@ -839,6 +949,21 @@ export function EditTab() {
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
               <Button
                 size="sm"
+                variant="ghost"
+                disabled={!canTryAgain}
+                onClick={() => void run(true)}
+                title={
+                  e.index < e.chain.length - 1
+                    ? "Make this edit again from the step before, with a new seed. Replaces it and the edits after it."
+                    : "Make this edit again from the step before, with a new seed. Replaces it."
+                }
+                aria-label="Try again"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />{" "}
+                <span className="hidden xl:inline">Try again</span>
+              </Button>
+              <Button
+                size="sm"
                 variant={compare && before ? "secondary" : "ghost"}
                 disabled={!before && e.index === 0}
                 aria-pressed={compare && !!before}
@@ -870,16 +995,19 @@ export function EditTab() {
                   <ImagePlus className="h-3.5 w-3.5" />{" "}
                   <span className="hidden xl:inline">New image</span>
                 </Button>
-                <Button
+                <UpscaleMenu
                   size="sm"
-                  onClick={() =>
-                    void actions
-                      .save(current.id)
-                      .catch((err) => setError(api.asCoreError(err)))
-                  }
-                >
-                  <Save className="h-3.5 w-3.5" /> Save
-                </Button>
+                  width={current.width}
+                  height={current.height}
+                  disabled={job || importing}
+                  onPick={(f) => void upscale(f)}
+                />
+                <SaveButton
+                  size="sm"
+                  id={current.id}
+                  seed={node?.meta?.seed ?? null}
+                  run={runAction}
+                />
                 <IconButton
                   label="Copy image"
                   size="sm"

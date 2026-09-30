@@ -210,6 +210,17 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
+model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
+is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
+and **Undo** puts back what was typed (shown while the box still holds the improved text; the
+answer is dropped if the prompt was edited meanwhile). The instruction says to keep the user's
+subject, stay safe for work while Safe mode is On, and not to write the trigger words of add-ons in
+use (taken out whole-word if it does anyway, since they are added at request time). The prompt goes
+only to the loopback llama-server, never logged or stored. Without the Describe model it offers
+the one-time download, then improves. Not in Edit: instruction edits are short commands ("make the
+sky a sunset") and a fuller rewrite would drift from what should change.
+
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
 
@@ -272,6 +283,13 @@ and VRAM need.
 history strip to work from it; **Delete this edit** removes the shown edit (never the original) and
 frees its image from memory; remaining edits are renumbered.
 
+Actions on the shown image: **Save** (with **Save as…** in the desktop app) · **Copy** ·
+**Describe** · **Upscale 2×/4×** (the upscaled image becomes the next step) · **Try again**
+(redoes the shown edit from the step before it with a new seed and the current settings, the same
+brush area included, and replaces it and any later steps; not for the original or an upscale step). Fine-tune shows the
+read-only "Final prompt sent to the model" like Create, since the style and trigger words are added
+at request time.
+
 ### 5.3 Describe (img2text)
 
 - Drop an image → **Describe**.
@@ -301,6 +319,7 @@ Two sub-views: **Browse** and **Installed**.
 | Commercial use | Any · OK for client work | `allowCommercialUse` includes `Image` |
 | Compatibility | Works with Pinhole (default on) | `baseModels=` every family in the registry |
 | Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
+| Style | Hide anime (switch, default off, remembered in Settings; models and add-ons) | client-side (CivitAI can only include one tag, never exclude; Browse keeps fetching until the page is full): hides models tagged or named anime / manga / cartoon / chibi / waifu, and whose newest version is on an anime-native base (Illustrious, NoobAI). Pony is not hidden by base, only by tags. Rules in `catalog-filters.yaml → hide_anime` |
 | Search | free text | `query` |
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models

@@ -5,7 +5,7 @@ import type { CoreError, GroupStatus } from "../lib/types";
 import { clearFinishedEverywhere } from "../tabs/models/lib/downloads";
 import { progressText, stateLabel } from "../tabs/models/lib/words";
 import { useActions } from "../lib/state/AppProvider";
-import { isActiveDownload, type TabId } from "../lib/state/model";
+import { isActiveDownload, isEditJob, type TabId } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { Logo } from "./Logo";
 import { ErrorWithFix } from "./ErrorWithFix";
@@ -22,7 +22,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const tab = useAppState((s) => s.tab);
   const jobKind = useAppState((s) => s.job?.kind ?? null);
   const actions = useActions();
-  const busyTab: TabId | null = jobKind === "edit" ? "edit" : jobKind ? "create" : null;
+  const busyTab: TabId | null = isEditJob(jobKind) ? "edit" : jobKind ? "create" : null;
 
   return (
     <header className="flex h-13 shrink-0 items-center gap-3 border-b border-neutral-200 bg-white/90 px-3 backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/90">

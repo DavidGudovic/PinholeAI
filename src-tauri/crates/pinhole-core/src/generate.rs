@@ -805,7 +805,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 /// when the chosen one isn't an edit model.
 /// Is `phrase` already in `text` as whole words (case-insensitive)? "art" is
 /// not in "heart", so a trigger word isn't skipped by a longer word.
-fn contains_phrase(text: &str, phrase: &str) -> bool {
+pub(crate) fn contains_phrase(text: &str, phrase: &str) -> bool {
     let (text, phrase) = (text.to_lowercase(), phrase.trim().to_lowercase());
     if phrase.is_empty() {
         return true;

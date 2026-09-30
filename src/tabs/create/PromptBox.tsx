@@ -7,12 +7,14 @@ import { AutoTextarea, Button, cx, focusRing } from "../../components/ui";
 import { looksLikeGenerationData } from "../../lib/paste/parse";
 import type { FamilyUi } from "../../lib/types";
 import { useAppState, useDispatch } from "../../lib/state/store";
+import { useImprovePrompt } from "./ImprovePrompt";
 
 export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | null; onOpenPaste: () => void; onApplyPasted: (text: string) => void }) {
   const prompt = useAppState((s) => s.create.prompt);
   const styleId = useAppState((s) => s.create.styleId);
   const dispatch = useDispatch();
   const area = useRef<HTMLTextAreaElement>(null);
+  const improve = useImprovePrompt(ui?.familyId);
   // Generation data pasted into the box, waiting for "Apply these settings?".
   // `base` is the prompt at paste time: the offsets only fit that text.
   const [pending, setPending] = useState<{ text: string; start: number; end: number; base: string } | null>(null);
@@ -69,8 +71,11 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
         />
         <div className="flex items-center gap-2 border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
           <StylePicker value={styleId} onChange={(id) => dispatch({ type: "patchCreate", patch: { styleId: id } })} familyId={ui?.familyId} familyLabel={ui?.label} />
+          <div className="ml-auto">{improve.button}</div>
         </div>
       </div>
+
+      {improve.notice}
 
       {pending && (
         <div className="pinhole-pop rounded-xl border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm dark:border-amber-500/30 dark:bg-amber-500/10" role="alert">

@@ -16,6 +16,8 @@ export interface BrowseFilters {
   compatibleOnly: boolean;
   /** Hide models that are too big for this computer's graphics card (models only). */
   runsOnMyCard: boolean;
+  /** Hide anime models and add-ons (remembered in Settings). */
+  hideAnime: boolean;
   /** Style add-ons: only ones made for this installed model (its id), or any. */
   forModel: string | null;
   query: string;
@@ -89,7 +91,7 @@ export function isSafeModeOff(mode: ContentMode): boolean {
  */
 export function defaultFilters(
   options: CatalogFilterOptions | null,
-  settings: Pick<Settings, "contentMode" | "showPaid"> | null,
+  settings: Pick<Settings, "contentMode" | "showPaid"> & Partial<Pick<Settings, "hideAnime">> | null,
   adultConfirmed: boolean,
 ): BrowseFilters {
   const o = options ?? FALLBACK_OPTIONS;
@@ -107,6 +109,7 @@ export function defaultFilters(
     commercialOnly: false,
     compatibleOnly: true,
     runsOnMyCard: false,
+    hideAnime: settings?.hideAnime ?? false,
     forModel: null,
     query: "",
   };
@@ -150,6 +153,7 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
     commercialOnly: f.commercialOnly,
     compatibleOnly: f.compatibleOnly,
     runsOnMyCard: f.kind === "models" && f.runsOnMyCard,
+    hideAnime: f.hideAnime,
     query: normalizeSearch(f.query),
     cursor,
   };
@@ -158,7 +162,7 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
 /** Stable key: a new key means "start over from the first page". */
 export function filtersKey(f: BrowseFilters): string {
   const q = toBrowseQuery(f, null);
-  return JSON.stringify([q.kind, q.look, q.tags, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.query, forModelOf(f)]);
+  return JSON.stringify([q.kind, q.look, q.tags, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.hideAnime, q.query, forModelOf(f)]);
 }
 
 /** The installed model style add-ons are narrowed to (only while browsing add-ons). */
@@ -168,7 +172,7 @@ export function forModelOf(f: Pick<BrowseFilters, "kind" | "forModel">): string 
 
 /** Filters that differ from the defaults (for a "Clear filters" button). */
 export function changedFilterCount(f: BrowseFilters, defaults: BrowseFilters): number {
-  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "runsOnMyCard", "query"];
+  const keys: (keyof BrowseFilters)[] = ["look", "content", "price", "sort", "period", "commercialOnly", "compatibleOnly", "runsOnMyCard", "hideAnime", "query"];
   // "Runs on my card" is hidden (and not sent) for style add-ons.
   const shown = f.kind === "models" ? keys : keys.filter((k) => k !== "runsOnMyCard");
   const tagsChanged = tagsFor(f).join() !== tagsFor(defaults).join() ? 1 : 0;

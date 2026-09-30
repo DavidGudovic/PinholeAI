@@ -21,6 +21,8 @@ vi.mock("../../lib/api", async (orig) => {
     savePreset: vi.fn(() => savePresetCall.promise),
     saveImage: vi.fn(() => saveImageCall.promise),
     previewFinalPrompt: vi.fn(async () => ({ prompt: "p", negative: null })),
+    captionerStatus: vi.fn(async () => ({ available: true, source: "default", downloadBytes: 0, running: false })),
+    improvePrompt: vi.fn(async (p: string) => `${p}, in soft light`),
   };
 });
 
@@ -199,6 +201,49 @@ describe("Paste as text", () => {
     const prompt = store.getState().create.prompt;
     expect(prompt.startsWith("a castle in fog ")).toBe(true);
     expect(prompt).toContain(data);
+  });
+});
+
+describe("Improve my prompt", () => {
+  const box = (prompt: string) => {
+    const store = createStore();
+    store.dispatch({ type: "patchCreate", patch: { prompt } });
+    withApp(store, <PromptBox ui={null} onOpenPaste={() => undefined} onApplyPasted={() => undefined} />);
+    return store;
+  };
+
+  it("needs some text first", () => {
+    box("");
+    expect((screen.getByRole("button", { name: /Improve/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("replaces the prompt and Undo puts the original back", async () => {
+    const store = box("a fox");
+    fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
+    await waitFor(() => expect(store.getState().create.prompt).toBe("a fox, in soft light"));
+    expect(api.improvePrompt).toHaveBeenCalledWith("a fox", null, []);
+    fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
+    expect(store.getState().create.prompt).toBe("a fox");
+  });
+
+  it("drops the answer when the prompt was edited meanwhile", async () => {
+    let done!: (v: string) => void;
+    vi.mocked(api.improvePrompt).mockImplementationOnce(() => new Promise<string>((r) => (done = r)));
+    const store = box("a fox");
+    fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
+    await waitFor(() => expect(api.improvePrompt).toHaveBeenCalled());
+    store.dispatch({ type: "patchCreate", patch: { prompt: "a wolf" } });
+    await act(async () => done("a fox, long text"));
+    expect(store.getState().create.prompt).toBe("a wolf");
+  });
+
+  it("offers the helper model when it isn't installed", async () => {
+    vi.mocked(api.captionerStatus).mockResolvedValueOnce({ available: false, source: null, downloadBytes: 2_750_000_000, running: false });
+    const store = box("a fox");
+    fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
+    await screen.findByRole("button", { name: /Get the helper/ });
+    expect(api.improvePrompt).not.toHaveBeenCalled();
+    expect(store.getState().create.prompt).toBe("a fox");
   });
 });
 

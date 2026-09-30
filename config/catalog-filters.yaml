@@ -107,6 +107,18 @@ tags:
     label: "NSFW"
     rule: made_for_adults
 
+# "Hide anime" switch in Browse. CivitAI's API can only include one tag, never exclude,
+# so this runs client-side (Browse keeps fetching until a page is full). A model is hidden
+# when ANY matches: one of these tags (whole tag, any case), a name word, or the newest
+# version on one of these base models. Illustrious and NoobAI are anime-native; Pony is not listed
+# because it also carries many realistic merges (those are caught by their tags).
+hide_anime:
+  label: "Hide anime"
+  tags: [anime, "anime style", "anime girl", "anime boy", "anime character", "anime screencap",
+         manga, "manga style", cartoon, "cartoon style", chibi, waifu, vtuber, donghua]
+  name_words: [anime, manga, chibi, waifu, cartoon]
+  base_models: [Illustrious, NoobAI]
+
 # Safe mode rules, like Stability Matrix's default (hide what CivitAI flags NSFW, show
 # only PG previews) plus our own checks. Tuned on live /api/v1/models data (2026-09-28;
 # samples in src-tauri/crates/pinhole-catalog/tests/fixtures/live_*.json). CivitAI's own

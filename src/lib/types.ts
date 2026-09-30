@@ -37,6 +37,8 @@ export interface Settings {
   vramOverrideGb: number | null;
   contentMode: ContentMode;
   showPaid: boolean;
+  /** Browse: hide anime models and add-ons. */
+  hideAnime: boolean;
   /** none | settings */
   savedMetadata: "none" | "settings";
   theme: "system" | "light" | "dark";
@@ -472,6 +474,8 @@ export interface BrowseQuery {
   compatibleOnly: boolean;
   /** Hide models that are Too big for this machine. */
   runsOnMyCard?: boolean;
+  /** Hide anime models and add-ons (tags, name words, anime-native base models). */
+  hideAnime?: boolean;
   query: string;
   cursor: string | null;
 }
