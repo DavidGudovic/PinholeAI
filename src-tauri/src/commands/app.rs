@@ -28,6 +28,15 @@ pub async fn set_settings(
     app::set_settings(&core, settings)
 }
 
+/// "I accept" on a model licence (RELEASE-SPEC §6).
+#[tauri::command]
+pub async fn accept_license(
+    core: State<'_, Arc<AppCore>>,
+    id: String,
+) -> Result<Settings, CoreError> {
+    pinhole_core::licence::accept_license(&core, &id)
+}
+
 #[tauri::command]
 pub async fn get_hardware(core: State<'_, Arc<AppCore>>) -> Result<HardwareView, CoreError> {
     Ok(app::hardware_view(&core))
@@ -143,6 +152,7 @@ super::area_commands![
     app_info,
     get_settings,
     set_settings,
+    accept_license,
     get_hardware,
     open_data_folder,
     open_outputs_folder,

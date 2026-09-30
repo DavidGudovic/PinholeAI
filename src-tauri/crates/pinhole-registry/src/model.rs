@@ -83,6 +83,11 @@ pub struct Family {
     pub activation_gb: f32,
     #[serde(default)]
     pub license_note: Option<String>,
+    /// Licence id the user must accept once before Pinhole downloads this family
+    /// (RELEASE-SPEC §6). Families sharing a licence share the id. Not inherited, and
+    /// `overrides.yaml` can't change it.
+    #[serde(default)]
+    pub license_accept: Option<String>,
     /// e.g. `edit` for instruction-edit families.
     #[serde(default)]
     pub role: Option<String>,
@@ -356,6 +361,11 @@ pub struct HelperSpec {
     /// Only offered while Safe mode is Off.
     #[serde(default)]
     pub needs_safe_off: bool,
+    #[serde(default)]
+    pub license_note: Option<String>,
+    /// Like [`Family::license_accept`].
+    #[serde(default)]
+    pub license_accept: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

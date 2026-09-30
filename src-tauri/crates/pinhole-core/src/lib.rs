@@ -19,6 +19,7 @@ pub mod gallery;
 pub mod generate;
 pub mod imagecheck;
 pub mod library;
+pub mod licence;
 pub mod linked;
 pub mod models;
 pub mod models_folder;

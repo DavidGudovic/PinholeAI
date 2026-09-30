@@ -566,3 +566,32 @@ fn krea2_turbo_registry_files() {
         "`download` is not inherited"
     );
 }
+
+#[test]
+fn licence_acceptance_comes_from_the_shipped_list_only() {
+    let reg = shipped();
+    assert_eq!(
+        reg.family("flux1_dev").unwrap().license_accept.as_deref(),
+        Some("flux1-dev-non-commercial")
+    );
+    // A permissive child doesn't inherit its parent's licence.
+    assert_eq!(reg.family("flux1_schnell").unwrap().license_accept, None);
+    // overrides.yaml can neither drop nor change a licence, nor add one to a helper.
+    let over = r#"
+families:
+  flux1_dev: { license_accept: null, label: "Renamed" }
+  flux2_dev: { license_accept: something-else }
+  sdxl: { license_accept: made-up }
+"#;
+    let reg = Registry::from_yaml(&shipped_yaml(), Some(over)).unwrap();
+    assert_eq!(reg.family("flux1_dev").unwrap().label, "Renamed");
+    assert_eq!(
+        reg.family("flux1_dev").unwrap().license_accept.as_deref(),
+        Some("flux1-dev-non-commercial")
+    );
+    assert_eq!(
+        reg.family("flux2_dev").unwrap().license_accept.as_deref(),
+        Some("flux2-dev-non-commercial")
+    );
+    assert_eq!(reg.family("sdxl").unwrap().license_accept, None);
+}

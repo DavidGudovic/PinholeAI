@@ -406,6 +406,10 @@ pub async fn install_civitai(
             }
         },
     };
+    // RELEASE-SPEC §6: the base model's licence is accepted once before the first download.
+    if !is_lora {
+        crate::licence::require_family(core, family.as_deref())?;
+    }
     let env = PlanEnv {
         registry: &registry,
         index: &index,

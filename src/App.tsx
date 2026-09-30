@@ -6,6 +6,7 @@ import { Toasts } from "./components/Toasts";
 import { UnsavedDialog } from "./components/UnsavedDialog";
 import { onCloseRequested } from "./lib/state/platform";
 import { BlockedNotice } from "./components/BlockedNotice";
+import { LicencePrompt } from "./components/LicencePrompt";
 import { TopBar } from "./components/TopBar";
 import { ShortcutsList } from "./components/ShortcutsList";
 import { Button, Dialog, Spinner } from "./components/ui";
@@ -114,6 +115,7 @@ function Shell() {
         <UseNotice onAgreed={() => setNoticeAgreed(true)} />
         <Toasts />
         <BlockedNotice />
+        <LicencePrompt />
       </div>
     );
   }
@@ -131,6 +133,7 @@ function Shell() {
         />
         <Toasts />
         <BlockedNotice />
+        <LicencePrompt />
       </div>
     );
   }
@@ -172,6 +175,7 @@ function Shell() {
       <UnsavedDialog />
       <Toasts />
       <BlockedNotice />
+      <LicencePrompt />
     </div>
   );
 }
