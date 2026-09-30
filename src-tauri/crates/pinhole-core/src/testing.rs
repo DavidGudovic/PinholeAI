@@ -2183,7 +2183,9 @@ mod tests {
 
         // Unknown ids are refused; a plain settings save can't add or drop one.
         assert_eq!(
-            crate::licence::accept_license(&core, "anything-goes").unwrap_err().code,
+            crate::licence::accept_license(&core, "anything-goes")
+                .unwrap_err()
+                .code,
             "invalid"
         );
         let mut st = crate::app::get_settings(&core);
@@ -2197,7 +2199,10 @@ mod tests {
         assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_ok());
         assert!(crate::licence::require_family(&core, Some("flux1_kontext")).is_ok());
         let saved = pinhole_store::settings::load(&core.data).unwrap();
-        assert_eq!(saved.accepted_licenses, vec!["flux1-dev-non-commercial".to_string()]);
+        assert_eq!(
+            saved.accepted_licenses,
+            vec!["flux1-dev-non-commercial".to_string()]
+        );
         let mut st = crate::app::get_settings(&core);
         st.accepted_licenses.clear();
         crate::app::set_settings(&core, st).unwrap();

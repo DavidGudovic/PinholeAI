@@ -267,17 +267,21 @@ prints them for a folder of test pictures.
   `config/models.yaml`, and show it on every download — not only on model cards.
 - **Explicit acceptance (done).** Families and helpers with a `license_accept` id in
   `config/models.yaml` download only after one "I accept" per licence id (shared by families
-  with the same licence). The download fails with code `license_needed` (message = the
-  `license_note`, details = the id); the UI's install wrappers show `LicencePrompt`, call
-  `accept_license` and retry. Only ids from the shipped list are accepted and only the ids are
+  with the same licence). The download fails with code `license_needed` (message = a sentence naming the
+  `license_note`, details = the id); the UI's install wrappers show `LicencePrompt` (installs
+  asking for the same id at once share one prompt), call `accept_license` and retry. Only ids from the shipped list are accepted and only the ids are
   stored (`Settings.accepted_licenses`); `set_settings` can't change them and overrides.yaml
-  can't remove a licence. Current ids:
+  can't remove a licence. No licence version is stored: a changed licence gets a new id, which
+  asks again. The prompt names the licence; a link to its full text is still open (first bullet).
+  Not covered: a user-picked family for a CivitAI file (picking FLUX.1 schnell for a dev
+  checkpoint), families added in overrides.yaml, and parts fetched for an installed model.
+  Current ids:
   - `flux1-dev-non-commercial`: FLUX.1 [dev] and FLUX.1 Kontext [dev]. The configured Kontext
-    URL is a third-party re-upload that skips Black Forest Labs' gate, so Pinhole shows the terms.
+    URL is a third-party re-upload that skips Black Forest Labs' gate, so Pinhole asks instead.
   - `flux2-dev-non-commercial`, `flux2-klein-9b-non-commercial` (FLUX Non-Commercial).
   - `krea2-community`: Krea 2 Turbo / Raw (Krea 2 Community License v1: §4.2 requires content
     filters for any deployment, §2.3 limits commercial use to < $1M yearly revenue; §3 is the
-    content filter). The mirror's own LICENSE file is empty, so Pinhole shows it.
+    content filter). The mirror's own LICENSE file is empty, so Pinhole names it and asks.
   - `anima-non-commercial` (CircleStone Labs), `stability-community` (SD 3.x).
   - `qwen-research`: Qwen-Image 2.1 (the one-click Realistic and Edit pick) and the default
     Describe helper Qwen2.5-VL-3B.

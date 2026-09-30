@@ -9,7 +9,13 @@ const LICENCES: Record<string, [id: string, note: string]> = {
   flux1_kontext: ["flux1-dev-non-commercial", "Non-commercial license"],
   flux2_dev: ["flux2-dev-non-commercial", "Non-commercial license"],
   flux2_klein_9b: ["flux2-klein-9b-non-commercial", "Non-commercial license"],
+  flux2_klein_9b_base: ["flux2-klein-9b-non-commercial", "Non-commercial license"],
   krea2_turbo: ["krea2-community", "Krea 2 Community License: commercial use only under $1M yearly revenue"],
+  krea2_raw: ["krea2-community", "Krea 2 Community License: commercial use only under $1M yearly revenue"],
+  anima: ["anima-non-commercial", "Non-commercial license"],
+  anima_turbo: ["anima-non-commercial", "Non-commercial license"],
+  sd3: ["stability-community", "Stability AI Community License"],
+  sd35_turbo: ["stability-community", "Stability AI Community License"],
   qwen_image_21: ["qwen-research", "Qwen Research License"],
   // The small Describe helper (Qwen2.5-VL 3B).
   describe: ["qwen-research", "Qwen Research License"],

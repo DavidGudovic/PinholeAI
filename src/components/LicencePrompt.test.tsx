@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { installMocks } from "../lib/mock";
 import { getSettings, installCaptioner } from "../lib/api";
+import { askLicence } from "../lib/licence";
 import { LicencePrompt } from "./LicencePrompt";
 
 beforeAll(async () => {
@@ -29,6 +30,23 @@ describe("LicencePrompt", () => {
 
     // Accepted licences aren't asked again.
     expect((await installCaptioner()).groupId).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "I accept" })).toBeNull();
+  });
+
+  it("shares one prompt for the same licence and queues other licences", async () => {
+    render(<LicencePrompt />);
+    // "Get all" can start two installs with the same licence at once.
+    const a = askLicence("lic-a", "This model comes with its own licence: A.");
+    const b = askLicence("lic-a", "This model comes with its own licence: A.");
+    const c = askLicence("lic-c", "This model comes with its own licence: C.");
+    expect(await screen.findByText(/licence: A\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "I accept" }));
+    expect(await a).toBe(true);
+    expect(await b).toBe(true);
+    // The other licence is asked next, not declined.
+    expect(await screen.findByText(/licence: C\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await c).toBe(false);
     expect(screen.queryByRole("button", { name: "I accept" })).toBeNull();
   });
 });

@@ -29,19 +29,36 @@ export function onLicenceRequest(cb: (r: LicenceRequest | null) => void): () => 
   return () => listeners.delete(cb);
 }
 
-/** Shows the prompt; resolves true on "I accept". A second request while one is open is declined. */
+interface Pending {
+  id: string;
+  message: string;
+  answer: Promise<boolean>;
+  settle: (accepted: boolean) => void;
+}
+const queue: Pending[] = [];
+
+function showNext() {
+  const next = queue[0];
+  set(next ? { id: next.id, message: next.message, resolve: next.settle } : null);
+}
+
+/** Shows the prompt; resolves true on "I accept". Asks for the same licence at once (e.g. "Get
+ *  all" starting Realistic and Edit with one licence) share one prompt; other licences wait. */
 export function askLicence(id: string, message: string): Promise<boolean> {
-  if (current) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    set({
-      id,
-      message,
-      resolve: (accepted) => {
-        set(null);
-        resolve(accepted);
-      },
-    });
+  const same = queue.find((p) => p.id === id);
+  if (same) return same.answer;
+  let settle!: (accepted: boolean) => void;
+  const answer = new Promise<boolean>((resolve) => {
+    settle = (accepted) => {
+      queue.splice(queue.indexOf(pending), 1);
+      resolve(accepted);
+      showNext();
+    };
   });
+  const pending: Pending = { id, message, answer, settle };
+  queue.push(pending);
+  if (queue.length === 1) showNext();
+  return answer;
 }
 
 /** The error an install gives when the licence wasn't accepted. */

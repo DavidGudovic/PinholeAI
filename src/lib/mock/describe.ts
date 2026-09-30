@@ -77,7 +77,8 @@ const table: MockTable = {
   install_captioner: async (a) => {
     await sleep(200);
     const seven = a.helperId === "qwen25_vl_7b";
-    requireLicence(seven ? null : "describe");
+    // Like Rust: only the default helper has a licence, asked only when its files download.
+    if ((!a.helperId || a.helperId === "describe") && !installed) requireLicence("describe");
     const groupId = startMockDownload(
       seven ? "Qwen2.5-VL 7B" : "Describe model",
       seven

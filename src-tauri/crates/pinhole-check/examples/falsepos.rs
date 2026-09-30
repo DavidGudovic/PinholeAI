@@ -8,14 +8,26 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let c = pinhole_check::Checker::new(args.next().expect("check dir").into());
     for dir in args {
-        let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .collect();
         files.sort();
-        let (mut n, mut blocked, mut intimate, mut sexual, mut child_tag, mut young_face, mut adult_faces) =
-            (0, 0, 0, 0, 0, 0, 0);
+        let (
+            mut n,
+            mut blocked,
+            mut intimate,
+            mut sexual,
+            mut child_tag,
+            mut young_face,
+            mut adult_faces,
+        ) = (0, 0, 0, 0, 0, 0, 0);
         for p in files {
             let Ok(img) = image::open(&p) else { continue };
             let mut png = Vec::new();
-            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
             let r = c.full_readings(&png).expect("readings");
             n += 1;
             let t = r.tags.unwrap_or_default();
@@ -34,7 +46,10 @@ fn main() {
                 adult_faces += 1;
             }
             if pinhole_check::rules::is_photo_style(&t)
-                && faces.iter().any(|f| f.under_ten.is_some_and(|u| u >= pinhole_check::rules::UNDER_TEN))
+                && faces.iter().any(|f| {
+                    f.under_ten
+                        .is_some_and(|u| u >= pinhole_check::rules::UNDER_TEN)
+                })
             {
                 young_face += 1;
             }
