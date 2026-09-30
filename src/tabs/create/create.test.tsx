@@ -32,9 +32,10 @@ const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
 const { PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
-const { FinalPromptPreview } = await import("./FineTune");
+const { FinalPromptPreview, FineTuneDrawer } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
+const tipModule = await import("./TipLine");
 const { ReferenceSlot } = await import("./ReferenceSlot");
 const { makeActions } = await import("../../lib/state/actions");
 type Store = ReturnType<typeof createStore>;
@@ -382,5 +383,52 @@ describe("prompt box toolbar", () => {
     const toolbar = improve.closest(".border-t") as HTMLElement;
     expect(toolbar.className).toContain("flex-wrap");
     expect(toolbar.querySelector("[aria-label^='Style']")).toBeTruthy();
+  });
+});
+
+describe("Starter ideas", () => {
+  it("fill an empty prompt and go away once there is text", () => {
+    const store = createStore();
+    withApp(store, <PromptBox ui={null} onOpenPaste={() => undefined} onApplyPasted={() => undefined} />);
+    fireEvent.click(screen.getByRole("button", { name: "Watercolor fox" }));
+    expect(store.getState().create.prompt).toMatch(/watercolor painting of a small fox/);
+    expect(screen.queryByRole("button", { name: "Watercolor fox" })).toBeNull();
+  });
+});
+
+describe("Named sizes", () => {
+  it("set Width and Height in one click and mark the active one", () => {
+    const store = createStore();
+    withApp(store, <FineTuneDrawer ui={null} model={null} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fine-tune/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Phone" }));
+    expect(store.getState().create.fineTune).toMatchObject({ width: 768, height: 1344 });
+    expect(screen.getByRole("button", { name: "Phone" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Instagram" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("Tip line", () => {
+  const { TipLine, eligibleTips, resetSessionTip } = tipModule;
+  beforeEach(() => resetSessionTip());
+
+  it("only offers tips that fit", () => {
+    expect(eligibleTips({ hasBatch: false, canReference: false })).not.toContain("variations");
+    expect(eligibleTips({ hasBatch: false, canReference: false })).not.toContain("reference");
+    expect(eligibleTips({ hasBatch: true, canReference: true })).toEqual(expect.arrayContaining(["variations", "reference"]));
+  });
+
+  it("shows one tip, and closing it keeps it closed for the session", () => {
+    withApp(createStore(), <TipLine hasBatch />);
+    expect(screen.getByRole("note").textContent).toMatch(/^Tip:/);
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss tip" }));
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("stays away when tips are turned off", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setSettings", settings: { ...(await api.getSettings()), showTips: false } });
+    withApp(store, <TipLine hasBatch />);
+    expect(screen.queryByRole("note")).toBeNull();
   });
 });

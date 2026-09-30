@@ -397,6 +397,11 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           control={<Toggle checked={settings.showPaid} onChange={(v) => update({ showPaid: v })} label={<span className="sr-only">Show paid models</span>} />}
         />
         <Row
+          label="Show tips"
+          hint="One short tip about a feature you may have missed, under a picture. At most one per session."
+          control={<Toggle checked={settings.showTips ?? true} onChange={(v) => update({ showTips: v })} label={<span className="sr-only">Show tips</span>} />}
+        />
+        <Row
           label="Add trigger words automatically"
           hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you, in memory only. Pick which ones on the add-on’s chip under the prompt."
           control={<Toggle checked={settings.addTriggerWords} onChange={(v) => update({ addTriggerWords: v })} label={<span className="sr-only">Add trigger words automatically</span>} />}
