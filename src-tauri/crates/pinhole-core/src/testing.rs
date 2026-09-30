@@ -1720,7 +1720,7 @@ mod tests {
             instruction.contains("Describe this image"),
             "registry instruction is used"
         );
-        assert!(describe::captioner_status(&core).available);
+        assert!(describe::captioner_status(&core, describe::Purpose::Describe).available);
     }
 
     #[tokio::test]
@@ -2705,7 +2705,7 @@ mod tests {
         let st = crate::engine_setup::engine_status(&core);
         assert!(!st.installed && !st.running);
         assert!(st.version.as_deref().unwrap_or("").starts_with("master-"));
-        let cs = describe::captioner_status(&core);
+        let cs = describe::captioner_status(&core, describe::Purpose::Describe);
         assert!(!cs.available);
         assert!(
             cs.download_bytes > 1_000_000_000,

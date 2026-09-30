@@ -310,6 +310,16 @@ brush area included, and replaces it and any later steps; not for the original o
 read-only "Final prompt sent to the model" like Create, since the style and trigger words are added
 at request time.
 
+**Helper models** (Describe and Improve): the language models behind both come from Pinhole's own
+list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, which is also
+Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
+**Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
+sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
+else the 3B. Only installed helpers can be picked; a removed one reads as Automatic. **Models →
+Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
+Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
+mode is Off (none yet). The word check runs on the output of every helper model.
+
 ### 5.3 Describe (img2text)
 
 - Drop an image → **Describe**.

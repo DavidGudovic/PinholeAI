@@ -54,6 +54,10 @@ export interface Settings {
   /** Models folder the user picked (absolute), null = Data/models. Read-only here:
    *  it only changes through changeModelsFolder, which moves the models. */
   modelsFolder: string | null;
+  /** Helper model for Describe: "auto" or a HelperModel id. */
+  describeModel: string;
+  /** Helper model for "Improve my prompt": "auto" or a HelperModel id. */
+  improveModel: string;
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";
@@ -416,6 +420,23 @@ export interface CaptionerStatus {
 }
 
 export type DescribeStyle = "sentence" | "tags";
+/** Which setting picks the helper model. */
+export type HelperPurpose = "describe" | "improve";
+/** A helper model from the registry (Models → Helpers, the Describe / Improve pickers). */
+export interface HelperModel {
+  id: string;
+  title: string;
+  note: string;
+  /** Both files together (installed size, else an estimate). */
+  sizeBytes: number;
+  /** Bytes still to download (0 when installed). */
+  downloadBytes: number;
+  installed: boolean;
+  /** Pinhole downloaded it as a helper (Remove is offered); else it came with another model. */
+  removable: boolean;
+  fit: Fit | null;
+  needsSafeOff: boolean;
+}
 /** "Improve my prompt" answer. `note` set = the helper's answer was unusable and `text` is the prompt unchanged. */
 export interface ImprovedPrompt {
   text: string;

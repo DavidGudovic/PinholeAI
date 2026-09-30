@@ -5,7 +5,7 @@ import type { BrowseFilters } from "./query";
 
 let adultConfirmed = false;
 let lastFilters: BrowseFilters | null = null;
-let lastView: "browse" | "installed" | null = null;
+let lastView: "browse" | "helpers" | "installed" | null = null;
 
 export const isAdultConfirmed = () => adultConfirmed;
 export const confirmAdult = () => {
@@ -38,6 +38,17 @@ export const onAddonRequest = (cb: (modelId: string) => void) => {
 };
 
 export const getLastView = () => lastView;
-export const rememberView = (v: "browse" | "installed") => {
+/** "Get more models…" in a Describe / Improve picker: the Models tab opens its Helpers view. */
+const helperListeners = new Set<() => void>();
+export const requestHelpersView = () => {
+  lastView = "helpers";
+  for (const l of helperListeners) l();
+};
+export const onHelpersRequest = (cb: () => void) => {
+  helperListeners.add(cb);
+  return () => void helperListeners.delete(cb);
+};
+
+export const rememberView = (v: "browse" | "helpers" | "installed") => {
   lastView = v;
 };
