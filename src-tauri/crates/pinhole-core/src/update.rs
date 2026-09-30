@@ -14,6 +14,9 @@
 //!   rename it over it (shortcuts keep working), relaunch.
 //! * Anything else (the .deb, dev builds): the UI opens the release page instead.
 //!
+//! Until release files are signed, [`SELF_UPDATE`] is off: every copy is offered
+//! the release page and nothing is downloaded or installed in the app.
+//!
 //! Integrity: the file must match the size GitHub reports and the SHA-256 listed in
 //! the release's `SHA256SUMS.txt`. That catches corrupted or swapped CDN downloads,
 //! not a compromised GitHub account; signed updates are RELEASE-SPEC work.
@@ -39,6 +42,13 @@ pub const STAGING_DIR: &str = ".pinhole-update";
 /// Staging folder for the Windows installer, inside the OS temp dir.
 const INSTALLER_STAGING_DIR: &str = "pinhole-update";
 const PRODUCT: &str = "Pinhole";
+
+/// In-app install ("Update and restart"). Off until release files are signed with a
+/// key only the maintainer holds (RELEASE-SPEC §12.2 "Signed updates"): the SHA-256
+/// list comes from the same release, so it can't catch a release someone else
+/// uploaded. While off, "Check for updates" offers the release page for every copy
+/// and [`install_update`] refuses.
+pub const SELF_UPDATE: bool = false;
 
 /// One update per app run: set when an install starts, cleared if it fails (then
 /// nothing was replaced). The UI can be closed and reopened meanwhile.
@@ -153,6 +163,15 @@ impl Environment {
             appimage: std::env::var_os("APPIMAGE").map(PathBuf::from),
             temp_dir: std::env::temp_dir(),
         }
+    }
+}
+
+/// How this copy updates: [`detect_target_with`], or by hand while [`SELF_UPDATE`] is off.
+pub fn update_target(env: &Environment) -> Target {
+    if SELF_UPDATE {
+        detect_target_with(env)
+    } else {
+        Target::Manual
     }
 }
 
@@ -387,7 +406,7 @@ fn releases_error(e: pinhole_net::NetError) -> CoreError {
 pub async fn check_for_updates(core: &AppCore, current_version: &str) -> CoreResult<UpdateCheck> {
     let current = parse_current(current_version)?;
     let releases = fetch_releases(core).await?;
-    let target = detect_target_with(&Environment::current(core));
+    let target = update_target(&Environment::current(core));
     Ok(UpdateCheck {
         current_version: current.to_string(),
         update: pick_update(&releases, &current, &target),
@@ -424,6 +443,11 @@ pub async fn install_update(
     current_version: &str,
     version: &str,
 ) -> CoreResult<Prepared> {
+    if !SELF_UPDATE {
+        return Err(CoreError::invalid(
+            "Download the new version from the release page.",
+        ));
+    }
     let current = parse_current(current_version)?;
     if UPDATING.swap(true, Ordering::SeqCst) {
         return Err(CoreError::invalid("An update is already under way."));
@@ -862,6 +886,25 @@ mod tests {
         l.appimage = Some(img.clone());
         assert_eq!(detect_target_with(&l), Target::AppImage { file: img });
         assert_eq!(detect_target_with(&env("macos", dir)), Target::Manual);
+    }
+
+    #[test]
+    fn every_copy_updates_from_the_release_page_until_releases_are_signed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
+        let e = env("windows", dir);
+        assert_ne!(detect_target_with(&e), Target::Manual);
+        assert_eq!(update_target(&e).mode(), InstallMode::Manual);
+        let releases = vec![rel(
+            "v9.0.0",
+            false,
+            &[("Pinhole-9.0.0-windows-x64-setup.exe", 10), (SUMS_FILE, 1)],
+        )];
+        let current = semver::Version::new(1, 0, 0);
+        let info = pick_update(&releases, &current, &update_target(&e)).unwrap();
+        assert_eq!(info.install_mode, InstallMode::Manual);
+        assert_eq!(info.size_bytes, None);
     }
 
     fn write_zip(path: &Path, files: &[(&str, &[u8])]) {

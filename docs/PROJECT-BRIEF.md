@@ -12,9 +12,11 @@ press Generate. Tauri 2 + Rust core + React/TS UI. Images are made by
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. Both are pinned, SHA-256-verified
 downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on your computer.
 
-## Status (v0.2.0, personal test build)
-- Milestones M0–M5 implemented on `main`. M6 (release readiness, `RELEASE-SPEC.md`) not started —
-  **no build is shared with anyone until it is done.**
+## Status (v1.0.0)
+- Milestones M0–M5 implemented on `main`. v1.0.0 is the first GitHub release, prepared as a draft
+  that the maintainer publishes after a test on a real GPU. `RELEASE-SPEC.md` §12 lists what was
+  done for it and what is still open. In-app updates open the release page until release files
+  are signed (`update::SELF_UPDATE`).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
   Ubuntu 24.04 (CPU), the app's own install → add model → wire → generate → save path, a
   WebDriver test that drives the real app, the privacy sentinel scan, Offline mode, installers.

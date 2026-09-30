@@ -492,9 +492,13 @@ templates, posts and UI.
       Pinhole side done (per-launch key + bearer); left: pin the patched build and set
       `ENGINE_LOCKDOWN = true` (SPEC §13).
 - [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign),
-      and "Update and restart" refuses a file whose signature doesn't verify. Today it only checks
-      `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").
-- [ ] Releases marked as pre-release / test build
+      and "Update and restart" refuses a file whose signature doesn't verify. Until then
+      "Update and restart" is switched off (`update::SELF_UPDATE = false`, 2026-09-30): "Check for
+      updates" only opens the release page and nothing is downloaded or installed in the app
+      (SPEC §13 "Updates"). The key is the maintainer's to make; then set `SELF_UPDATE = true`.
+- [x] ~~Releases marked as pre-release / test build~~ Replaced (2026-09-30): v1.0.0 is a normal GitHub
+      release, created as a draft for the maintainer to publish. `release.yml` marks only versions
+      with a suffix (`1.1.0-rc.1`) as pre-releases.
 - [ ] SPEC.md, CLAUDE.md and the privacy tests updated to match (the AI marker exception)
 
 ### 12.3 Level 3 — marketing

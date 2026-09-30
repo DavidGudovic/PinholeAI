@@ -700,8 +700,8 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
-  **Update and restart** (Windows installer, Windows portable, Linux AppImage) or **Open download
-  page** (the .deb and dev builds, which can't replace themselves). See §13.
+  **Open download page**. **Update and restart** (Windows installer, Windows portable, Linux
+  AppImage) is built but switched off until release files are signed. See §13.
 
 ---
 
@@ -778,9 +778,13 @@ build is shared.
 - **Paid (early access) models**: hidden by default.
 - **Content filter**: Safe mode On (default) · Off. No "adult only" mode; the NSFW tag in the
   Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
-- **Distribution**: personal testing only for now. Any shared build is gated by
-  `docs/RELEASE-SPEC.md`.
-- **Updates** (manual only): Settings → Check for updates asks
+- **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` §12 lists what
+  was done first).
+- **Updates** (manual only): **Update and restart** is off (`update::SELF_UPDATE = false`) until
+  release files are signed with a key only the maintainer holds: `SHA256SUMS.txt` comes from the
+  same release, so it can't catch a release someone else uploaded. Until then every copy is offered
+  **Open download page** and nothing is downloaded or installed in the app. The rest of this entry
+  describes in-app install for when it is switched on. Settings → Check for updates asks
   `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (pre-releases
   included while every build is a test build). Download URLs are built from the repo, the tag and the
   expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
