@@ -176,8 +176,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
    often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
    10–19, 20–29…) and it is off by several years, so it can't separate teenagers from young
-   adults without blocking many adults. Teenagers are covered by the word check, rule 1 and the
-   child tags.
+   adults without blocking many adults. Teenagers are left to the word check, the brought-in
+   photo rule (rule 1) and, for drawings, the child tags.
 3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
    Models flagged `poi` or `minor` can't be installed at all (§5). Known limits: the flag is set
@@ -377,10 +377,11 @@ templates, posts and UI.
 
 ## 9. Paper trail and reporting
 
-- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and doesn't (§3.2), how (on the
-  computer, nothing recorded), known limits in one line at most (checks can make mistakes; a
-  modified build can leave them out; no "limitations" section, David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only, no email
-  address; decided 2026-09-30).
+- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
+  doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
+  (checks can make mistakes; a modified build can leave them out; no "limitations" section,
+  David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
+  no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
   states plainly that Pinhole can't identify its users or see what they made.

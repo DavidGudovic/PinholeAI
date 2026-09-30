@@ -146,7 +146,7 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
         // Photos: the age estimate only sorts faces into wide groups (0–2, 3–9, 10–19, 20–29…)
         // and is often off by several years, so it can't tell a teenager from a young adult
         // without also blocking many adults. This rule therefore only acts on faces it is
-        // confident are children. Teenagers are covered by the word check, the brought-in
+        // confident are children. Teenagers are left to the word check, the brought-in
         // photo rule (rule 1) and, for drawings, the tagger's tags.
         let child_face = tags.is_some_and(is_photo_style)
             && r.faces
@@ -346,18 +346,22 @@ mod tests {
             decide(&explicit, &[], true),
             Some(Rule::SafeImagesOnlyModel)
         );
-        // A strongly explicit rating counts without a tag (the tagger may not name nudity on
-        // a photo); a milder one doesn't.
-        let photo_nude = readings(0.9, Some(photo(tags(0.2, 0.7))), vec![]);
-        assert_eq!(
-            decide(&photo_nude, &[PHOTO_ORIGINAL], false),
-            Some(Rule::PhotoMadeIntimate)
-        );
-        let mild = readings(0.9, Some(photo(tags(0.2, 0.5))), vec![]);
-        assert_eq!(decide(&mild, &[PHOTO_ORIGINAL], false), None);
         // Rule 2 is unchanged: swimwear that reads as sexual with a child face is still blocked.
         let child = readings(0.97, Some(photo(tags(0.55, 0.22))), vec![face(0.8)]);
         assert_eq!(decide(&child, &[], false), Some(Rule::LooksUnderage));
+    }
+
+    #[test]
+    fn a_strong_explicit_rating_is_intimate_without_a_tag() {
+        // The tagger may not name nudity on a photo; a strong explicit rating counts alone,
+        // from exactly EXPLICIT_INTIMATE up.
+        let at = readings(0.9, Some(photo(tags(0.2, EXPLICIT_INTIMATE))), vec![]);
+        assert_eq!(
+            decide(&at, &[PHOTO_ORIGINAL], false),
+            Some(Rule::PhotoMadeIntimate)
+        );
+        let below = readings(0.9, Some(photo(tags(0.2, 0.55))), vec![]);
+        assert_eq!(decide(&below, &[PHOTO_ORIGINAL], false), None);
     }
 
     #[test]
