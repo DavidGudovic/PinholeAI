@@ -249,6 +249,12 @@ Two modes, picked automatically:
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
 
+Both modes take style add-ons (LoRAs) like Create: added in Edit's Fine-tune (with Quality,
+Output size and Seed), shown as chips under the text, trigger words picked on the chip. Only
+add-ons made for the edit's model (same architecture) are used. Edit keeps its own add-on list
+(Reset keeps it, like Create). Pasting CivitAI generation data stays in Create: it describes a
+text-to-image run (size, seed, sampler), not an edit of your own picture.
+
 If no edit model is installed, the Edit tab shows one card: "Get the best edit model for your
 GPU" — one-click download of the top edit model that fits (§6.1), showing its download size
 and VRAM need.

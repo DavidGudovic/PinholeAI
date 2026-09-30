@@ -576,6 +576,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn edit_add_ons_go_only_to_the_model_they_were_picked_for() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(256, 256, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let sdxl = register_fake_model(&core, "sdxl");
+        let _qwen_edit = register_fake_model(&core, "qwen_image_edit_2511");
+        let lora = register_fake_lora(&core, "sdxl", &["zxc_trigger"]);
+        let with_lora = |mode: GenMode| {
+            let mut req = GenerateRequest::txt2img(sdxl.clone(), "make it evening");
+            req.mode = mode;
+            req.dials.quality = Quality::Fast;
+            req.loras = vec![generate::LoraUse {
+                lora_id: lora.clone(),
+                weight: 0.7,
+                words: None,
+            }];
+            req
+        };
+
+        // Restyle with SDXL: the add-on and its trigger word are used.
+        let mut req = with_lora(GenMode::Img2img);
+        req.init_image_id = Some(src.id.clone());
+        req.strength = Some(0.5);
+        generate::generate(&core, req).await.unwrap();
+        let body = mock.requests().last().cloned().unwrap();
+        assert_eq!(body["lora"].as_array().unwrap().len(), 1);
+        assert!(body["prompt"].as_str().unwrap().contains("zxc_trigger"));
+
+        // An instruction edit that falls back to Qwen Image Edit drops the SDXL add-on.
+        let mut req = with_lora(GenMode::Edit);
+        req.ref_image_ids = vec![src.id.clone()];
+        let res = generate::generate(&core, req).await.unwrap();
+        assert_eq!(res.images[0].family_id, "qwen_image_edit_2511");
+        let body = mock.requests().last().cloned().unwrap();
+        assert!(body["lora"].as_array().is_none_or(|l| l.is_empty()));
+        assert!(!body["prompt"].as_str().unwrap().contains("zxc_trigger"));
+    }
+
+    #[tokio::test]
     async fn two_image_edit_needs_a_model_that_combines_them() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;

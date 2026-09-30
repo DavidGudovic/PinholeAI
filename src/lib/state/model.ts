@@ -94,6 +94,8 @@ export interface EditParams {
   styleId: string | null;
   /** null = best installed edit model. */
   editModelId: string | null;
+  /** Style add-ons (LoRAs) for edits; only those made for the edit's model are used. */
+  loras: LoraUse[];
   /** Optional second image for "Describe a change" (image 2); session RAM like the chain. */
   secondImageId: string | null;
   /** null = the Create tab's model. */
@@ -177,6 +179,7 @@ export const initialEdit = (): EditParams => ({
   change: "medium",
   styleId: null,
   editModelId: null,
+  loras: [],
   secondImageId: null,
   restyleModelId: null,
   quality: "balanced",
@@ -561,7 +564,7 @@ function inner(s: AppState, a: Action): AppState {
         selectedResultId: null,
         batches: {},
         resultBatch: {},
-        edit: { ...initialEdit(), mode: s.edit.mode, editModelId: s.edit.editModelId, restyleModelId: s.edit.restyleModelId },
+        edit: { ...initialEdit(), mode: s.edit.mode, editModelId: s.edit.editModelId, restyleModelId: s.edit.restyleModelId, loras: s.edit.loras },
         describe: { ...initialDescribe(), style: s.describe.style },
         toasts: [],
         sessionNonce: s.sessionNonce + 1,

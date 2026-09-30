@@ -690,7 +690,14 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     let mut triggers: Vec<String> = Vec::new();
     {
         let idx = core.installed.lock();
-        for l in &req.loras {
+        // Add-ons were picked for the chosen model; an edit that fell back to
+        // another model (the chosen one can't edit) doesn't get them.
+        let picked = if model.id == req.model_id {
+            &req.loras[..]
+        } else {
+            &[]
+        };
+        for l in picked {
             let Some(f) = idx.get(&l.lora_id).filter(|f| f.kind == ModelKind::Lora) else {
                 return Err(CoreError::not_found("A style add-on (LoRA) you picked isn't installed anymore. Remove it in Fine-tune."));
             };

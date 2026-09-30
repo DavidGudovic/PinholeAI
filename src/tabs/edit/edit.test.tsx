@@ -191,6 +191,24 @@ describe("Edit tab", () => {
     recommended.mockRestore();
     vi.mocked(api.listModels).mockImplementation(async () => [model]);
   });
+
+  it("shows the Edit tab's own add-on chips", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle", loras: [{ loraId: "gone", weight: 0.8 }] } });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Remove Missing add-on" }));
+    expect(store.getState().edit.loras).toEqual([]);
+    expect(store.getState().create.loras).toEqual([]);
+  });
 });
 
 describe("Compare slider", () => {

@@ -20,6 +20,8 @@ import { createModels, editModels, type ChangeAmount, type EditMode } from "../.
 import { modKey } from "../../lib/state/platform";
 import { editOutputSize, settingsSummary, type EditSizeChoice } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
+import { AddonChips } from "../create/AddonChips";
+import { LoraSection } from "../create/FineTune";
 import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
@@ -291,6 +293,8 @@ export function EditTab() {
             </>
           )}
 
+          {!needsEditModel && <AddonChips model={model} target="edit" />}
+
           {mode === "instruction" && current && (
             <div>
               {secondPicker.input}
@@ -381,6 +385,7 @@ export function EditTab() {
                       dispatch({ type: "patchEdit", patch: { seed: Number.isFinite(n) && n >= 0 ? n : null } });
                     }}
                   />
+                  <LoraSection model={model} target="edit" />
                 </div>
                 <p className="text-[11px] text-neutral-400">Size keeps your image’s shape. {ui ? `${ui.label} defaults are used for everything else.` : ""}</p>
               </div>
