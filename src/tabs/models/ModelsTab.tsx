@@ -10,9 +10,10 @@ import { DownloadsPanel } from "./DownloadsPanel";
 import { InstalledView } from "./InstalledView";
 import { useTauriEvent } from "./lib/hooks";
 import { ScrollRootContext, useIsVisible } from "./lib/preview";
-import { getLastView, hasAddonRequest, onAddonRequest, rememberView } from "./lib/session";
+import { getLastView, hasAddonRequest, onAddonRequest, onHelpersRequest, rememberView } from "./lib/session";
+import { HelpersView } from "./HelpersView";
 
-type View = "browse" | "installed";
+type View = "browse" | "helpers" | "installed";
 
 export function ModelsTab() {
   const [view, setViewState] = useState<View>(() => (hasAddonRequest() ? "browse" : (getLastView() ?? "browse")));
@@ -46,6 +47,16 @@ export function ModelsTab() {
     [],
   );
 
+  // "Get more models…" in a Describe / Improve picker opens Helpers.
+  useEffect(
+    () =>
+      onHelpersRequest(() => {
+        rememberView("helpers");
+        setViewState("helpers");
+      }),
+    [],
+  );
+
   useEffect(() => {
     getSettings()
       .then(setLocalSettings)
@@ -71,13 +82,18 @@ export function ModelsTab() {
             <div>
               <h1 className="text-xl font-semibold tracking-tight">Models</h1>
               <p className="text-sm text-neutral-500">
-                {view === "browse" ? "Find models and style add-ons on CivitAI. Everything downloads to this computer." : "Everything on this computer, ready to use offline."}
+                {view === "browse"
+                  ? "Find models and style add-ons on CivitAI. Everything downloads to this computer."
+                  : view === "helpers"
+                    ? "Small language models for Describe and Improve. They run on this computer."
+                    : "Everything on this computer, ready to use offline."}
               </p>
             </div>
             <Segmented
               ariaLabel="View"
               options={[
                 { value: "browse" as View, label: "Browse" },
+                { value: "helpers" as View, label: "Helpers" },
                 { value: "installed" as View, label: installedCount != null ? `Installed (${installedCount})` : "Installed" },
               ]}
               value={view}
@@ -95,6 +111,8 @@ export function ModelsTab() {
                 <Spinner className="h-5 w-5 text-neutral-400" />
               </div>
             )
+          ) : view === "helpers" ? (
+            <HelpersView />
           ) : (
             <InstalledView onBrowse={() => setView("browse")} />
           )}

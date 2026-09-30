@@ -260,6 +260,32 @@ impl Registry {
     pub fn validate(&self) -> Vec<String> {
         let mut problems = Vec::new();
         let comp_ok = |id: &str| self.file.components.contains_key(id);
+        let mut helper_ids = std::collections::HashSet::new();
+        for h in &self.file.captioner.helpers {
+            if !helper_ids.insert(h.id.as_str()) {
+                problems.push(format!("captioner helper `{}` is listed twice", h.id));
+            }
+            if h.default == h.components.is_empty() {
+                problems.push(format!(
+                    "captioner helper `{}`: set either `default: true` or two `components`",
+                    h.id
+                ));
+            }
+            if !h.components.is_empty() && h.components.len() != 2 {
+                problems.push(format!(
+                    "captioner helper `{}`: `components` is the model and its vision projector",
+                    h.id
+                ));
+            }
+            for c in &h.components {
+                if !comp_ok(c) {
+                    problems.push(format!(
+                        "captioner helper `{}` refers to unknown component `{c}`",
+                        h.id
+                    ));
+                }
+            }
+        }
         for f in self.families_in_order() {
             let id = &f.id;
             for (kind, choice) in &f.components {

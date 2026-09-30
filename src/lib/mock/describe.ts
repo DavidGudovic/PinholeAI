@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { startMockDownload } from "./models";
-import type { CaptionerStatus, CoreError, InstalledModel, RecommendedPick } from "../types";
+import type { CaptionerStatus, CoreError, HelperModel, InstalledModel, RecommendedPick } from "../types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const err = (code: string, message: string, details: string | null = null): CoreError => ({ code, message, details });
@@ -11,6 +11,8 @@ const MB = 1024 * 1024;
 
 let installed = typeof location !== "undefined" && new URLSearchParams(location.search).has("captioner");
 let warm = false;
+// ?helper7 → the 7B helper is installed too (screenshots).
+let installed7 = typeof location !== "undefined" && new URLSearchParams(location.search).has("helper7");
 
 async function status(): Promise<CaptionerStatus> {
   const [models, picks] = await Promise.all([
@@ -19,7 +21,7 @@ async function status(): Promise<CaptionerStatus> {
   ]);
   const reuse = models.some((m) => /qwen_image_edit|qwen_image/.test(m.familyId ?? "") && !m.missingComponents.length);
   const viaRecommended = picks.find((p) => p.role === "describe")?.installed ?? false;
-  const available = installed || reuse || viaRecommended;
+  const available = installed || installed7 || reuse || viaRecommended;
   return { available, source: reuse ? "reuse" : available ? "default" : null, downloadBytes: available ? 0 : (1900 + 850) * MB, running: warm };
 }
 
@@ -63,15 +65,29 @@ function improved(idea: string, tags: boolean): string {
 
 const table: MockTable = {
   captioner_status: () => status(),
-  install_captioner: async () => {
+  list_helper_models: async (): Promise<HelperModel[]> => {
+    const st = await status();
+    const three = installed || (st.available && st.source === "default");
+    return [
+      { id: "describe", title: "Qwen2.5-VL 3B", note: "Small and quick. Enough for Describe and short prompt ideas.", sizeBytes: 2775 * MB, downloadBytes: three ? 0 : 2775 * MB, installed: three, removable: installed, fit: "fits", needsSafeOff: false },
+      { id: "qwen25_vl_7b", title: "Qwen2.5-VL 7B", note: "Writes fuller, more careful prompts and descriptions. Large download; shared with Qwen Image Edit.", sizeBytes: 8952 * MB, downloadBytes: installed7 ? 0 : 8952 * MB, installed: installed7, removable: installed7, fit: "tight", needsSafeOff: false },
+    ];
+  },
+  install_captioner: async (a) => {
     await sleep(200);
+    const seven = a.helperId === "qwen25_vl_7b";
     const groupId = startMockDownload(
-      "Describe model",
-      [
-        { name: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", bytes: 1900 * MB },
-        { name: "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", bytes: 850 * MB },
-      ],
-      { kind: "captioner", durationMs: 5000, onDone: () => (installed = true) },
+      seven ? "Qwen2.5-VL 7B" : "Describe model",
+      seven
+        ? [
+            { name: "Qwen2.5-VL-7B-Instruct-Q8_0.gguf", bytes: 8099 * MB },
+            { name: "Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf", bytes: 853 * MB },
+          ]
+        : [
+            { name: "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", bytes: 1900 * MB },
+            { name: "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf", bytes: 850 * MB },
+          ],
+      { kind: "captioner", durationMs: 5000, onDone: () => (seven ? (installed7 = true) : (installed = true)) },
     );
     return { groupId };
   },

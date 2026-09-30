@@ -53,6 +53,8 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
           engineBackend: "auto",
           textEncoderOnCpu: "auto",
           modelsFolder: null,
+        describeModel: "auto",
+        improveModel: "auto",
         },
       }),
     );

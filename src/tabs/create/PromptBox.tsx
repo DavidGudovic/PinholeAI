@@ -71,7 +71,10 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
         />
         <div className="flex items-center gap-2 border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
           <StylePicker value={styleId} onChange={(id) => dispatch({ type: "patchCreate", patch: { styleId: id } })} familyId={ui?.familyId} familyLabel={ui?.label} />
-          <div className="ml-auto">{improve.button}</div>
+          <div className="ml-auto flex items-center gap-1">
+            {improve.picker}
+            {improve.button}
+          </div>
         </div>
       </div>
 

@@ -107,8 +107,10 @@ export const clearSession = () => invoke<void>("clear_session");
 export const upscaleImage = (id: string, factor: 2 | 4) => invoke<T.ResultImage>("upscale_image", { id, factor });
 
 // ---------------------------------------------------------------- describe (engine agent)
-export const captionerStatus = () => invoke<T.CaptionerStatus>("captioner_status");
-export const installCaptioner = () => invoke<T.InstallStarted>("install_captioner");
+export const captionerStatus = (purpose: T.HelperPurpose = "describe") => invoke<T.CaptionerStatus>("captioner_status", { purpose });
+/** `helperId`: a HelperModel id; omitted = the default helper. */
+export const installCaptioner = (helperId?: string) => invoke<T.InstallStarted>("install_captioner", { helperId: helperId ?? null });
+export const listHelperModels = () => invoke<T.HelperModel[]>("list_helper_models");
 export const describeImage = (imageId: string, style: T.DescribeStyle) =>
   invoke<string>("describe_image", { imageId, style });
 /** "Improve my prompt": a short idea → a fuller prompt (local helper model). `avoid` = add-on trigger words. */
