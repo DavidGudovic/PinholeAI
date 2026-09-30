@@ -747,6 +747,13 @@ pub fn cleanup_after_update(exe_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn engine_releases_are_not_app_updates() {
+        // The Engine workflow publishes `engine-…` releases in the same repo.
+        assert_eq!(tag_version("engine-master-929-3f8527a-p1"), None);
+        assert!(tag_version("v0.2.0").is_some());
+    }
     use std::io::Write;
 
     fn rel(tag: &str, draft: bool, assets: &[(&str, u64)]) -> GhRelease {

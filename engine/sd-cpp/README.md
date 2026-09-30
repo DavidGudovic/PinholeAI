@@ -19,24 +19,23 @@ every route is covered. The key is never logged.
 
 ## Where the builds come from
 
-Pinhole downloads engines from GitHub releases pinned in `config/engine.yaml`. The patched
-builds come from a separate **public** repo (public repos get free Actions minutes, Windows
-included; this repo's minutes are limited):
+No fork and no second repo: the **Engine** workflow in this repo (`.github/workflows/engine.yml`)
+checks out official stable-diffusion.cpp at the commit pinned in `config/engine.yaml`, applies
+every `engine/sd-cpp/*.patch`, builds Linux CPU / Vulkan / CUDA and Windows CPU / Vulkan / CUDA,
+and publishes them as a release `engine-<version>-p<N>` here. Linux CUDA is new (upstream has
+none) and is built only for RTX 30/40/50 cards to keep the download small; Windows CUDA keeps
+upstream's architecture list. App releases (`v*`) don't rebuild the engine.
 
-1. Create a public repo on David's account (a fork of leejet/stable-diffusion.cpp or an
-   empty repo both work).
-2. On a `pinhole` branch add `pinhole/0001-server-api-key-and-reject-origin.patch` (this file)
-   and `.github/workflows/pinhole-build.yml` (copy of `pinhole-build.yml` here).
-3. Actions → Pinhole engine build → Run workflow. It builds Linux CPU / Vulkan / CUDA and
-   Windows CPU / Vulkan / CUDA, then publishes a release with the zips and `SHA256SUMS.txt`.
-   Linux CUDA is new (upstream has none) and is built only for RTX 30/40/50 cards to keep the
-   download small; Windows CUDA keeps upstream's architecture list.
-4. In Pinhole: point `config/engine.yaml` at that release (sizes and SHA-256 checked with the
-   verify-pins workflow), add a `linux_cuda` build (+ its cudart zip as `extra`), set
+1. Actions → Engine → Run workflow (`patch_level` 1; bump it when only the patch changes).
+2. Point `config/engine.yaml` at that release (sizes and SHA-256 checked with the verify-pins
+   workflow), add a `linux_cuda` build (+ its cudart zip as `extra`), set
    `ENGINE_LOCKDOWN = true` in `pinhole-core/src/generate.rs`, run the engine smoke test.
 
-Updating the engine: rerun the workflow with the new upstream tag. If the patch no longer
-applies, refresh it against the new tag and copy it here too.
+Updating the engine: change the pin in `config/engine.yaml`, refresh the patch if it no longer
+applies, run the workflow again.
+
+While the repo is private, Pinhole can't download these release files without a GitHub token
+(the engine installer sends none), and the workflow uses the private repo's Actions minutes.
 
 ## Checking a build
 
