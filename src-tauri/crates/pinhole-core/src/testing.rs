@@ -695,6 +695,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn qwen_image_21_creates_without_its_vision_encoder_but_edits_need_it() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let q21 = register_fake_model(&core, "qwen_image_21");
+        {
+            let mut idx = core.installed.lock();
+            let vision = idx.find_component("qwen3vl_8b_mmproj").unwrap().id.clone();
+            idx.remove(&vision);
+        }
+        let mut req = GenerateRequest::txt2img(q21.clone(), "a lighthouse");
+        req.dials.quality = Quality::Fast;
+        generate::generate(&core, req).await.unwrap();
+
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(256, 256, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(q21, "make it evening");
+        req.mode = GenMode::Edit;
+        req.ref_image_ids = vec![src.id];
+        let err = generate::generate(&core, req).await.unwrap_err();
+        assert!(
+            err.message.contains("mmproj-Qwen3VL-8B-Instruct-F16.gguf"),
+            "{}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
     async fn two_image_edit_needs_a_model_that_combines_them() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;
@@ -2022,7 +2053,7 @@ mod tests {
             trigger_words: None,
         };
         // No shared components installed: fine for an all-in-one checkpoint…
-        let files = crate::generate::model_files(&core, &aio, &fam, &hw).unwrap();
+        let files = crate::generate::model_files(&core, &aio, &fam, &hw, false).unwrap();
         assert_eq!(files.layout, pinhole_registry::Layout::AllInOne);
         let args = pinhole_registry::wiring::launch_args(&reg, &files, &hw, &Default::default());
         assert!(args.iter().any(|a| a == "--model" || a == "-m"), "{args:?}");
@@ -2032,7 +2063,7 @@ mod tests {
         dif.kind = ModelKind::Diffusion;
         let (rel, _) = write_dummy(&core, ModelKind::Diffusion, "flux-dit.safetensors");
         dif.rel_path = rel;
-        let err = crate::generate::model_files(&core, &dif, &fam, &hw).unwrap_err();
+        let err = crate::generate::model_files(&core, &dif, &fam, &hw, false).unwrap_err();
         assert_eq!(err.code, "not_found");
     }
 
@@ -2068,7 +2099,7 @@ mod tests {
             dtype: None,
             trigger_words: None,
         };
-        let err = crate::generate::model_files(&core, &zit, &fam, &hw).unwrap_err();
+        let err = crate::generate::model_files(&core, &zit, &fam, &hw, false).unwrap_err();
         assert!(
             err.message.contains("Qwen3-4B-Q8_0.gguf"),
             "{}",
@@ -2099,7 +2130,7 @@ mod tests {
                 });
             }
         }
-        let files = crate::generate::model_files(&core, &zit, &fam, &hw).unwrap();
+        let files = crate::generate::model_files(&core, &zit, &fam, &hw, false).unwrap();
         let llm = files.components.get("llm").unwrap();
         assert!(
             llm.ends_with(&reg.component("qwen3_4b").unwrap().file),
