@@ -1,6 +1,7 @@
 # Pinhole
 
-A simple, private, offline AI image generator. Pick a model, type a prompt, press **Generate**.
+A simple AI image generator that runs on your own computer. Pick a model, type a prompt, press
+**Generate**.
 
 Pinhole is for people who want good local image generation without learning ComfyUI:
 no node graphs, no Python, no jargon. Everything is decided for you — and every
@@ -19,52 +20,43 @@ decision can be seen and changed in the **Fine-tune** drawer.
 - **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
   CivitAI* in Pinhole: prompt, negative, steps, CFG, sampler, seed, size and LoRAs are applied,
   and missing models/LoRAs are one click away. The pasted text is never stored.
-- **Private by construction.** Your prompts and images stay on your computer. No telemetry.
-  Works offline once models are downloaded.
+- **Runs on your computer.** No account and no cloud service. Works offline once models are
+  downloaded.
 - **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
   (`sd-server`) and [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) —
   NVIDIA (CUDA, incl. RTX 50xx), AMD/Intel (Vulkan), or CPU.
 
-## Privacy
+## Your data
 
-What Pinhole promises (enforced by tests in CI, see [Tests](#tests)):
+Pinhole works like any other desktop app: your prompts and pictures stay on your computer.
 
-- **Your prompts are never written anywhere** — not to disk, logs, presets, file names, PNG
-  metadata or crash output. The engine's output is kept in a small in-memory buffer, with your
-  prompt redacted.
-- **Generated images stay in memory** until you click **Save**. Closing the app or
-  **Reset** discards them. Saved files are named `pinhole_YYYYMMDD_HHMMSS_<seed>.png` and
-  carry no metadata unless you turn on "Include generation settings (no prompt)".
-- **The one exception is Styles:** text you explicitly save as a named Style is stored in
-  `Data/styles/`. Styles and prompts are separate fields, combined only in memory.
-- **No telemetry, analytics, crash reporting or update checks.** No remote fonts or CDNs.
-- **Network traffic happens only when you start it** — browsing CivitAI, downloading a model or
-  the engine — and only to `civitai.com`, `huggingface.co` and `github.com` (plus their download
-  CDNs). The user interface itself makes no network calls. **Offline mode** (Settings) blocks
-  every request before a connection is opened.
-- The engines listen on `127.0.0.1` only. The optional CivitAI API key lives in your OS keychain.
+- **No account, no telemetry, no analytics.** Pinhole does not check for updates on its own and
+  loads no remote fonts or scripts.
+- **Going online only when you ask.** Browsing CivitAI, downloading a model or the engine, and
+  **Check for updates** connect to `civitai.com`, `huggingface.co` or `github.com` (plus their
+  download servers). **Offline mode** in Settings turns all of that off.
+- **Saving is up to you.** New pictures are kept in the app until you click **Save**. Prompts
+  are not written to disk, logs or saved files. Text you save as a named Style is stored in
+  `Data/styles/`.
+- **Local engines.** The image and text engines run as separate programs that only accept
+  connections from your own computer (`127.0.0.1`). The optional CivitAI API key is kept in your
+  system's keychain.
 
-Honest limitations:
-
-- Your operating system may page memory to swap / the pagefile, and Pinhole cannot control that.
-  If that matters to you, use full-disk encryption (BitLocker, LUKS).
-- On Windows, the WebView2 runtime that draws Pinhole's window keeps its own browser cache under
-  `%LOCALAPPDATA%\app.pinhole.desktop` (also in portable mode). Pinhole never puts prompts or
-  images there.
-- The image engine (`sd-server`, from stable-diffusion.cpp) has no password on its local port and
-  keeps recently finished images for up to 10 minutes. While it runs, another program on your
-  computer — or, in theory, a web page that guesses the port — could fetch them. Pinhole limits
-  this: the engine listens on `127.0.0.1` only, on a random port, and is shut down when you click
-  **Reset** and 5 minutes after your last image. A proper fix (an engine build that
-  requires a per-launch password) is planned. The Describe engine already uses one.
+The image engine (`sd-server`, from stable-diffusion.cpp) keeps recently finished pictures for up
+to 10 minutes and does not yet require a password on its local port, so another program on the
+same computer could ask it for them while it runs. It stops when you click **Reset** and 5
+minutes after your last picture. An engine build that requires a per-launch password is planned.
 
 ## Acceptable use
 
-When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
-and to each model's licence. You're responsible for what you make.
+Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
+this with AI running entirely on your own computer, so your work never leaves your device.
 
-Pinhole has a built-in safety check. It checks prompts and pictures on your computer and stops
-the most harmful content. The check works offline, can't be turned off and keeps no record.
+When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
+and to each model's licence. You are responsible for what you make.
+
+The safeguards are part of Pinhole. Modified versions are the responsibility of whoever makes and
+distributes them.
 
 To report a problem with the safeguards, use GitHub's private vulnerability reporting
 (**Security → Report a vulnerability** on this repository).
