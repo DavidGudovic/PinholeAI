@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { startMockDownload } from "./models";
+import { requireLicence } from "./licences";
 import type { CaptionerStatus, CoreError, HelperModel, InstalledModel, RecommendedPick } from "../types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -76,6 +77,7 @@ const table: MockTable = {
   install_captioner: async (a) => {
     await sleep(200);
     const seven = a.helperId === "qwen25_vl_7b";
+    requireLicence(seven ? null : "describe");
     const groupId = startMockDownload(
       seven ? "Qwen2.5-VL 7B" : "Describe model",
       seven

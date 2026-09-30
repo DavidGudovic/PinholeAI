@@ -11,7 +11,8 @@ Everything below runs on your computer and sends nothing anywhere. There is no s
 file or environment variable that skips it. Safe mode (a Models setting) doesn't change it.
 
 - **Usage guidelines and model licences.** Pinhole shows its usage guidelines before first use,
-  and each model's licence before it downloads.
+  and each model's licence before it downloads. Models with a non-commercial or other special
+  licence ask you to accept it once first.
 - **Word check.** Prompts, "Improve my prompt" ideas, text written by the Describe helper and
   Browse searches are checked against fixed word lists in the code. Text that combines words about
   minors with sexual words is refused.

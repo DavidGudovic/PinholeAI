@@ -2162,6 +2162,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn licences_are_accepted_once_and_only_by_id() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let mut st = crate::app::get_settings(&core);
+        st.engine_backend = "cpu".into();
+        crate::app::set_settings(&core, st).unwrap();
+
+        // FLUX.1 dev needs its licence accepted; SDXL has none to accept.
+        let e = crate::licence::require_family(&core, Some("flux1_dev")).unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+        assert_eq!(e.details.as_deref(), Some("flux1-dev-non-commercial"));
+        assert!(crate::licence::require_family(&core, Some("sdxl")).is_ok());
+        assert!(crate::licence::require_family(&core, None).is_ok());
+
+        // The default Describe helper (Qwen research licence) asks before its files download.
+        let e = describe::install_captioner(&core, None).await.unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+        assert!(e.message.contains("Qwen Research License"), "{}", e.message);
+
+        // Unknown ids are refused; a plain settings save can't add or drop one.
+        assert_eq!(
+            crate::licence::accept_license(&core, "anything-goes").unwrap_err().code,
+            "invalid"
+        );
+        let mut st = crate::app::get_settings(&core);
+        st.accepted_licenses = vec!["flux1-dev-non-commercial".into()];
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_err());
+
+        // Accepting once covers every family with that licence (dev and Kontext) and is saved.
+        crate::licence::accept_license(&core, "flux1-dev-non-commercial").unwrap();
+        crate::licence::accept_license(&core, "flux1-dev-non-commercial").unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_ok());
+        assert!(crate::licence::require_family(&core, Some("flux1_kontext")).is_ok());
+        let saved = pinhole_store::settings::load(&core.data).unwrap();
+        assert_eq!(saved.accepted_licenses, vec!["flux1-dev-non-commercial".to_string()]);
+        let mut st = crate::app::get_settings(&core);
+        st.accepted_licenses.clear();
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_ok());
+
+        crate::licence::accept_license(&core, "qwen-research").unwrap();
+        assert!(describe::install_captioner(&core, None).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn setting_up_the_check_twice_does_not_hang() {
         let (_tmp, core, _rec) = new_core();
         core.offline.set(true); // the download fails at once, nothing leaves the machine

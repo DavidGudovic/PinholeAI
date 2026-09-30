@@ -265,22 +265,22 @@ prints them for a folder of test pictures.
 
 - Add a `license` field (name + link) to **every** family, component and captioner in
   `config/models.yaml`, and show it on every download — not only on model cards.
-- **Require explicit acceptance** before downloading non-commercial or gated models:
-  - FLUX.1 Kontext [dev] and FLUX.1 [dev] — non-commercial; requires filters or manual review.
-    The configured Kontext URL is a third-party re-upload that skips Black Forest Labs' gate.
-  - Qwen2.5-VL-3B (default captioner) — reportedly the Qwen Research (non-commercial) licence;
-    verify, or switch to an Apache-2.0 captioner.
-  - Krea 2 (registry files from the GGUF mirror realrebelai/KREA-2_GGUFs; no longer one-click) —
-    Krea 2 Community License v1 (LICENSE.pdf in krea-ai/krea-2 and Comfy-Org/Krea-2): allows
-    use, copying, redistribution and derivatives, but §4.2 requires content filters for any
-    deployment and §2.3 limits commercial use to < $1M yearly revenue. Show the licence
-    (link to the PDF) and require acceptance; the mirror's own LICENSE file is empty, so
-    Pinhole must show it. §3 is the content filter.
-  - Other non-commercial families now in the registry: FLUX.2 dev / klein 9B (FLUX
-    Non-Commercial), Anima (CircleStone Labs non-commercial), Qwen-Image 2.1 (Qwen Research; now the one-click
-    Realistic and Edit pick),
-    SD 3.x (Stability Community License) — licence acceptance before their first download.
-- Store only the accepted licence id + version in `settings.yaml`.
+- **Explicit acceptance (done).** Families and helpers with a `license_accept` id in
+  `config/models.yaml` download only after one "I accept" per licence id (shared by families
+  with the same licence). The download fails with code `license_needed` (message = the
+  `license_note`, details = the id); the UI's install wrappers show `LicencePrompt`, call
+  `accept_license` and retry. Only ids from the shipped list are accepted and only the ids are
+  stored (`Settings.accepted_licenses`); `set_settings` can't change them and overrides.yaml
+  can't remove a licence. Current ids:
+  - `flux1-dev-non-commercial`: FLUX.1 [dev] and FLUX.1 Kontext [dev]. The configured Kontext
+    URL is a third-party re-upload that skips Black Forest Labs' gate, so Pinhole shows the terms.
+  - `flux2-dev-non-commercial`, `flux2-klein-9b-non-commercial` (FLUX Non-Commercial).
+  - `krea2-community`: Krea 2 Turbo / Raw (Krea 2 Community License v1: §4.2 requires content
+    filters for any deployment, §2.3 limits commercial use to < $1M yearly revenue; §3 is the
+    content filter). The mirror's own LICENSE file is empty, so Pinhole shows it.
+  - `anima-non-commercial` (CircleStone Labs), `stability-community` (SD 3.x).
+  - `qwen-research`: Qwen-Image 2.1 (the one-click Realistic and Edit pick) and the default
+    Describe helper Qwen2.5-VL-3B.
 - SD 1.5 / SDXL (OpenRAIL-M / ++) use restrictions are repeated in the terms (§7).
 - `THIRD_PARTY_LICENSES` covers engines, bundled classifiers and the watermark model.
 
