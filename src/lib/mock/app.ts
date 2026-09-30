@@ -56,6 +56,8 @@ export function mockSettings(): Settings {
       engineBackend: "auto",
       textEncoderOnCpu: "auto",
       modelsFolder: null,
+      describeModel: "auto",
+      improveModel: "auto",
     };
     settings = initial;
     return initial;
@@ -77,6 +79,8 @@ function normalizeSettings(s: Settings): Settings {
     theme: pick(s.theme, ["system", "light", "dark"], "system"),
     engineBackend: pick(s.engineBackend, ["auto", "cuda", "vulkan", "cpu"], "auto"),
     textEncoderOnCpu: pick(s.textEncoderOnCpu, ["auto", "on", "off"], "auto"),
+    describeModel: String(s.describeModel ?? "").trim() || "auto",
+    improveModel: String(s.improveModel ?? "").trim() || "auto",
   };
 }
 

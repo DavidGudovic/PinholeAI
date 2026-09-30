@@ -220,6 +220,7 @@ what was skipped.
 | `core::app::hw_context(core) -> HwContext` | store | engine, catalog |
 | `core::models::register_download(core, &DownloadedFile, Registration)` | catalog | engine (captioner, upscaler, engine files are NOT registered) |
 | `core::describe::install_captioner(core)` | engine | catalog (recommended "describe" role) |
+| `core::describe::{list_helper_models, install_captioner(core, helper_id)}` | engine | frontend B (Models → Helpers), frontend A (pickers) |
 | `core::describe::improve_prompt(core, prompt, family_id, avoid)` | engine | frontend A (Create prompt box) |
 | `core::generate::unload_model(core, model_id)` | engine | catalog (delete) |
 | `core::testing::{use_external_engine, register_fake_model}` (feature `test-util`) | engine | ci (`tests/`) |
