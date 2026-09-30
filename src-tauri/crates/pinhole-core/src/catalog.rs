@@ -187,6 +187,9 @@ pub async fn browse(
         }
         None => registry.all_civitai_base_models(),
     };
+    if for_bases.is_some() && !filters.tags_fit_base_models(&query, &base_models) {
+        return Ok(BrowsePage::empty());
+    }
     let narrowed = OnlyBaseModels {
         inner: &env,
         base_models: &base_models,
@@ -497,7 +500,7 @@ mod tests {
         let opts = catalog_filters(&core).unwrap();
         assert_eq!(opts.looks.len(), 5);
         core.offline.set(true);
-        let page = browse(&core, BrowseQuery::default()).await.unwrap();
+        let page = browse(&core, BrowseQuery::default(), None).await.unwrap();
         assert!(page.offline && page.items.is_empty());
         assert_eq!(
             fetch_preview(&core, "https://evil.example/x.jpeg")

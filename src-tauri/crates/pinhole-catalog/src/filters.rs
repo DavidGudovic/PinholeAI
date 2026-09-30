@@ -522,6 +522,21 @@ impl CatalogFilters {
         self.tags.iter().find(|t| t.key == key)
     }
 
+    /// Whether the picked tags can match anything within `base_models`: every
+    /// tag that narrows `baseModels` (Edit) shares at least one with them.
+    /// False for Edit + add-ons for an SDXL model: nothing to ask CivitAI for.
+    pub fn tags_fit_base_models(&self, q: &BrowseQuery, base_models: &[String]) -> bool {
+        q.tags
+            .iter()
+            .filter_map(|k| self.tag(k))
+            .filter(|t| !t.api_base_models.is_empty())
+            .all(|t| {
+                t.api_base_models
+                    .iter()
+                    .any(|a| base_models.iter().any(|b| a.eq_ignore_ascii_case(b)))
+            })
+    }
+
     pub fn is_lora_type(&self, civitai_type: &str) -> bool {
         self.lora_types
             .iter()
@@ -1236,6 +1251,20 @@ pub(crate) mod tests {
             "modelVersions": [{ "id": 2, "name": "v1", "baseModel": base_model, "files": [], "images": [] }],
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn edit_tag_only_fits_edit_capable_base_models() {
+        let f = filters();
+        let q = BrowseQuery {
+            tags: vec!["edit".into()],
+            ..BrowseQuery::default()
+        };
+        let sdxl = ["SDXL 1.0".to_string(), "Pony".to_string()];
+        let qwen = ["Qwen".to_string()];
+        assert!(!f.tags_fit_base_models(&q, &sdxl));
+        assert!(f.tags_fit_base_models(&q, &qwen));
+        assert!(f.tags_fit_base_models(&BrowseQuery::default(), &sdxl));
     }
 
     #[test]

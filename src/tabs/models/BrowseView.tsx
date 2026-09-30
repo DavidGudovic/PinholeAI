@@ -95,6 +95,9 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     const id = forModelOf(f);
     return (id && modelsRef.current?.find((m) => m.id === id)?.familyId) || null;
   }, []);
+  // The family actually sent is part of the key: pages asked before the models list loaded
+  // (or after the model was deleted) aren't narrowed, and mustn't be reused as if they were.
+  const keyOf = useCallback((f: BrowseFilters) => `${filtersKey(f)}|${familyOf(f) ?? ""}`, [familyOf]);
   const reqId = useRef(0);
   /** First visit this session, and the user hasn't touched a filter yet. */
   const pristine = useRef(!getLastFilters());
@@ -183,7 +186,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const fetchPage = useCallback(
     async (cursor: string | null, retry = true) => {
       const f = filtersRef.current;
-      const key = filtersKey(f);
+      const key = keyOf(f);
       const id = ++reqId.current;
       if (!cursor) autoRounds.current = 0;
       setPhase(cursor ? "more" : "loading");
@@ -214,11 +217,11 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         if (id === reqId.current) setPhase("idle");
       }
     },
-    [showPages, familyOf],
+    [showPages, familyOf, keyOf],
   );
 
   // Filters changed: show the cached grid right away when there is one…
-  const liveKey = filtersKey(filters);
+  const liveKey = keyOf(filters);
   useEffect(() => {
     const chain = pages.chain(liveKey);
     if (!chain) return;
@@ -232,20 +235,20 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   // …otherwise ask CivitAI once the clicks settle.
   const key = useDebounced(liveKey, FILTER_DEBOUNCE_MS);
   useEffect(() => {
-    if (key !== filtersKey(filtersRef.current)) return; // still changing
+    if (key !== keyOf(filtersRef.current)) return; // still changing
     if (shownKey.current === key) return; // restored from the cache
     void fetchPage(null);
-  }, [key, reloadTick, fetchPage]);
+  }, [key, reloadTick, fetchPage, keyOf]);
 
   // Fetch the next page ahead, while the user looks at this one.
   useEffect(() => {
     if (phase !== "idle" || !nextCursor || partial || error || offline) return;
     const k = shownKey.current;
     const f = filtersRef.current;
-    if (!k || k !== filtersKey(f) || pages.has(k, nextCursor)) return;
+    if (!k || k !== keyOf(f) || pages.has(k, nextCursor)) return;
     const t = setTimeout(() => void pages.load(k, nextCursor, () => browseCatalog(toBrowseQuery(f, nextCursor), familyOf(f))).catch(() => undefined), 250);
     return () => clearTimeout(t);
-  }, [phase, nextCursor, partial, error, offline, familyOf]);
+  }, [phase, nextCursor, partial, error, offline, familyOf, keyOf]);
 
   // Nothing matched in the pages checked so far: keep looking on our own.
   useEffect(() => {
