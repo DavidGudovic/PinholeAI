@@ -412,6 +412,130 @@ async fn describe_inner(
     Ok(text)
 }
 
+/// Longest prompt "Improve my prompt" accepts (characters).
+const IMPROVE_MAX_CHARS: usize = 2000;
+
+/// The instruction for "Improve my prompt": tag or sentence style from the family's
+/// `style_template`, the Safe mode rule, and the add-on trigger words not to repeat.
+fn improve_instruction(
+    improve: &std::collections::BTreeMap<String, String>,
+    template: &str,
+    safe: bool,
+    avoid: &[String],
+) -> Option<String> {
+    let key = if template == "tags" {
+        "tags"
+    } else {
+        "natural"
+    };
+    let mut out = improve.get(key)?.trim().to_string();
+    if safe {
+        if let Some(rule) = improve.get("safe") {
+            out = format!("{out} {}", rule.trim());
+        }
+    }
+    if !avoid.is_empty() {
+        if let Some(rule) = improve.get("avoid") {
+            out = format!(
+                "{out} {}",
+                rule.trim().replace("{words}", &avoid.join(", "))
+            );
+        }
+    }
+    Some(out)
+}
+
+/// One line of clean text; add-on trigger words the model wrote anyway are taken out
+/// (whole words only), because they are added separately at generation time.
+fn tidy_improved(text: &str, avoid: &[String]) -> String {
+    let mut t = llama::clean_caption(text)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    for w in avoid {
+        let w = w.trim();
+        // Longest match first is not needed: each phrase is removed on its own.
+        while !w.is_empty() && crate::generate::contains_phrase(&t, w) {
+            let lower = t.to_lowercase();
+            let wl = w.to_lowercase();
+            // Byte offsets of the lowercase copy only line up for text that doesn't change
+            // length when lowercased; otherwise leave the rest alone.
+            if lower.len() != t.len() {
+                break;
+            }
+            let Some(i) = lower.match_indices(&wl).map(|(i, _)| i).find(|&i| {
+                let before = lower[..i].chars().next_back();
+                let after = lower[i + wl.len()..].chars().next();
+                !before.is_some_and(char::is_alphanumeric)
+                    && !after.is_some_and(char::is_alphanumeric)
+            }) else {
+                break;
+            };
+            t.replace_range(i..i + wl.len(), "");
+        }
+    }
+    // Tidy what the removals left: doubled or dangling commas and spaces.
+    let parts: Vec<&str> = t
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    let joined = parts.join(", ");
+    joined.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Turn a short idea into a fuller prompt with the local text model (the Describe model).
+/// `family_id` picks tags vs sentences; `avoid` = trigger words of the add-ons in use.
+/// PRIVACY: the prompt goes only to the loopback llama-server and back; never logged or stored.
+pub async fn improve_prompt(
+    core: &Arc<AppCore>,
+    prompt: &str,
+    family_id: Option<&str>,
+    avoid: &[String],
+) -> CoreResult<String> {
+    let idea = prompt.trim();
+    if idea.is_empty() {
+        return Err(CoreError::invalid(
+            "Type a few words about your picture first.",
+        ));
+    }
+    if idea.chars().count() > IMPROVE_MAX_CHARS {
+        return Err(CoreError::invalid(
+            "That prompt is already long. Improve works on shorter ideas.",
+        ));
+    }
+    let _folder = crate::models::folder_read(core)?;
+    let reg = core.registry();
+    let template = family_id
+        .and_then(|id| reg.family(id))
+        .map(|f| f.style_template.clone())
+        .unwrap_or_else(|| "natural".into());
+    let safe = core.settings.read().content_mode != "all";
+    let instruction = improve_instruction(&reg.captioner().improve, &template, safe, avoid)
+        .ok_or_else(|| {
+            CoreError::not_found("Improve my prompt isn't available. Update Pinhole.")
+        })?;
+    let max_tokens = if template == "tags" { 200 } else { 300 };
+
+    let _busy = BusyGuard::new(&core.describe);
+    let client = ensure_llama(core).await?;
+    let text = client.rewrite(&instruction, idea, max_tokens).await.map_err(|e| {
+        let tail = core.describe.logs.tail_text(30);
+        match classify(&tail, None) {
+            Failure::OutOfMemory => CoreError::new("vram", "Not enough memory to improve the prompt right now — close other apps or wait for the image to finish, then try again.").with_details(tail),
+            _ => CoreError::new("engine_failed", "Improving the prompt failed. Try again.").with_details(format!("{e}\n{tail}")),
+        }
+    })?;
+    let text = tidy_improved(&text, avoid);
+    if text.is_empty() {
+        return Err(CoreError::new(
+            "engine_failed",
+            "The helper model returned nothing. Try again.",
+        ));
+    }
+    Ok(text)
+}
+
 /// 32 random bytes as hex: llama-server's API key for one launch.
 fn new_api_key() -> String {
     rand::random::<[u8; 32]>()
@@ -630,6 +754,55 @@ mod tests {
         assert!(st.is_busy(), "the other describe still runs");
         drop(b);
         assert!(!st.is_busy());
+    }
+
+    fn improve_map() -> std::collections::BTreeMap<String, String> {
+        [
+            ("natural", "NAT"),
+            ("tags", "TAGS"),
+            ("safe", "SAFE."),
+            ("avoid", "Skip: {words}."),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    #[test]
+    fn improve_instruction_follows_style_safe_mode_and_trigger_words() {
+        let m = improve_map();
+        assert_eq!(improve_instruction(&m, "tags", false, &[]).unwrap(), "TAGS");
+        assert_eq!(
+            improve_instruction(&m, "natural", true, &["sks style".into(), "ink".into()]).unwrap(),
+            "NAT SAFE. Skip: sks style, ink."
+        );
+        // Unknown templates read as sentences; a registry without the text says so.
+        assert!(improve_instruction(&m, "other", false, &[])
+            .unwrap()
+            .starts_with("NAT"));
+        assert!(improve_instruction(&Default::default(), "tags", false, &[]).is_none());
+    }
+
+    #[test]
+    fn improved_text_is_one_clean_line_without_trigger_words() {
+        assert_eq!(
+            tidy_improved("Prompt: \"a cat,\n  on a mat\"", &[]),
+            "a cat, on a mat"
+        );
+        let avoid = vec!["Sks".to_string(), "ink wash".to_string()];
+        assert_eq!(
+            tidy_improved("sks, a cat, ink wash, soft light", &avoid),
+            "a cat, soft light"
+        );
+        // Whole words only: "ink" stays inside "pink".
+        assert_eq!(
+            tidy_improved("a pink cat, ink", &["ink".to_string()]),
+            "a pink cat"
+        );
+        assert_eq!(
+            tidy_improved("A cat in the sks style.", &["sks".to_string()]),
+            "A cat in the style."
+        );
     }
 
     #[test]

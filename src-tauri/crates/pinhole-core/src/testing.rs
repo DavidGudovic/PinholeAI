@@ -1581,6 +1581,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn improve_prompt_through_mock_llama() {
+        let (_tmp, core, _rec) = new_core();
+        let llama = MockLlamaServer::start("a red fox, sks, in snow, soft light", 0).await;
+        use_external_captioner(&core, &llama.base_url());
+        let text = describe::improve_prompt(&core, "  a red fox  ", None, &["sks".into()])
+            .await
+            .unwrap();
+        assert_eq!(text, "a red fox, in snow, soft light");
+        let body = &llama.requests()[0];
+        let system = body
+            .pointer("/messages/0/content")
+            .and_then(|t| t.as_str())
+            .unwrap();
+        assert!(system.contains("natural sentences"), "{system}");
+        assert!(
+            system.contains("safe for work"),
+            "Safe mode is on by default"
+        );
+        assert!(system.contains("sks"), "trigger words are not repeated");
+        assert_eq!(
+            body.pointer("/messages/1/content").and_then(|t| t.as_str()),
+            Some("a red fox"),
+            "the idea is the chat message, not part of the instruction"
+        );
+        let e = describe::improve_prompt(&core, "   ", None, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "invalid");
+    }
+
+    #[tokio::test]
     async fn sd_args_force_loopback_and_privacy_flags() {
         let (_tmp, core, _) = new_core();
         let cfg = crate::engine_setup::engine_config(&core).unwrap();
