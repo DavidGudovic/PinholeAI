@@ -76,6 +76,8 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
    **Only exception:** a Style the user explicitly saves goes to `Data/styles/`. Styles and the
    main prompt are separate fields and are only combined in memory at request time.
 2. Always send `"embed_image_metadata": false` to `sd-server` (its default is `true`).
+   The AI-generated marker (XMP `DigitalSourceType` + app name/version, RELEASE-SPEC §2) is the
+   one metadata always written, by `session::export_png`; it never carries prompt text.
 3. Generated images stay in memory (Rust `Vec<u8>` / JS Blob) until the user clicks Save.
 4. No telemetry, analytics, crash reporters, automatic update checks, remote fonts or CDN assets.
    The only update check is the user pressing **Check for updates** (SPEC §4 rule 6), through the

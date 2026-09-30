@@ -2551,6 +2551,74 @@ mod tests {
         );
     }
 
+    /// RELEASE-SPEC §2: every picture Pinhole made leaves with the AI-generated
+    /// marker (Save, Save as, Copy), whatever the settings say; an untouched
+    /// import leaves without one.
+    #[tokio::test]
+    async fn exports_carry_the_ai_marker() {
+        let (tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let sdxl = register_fake_model(&core, "sdxl");
+        let xmp = |bytes: &[u8]| -> Option<String> {
+            pinhole_engine::png::text_chunks(bytes)
+                .into_iter()
+                .find(|(k, d)| k == "iTXt" && d.starts_with(b"XML:com.adobe.xmp\0"))
+                .map(|(_, d)| String::from_utf8_lossy(&d[22..]).into_owned())
+        };
+        let made = generate::generate(&core, GenerateRequest::txt2img(sdxl.clone(), "a boat"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut req = GenerateRequest::txt2img(sdxl, "at sunset");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(photo.clone());
+        req.strength = Some(0.5);
+        let restyled = generate::generate(&core, req).await.unwrap().images[0]
+            .id
+            .clone();
+
+        for with_settings in [false, true] {
+            core.settings.write().saved_metadata =
+                if with_settings { "settings" } else { "none" }.into();
+            let saved = std::fs::read(session::save_image(&core, &made).unwrap().path).unwrap();
+            let m = xmp(&saved).expect("marker on a Create result");
+            assert!(
+                m.contains("digitalsourcetype/trainedAlgorithmicMedia"),
+                "{m}"
+            );
+            assert!(
+                m.contains(concat!("Pinhole ", env!("CARGO_PKG_VERSION"))),
+                "{m}"
+            );
+            assert!(!m.contains("a boat"));
+            let path = tmp.path().join(format!("as_{with_settings}.png"));
+            let saved = std::fs::read(
+                session::save_image_as(&core, &restyled, path.to_str().unwrap())
+                    .unwrap()
+                    .path,
+            )
+            .unwrap();
+            let m = xmp(&saved).expect("marker on an edited photo");
+            assert!(
+                m.contains("digitalsourcetype/compositeWithTrainedAlgorithmicMedia"),
+                "{m}"
+            );
+            let saved = std::fs::read(session::save_image(&core, &photo).unwrap().path).unwrap();
+            assert!(xmp(&saved).is_none(), "an untouched import isn't AI-made");
+        }
+        // Copy uses the same export.
+        assert!(session::decode_rgba(&core, &made).is_ok());
+    }
+
     fn last_generation_event(rec: &Recorder) -> Option<crate::events::GenerationProgress> {
         rec.0.lock().iter().rev().find_map(|e| {
             if let CoreEvent::Generation(p) = e {

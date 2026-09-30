@@ -432,8 +432,8 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           label="Information inside saved pictures"
           hint={
             settings.savedMetadata === "settings"
-              ? "Model name, seed, steps and dials are written into the PNG. Your prompt is never included."
-              : "Saved pictures contain only the image — nothing about how it was made."
+              ? "A “made with AI” note, plus model name, seed, steps and dials. Your prompt is never included."
+              : "Only a “made with AI” note (always added to pictures Pinhole made). Your prompt is never included."
           }
         >
           <Segmented<"none" | "settings">

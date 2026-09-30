@@ -308,10 +308,19 @@ fn check_saved_file(path: &Path, data_root: &Path) {
         &pinhole_tests::PNG_SIGNATURE,
         "saved file is not a PNG"
     );
-    for (kind, keyword, _) in pinhole_tests::png_text_chunks(&bytes) {
+    let mut marker = false;
+    for (kind, keyword, text) in pinhole_tests::png_text_chunks(&bytes) {
+        if kind == "iTXt" && keyword == "XML:com.adobe.xmp" {
+            // The AI-generated marker (RELEASE-SPEC §2): always there, app name only.
+            let text = String::from_utf8_lossy(&text);
+            assert!(text.contains("DigitalSourceType"), "{text}");
+            marker = true;
+            continue;
+        }
         assert!(
             kind == "tEXt" && keyword == "pinhole",
-            "saved PNG may only carry the single `pinhole` settings chunk, found {kind} `{keyword}`"
+            "saved PNG may only carry the AI marker and the `pinhole` settings chunk, found {kind} `{keyword}`"
         );
     }
+    assert!(marker, "saved PNG must carry the AI-generated marker");
 }

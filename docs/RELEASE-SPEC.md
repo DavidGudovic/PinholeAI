@@ -63,7 +63,8 @@ instead of a refactor:
 
 The EU Code of Practice on marking (final, June 2026) expects **at least two layers**.
 
-- **Metadata** on every saved file:
+- **Metadata** on every saved file (XMP `DigitalSourceType` built 2026-09-30:
+  `session::export_png`, the one export function behind Save, Save as and Copy):
   - IPTC/XMP `DigitalSourceType`:
     `http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia` for Create,
     `.../compositeWithTrainedAlgorithmicMedia` for Edit / Restyle.
