@@ -186,6 +186,11 @@ pub fn register_download(
                 .filter(|_| same_file)
                 .and_then(|p| p.observed_vram_gb),
             dtype: reg.dtype,
+            // The user's own trigger words describe the file, so keep them for the same file.
+            trigger_words: previous
+                .as_ref()
+                .filter(|_| same_file)
+                .and_then(|p| p.trigger_words.clone()),
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
@@ -255,6 +260,43 @@ pub fn list_loras(core: &AppCore) -> CoreResult<Vec<InstalledLora>> {
     let mut out: Vec<InstalledLora> = index.loras().map(inventory::installed_lora_view).collect();
     out.sort_by_key(|l| l.friendly_name.to_lowercase());
     Ok(out)
+}
+
+/// Replace an installed add-on's trigger words with the user's own list
+/// (trimmed, empty and duplicate words dropped). An empty list means "none".
+pub fn set_lora_trigger_words(
+    core: &AppCore,
+    lora_id: &str,
+    words: Vec<String>,
+) -> CoreResult<InstalledLora> {
+    let mut clean: Vec<String> = Vec::new();
+    for w in words {
+        let w = w.trim();
+        if w.chars().count() > 200 {
+            return Err(CoreError::invalid(
+                "That trigger word is too long. Keep each one short.",
+            ));
+        }
+        if !w.is_empty() && !clean.iter().any(|c| c.eq_ignore_ascii_case(w)) {
+            clean.push(w.to_string());
+        }
+    }
+    if clean.len() > 50 {
+        return Err(CoreError::invalid(
+            "That's too many trigger words. Keep the ones the add-on needs.",
+        ));
+    }
+    let mut index = core.installed.lock();
+    index.check_savable(&core.data)?;
+    let file = index
+        .files
+        .iter_mut()
+        .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
+        .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
+    file.trigger_words = Some(clean);
+    let view = inventory::installed_lora_view(file);
+    index.save(&core.data)?;
+    Ok(view)
 }
 
 /// `InstalledHelper` in src/lib/types.ts: a helper model that isn't picked
@@ -1134,9 +1176,11 @@ mod tests {
             "paths are Data-relative"
         );
 
-        // Same path again → same id (no duplicates).
+        // Same path again → same id (no duplicates), the user's trigger words kept.
+        core.installed.lock().files[0].trigger_words = Some(vec!["mine".into()]);
         let again = register_download(&core, &file, reg).unwrap();
         assert_eq!(again.id, entry.id);
+        assert_eq!(again.trigger_words, Some(vec!["mine".into()]));
         assert_eq!(core.installed.lock().files.len(), 1);
 
         // Listed as an installed model.

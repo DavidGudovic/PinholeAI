@@ -60,8 +60,6 @@ export interface CreateParams {
   /** prompt-bearing (negativePrompt). Unset/null fields = registry default. */
   fineTune: FineTune;
   loras: LoraUse[];
-  /** null = follow Settings. */
-  addTriggerWords: boolean | null;
 }
 
 /** The request behind a batch of results — used by "Variations". prompt-bearing, memory only. */
@@ -165,7 +163,6 @@ export const initialCreate = (): CreateParams => ({
   count: 1,
   fineTune: {},
   loras: [],
-  addTriggerWords: null,
 });
 
 export const initialEdit = (): EditParams => ({
@@ -286,6 +283,22 @@ export function baseArch(familyId: string | null | undefined): string | null {
 
 /** Strength a newly added style add-on starts at. */
 export const DEFAULT_LORA_WEIGHT = 0.8;
+
+/** Up to this many trigger words, all are added. A longer list is usually alternatives (one per
+ *  character or outfit), so only the first is added until the user picks others on the chip. */
+export const ALL_TRIGGER_WORDS_UP_TO = 3;
+
+/** Trigger words this add-on adds to the prompt: the user's pick on the chip, else the default
+ *  (none when "Add trigger words automatically" is off in Settings). */
+export function pickedTriggerWords(u: LoraUse, lora: InstalledLora | undefined, autoAdd: boolean): string[] {
+  const words = lora?.trainedWords ?? [];
+  if (u.words) {
+    const picked = new Set(u.words.map((w) => w.trim().toLowerCase()));
+    return words.filter((w) => picked.has(w.trim().toLowerCase()));
+  }
+  if (!autoAdd) return [];
+  return words.length <= ALL_TRIGGER_WORDS_UP_TO ? [...words] : words.slice(0, 1);
+}
 
 export function loraCompatible(lora: InstalledLora, modelFamily: string | null | undefined): boolean {
   if (!lora.familyId || !modelFamily) return true;

@@ -239,6 +239,17 @@ export function makeActions(store: Store) {
     );
   }
 
+  /** Save the user's own trigger words for an add-on. Its chips go back to the default pick. Throws CoreError. */
+  async function setLoraTriggerWords(loraId: string, words: string[]) {
+    const updated = await api.setLoraTriggerWords(loraId, words);
+    const s = get();
+    dispatch({ type: "setLoras", loras: s.loras.map((l) => (l.id === loraId ? updated : l)) });
+    const used = get().create.loras;
+    if (used.some((u) => u.loraId === loraId && u.words)) {
+      dispatch({ type: "patchCreate", patch: { loras: used.map((u) => (u.loraId === loraId ? { loraId: u.loraId, weight: u.weight } : u)) } });
+    }
+  }
+
   function sendToEdit(id: string) {
     const ref = get().images[id];
     if (!ref) return;
@@ -382,6 +393,7 @@ export function makeActions(store: Store) {
     copyTextToClipboard,
     setTab,
     addLora,
+    setLoraTriggerWords,
     sendToEdit,
     sendToDescribe,
     useAsPrompt,

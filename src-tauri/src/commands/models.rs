@@ -21,6 +21,15 @@ pub async fn list_loras(core: State<'_, Arc<AppCore>>) -> Result<Vec<InstalledLo
 }
 
 #[tauri::command]
+pub async fn set_lora_trigger_words(
+    core: State<'_, Arc<AppCore>>,
+    lora_id: String,
+    words: Vec<String>,
+) -> Result<InstalledLora, CoreError> {
+    pinhole_core::models::set_lora_trigger_words(&core, &lora_id, words)
+}
+
+#[tauri::command]
 pub async fn get_recommended(
     core: State<'_, Arc<AppCore>>,
 ) -> Result<Vec<RecommendedPick>, CoreError> {
@@ -141,6 +150,7 @@ pub async fn change_models_folder(
 super::area_commands![
     list_models,
     list_loras,
+    set_lora_trigger_words,
     list_helpers,
     delete_helper,
     open_models_folder,

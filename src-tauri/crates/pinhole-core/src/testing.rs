@@ -108,6 +108,7 @@ pub fn register_fake_model(core: &AppCore, family_id: &str) -> String {
         last_used: None,
         observed_vram_gb: None,
         dtype: Some("f16".into()),
+        trigger_words: None,
     }];
     let required = pinhole_registry::wiring::required_components(&reg, &family, &hw);
     {
@@ -136,6 +137,7 @@ pub fn register_fake_model(core: &AppCore, family_id: &str) -> String {
                 last_used: None,
                 observed_vram_gb: None,
                 dtype: None,
+                trigger_words: None,
             });
         }
     }
@@ -177,6 +179,7 @@ pub fn register_fake_lora(core: &AppCore, family_id: &str, trained_words: &[&str
         last_used: None,
         observed_vram_gb: None,
         dtype: None,
+        trigger_words: None,
     };
     let mut idx = core.installed.lock();
     idx.upsert(file);
@@ -375,6 +378,7 @@ mod tests {
         req.loras = vec![generate::LoraUse {
             lora_id: lora,
             weight: 0.7,
+            words: None,
         }];
         req.add_trigger_words = true;
         let preview = generate::preview_final_prompt(&core, &req).unwrap();
@@ -400,6 +404,53 @@ mod tests {
         assert!((body["lora"][0]["multiplier"].as_f64().unwrap() - 0.7).abs() < 1e-6);
         assert!(body["prompt"].as_str().unwrap().contains("zxc_trigger"));
         assert!(!body["prompt"].as_str().unwrap().contains("<lora:"));
+    }
+
+    #[test]
+    fn trigger_words_follow_the_chip_and_the_users_list() {
+        let (_tmp, core, _rec) = new_core();
+        let model = register_fake_model(&core, "sdxl");
+        let lora = register_fake_lora(&core, "sdxl", &["alpha look", "beta look", "gamma"]);
+        let prompt_for = |words: Option<Vec<&str>>, prompt: &str| {
+            let mut req = GenerateRequest::txt2img(model.clone(), prompt);
+            req.loras = vec![generate::LoraUse {
+                lora_id: lora.clone(),
+                weight: 0.8,
+                words: words.map(|w| w.into_iter().map(String::from).collect()),
+            }];
+            generate::preview_final_prompt(&core, &req).unwrap().prompt
+        };
+        // No pick = every word; a pick keeps only listed words, in the add-on's order.
+        let all = prompt_for(None, "a boat");
+        assert!(all.contains("alpha look, beta look, gamma"), "{all}");
+        let some = prompt_for(Some(vec!["GAMMA", "alpha look", "made up"]), "a boat");
+        assert!(
+            some.contains("alpha look, gamma")
+                && !some.contains("beta")
+                && !some.contains("made up"),
+            "{some}"
+        );
+        assert!(!prompt_for(Some(vec![]), "a boat").contains("look"));
+        // Already typed (whole words) = not added twice; part of a longer word doesn't count.
+        let typed = prompt_for(Some(vec!["gamma"]), "a Gamma boat");
+        assert_eq!(typed.matches("amma").count(), 1, "{typed}");
+        assert!(prompt_for(Some(vec!["gamma"]), "a gammaray boat").contains(", gamma"));
+
+        // The user's own list replaces CivitAI's and survives a reload.
+        let saved = crate::models::set_lora_trigger_words(
+            &core,
+            &lora,
+            vec![" own word ".into(), "".into(), "Own Word".into()],
+        )
+        .unwrap();
+        assert_eq!(saved.trained_words, ["own word"]);
+        let reloaded = pinhole_store::installed::InstalledIndex::load(&core.data).unwrap();
+        assert_eq!(reloaded.get(&lora).unwrap().trigger_words(), ["own word"]);
+        assert!(prompt_for(None, "a boat").contains("own word"));
+        assert!(!prompt_for(None, "a boat").contains("alpha"));
+        // Not a LoRA / not installed.
+        assert!(crate::models::set_lora_trigger_words(&core, &model, vec![]).is_err());
+        assert!(crate::models::set_lora_trigger_words(&core, "nope", vec![]).is_err());
     }
 
     #[tokio::test]
@@ -1334,6 +1385,7 @@ mod tests {
                 last_used: None,
                 observed_vram_gb: None,
                 dtype: None,
+                trigger_words: None,
             });
         }
         let mut req = GenerateRequest::txt2img(model, "a cat");
@@ -1657,6 +1709,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: None,
             dtype: None,
+            trigger_words: None,
         };
         // No shared components installed: fine for an all-in-one checkpoint…
         let files = crate::generate::model_files(&core, &aio, &fam, &hw).unwrap();
@@ -1703,6 +1756,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: None,
             dtype: None,
+            trigger_words: None,
         };
         let err = crate::generate::model_files(&core, &zit, &fam, &hw).unwrap_err();
         assert!(
@@ -1731,6 +1785,7 @@ mod tests {
                     last_used: None,
                     observed_vram_gb: None,
                     dtype: None,
+                    trigger_words: None,
                 });
             }
         }
@@ -2033,6 +2088,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: None,
             dtype: None,
+            trigger_words: None,
         });
     }
 

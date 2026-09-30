@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { InstalledLora, InstalledModel, Preset, ResultImage } from "../types";
+import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { createModels, editModels, initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
@@ -217,7 +217,18 @@ describe("requests", () => {
       model: s.models!.find((m) => m.id === "m1")!,
       settings: null,
     });
-    expect(req.loras).toEqual([{ loraId: "p", weight: 0.8 }]);
+    expect(req.loras).toEqual([{ loraId: "p", weight: 0.8, words: [] }]);
+  });
+
+  it("sends each add-on's trigger words: the chip's pick, else all of a short list or the first of a long one", () => {
+    const withWords = (id: string, words: string[]) => ({ ...lora(id, "sdxl"), trainedWords: words });
+    const loras = [withWords("a", ["w1", "w2"]), withWords("b", ["c1", "c2", "c3", "c4"]), withWords("c", ["x", "y"])];
+    const create = { ...withModels().create, prompt: "p", loras: [{ loraId: "a", weight: 0.8 }, { loraId: "b", weight: 0.8 }, { loraId: "c", weight: 0.8, words: ["Y", "gone"] }] };
+    const build = (addTriggerWords: boolean) =>
+      buildCreateRequest(create, { ui: FAMILY_UI.sdxl, loras, model: model("m1", "sdxl"), settings: { addTriggerWords } as Settings }).loras.map((u) => u.words);
+    expect(build(true)).toEqual([["w1", "w2"], ["c1"], ["y"]]);
+    // Settings off: nothing unless picked on the chip.
+    expect(build(false)).toEqual([[], [], ["y"]]);
   });
 
   it("variations drop the seed only", () => {
