@@ -219,10 +219,12 @@ function Preview({
           <ScanText className="h-4 w-4" /> Describe
         </Button>
         <Button
-          disabled={busy || !hasBatch}
+          disabled={!hasBatch}
           title={
             hasBatch
-              ? "Same prompt, new seeds"
+              ? busy
+                ? "Same prompt, new seeds (waits for the current job)"
+                : "Same prompt, new seeds"
               : "Only for images made in this session"
           }
           onClick={() => void run(() => actions.variations(result.id))}

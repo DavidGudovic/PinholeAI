@@ -121,6 +121,21 @@ export interface Job {
   count?: number;
 }
 
+/**
+ * A Generate/Edit press waiting for the running job. Its settings were copied when it was
+ * pressed; the job itself lives in the actions (memory only, like everything here).
+ */
+export interface QueuedJob {
+  id: string;
+  kind: "create" | "edit";
+  /** prompt-bearing: the start of its prompt, for the queue list. */
+  label: string;
+  /** Model and image count, in plain words. */
+  detail: string;
+  /** Session images it reads (kept until it has run). */
+  imageIds: string[];
+}
+
 export interface Toast {
   id: number;
   text: string;
@@ -150,6 +165,8 @@ export interface AppState {
   edit: EditParams;
   describe: DescribeParams;
   job: Job | null;
+  /** Jobs waiting for the running one, oldest first. */
+  queue: QueuedJob[];
   toasts: Toast[];
   /** Bumped by Reset; tab roots are keyed on it so local state resets too. */
   sessionNonce: number;
@@ -208,6 +225,7 @@ export function initialState(): AppState {
     edit: initialEdit(),
     describe: initialDescribe(),
     job: null,
+    queue: [],
     toasts: [],
     sessionNonce: 0,
   };
@@ -243,8 +261,11 @@ export type Action =
   | { type: "jobStart"; kind: JobKind; at: number; count?: number }
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
+  | { type: "queueAdd"; job: QueuedJob }
+  | { type: "queueRemove"; id: string }
   | { type: "editLoad"; ref: ImgRef }
   | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null }
+  | { type: "editAppend"; ref: ImgRef; meta?: ResultImage | null }
   | { type: "editGoto"; index: number }
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
@@ -313,8 +334,9 @@ export function loraCompatible(lora: InstalledLora, modelFamily: string | null |
 }
 
 /** Every session image id the UI still shows. */
-export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "describe">): Set<string> {
+export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue">>): Set<string> {
   const ids = new Set<string>();
+  for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);
   for (const n of s.edit.chain) ids.add(n.imageId);
   if (s.edit.secondImageId) ids.add(s.edit.secondImageId);
@@ -357,6 +379,12 @@ export function compactFineTune(ft: FineTune): FineTune {
   }
   return out;
 }
+
+/** An edit is running or waiting: the edit history stays put until they are done. */
+export const editBusy = (s: Pick<AppState, "job" | "queue">) => s.job?.kind === "edit" || s.queue.some((q) => q.kind === "edit");
+
+/** A new Generate/Edit press waits in the queue. */
+export const willQueue = (s: Pick<AppState, "job" | "queue">) => !!s.job || s.queue.length > 0;
 
 const ACTIVE_DL = new Set(["queued", "downloading", "verifying"]);
 export const isActiveDownload = (d: Pick<GroupStatus, "state">) => ACTIVE_DL.has(d.state);
@@ -508,6 +536,10 @@ function inner(s: AppState, a: Action): AppState {
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
     case "jobEnd":
       return s.job ? { ...s, job: null } : s;
+    case "queueAdd":
+      return { ...s, queue: [...s.queue, a.job] };
+    case "queueRemove":
+      return s.queue.some((q) => q.id === a.id) ? { ...s, queue: s.queue.filter((q) => q.id !== a.id) } : s;
 
     case "editLoad":
       return {
@@ -519,6 +551,12 @@ function inner(s: AppState, a: Action): AppState {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
       const kept = s.edit.chain.slice(0, s.edit.index + 1);
       const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null }];
+      return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
+    }
+    case "editAppend": {
+      // A queued edit of an earlier image in the history: added at the end, keeping the edits after it.
+      if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
+      const chain = [...s.edit.chain, { imageId: a.ref.id, label: `Edit ${s.edit.chain.length}`, meta: a.meta ?? null }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }
     case "editGoto": {
@@ -566,6 +604,7 @@ function inner(s: AppState, a: Action): AppState {
         resultBatch: {},
         edit: { ...initialEdit(), mode: s.edit.mode, editModelId: s.edit.editModelId, restyleModelId: s.edit.restyleModelId, loras: s.edit.loras },
         describe: { ...initialDescribe(), style: s.describe.style },
+        queue: [],
         toasts: [],
         sessionNonce: s.sessionNonce + 1,
       };

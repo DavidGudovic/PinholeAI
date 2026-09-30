@@ -9,6 +9,7 @@ import {
   Copy,
   Eraser,
   ImagePlus,
+  ListPlus,
   Maximize2,
   Redo2,
   Save,
@@ -27,6 +28,7 @@ import {
 } from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { LiveJobProgress } from "../../components/JobProgress";
+import { QueueButton } from "../../components/QueueButton";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
 import { ImageViewer } from "../../components/ImageViewer";
@@ -53,7 +55,9 @@ import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
   createModels,
+  editBusy,
   editModels,
+  willQueue,
   type ChangeAmount,
   type EditMode,
 } from "../../lib/state/model";
@@ -86,6 +90,9 @@ export function EditTab() {
   // Only the kind: the progress card subscribes to the job itself (LiveJobProgress).
   const jobKind = useAppState((s) => s.job?.kind ?? null);
   const job = !!jobKind;
+  // An edit running or waiting: the history stays put until they are done.
+  const locked = useAppState(editBusy);
+  const queues = useAppState(willQueue);
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
@@ -155,7 +162,7 @@ export function EditTab() {
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
-    if (store.getState().job?.kind === "edit") return;
+    if (editBusy(store.getState())) return;
     setError(null);
     setImporting(true);
     try {
@@ -171,7 +178,7 @@ export function EditTab() {
   const picker = useFilePicker((f) => void load(f));
 
   const loadSecond = async (f: File) => {
-    if (store.getState().job?.kind === "edit") return;
+    if (editBusy(store.getState())) return;
     setError(null);
     setImporting(true); // Apply waits for image 2
     try {
@@ -193,14 +200,7 @@ export function EditTab() {
   // during the export doesn't get as far as the job and report "still working".
   const running = useRef(false);
   const run = async () => {
-    if (
-      running.current ||
-      store.getState().job ||
-      importing ||
-      !current ||
-      !model
-    )
-      return;
+    if (running.current || importing || !current || !model) return;
     running.current = true;
     setError(null);
     try {
@@ -236,7 +236,7 @@ export function EditTab() {
       )
         return;
       ev.preventDefault();
-      if (store.getState().job?.kind === "edit") return;
+      if (editBusy(store.getState())) return;
       const s = store.getState().edit;
       dispatch({ type: "editGoto", index: s.index + (ev.shiftKey ? 1 : -1) });
     };
@@ -249,7 +249,6 @@ export function EditTab() {
   const canRun =
     !!current &&
     !!model &&
-    !job &&
     !importing &&
     (text.trim().length > 0 || !!e.styleId) &&
     !needsEditModel;
@@ -483,7 +482,7 @@ export function EditTab() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={myJob || importing}
+                  disabled={locked || importing}
                   onClick={secondPicker.open}
                   title="Use something from another picture, like an object or a logo"
                 >
@@ -673,7 +672,7 @@ export function EditTab() {
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 px-5 py-4 dark:border-neutral-800">
-          {myJob ? (
+          {myJob && (
             <LiveJobProgress
               kinds={EDIT_JOBS}
               cancelling={cancelling}
@@ -683,22 +682,32 @@ export function EditTab() {
                 setCancelling(false);
               }}
             />
-          ) : (
+          )}
+          <div className="flex gap-2">
             <Button
               variant="primary"
               size="lg"
-              className="w-full"
+              className="min-w-0 flex-1"
               disabled={!canRun}
               onClick={() => void run()}
             >
-              <WandSparkles className="h-4 w-4" />
-              {mode === "instruction" ? "Apply edit" : "Restyle"}
+              {queues ? (
+                <ListPlus className="h-4 w-4" />
+              ) : (
+                <WandSparkles className="h-4 w-4" />
+              )}
+              {queues
+                ? "Add to queue"
+                : mode === "instruction"
+                  ? "Apply edit"
+                  : "Restyle"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
               </span>
             </Button>
-          )}
+            <QueueButton />
+          </div>
           {!current && !myJob && (
             <p className="text-center text-xs text-neutral-500">
               Add an image to start.
@@ -706,7 +715,7 @@ export function EditTab() {
           )}
           {job && !myJob && (
             <p className="text-center text-xs text-neutral-500">
-              Busy creating — editing is available when it finishes.
+              Busy creating. Edits wait for it to finish.
             </p>
           )}
           {error && (
@@ -740,7 +749,7 @@ export function EditTab() {
             <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
               <IconButton
                 label="Undo"
-                disabled={e.index === 0 || myJob}
+                disabled={e.index === 0 || locked}
                 onClick={() =>
                   dispatch({ type: "editGoto", index: e.index - 1 })
                 }
@@ -749,7 +758,7 @@ export function EditTab() {
               </IconButton>
               <IconButton
                 label="Redo"
-                disabled={e.index >= e.chain.length - 1 || myJob}
+                disabled={e.index >= e.chain.length - 1 || locked}
                 onClick={() =>
                   dispatch({ type: "editGoto", index: e.index + 1 })
                 }
@@ -758,7 +767,7 @@ export function EditTab() {
               </IconButton>
               <IconButton
                 label="Delete this edit"
-                disabled={e.index === 0 || job}
+                disabled={e.index === 0 || job || locked}
                 onClick={() => dispatch({ type: "editDelete", index: e.index })}
               >
                 <Trash2 className="h-4 w-4" />
@@ -789,7 +798,7 @@ export function EditTab() {
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={myJob}
+                  disabled={locked}
                   onClick={picker.open}
                   title="Edit a different image"
                   aria-label="New image"
@@ -872,7 +881,7 @@ export function EditTab() {
                       <button
                         type="button"
                         aria-current={i === e.index ? "step" : undefined}
-                        disabled={myJob && i !== e.index}
+                        disabled={locked && i !== e.index}
                         onClick={() => dispatch({ type: "editGoto", index: i })}
                         className={cx(
                           "group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50",

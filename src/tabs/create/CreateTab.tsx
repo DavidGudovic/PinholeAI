@@ -1,9 +1,10 @@
 // Create (txt2img), SPEC §5.1.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Download, Layers, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Check, Download, Layers, ListPlus, Sparkles, TriangleAlert, X } from "lucide-react";
 import { LiveJobProgress } from "../../components/JobProgress";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { ModelPicker } from "../../components/ModelPicker";
+import { QueueButton } from "../../components/QueueButton";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
@@ -12,7 +13,7 @@ import * as api from "../../lib/api";
 import type { CoreError, GroupStatus } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
-import { createModels, isActiveDownload } from "../../lib/state/model";
+import { createModels, isActiveDownload, willQueue } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "./AddonChips";
@@ -74,6 +75,7 @@ function CreateWorkspace() {
   const modelId = useAppState((s) => s.create.modelId);
   // Only the kind: the progress card subscribes to the job itself (LiveJobProgress).
   const jobKind = useAppState((s) => s.job?.kind ?? null);
+  const queues = useAppState(willQueue);
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
@@ -87,18 +89,13 @@ function CreateWorkspace() {
   const [presetNotice, setPresetNotice] = useState<PresetNotice | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
-  // Set before the first await, so a second press while the job is starting is ignored.
-  const generating = useRef(false);
+  // Pressed while a job runs, it waits in the queue with the settings as they are now.
   const generate = async () => {
-    if (generating.current || store.getState().job) return;
-    generating.current = true;
     setError(null);
     try {
       await actions.generateCreate();
     } catch (e) {
       setError(api.asCoreError(e));
-    } finally {
-      generating.current = false;
     }
   };
   usePrimaryAction("create", () => void generate());
@@ -153,19 +150,19 @@ function CreateWorkspace() {
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-900">
-          {myJob ? (
-            <LiveJobProgress kinds={CREATE_JOBS} onCancel={() => void cancel()} cancelling={cancelling} />
-          ) : (
-            <Button variant="primary" size="lg" className="w-full" disabled={!!jobKind || !model} onClick={() => void generate()}>
-              <Sparkles className="h-4 w-4" />
-              Generate
+          {myJob && <LiveJobProgress kinds={CREATE_JOBS} onCancel={() => void cancel()} cancelling={cancelling} />}
+          <div className="flex gap-2">
+            <Button variant="primary" size="lg" className="min-w-0 flex-1" disabled={!model} onClick={() => void generate()}>
+              {queues ? <ListPlus className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+              {queues ? "Add to queue" : "Generate"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
               </span>
             </Button>
-          )}
-          {jobKind && !myJob && <p className="text-center text-xs text-neutral-500">Busy with an edit — Generate is available when it finishes.</p>}
+            <QueueButton />
+          </div>
+          {jobKind === "edit" && <p className="text-center text-xs text-neutral-500">Busy with an edit. Generate waits for it to finish.</p>}
           {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void generate()} />}
         </div>
       </aside>
