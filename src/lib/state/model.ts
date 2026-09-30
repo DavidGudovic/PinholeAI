@@ -386,10 +386,10 @@ export function loraCompatible(lora: InstalledLora, modelFamily: string | null |
 export const PROMPT_HISTORY_MAX = 50;
 
 /** Pictures made this session (Create results and Edit results) that haven't been saved yet. */
-export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved">): string[] {
+export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "images">): string[] {
   const ids = new Set<string>(s.results.map((r) => r.id));
   for (const n of s.edit.chain) if (n.meta) ids.add(n.imageId);
-  return [...ids].filter((id) => !s.saved[id]);
+  return [...ids].filter((id) => s.images[id] && !s.saved[id]);
 }
 
 /** Every session image id the UI still shows. */

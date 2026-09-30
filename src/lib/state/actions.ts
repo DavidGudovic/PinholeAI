@@ -103,7 +103,6 @@ export function makeActions(store: Store) {
     if (get().job) throw busyError();
     cancelRequested = false;
     dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
-    if (get().settings?.soundOnDone) primeSound();
     let ok = false;
     try {
       const out = await work();
@@ -114,7 +113,7 @@ export function makeActions(store: Store) {
     } finally {
       dispatch({ type: "jobEnd" });
       // Finished while the user is elsewhere (and nothing else is waiting): flash the taskbar, chime if asked.
-      if (ok && !get().queue.length && windowInBackground()) notifyDone(!!get().settings?.soundOnDone);
+      if (ok && kind !== "describe" && !get().queue.length && windowInBackground()) notifyDone(!!get().settings?.soundOnDone);
       startNextQueued();
     }
   }
@@ -130,6 +129,8 @@ export function makeActions(store: Store) {
   function enqueue(entry: Omit<QueuedJob, "id">, run: () => Promise<void>): Promise<void> {
     // Pressed while Reset is clearing the session: it belongs to the cleared session.
     if (resetting) return Promise.resolve();
+    // The click that started this is the moment a WebView will let the chime's audio start.
+    if (get().settings?.soundOnDone) primeSound();
     if (!willQueue(get())) return run();
     const id = uid("q");
     return new Promise<void>((resolve, reject) => {
@@ -218,12 +219,12 @@ export function makeActions(store: Store) {
       throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Switch to a model that can, or remove the picture.`, details: null } as CoreError;
     }
     const { create, loras, settings } = s;
-    dispatch({ type: "pushPrompt", prompt: create.prompt });
     const imageIds = create.refImageId ? [create.refImageId] : [];
     await queueBatch(
       create.count,
       queueEntry("create", create.prompt, model, create.count, imageIds),
       async () => {
+        dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
         return buildCreateRequest(create, { ui, loras, model, settings });
       },
@@ -321,7 +322,7 @@ export function makeActions(store: Store) {
     return saved;
   }
 
-  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled or some failed. */
+  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled; throws if some couldn't be saved. */
   async function saveAll(): Promise<boolean> {
     const ids = unsavedIds(get());
     if (!ids.length) return true;
@@ -330,8 +331,11 @@ export function makeActions(store: Store) {
     const batch = await api.saveImagesTo(ids, dir);
     dispatch({ type: "markSaved", entries: batch.saved });
     const n = batch.saved.length;
-    toast(batch.failed ? `Saved ${n} of ${n + batch.failed} pictures to ${dir}` : `Saved ${n} ${n === 1 ? "picture" : "pictures"} to ${dir}`, { ms: 8000 });
-    return batch.failed === 0;
+    if (n) toast(`Saved ${n} ${n === 1 ? "picture" : "pictures"} to ${dir}`, { ms: 8000 });
+    if (batch.failed) {
+      throw { code: "io", message: `${batch.failed} of ${n + batch.failed} pictures couldn't be saved. Check that the folder can be written to, then try again.`, details: null } as CoreError;
+    }
+    return true;
   }
 
   /** The window is closing (or Reset was pressed): true = go ahead; false = unsaved pictures, the question dialog is now showing. */

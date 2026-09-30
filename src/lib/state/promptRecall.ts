@@ -5,6 +5,8 @@
 export interface Browse {
   index: number;
   draft: string;
+  /** What recall put in the box; if the text differs, the user (or Reset, Improve…) changed it and browsing is over. */
+  shown: string;
 }
 
 export interface Step {
@@ -15,15 +17,13 @@ export interface Step {
 
 /** One Up (`-1`) or Down (`+1`) press. */
 export function recallStep(history: string[], browse: Browse | null, prompt: string, dir: -1 | 1): Step {
-  if (!history.length) return { browse, text: null };
-  if (dir === -1) {
-    const index = browse ? Math.max(0, browse.index - 1) : history.length - 1;
-    return { browse: { index, draft: browse ? browse.draft : prompt }, text: history[index] };
-  }
+  if (!history.length) return { browse: null, text: null };
+  if (browse && browse.shown !== prompt) browse = null;
+  const at = (index: number, draft: string): Step => ({ browse: { index, draft, shown: history[index] }, text: history[index] });
+  if (dir === -1) return at(browse ? Math.min(history.length - 1, Math.max(0, browse.index - 1)) : history.length - 1, browse ? browse.draft : prompt);
   if (!browse) return { browse: null, text: null };
   if (browse.index >= history.length - 1) return { browse: null, text: browse.draft };
-  const index = browse.index + 1;
-  return { browse: { index, draft: browse.draft }, text: history[index] };
+  return at(browse.index + 1, browse.draft);
 }
 
 /** Should this Up/Down press recall a prompt (rather than just move the caret inside multi-line text)? */

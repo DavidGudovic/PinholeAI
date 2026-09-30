@@ -16,6 +16,7 @@ import {
 } from "../lib/api";
 import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
+import { primeSound } from "../lib/state/platform";
 import { ShortcutsList } from "../components/ShortcutsList";
 import { useHelperModels } from "../lib/helpers";
 import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from "../components/ui";
@@ -404,7 +405,10 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         <Row
           label="Play a soft sound when a picture is ready"
           hint="Only when Pinhole is in the background. The taskbar icon flashes either way."
-          control={<Toggle checked={settings.soundOnDone} onChange={(v) => update({ soundOnDone: v })} label={<span className="sr-only">Play a soft sound when a picture is ready</span>} />}
+          control={<Toggle checked={settings.soundOnDone} onChange={(v) => {
+            if (v) primeSound();
+            update({ soundOnDone: v });
+          }} label={<span className="sr-only">Play a soft sound when a picture is ready</span>} />}
         />
       </Section>
 

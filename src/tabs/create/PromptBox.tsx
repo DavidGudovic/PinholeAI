@@ -72,9 +72,9 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
             const el = e.currentTarget;
             if (!history.length || !shouldRecall(el.value, el.selectionStart, el.selectionEnd, dir, browse.current !== null)) return;
             const step = recallStep(history, browse.current, el.value, dir);
+            browse.current = step.browse;
             if (step.text === null) return;
             e.preventDefault();
-            browse.current = step.browse;
             dispatch({ type: "patchCreate", patch: { prompt: step.text } });
             const end = step.text.length;
             requestAnimationFrame(() => area.current?.setSelectionRange(end, end));

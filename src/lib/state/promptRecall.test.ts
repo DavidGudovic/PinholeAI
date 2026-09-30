@@ -20,6 +20,14 @@ describe("recallStep", () => {
     const d2 = recallStep(h, d1.browse, "third", 1);
     expect(d2).toEqual({ browse: null, text: "draft" });
   });
+  it("starts over when the box was changed from outside, or the history shrank", () => {
+    const a = recallStep(h, null, "", -1);
+    expect(recallStep(h, a.browse, "something else", -1).text).toBe("third");
+    const stale = { index: 7, draft: "d", shown: "gone" };
+    expect(recallStep(h, stale, "gone", -1).text).toBe("third");
+    expect(recallStep(h, stale, "gone", 1).text).toBe("d");
+  });
+
   it("does nothing without history, or on Down when not browsing", () => {
     expect(recallStep([], null, "x", -1).text).toBeNull();
     expect(recallStep(h, null, "x", 1).text).toBeNull();
