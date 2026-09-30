@@ -596,6 +596,8 @@ pub async fn improve_prompt(
     })?;
     let (text, degenerate) =
         collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
+    // Before the fallback: text that would be blocked never comes back, even when short.
+    crate::text_check::check(&text)?;
     if degenerate {
         return Ok(ImprovedPrompt {
             text: idea.to_string(),
@@ -604,7 +606,6 @@ pub async fn improve_prompt(
             ),
         });
     }
-    crate::text_check::check(&text)?;
     Ok(ImprovedPrompt { text, note: None })
 }
 
