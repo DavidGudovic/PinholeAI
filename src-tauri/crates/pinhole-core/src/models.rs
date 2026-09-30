@@ -467,10 +467,14 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
     {
         let index = core.installed.lock();
-        if helper_files(core, &index, helper_id).is_empty() {
+        let files = helper_files(core, &index, helper_id);
+        if files.is_empty() {
             return Err(CoreError::not_found(
                 "That helper isn't installed any more.",
             ));
+        }
+        if files.iter().any(|f| f.is_linked()) {
+            return Err(CoreError::invalid(LINKED_DELETE));
         }
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;

@@ -1,7 +1,7 @@
 //! `Data/catalog/installed.json` — index of installed files: path, sha256,
 //! family, CivitAI ids, observed VRAM. Never contains prompts.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -178,6 +178,19 @@ pub struct LinkedState {
     /// Entries of folders that aren't available right now (drive not connected):
     /// left out of `files` and saved back as they are.
     pub parked: Vec<LinkedEntry>,
+    /// Files found that Pinhole can't use, by `rel_path`: not read (or hashed)
+    /// again while unchanged.
+    pub not_used: BTreeMap<String, NotUsed>,
+}
+
+/// A file in a linked folder Pinhole doesn't use.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotUsed {
+    pub stamp: FileStamp,
+    /// A note says CivitAI marks it as showing a real person or someone under 18.
+    #[serde(default)]
+    pub flagged: bool,
 }
 
 impl LinkedState {
@@ -201,6 +214,8 @@ struct LinkedOnDisk {
     folders: Vec<LinkedFolder>,
     #[serde(default)]
     files: Vec<serde_json::Value>,
+    #[serde(default)]
+    not_used: BTreeMap<String, NotUsed>,
 }
 
 /// `rel_path` for `parts` (the path inside the folder) of linked folder `folder_id`.
@@ -321,6 +336,7 @@ impl InstalledIndex {
             .filter(|f| Path::new(&f.path).is_dir())
             .map(|f| f.id.as_str())
             .collect();
+        let mut seen: HashSet<String> = HashSet::new();
         for value in disk.files {
             let Ok(entry) = serde_json::from_value::<LinkedEntry>(value) else {
                 continue;
@@ -328,7 +344,11 @@ impl InstalledIndex {
             let Some(id) = linked_folder_id(&entry.file.rel_path) else {
                 continue;
             };
-            if !folders.iter().any(|f| f.id == id) || self.get(&entry.file.id).is_some() {
+            if !folders.iter().any(|f| f.id == id)
+                || self.get(&entry.file.id).is_some()
+                || !seen.insert(entry.file.id.clone())
+                || !seen.insert(format!("path:{}", normalize_rel(&entry.file.rel_path)))
+            {
                 continue;
             }
             if available.contains(&id) {
@@ -340,7 +360,32 @@ impl InstalledIndex {
                 self.linked.parked.push(entry);
             }
         }
+        self.linked.not_used = disk
+            .not_used
+            .into_iter()
+            .filter(|(rel, _)| {
+                linked_folder_id(rel).is_some_and(|id| folders.iter().any(|f| f.id == id))
+            })
+            .collect();
         self.linked.folders = folders;
+    }
+
+    /// Put the parked entries of linked folder `id` back (its drive is connected
+    /// again), so a new look through it keeps their ids.
+    pub fn unpark(&mut self, id: &str) {
+        let (back, keep): (Vec<LinkedEntry>, Vec<LinkedEntry>) =
+            std::mem::take(&mut self.linked.parked)
+                .into_iter()
+                .partition(|e| linked_folder_id(&e.file.rel_path) == Some(id));
+        self.linked.parked = keep;
+        for e in back {
+            let taken = self.get(&e.file.id).is_some()
+                || self.files.iter().any(|f| f.rel_path == e.file.rel_path);
+            if !taken {
+                self.linked.stamps.insert(e.file.id.clone(), e.stamp);
+                self.files.push(e.file);
+            }
+        }
     }
 
     /// Save the linked folders and their files (`Data/catalog/linked-folders.json`).
@@ -363,6 +408,7 @@ impl InstalledIndex {
         let out = LinkedOnDisk {
             folders: self.linked.folders.clone(),
             files,
+            not_used: self.linked.not_used.clone(),
         };
         let mut json = serde_json::to_vec_pretty(&out).map_err(|e| {
             StoreError::Invalid(format!("could not encode the linked folders: {e}"))
@@ -868,6 +914,12 @@ mod tests {
         assert_eq!(parked.files.len(), 1);
         assert_eq!(parked.linked.parked.len(), 1);
         parked.save(&d).unwrap();
+        // Put back when the drive is there again (same id, same stamp).
+        let mut again = parked.clone();
+        again.unpark("f1");
+        assert_eq!(again.get("l"), Some(&l));
+        assert!(again.linked.parked.is_empty());
+        assert_eq!(again.linked.stamps["l"], FileStamp { size: 5, mtime: 7 });
         std::fs::create_dir_all(&other).unwrap();
         assert_eq!(InstalledIndex::load(&d).unwrap().get("l"), Some(&l));
 

@@ -97,8 +97,9 @@ pub struct FoundFile {
 }
 
 /// Every `.safetensors` / `.gguf` file under `root` (following links, never
-/// twice into the same folder), sorted by path. Blocking.
-pub fn walk(root: &Path) -> Vec<FoundFile> {
+/// twice into the same folder, never into `exclude`, given as canonical
+/// paths), sorted by path. Blocking.
+pub fn walk(root: &Path, exclude: &[PathBuf]) -> Vec<FoundFile> {
     let mut out = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut dirs = 0usize;
@@ -109,7 +110,8 @@ pub fn walk(root: &Path) -> Vec<FoundFile> {
             break;
         }
         let canon = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-        if !seen.insert(canon) {
+        // Pinhole's own folders (a link to them inside the picked folder).
+        if exclude.iter().any(|e| canon.starts_with(e)) || !seen.insert(canon) {
             continue;
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -502,7 +504,9 @@ pub fn component_candidates<'a>(
     registry
         .components()
         .iter()
-        .filter(|(_, c)| c.kind == kind && families::normalize_sha(&c.sha256).is_some())
+        // The upscaler is Pinhole's own pinned download, never taken from elsewhere.
+        .filter(|(_, c)| c.kind == kind && c.kind != "upscaler")
+        .filter(|(_, c)| families::normalize_sha(&c.sha256).is_some())
         .filter(|(_, c)| (size as f64 - c.size_mb as f64 * 1e6).abs() <= 2.5e6)
         .collect()
 }
@@ -729,7 +733,7 @@ mod tests {
         mk("models/controlnet/cn.safetensors");
         mk("custom_nodes/x/model.safetensors");
         mk(".git/y.safetensors");
-        let found = walk(root);
+        let found = walk(root, &[]);
         let rels: Vec<String> = found.iter().map(|f| f.parts.join("/")).collect();
         assert_eq!(
             rels,
@@ -740,6 +744,9 @@ mod tests {
             ]
         );
         assert_eq!(found[0].size, 1);
+        // Pinhole's own folder inside the picked one is left out.
+        let own = root.join("models/unet").canonicalize().unwrap();
+        assert_eq!(walk(root, &[own]).len(), 2);
     }
 
     #[test]

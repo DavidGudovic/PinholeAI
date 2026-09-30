@@ -159,7 +159,9 @@ the folder from the list only forgets them. Fit badges and recommendations count
 installed files; a model that lacks parts gets **Get missing parts** (from the registry). sd-server
 loads add-ons only from one folder, so a linked add-on used in a picture is hard-linked (else
 symlinked, else copied) into `models/loras/.pinhole-linked/`, which is emptied at every start.
-Moving Pinhole's Models folder leaves linked files where they are.
+Moving Pinhole's Models folder leaves linked files where they are, and it can't be moved into (or
+around) a linked folder. A file Pinhole already has (same SHA-256, from a note or a part match) is
+listed once. A folder whose drive isn't connected keeps its entries and shows "Not connected".
 
 ---
 

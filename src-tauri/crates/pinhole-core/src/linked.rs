@@ -12,7 +12,7 @@
 //! PRIVACY: nothing here goes online (no by-hash lookups; only notes other
 //! apps already saved next to their files). No prompt text anywhere.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ use pinhole_catalog::local;
 use pinhole_registry::detect;
 use pinhole_store::datadir::ModelKind;
 use pinhole_store::installed::{
-    linked_folder_id, linked_rel_path, FileStamp, InstalledFile, LinkedFolder,
+    linked_folder_id, linked_rel_path, FileStamp, InstalledFile, LinkedFolder, NotUsed,
 };
 use serde::{Deserialize, Serialize};
 
@@ -34,13 +34,15 @@ pub const LORA_LINKS_DIR: &str = ".pinhole-linked";
 /// RAM-only state of the linked folders.
 #[derive(Default)]
 pub struct LinkedRuntime {
+    scans: Mutex<Scans>,
+}
+
+#[derive(Default)]
+struct Scans {
     /// Folder ids being looked through right now.
-    scanning: Mutex<HashSet<String>>,
+    running: HashSet<String>,
     /// Another look was asked for while one ran.
-    again: Mutex<HashSet<String>>,
-    /// Files found last time that Pinhole can't use, by `rel_path`: not read
-    /// again while unchanged.
-    skipped: Mutex<HashMap<String, (FileStamp, Skipped)>>,
+    again: HashSet<String>,
 }
 
 /// `LinkedFolder` in src/lib/types.ts.
@@ -79,20 +81,18 @@ fn view(core: &AppCore, folder: &LinkedFolder) -> LinkedFolderView {
             .filter(|f| linked_folder_id(&f.rel_path) == Some(folder.id.as_str()))
     };
     let count = |pred: &dyn Fn(&InstalledFile) -> bool| mine().filter(|f| pred(f)).count() as u32;
-    let prefix = linked_rel_path(&folder.id, &[]) + "/";
-    let not_used = core
+    let not_used = index
         .linked
-        .skipped
-        .lock()
+        .not_used
         .keys()
-        .filter(|k| k.starts_with(&prefix))
+        .filter(|k| linked_folder_id(k) == Some(folder.id.as_str()))
         .count() as u32;
     LinkedFolderView {
         id: folder.id.clone(),
         path: folder.path.clone(),
         name: folder_name(&folder.path),
         available: Path::new(&folder.path).is_dir(),
-        scanning: core.linked.scanning.lock().contains(&folder.id),
+        scanning: core.linked.scans.lock().running.contains(&folder.id),
         models: count(&|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion)),
         addons: count(&|f| f.kind == ModelKind::Lora),
         parts: count(&|f| f.component_id.is_some()),
@@ -119,6 +119,7 @@ pub fn add(core: &Arc<AppCore>, path: &str) -> CoreResult<LinkedFolderView> {
             "Pinhole can't find that folder. Check that its drive is connected and try again.",
         ));
     }
+    // Kept as picked (not the canonical `\\?\` form on Windows); compared canonical.
     let picked = canon(&raw);
     let own = [canon(&core.data.root), canon(&core.data.models_root())];
     if own
@@ -145,7 +146,7 @@ pub fn add(core: &Arc<AppCore>, path: &str) -> CoreResult<LinkedFolderView> {
         }
         let folder = LinkedFolder {
             id: uuid::Uuid::new_v4().simple().to_string()[..12].to_string(),
-            path: picked.display().to_string(),
+            path: raw.display().to_string(),
             added_at: chrono::Utc::now().timestamp(),
         };
         index.linked.folders.push(folder.clone());
@@ -155,7 +156,7 @@ pub fn add(core: &Arc<AppCore>, path: &str) -> CoreResult<LinkedFolderView> {
         }
         folder
     };
-    core.linked.scanning.lock().insert(folder.id.clone());
+    core.linked.scans.lock().running.insert(folder.id.clone());
     spawn_scan(core, folder.id.clone());
     core.emit(CoreEvent::ModelsChanged);
     Ok(view(core, &folder))
@@ -201,16 +202,15 @@ pub async fn remove(core: &AppCore, id: &str) -> CoreResult<()> {
             .linked
             .parked
             .retain(|e| linked_folder_id(&e.file.rel_path) != Some(id));
+        index
+            .linked
+            .not_used
+            .retain(|k, _| linked_folder_id(k) != Some(id));
         if let Err(e) = index.save_linked(&core.data) {
             *index = before;
             return Err(e.into());
         }
     }
-    let prefix = linked_rel_path(id, &[]) + "/";
-    core.linked
-        .skipped
-        .lock()
-        .retain(|k, _| !k.starts_with(&prefix));
     let _ = std::fs::remove_dir_all(lora_links_root(core).join(id));
     core.emit(CoreEvent::ModelsChanged);
     Ok(())
@@ -228,11 +228,16 @@ pub fn rescan_all(core: &Arc<AppCore>) {
         .map(|f| f.id.clone())
         .collect();
     for id in ids {
-        let fresh = core.linked.scanning.lock().insert(id.clone());
+        let fresh = {
+            let mut scans = core.linked.scans.lock();
+            let fresh = scans.running.insert(id.clone());
+            if !fresh {
+                scans.again.insert(id.clone());
+            }
+            fresh
+        };
         if fresh {
             spawn_scan(core, id);
-        } else {
-            core.linked.again.lock().insert(id);
         }
     }
     core.emit(CoreEvent::ModelsChanged);
@@ -250,9 +255,15 @@ fn spawn_scan(core: &Arc<AppCore>, id: String) {
     let core = core.clone();
     std::thread::spawn(move || loop {
         scan_folder(&core, &id);
-        let again = core.linked.again.lock().remove(&id);
-        if !again {
-            core.linked.scanning.lock().remove(&id);
+        let done = {
+            let mut scans = core.linked.scans.lock();
+            let again = scans.again.remove(&id);
+            if !again {
+                scans.running.remove(&id);
+            }
+            !again
+        };
+        if done {
             core.emit(CoreEvent::ModelsChanged);
             break;
         }
@@ -261,8 +272,20 @@ fn spawn_scan(core: &Arc<AppCore>, id: String) {
 
 /// Look through one folder and replace its entries in the index. Blocking.
 fn scan_folder(core: &AppCore, id: &str) {
-    let (folder, previous, taken_shas) = {
+    let root_ok = {
         let index = core.installed.lock();
+        index
+            .linked
+            .folder(id)
+            .is_some_and(|f| Path::new(&f.path).is_dir())
+    };
+    if !root_ok {
+        return; // removed, or its drive isn't connected: parked entries stay as they are
+    }
+    let (folder, previous, taken_shas, old_skipped) = {
+        let mut index = core.installed.lock();
+        // Connected again since start: its entries come back with their ids.
+        index.unpark(id);
         let Some(folder) = index.linked.folder(id).cloned() else {
             return;
         };
@@ -283,18 +306,23 @@ fn scan_folder(core: &AppCore, id: &str) {
             .map(|f| f.sha256.to_ascii_lowercase())
             .filter(|s| !s.is_empty())
             .collect();
-        (folder, previous, taken)
+        let old_skipped: BTreeMap<String, NotUsed> = index
+            .linked
+            .not_used
+            .iter()
+            .filter(|(k, _)| linked_folder_id(k) == Some(id))
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        (folder, previous, taken, old_skipped)
     };
     let root = PathBuf::from(&folder.path);
-    if !root.is_dir() {
-        return;
-    }
     let registry = core.registry();
-    let found = scan::walk(&root);
+    // A link to Pinhole's own folders inside the picked one isn't looked through.
+    let own = [canon(&core.data.root), canon(&core.data.models_root())];
+    let found = scan::walk(&root, &own);
     let mut kept: Vec<(InstalledFile, FileStamp)> = Vec::new();
     let mut shas: HashSet<String> = taken_shas;
-    let mut skipped: HashMap<String, (FileStamp, Skipped)> = HashMap::new();
-    let old_skipped = core.linked.skipped.lock().clone();
+    let mut skipped: BTreeMap<String, NotUsed> = BTreeMap::new();
     for f in &found {
         let rel = linked_rel_path(id, &f.parts);
         // A name the index can't store as is (e.g. with `:` on Linux) would
@@ -309,7 +337,11 @@ fn scan_folder(core: &AppCore, id: &str) {
         let entry = match previous.get(&rel) {
             Some((prev, s)) if *s == stamp => Ok(prev.clone()),
             _ => match old_skipped.get(&rel) {
-                Some((s, why)) if *s == stamp => Err(*why),
+                Some(n) if n.stamp == stamp => Err(if n.flagged {
+                    Skipped::PersonOrMinor
+                } else {
+                    Skipped::NotUsable
+                }),
                 _ => recognise(&registry, f, previous.get(&rel).map(|p| &p.0), &rel),
             },
         };
@@ -323,7 +355,8 @@ fn scan_folder(core: &AppCore, id: &str) {
                 kept.push((entry, stamp));
             }
             Err(why) => {
-                skipped.insert(rel, (stamp, why));
+                let flagged = why == Skipped::PersonOrMinor;
+                skipped.insert(rel, NotUsed { stamp, flagged });
             }
         }
     }
@@ -341,7 +374,13 @@ fn scan_folder(core: &AppCore, id: &str) {
         let unchanged = old.len() == kept.len()
             && kept.iter().all(|(f, s)| {
                 index.get(&f.id) == Some(f) && index.linked.stamps.get(&f.id) == Some(s)
-            });
+            })
+            && old_skipped == skipped;
+        index
+            .linked
+            .not_used
+            .retain(|k, _| linked_folder_id(k) != Some(id));
+        index.linked.not_used.extend(skipped);
         if !unchanged {
             // Keep what changed meanwhile (last used, measured memory, trigger words).
             let live: HashMap<String, InstalledFile> = old
@@ -363,14 +402,10 @@ fn scan_folder(core: &AppCore, id: &str) {
                 index.linked.stamps.insert(f.id.clone(), stamp);
                 index.files.push(f);
             }
+        }
+        if !unchanged {
             let _ = index.save_linked(&core.data);
         }
-    }
-    {
-        let prefix = linked_rel_path(id, &[]) + "/";
-        let mut all = core.linked.skipped.lock();
-        all.retain(|k, _| !k.starts_with(&prefix));
-        all.extend(skipped);
     }
     core.emit(CoreEvent::ModelsChanged);
 }
@@ -467,7 +502,20 @@ pub fn lora_path_for_engine(
         return Ok(dest);
     }
     let part = local::part_path(&dest);
-    std::fs::copy(abs, &part).map_err(fail)?;
+    let size = std::fs::metadata(abs).map_err(fail)?.len();
+    if let Some(dir) = dest.parent() {
+        pinhole_net::download::check_free_space(dir, size).map_err(|e| {
+            CoreError::new(
+                "disk_space",
+                "There isn't enough free space in Pinhole's Data folder for this add-on. Free up some space and try again.",
+            )
+            .with_details(e.to_string())
+        })?;
+    }
+    std::fs::copy(abs, &part).map_err(|e| {
+        let _ = std::fs::remove_file(&part);
+        fail(e)
+    })?;
     if let Ok(t) = std::fs::metadata(abs).and_then(|m| m.modified()) {
         if let Ok(f) = std::fs::File::options().write(true).open(&part) {
             let _ = f.set_modified(t);
@@ -585,7 +633,7 @@ mod tests {
 
     pub(crate) fn wait_scans(core: &AppCore) {
         let start = Instant::now();
-        while !core.linked.scanning.lock().is_empty() {
+        while !core.linked.scans.lock().running.is_empty() {
             assert!(
                 start.elapsed() < Duration::from_secs(30),
                 "scan never finished"
@@ -600,7 +648,7 @@ mod tests {
         let comfy = tmp.path().join("ComfyUI");
         fixtures::comfy(&comfy);
         let listing = |p: &Path| {
-            let mut v: Vec<_> = scan::walk(p)
+            let mut v: Vec<_> = scan::walk(p, &[])
                 .into_iter()
                 .map(|f| (f.parts, f.size, f.mtime))
                 .collect();
@@ -661,6 +709,23 @@ mod tests {
             crate::models::list_models(&again).unwrap()[0].id,
             models[0].id
         );
+
+        // What it can't use is remembered too (not read again while unchanged).
+        assert_eq!(list(&again)[0].not_used, 1);
+
+        // Drive not connected at start, connected later: same entries, same ids.
+        let away = tmp.path().join("away");
+        std::fs::rename(&comfy, &away).unwrap();
+        let unplugged = new_core(&tmp.path().join("Data"));
+        assert!(crate::models::list_models(&unplugged).unwrap().is_empty());
+        assert!(!list(&unplugged)[0].available);
+        std::fs::rename(&away, &comfy).unwrap();
+        rescan_all(&unplugged);
+        wait_scans(&unplugged);
+        let back = crate::models::list_models(&unplugged).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].id, models[0].id);
+        drop(unplugged);
 
         // A new file shows up on the next look; unchanged ones keep their entry.
         fixtures::sdxl(&comfy.join("models/checkpoints/illustrious/mix.safetensors"));

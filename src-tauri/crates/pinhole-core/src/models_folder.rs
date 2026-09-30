@@ -94,6 +94,23 @@ fn target_dir(core: &AppCore, folder: Option<&str>) -> CoreResult<DataDir> {
             "Pick a folder outside Pinhole's Data folder, for example a new folder on your shared drive.",
         ));
     }
+    // Another app's folder Pinhole uses in place is never written to.
+    let linked: Vec<String> = core
+        .installed
+        .lock()
+        .linked
+        .folders
+        .iter()
+        .map(|f| f.path.clone())
+        .collect();
+    for other in linked {
+        let other = canon_or(Path::new(&other));
+        if canon.starts_with(&other) || other.starts_with(&canon) {
+            return Err(CoreError::invalid(
+                "That folder holds (or is inside) another app's models folder that Pinhole uses. Pick a folder of its own.",
+            ));
+        }
+    }
     Ok(default.with_models_home(Some(path)))
 }
 
