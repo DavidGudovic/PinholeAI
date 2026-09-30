@@ -4,6 +4,7 @@ import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
 import { AutoTextarea, Button, Kbd, Segmented, Spinner } from "../../components/ui";
+import { HelperPicker } from "../../components/HelperPicker";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { GroupProgress } from "../models/controls";
 import * as api from "../../lib/api";
@@ -43,7 +44,7 @@ export function DescribeTab() {
 
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(await api.captionerStatus());
+      setStatus(await api.captionerStatus("describe"));
       setStatusError(false);
     } catch {
       setStatusError(true);
@@ -244,6 +245,7 @@ export function DescribeTab() {
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 px-5 py-4 dark:border-neutral-800">
+          <HelperPicker purpose="describe" className="flex justify-end" />
           <Button variant="primary" size="lg" className="w-full" disabled={!img || !!busy || !!unavailable} onClick={() => void describe()}>
             <ScanText className="h-4 w-4" /> Describe
             <span className="ml-1 inline-flex gap-0.5 opacity-70">

@@ -325,8 +325,29 @@ pub struct CaptionerDefault {
     pub mmproj: CaptionerFile,
 }
 
+/// A helper model choice (Models → Helpers, the Describe / Improve pickers).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct HelperSpec {
+    /// Stable id stored in settings (`describe_model` / `improve_model`).
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub note: String,
+    /// Uses the files of `captioner.default`.
+    #[serde(default)]
+    pub default: bool,
+    /// Ids in `components:` (model first, then its vision projector).
+    #[serde(default)]
+    pub components: Vec<String>,
+    /// Only offered while Safe mode is Off.
+    #[serde(default)]
+    pub needs_safe_off: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CaptionerSpec {
+    #[serde(default)]
+    pub helpers: Vec<HelperSpec>,
     #[serde(default)]
     pub prefer_reuse: Vec<String>,
     #[serde(default)]
