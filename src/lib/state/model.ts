@@ -115,6 +115,8 @@ export interface Job {
   kind: JobKind;
   progress: GenerationProgress | null;
   startedAt: number;
+  /** How many images the job makes (the strip's placeholders); not the current dial. */
+  count?: number;
 }
 
 export interface Toast {
@@ -235,7 +237,7 @@ export type Action =
   | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[] }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
-  | { type: "jobStart"; kind: JobKind; at: number }
+  | { type: "jobStart"; kind: JobKind; at: number; count?: number }
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
   | { type: "editLoad"; ref: ImgRef }
@@ -336,7 +338,7 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 const ACTIVE_DL = new Set(["queued", "downloading", "verifying"]);
-export const isActiveDownload = (d: GroupStatus) => ACTIVE_DL.has(d.state);
+export const isActiveDownload = (d: Pick<GroupStatus, "state">) => ACTIVE_DL.has(d.state);
 
 // ------------------------------------------------------------------ reducer
 
@@ -480,7 +482,7 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, results, selectedResultId };
     }
     case "jobStart":
-      return { ...s, job: { kind: a.kind, progress: null, startedAt: a.at } };
+      return { ...s, job: { kind: a.kind, progress: null, startedAt: a.at, ...(a.count != null ? { count: a.count } : {}) } };
     case "jobProgress":
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
     case "jobEnd":

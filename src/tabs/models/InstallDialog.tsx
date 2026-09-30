@@ -1,5 +1,5 @@
 // Install flow for a CivitAI version (SPEC §5.4 "Install"): plan → review → download.
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { CircleCheck, Download, FileBox, HardDrive, KeyRound, Puzzle, ShieldAlert, TriangleAlert } from "lucide-react";
 import { asCoreError, getSettings, installCivitai, planCivitaiInstall, setSettings } from "../../lib/api";
 import type { CoreError, InstallPlan, PlanFileOption, Settings } from "../../lib/types";
@@ -23,22 +23,35 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
   // The size the user picked (a CivitAI file id), for this version only. Null = Pinhole's pick.
   const [choice, setChoice] = useState<{ versionId: number; fileId: number } | null>(null);
   const chosenFile = choice && choice.versionId === versionId ? choice.fileId : null;
+  // Only the size changed: keep the current plan on screen (and the focused radio mounted)
+  // while the new one loads.
+  const [replanning, setReplanning] = useState(false);
+  const planned = useRef<{ versionId: number | null; attempt: number } | null>(null);
 
   useEffect(() => {
-    if (versionId == null) return;
+    if (versionId == null) {
+      planned.current = null;
+      setReplanning(false);
+      return;
+    }
     let alive = true;
-    setPlan(null);
+    const sizeOnly = planned.current?.versionId === versionId && planned.current.attempt === attempt;
+    planned.current = { versionId, attempt };
+    if (sizeOnly) setReplanning(true);
+    else setPlan(null);
     setError(null);
     if (attempt === 0) setKeyOpen(false);
     planCivitaiInstall(versionId, chosenFile)
       .then((p) => {
         if (!alive) return;
+        setReplanning(false);
         setPlan(p);
         // Keep the kind the user already picked when only the size changed.
         setFamily((prev) => (p.familyCandidates.length ? (p.familyCandidates.some((c) => c.familyId === prev) ? prev : null) : (p.family?.familyId ?? null)));
       })
       .catch((e) => {
         if (!alive) return;
+        setReplanning(false);
         const ce = asCoreError(e);
         setError(ce);
         if (ce.code === "unauthorized") {
@@ -108,7 +121,7 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
   const blocked = !!plan?.blockedReason;
   const needsFamily = !!plan && plan.familyCandidates.length > 0 && !family;
   const tooBig = plan?.fit === "tooBig";
-  const canInstall = !!plan && !blocked && plan.enoughDisk && !needsFamily && !installing;
+  const canInstall = !!plan && !blocked && plan.enoughDisk && !needsFamily && !installing && !replanning;
 
   const footer = (
     <>
@@ -171,10 +184,18 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
             </Section>
 
             {!plan.isLora && (plan.fileOptions?.length ?? 0) > 1 && (
-              <Section title="Size">
+              <Section
+                title={
+                  <span className="inline-flex items-center gap-1.5">
+                    Size{replanning && <Spinner className="h-3 w-3 text-amber-500" />}
+                  </span>
+                }
+              >
                 <SizeChoice
                   options={plan.fileOptions ?? []}
                   smaller={plan.smallerFile ?? null}
+                  // While the new plan loads, show the size the user just picked.
+                  picked={replanning ? chosenFile : null}
                   onPick={(fileId) => versionId != null && setChoice({ versionId, fileId })}
                   disabled={installing}
                 />
@@ -272,7 +293,19 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
  * The files of one version at different sizes (full quality, compact FP8, Q4…). Pinhole picks the
  * best one that fits the card; the user can pick another. Plain words, SPEC §5.4 "Install".
  */
-function SizeChoice({ options, smaller, onPick, disabled }: { options: PlanFileOption[]; smaller: string | null; onPick: (fileId: number) => void; disabled: boolean }) {
+function SizeChoice({
+  options,
+  smaller,
+  picked,
+  onPick,
+  disabled,
+}: {
+  options: PlanFileOption[];
+  smaller: string | null;
+  picked: number | null;
+  onPick: (fileId: number) => void;
+  disabled: boolean;
+}) {
   return (
     <div>
       <p className="mb-2 text-xs text-neutral-500">
@@ -285,7 +318,7 @@ function SizeChoice({ options, smaller, onPick, disabled }: { options: PlanFileO
       <div role="radiogroup" aria-label="Size" className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
         {options.map((o) => (
           <label key={o.fileId} className="flex cursor-pointer items-center gap-3 px-3 py-2 has-[:disabled]:cursor-default">
-            <input type="radio" name="install-size" checked={o.selected} disabled={disabled} onChange={() => onPick(o.fileId)} className="accent-amber-500" />
+            <input type="radio" name="install-size" checked={picked != null ? o.fileId === picked : o.selected} disabled={disabled} onChange={() => onPick(o.fileId)} className="accent-amber-500" />
             <span className="min-w-0 flex-1">
               <span className="block text-neutral-800 dark:text-neutral-200">{o.label}</span>
               <span className="block truncate text-[11px] text-neutral-500" title={o.name}>
@@ -301,7 +334,7 @@ function SizeChoice({ options, smaller, onPick, disabled }: { options: PlanFileO
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children }: { title: ReactNode; children: ReactNode }) {
   return (
     <section>
       <h3 className="mb-2 text-xs font-semibold tracking-wide text-neutral-500 uppercase">{title}</h3>

@@ -1323,6 +1323,48 @@ mod tests {
         assert_eq!(rgba.len() as u32, w * h * 4);
     }
 
+    /// 2× runs at 4× first: a source over 2048 px per side is refused for 2×
+    /// too, and the message says so (the 2× size itself would fit).
+    #[tokio::test]
+    async fn upscale_too_large_message_names_the_4x_limit() {
+        let (_tmp, core, _rec) = new_core();
+        let img = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(2100, 1000, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let e = generate::upscale_image(&core, &img.id, 2)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "invalid");
+        assert_eq!(e.message, generate::UPSCALE_TOO_LARGE);
+        assert!(e.message.contains("4×") && e.message.contains("8192"));
+    }
+
+    /// The first-use upscaler download now runs inside the job (so Cancel
+    /// reaches it, see `cancel_ends_the_upscaler_download_wait`): a failed
+    /// download clears the job and adds no result.
+    #[tokio::test]
+    async fn failed_upscaler_download_clears_the_job() {
+        let (_tmp, core, rec) = new_core();
+        core.offline.set(true); // the download fails fast, nothing leaves the machine
+        let img = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let before = rec.0.lock().len();
+        let e = generate::upscale_image(&core, &img.id, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "offline", "{e:?}");
+        assert!(core.gen.active.lock().is_none());
+        assert!(!rec.0.lock()[before..]
+            .iter()
+            .any(|e| matches!(e, CoreEvent::Generation(_))));
+        assert_eq!(core.session.len(), 1, "only the source image");
+    }
+
     #[tokio::test]
     async fn describe_through_mock_llama() {
         let (_tmp, core, _rec) = new_core();
@@ -2012,6 +2054,39 @@ mod tests {
         .expect("unload doesn't wait for the load");
         assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
         assert!(core.gen.slot.lock().await.proc.is_none());
+    }
+
+    /// Deleting a LoRA (or the loaded model) while a job runs is refused: it
+    /// would stop the engine under the job, which then fails like a crash.
+    /// Deleting a model the engine doesn't use still works.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn delete_during_a_job_does_not_stop_the_engine() {
+        let (tmp, core, _rec) = new_core();
+        let lora = register_fake_lora(&core, "sd15", &[]);
+        let lora_path = {
+            let idx = core.installed.lock();
+            idx.abs_path(&core.data, idx.get(&lora).unwrap())
+        };
+        put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), false).await;
+        *core.gen.active.lock() = Some(tokio_util::sync::CancellationToken::new());
+        let e = crate::models::delete_model(&core, &lora).await.unwrap_err();
+        assert_eq!(e.code, "invalid");
+        assert!(e.message.contains("Wait for the current pictures"), "{e:?}");
+        assert!(
+            engine_running(&core).await,
+            "the job's engine keeps running"
+        );
+        assert!(lora_path.exists());
+        assert!(core.installed.lock().get(&lora).is_some());
+        let other = register_fake_model(&core, "sd15");
+        crate::models::delete_model(&core, &other).await.unwrap();
+        assert!(engine_running(&core).await);
+        // No job: the LoRA is deleted (and the engine stopped, see unload_model).
+        *core.gen.active.lock() = None;
+        crate::models::delete_model(&core, &lora).await.unwrap();
+        assert!(!lora_path.exists());
+        assert!(!engine_running(&core).await);
     }
 
     /// A delete while the job still stops the previous engine (before the new

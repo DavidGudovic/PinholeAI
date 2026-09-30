@@ -14,6 +14,7 @@ import { useAppState } from "../../lib/state/store";
 import { Badge, Button, Dialog, ErrorNotice, Spinner } from "../../components/ui";
 import { sendGenerationToCreate } from "../create/handoff";
 import { GroupProgress, Skeleton, VramLine } from "./controls";
+import { createBlobLoader } from "./lib/blobLoader";
 import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { isActive, ratioPercent } from "./lib/words";
 import { UseAddonButton, useInstalledLoraId } from "./UseAddon";
@@ -21,42 +22,19 @@ import { UseAddonButton, useInstalledLoraId } from "./UseAddon";
 // Image loading is local to this page (not ./lib/preview) so it doesn't depend
 // on the Browse grid's loader. At most a few fetches run at once. Bytes come
 // from Rust and are kept as Blobs only while the page is open, so the viewer and
-// "Edit this image" reuse what the grid already fetched.
+// "Edit this image" reuse what the grid already fetched. The opened image jumps
+// the queue; closing the page drops the fetches that haven't started.
 const MAX_PARALLEL = 4;
-let running = 0;
-const waiting: (() => void)[] = [];
-async function limited<T>(job: () => Promise<T>): Promise<T> {
-  // A finishing job hands its slot straight to the next waiter (running stays
-  // the same), so a new call in the same tick can't slip in past the cap.
-  if (running >= MAX_PARALLEL) await new Promise<void>((r) => waiting.push(r));
-  else running++;
-  try {
-    return await job();
-  } finally {
-    const next = waiting.shift();
-    if (next) next();
-    else running--;
-  }
-}
+const loader = createBlobLoader((url) => api.fetchPreview(url).then((buf) => new Blob([buf])), MAX_PARALLEL);
+const loadBlob = loader.load;
 
-const blobs = new Map<string, Promise<Blob>>();
-function loadBlob(url: string): Promise<Blob> {
-  let p = blobs.get(url);
-  if (!p) {
-    p = limited(() => api.fetchPreview(url)).then((buf) => new Blob([buf]));
-    p.catch(() => blobs.delete(url));
-    blobs.set(url, p);
-  }
-  return p;
-}
-
-function useImage(url: string | null): { src: string | null; failed: boolean } {
+function useImage(url: string | null, front = false): { src: string | null; failed: boolean } {
   const [state, setState] = useState<{ url: string | null; src: string | null; failed: boolean }>({ url: null, src: null, failed: false });
   useEffect(() => {
     if (!url) return;
     let alive = true;
     let objectUrl: string | null = null;
-    loadBlob(url)
+    loadBlob(url, { front })
       .then((blob) => {
         if (!alive) return;
         objectUrl = URL.createObjectURL(blob);
@@ -67,6 +45,7 @@ function useImage(url: string | null): { src: string | null; failed: boolean } {
       alive = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
+    // `front` only matters when the request is made.
   }, [url]);
   // Never hand back another URL's (already revoked) blob.
   return state.url === url && url ? state : { src: null, failed: false };
@@ -111,7 +90,7 @@ export function ModelDetails({
 
   useEffect(() => {
     rootRef.current?.focus();
-    return () => blobs.clear();
+    return () => loader.clear();
   }, []);
 
   // Esc goes back (unless the image viewer is open: it closes itself first).
@@ -150,11 +129,11 @@ export function ModelDetails({
     try {
       let blob: Blob;
       try {
-        blob = await loadBlob(item.fullUrl);
+        blob = await loadBlob(item.fullUrl, { front: true });
       } catch (e) {
         // Only a full-size file over the size cap falls back to the smaller copy, and says so.
         if (api.asCoreError(e).code !== "invalid") throw e;
-        blob = await loadBlob(item.thumbUrl);
+        blob = await loadBlob(item.thumbUrl, { front: true });
         actions.toast("The full-size image is too large, so a smaller copy was opened in Edit.");
       }
       await actions.importToEdit(blob);
@@ -212,7 +191,7 @@ export function ModelDetails({
             <>
               <div className="columns-[220px] gap-4">
                 {gallery.items.map((it) => (
-                  <Tile key={it.index} item={it} onOpen={() => setOpen(it)} />
+                  <Tile key={it.index} item={it} onOpen={setOpen} />
                 ))}
               </div>
               {gallery.hiddenNsfw > 0 && (
@@ -315,13 +294,14 @@ function Header({
 }
 
 // Images made for adults never reach the page with Safe mode on (Rust leaves them out), so there is nothing to blur.
-const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: () => void }) {
+// `onOpen` takes the item so the page can pass a stable setter and memo can skip re-renders.
+const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: (item: GalleryItem) => void }) {
   const preview = useImage(item.thumbUrl);
   const ratio = item.width && item.height ? `${item.width} / ${item.height}` : "3 / 4";
   return (
     <button
       type="button"
-      onClick={onOpen}
+      onClick={() => onOpen(item)}
       aria-label={item.generation ? "Open image (settings available)" : "Open image"}
       className="group relative mb-4 block w-full break-inside-avoid overflow-hidden rounded-xl bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none dark:bg-neutral-800"
       style={{ aspectRatio: ratio }}
@@ -357,8 +337,8 @@ function Viewer({
   onUseSettings: (item: GalleryItem) => void;
   onEdit: (item: GalleryItem) => void;
 }) {
-  const preview = useImage(item?.fullUrl ?? null);
-  const small = useImage(item?.thumbUrl ?? null);
+  const preview = useImage(item?.fullUrl ?? null, true);
+  const small = useImage(item?.thumbUrl ?? null, true);
   const src = preview.src ?? small.src;
   const g = item?.generation ?? null;
   const prompt = typeof g?.prompt === "string" ? g.prompt : null;

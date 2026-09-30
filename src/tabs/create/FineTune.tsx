@@ -402,14 +402,26 @@ function LoraSection({ model }: { model: InstalledModel | null }) {
 }
 
 /** Read-only "Final prompt sent to the model" (combined in Rust, in memory). */
-function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
+export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
   const c = useAppState((s) => s.create);
   const loras = useAppState((s) => s.loras);
   const settings = useAppState((s) => s.settings);
+  // Rust resolves the style's words from its id, so an edit to the selected style must refresh too.
+  const style = useAppState((s) => s.styles.find((x) => x.id === s.create.styleId));
   const req = useMemo(() => (model ? buildCreateRequest(c, { ui, loras, model, settings }) : null), [c, ui, loras, model, settings]);
-  // Only the parts that change the text matter; debounce typing.
+  // Only the parts that change the text matter; debounce typing. (In memory only.)
   const key = req
-    ? JSON.stringify([req.modelId, req.prompt, req.styleId, req.fineTune.negativePrompt ?? null, req.fineTune.autoPromptPrefix ?? null, req.loras, req.addTriggerWords])
+    ? JSON.stringify([
+        req.modelId,
+        req.prompt,
+        req.styleId,
+        style?.positive ?? null,
+        style?.negative ?? null,
+        req.fineTune.negativePrompt ?? null,
+        req.fineTune.autoPromptPrefix ?? null,
+        req.loras,
+        req.addTriggerWords,
+      ])
     : "";
   const debouncedKey = useDebounced(key, 350);
   const [preview, setPreview] = useState<{ prompt: string; negative: string | null } | null>(null);

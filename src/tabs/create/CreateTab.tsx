@@ -1,7 +1,7 @@
 // Create (txt2img), SPEC §5.1.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Layers, Sparkles, TriangleAlert, X } from "lucide-react";
-import { JobProgress } from "../../components/JobProgress";
+import { Check, Download, Layers, Sparkles, TriangleAlert, X } from "lucide-react";
+import { LiveJobProgress } from "../../components/JobProgress";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { ModelPicker } from "../../components/ModelPicker";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
@@ -9,10 +9,10 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
-import type { CoreError } from "../../lib/types";
+import type { CoreError, GroupStatus } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
-import { createModels } from "../../lib/state/model";
+import { createModels, isActiveDownload } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "./AddonChips";
@@ -67,10 +67,13 @@ function NoModels() {
   );
 }
 
+const CREATE_JOBS = ["create", "upscale"] as const;
+
 function CreateWorkspace() {
   const models = useAppState((s) => s.models);
   const modelId = useAppState((s) => s.create.modelId);
-  const job = useAppState((s) => s.job);
+  // Only the kind: the progress card subscribes to the job itself (LiveJobProgress).
+  const jobKind = useAppState((s) => s.job?.kind ?? null);
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
@@ -84,13 +87,18 @@ function CreateWorkspace() {
   const [presetNotice, setPresetNotice] = useState<PresetNotice | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
+  // Set before the first await, so a second press while the job is starting is ignored.
+  const generating = useRef(false);
   const generate = async () => {
-    if (store.getState().job) return;
+    if (generating.current || store.getState().job) return;
+    generating.current = true;
     setError(null);
     try {
       await actions.generateCreate();
     } catch (e) {
       setError(api.asCoreError(e));
+    } finally {
+      generating.current = false;
     }
   };
   usePrimaryAction("create", () => void generate());
@@ -113,7 +121,7 @@ function CreateWorkspace() {
   applyPasteRef.current = applyPaste;
   useEffect(() => onGenerationHandoff((t) => void applyPasteRef.current(t).catch((e) => setError(api.asCoreError(e)))), []);
 
-  const myJob = job && (job.kind === "create" || job.kind === "upscale") ? job : null;
+  const myJob = jobKind === "create" || jobKind === "upscale";
 
   return (
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
@@ -146,9 +154,9 @@ function CreateWorkspace() {
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 bg-white px-5 py-4 dark:border-neutral-800 dark:bg-neutral-900">
           {myJob ? (
-            <JobProgress job={myJob} onCancel={() => void cancel()} cancelling={cancelling} />
+            <LiveJobProgress kinds={CREATE_JOBS} onCancel={() => void cancel()} cancelling={cancelling} />
           ) : (
-            <Button variant="primary" size="lg" className="w-full" disabled={!!job || !model} onClick={() => void generate()}>
+            <Button variant="primary" size="lg" className="w-full" disabled={!!jobKind || !model} onClick={() => void generate()}>
               <Sparkles className="h-4 w-4" />
               Generate
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
@@ -157,7 +165,7 @@ function CreateWorkspace() {
               </span>
             </Button>
           )}
-          {job && !myJob && <p className="text-center text-xs text-neutral-500">Busy with an edit — Generate is available when it finishes.</p>}
+          {jobKind && !myJob && <p className="text-center text-xs text-neutral-500">Busy with an edit — Generate is available when it finishes.</p>}
           {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void generate()} />}
         </div>
       </aside>
@@ -173,12 +181,38 @@ function CreateWorkspace() {
   );
 }
 
-function PresetNoticeCard({ notice, onDismiss }: { notice: PresetNotice; onDismiss: () => void }) {
+export function PresetNoticeCard({ notice, onDismiss }: { notice: PresetNotice; onDismiss: () => void }) {
   const actions = useActions();
-  const [started, setStarted] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [groupId, setGroupId] = useState<string | null>(null);
+  // Follow the download it started, so the button can say what happened (like PasteSummary).
+  const dl = useAppState((s) => (groupId ? s.downloads.find((d) => d.groupId === groupId) : undefined));
   const [error, setError] = useState<CoreError | null>(null);
   const { preset, app } = notice;
   const vid = app.missingModel?.civitaiVersionId ?? null;
+  // Remember the last state seen: the entry can vanish (Clear finished downloads) or not
+  // be listed yet (refresh failed, no event yet), and that must not offer a second install.
+  const lastState = useRef<GroupStatus["state"] | null>(null);
+  if (dl) lastState.current = dl.state;
+  const state = dl?.state ?? lastState.current;
+  const done = state === "done";
+  const downloading = !!groupId && (state == null || isActiveDownload({ state }));
+  const failed = !!groupId && !downloading && !done;
+  const getModel = async () => {
+    if (vid == null || starting || downloading || done) return;
+    setError(null);
+    setStarting(true);
+    try {
+      const started = await api.installCivitai(vid, app.missingModel?.family ?? null);
+      lastState.current = null;
+      setGroupId(started.groupId);
+      await actions.refreshDownloads().catch(() => undefined);
+    } catch (e) {
+      setError(api.asCoreError(e));
+    } finally {
+      setStarting(false);
+    }
+  };
   return (
     <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-sm dark:border-amber-500/20 dark:bg-amber-500/5">
       <div className="flex items-start gap-2">
@@ -195,23 +229,15 @@ function PresetNoticeCard({ notice, onDismiss }: { notice: PresetNotice; onDismi
           )}
           {app.missingStyle && <p className="text-xs text-neutral-600 dark:text-neutral-400">Its style was deleted; your style is kept.</p>}
           <div className="flex flex-wrap gap-2 pt-1">
-            {app.missingModel && vid != null && (
-              <Button
-                size="sm"
-                variant="primary"
-                disabled={started}
-                onClick={async () => {
-                  setError(null);
-                  try {
-                    await api.installCivitai(vid, app.missingModel?.family ?? null);
-                    setStarted(true);
-                    void actions.refreshDownloads().catch(() => undefined);
-                  } catch (e) {
-                    setError(api.asCoreError(e));
-                  }
-                }}
-              >
-                <Download className="h-3.5 w-3.5" /> {started ? "Downloading…" : "Get the model"}
+            {app.missingModel && vid != null && done && (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400">
+                <Check className="h-3.5 w-3.5" /> Downloaded. Pick it in the model list.
+              </span>
+            )}
+            {app.missingModel && vid != null && !done && (
+              <Button size="sm" variant="primary" disabled={starting || downloading} onClick={() => void getModel()}>
+                {starting ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}{" "}
+                {downloading ? "Downloading…" : failed ? "Try again" : "Get the model"}
               </Button>
             )}
             {app.missingModel && vid == null && (

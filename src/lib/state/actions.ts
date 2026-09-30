@@ -81,10 +81,10 @@ export function makeActions(store: Store) {
   let cancelRequested = false;
 
   /** Mark a job as running for the whole of `work` (only one at a time). */
-  async function withJob<T>(kind: JobKind, work: () => Promise<T>): Promise<T> {
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number): Promise<T> {
     if (get().job) throw busyError();
     cancelRequested = false;
-    dispatch({ type: "jobStart", kind, at: Date.now() });
+    dispatch({ type: "jobStart", kind, at: Date.now(), count });
     try {
       return await work();
     } catch (e) {
@@ -116,7 +116,7 @@ export function makeActions(store: Store) {
     return { images: res.images, refs: await jobRefs(res.images, nonce) };
   }
 
-  const runJob = (kind: JobKind, req: GenerateRequest) => withJob(kind, () => generateNow(req));
+  const runJob = (kind: JobKind, req: GenerateRequest) => withJob(kind, () => generateNow(req), req.dials.count);
 
   /** Blob refs for new session images. If one can't be read, the others are released too and the error is thrown. */
   async function refsFromSession(images: ResultImage[]): Promise<ImgRef[]> {
@@ -170,11 +170,17 @@ export function makeActions(store: Store) {
       await withJob("upscale", async () => {
         const nonce = get().sessionNonce;
         const im = await api.upscaleImage(resultId, factor);
+        // Cancel pressed while the upscaler was still downloading (the engine had no job
+        // to stop yet): drop the image instead of adding it.
+        if (cancelRequested) {
+          void api.discardImage(im.id).catch(() => undefined);
+          throw cancelledError();
+        }
         const refs = await jobRefs([im], nonce);
         const batchId = get().resultBatch[resultId];
         const batch = batchId ? get().batches[batchId] : undefined;
         dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
-      });
+      }, 1);
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;

@@ -379,3 +379,30 @@ async fn approximate_sizes_feed_the_group_total() {
     assert_eq!(st.total_bytes, 3_000_000);
     let _ = m.wait(&id).await;
 }
+
+/// A group whose files the caller couldn't use (e.g. couldn't register them)
+/// is marked failed after all, with the caller's message.
+#[tokio::test]
+async fn a_done_group_can_be_marked_failed() {
+    let body = data(1_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let m = manager();
+    let id = m.enqueue("Model".into(), vec![file(&srv, "/m", dir.path(), &body)]);
+    m.wait(&id).await.unwrap();
+    let mut rx = m.subscribe();
+    m.fail_done(&id, "io", "Couldn't save the list of installed models.");
+    let s = m.status().into_iter().find(|s| s.group_id == id).unwrap();
+    assert_eq!(s.state, DownloadState::Failed);
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Couldn't save the list of installed models.")
+    );
+    assert_eq!(rx.try_recv().unwrap().state, DownloadState::Failed);
+    let err = m.wait_detailed(&id).await.unwrap_err();
+    assert_eq!(err.code, "io");
+    // Only a Done group changes.
+    m.fail_done(&id, "io", "again");
+    assert!(rx.try_recv().is_err());
+}

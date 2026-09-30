@@ -1,5 +1,5 @@
 // Preset picker next to the model picker (SPEC §7). Presets never contain the prompt.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Bookmark, BookmarkPlus, Check, ChevronDown, Lock, Trash } from "lucide-react";
 import { Button, Dialog, ErrorNotice, Field, IconButton, MenuItem, MenuLabel, MenuSeparator, Popover, cx, focusRing, inputClass } from "../../components/ui";
 import * as api from "../../lib/api";
@@ -8,6 +8,9 @@ import type { CoreError, Preset } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
 import { applyPreset, clearPreset, presetFromCreate, type PresetApplication } from "../../lib/state/request";
 import { useAppState, useStore } from "../../lib/state/store";
+
+/** "balanced" → "Balanced", as the Quality dial shows it. */
+const qualityLabel = (q: string) => q[0].toUpperCase() + q.slice(1);
 
 export interface PresetNotice {
   preset: Preset;
@@ -58,7 +61,7 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
             close();
           }}
           right={p.id === presetId ? <Check className="h-4 w-4 text-amber-600" /> : undefined}
-          hint={[p.shape && SHAPE_LABEL[p.shape], p.quality && p.quality[0].toUpperCase() + p.quality.slice(1), p.count && `${p.count} at a time`].filter(Boolean).join(" · ") || undefined}
+          hint={[p.shape && SHAPE_LABEL[p.shape], p.quality && qualityLabel(p.quality), p.count && `${p.count} at a time`].filter(Boolean).join(" · ") || undefined}
         >
           {p.name}
         </MenuItem>
@@ -139,7 +142,7 @@ export function PresetPicker({ onApplied }: { onApplied: (n: PresetNotice | null
   );
 }
 
-function SavePresetDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SavePresetDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return open ? <SavePresetInner onClose={onClose} /> : null;
 }
 
@@ -149,12 +152,16 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<CoreError | null>(null);
   const [saving, setSaving] = useState(false);
+  // Enter in the name field submits the form even while the Save button is disabled;
+  // a ref (not state) also stops two Enters in the same frame.
+  const inflight = useRef(false);
   const s = store.getState();
   const model = (s.models ?? []).find((m) => m.id === s.create.modelId) ?? null;
   const style = s.styles.find((x) => x.id === s.create.styleId) ?? null;
 
   const save = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || inflight.current) return;
+    inflight.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -168,6 +175,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
     } catch (e) {
       setError(api.asCoreError(e));
     } finally {
+      inflight.current = false;
       setSaving(false);
     }
   };
@@ -207,7 +215,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
             <li>Model: {model?.friendlyName ?? "—"}</li>
             <li>Style: {style?.name ?? "None"}</li>
             <li>
-              Dials: {SHAPE_LABEL[s.create.shape]} · {s.create.quality} · {s.create.count} at a time
+              Dials: {SHAPE_LABEL[s.create.shape]} · {qualityLabel(s.create.quality)} · {s.create.count} at a time
             </li>
             <li>Fine-tune: {Object.keys(s.create.fineTune).filter((k) => k !== "negativePrompt" && k !== "hiresScale" && k !== "hiresDenoise").length} changed setting(s)</li>
             <li>LoRAs: {s.create.loras.length || "none"}</li>

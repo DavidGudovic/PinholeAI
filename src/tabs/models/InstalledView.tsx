@@ -21,11 +21,11 @@ import type { AddFileResult, CatalogCard, ContentMode, CoreError, DeletePreview,
 import { FOLDER_PROBLEM } from "../../settings/ModelsFolderSection";
 import { formatBytes } from "../../lib/format";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
-import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge } from "../../components/ui";
+import { Badge, Button, Dialog, ErrorNotice, IconButton, Spinner, VramBadge, cx, focusRing } from "../../components/ui";
 import { EmptyState, FamilyPicker, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
-import { useHardware, useTauriEvent } from "./lib/hooks";
+import { useHardware, useOnHardwareChange, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
 import { requestAddonBrowse } from "./lib/session";
 import { UseAddonButton } from "./UseAddon";
@@ -108,6 +108,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
       .catch(() => undefined);
   }, []);
   useTauriEvent(onModelsChanged, () => void refresh());
+  // Fit badges are sized against the hardware: refetch when it changes.
+  useOnHardwareChange(() => void refresh());
 
   const showDetails = (card: CatalogCard) => {
     getSettings()
@@ -209,7 +211,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           <span className="inline-flex items-center gap-2">
             <CircleCheck className="h-4 w-4" /> {notice}
           </span>
-          <button className="text-xs hover:underline" onClick={() => setNotice(null)}>
+          <button type="button" className={cx("rounded text-xs hover:underline", focusRing)} onClick={() => setNotice(null)}>
             Dismiss
           </button>
         </div>
@@ -461,6 +463,8 @@ function DeleteDialog({ target, onClose, onDeleted }: { target: { id: string; na
   const [preview, setPreview] = useState<DeletePreview | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bumped by "Try again" when the file check failed.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!target) return;
@@ -473,7 +477,7 @@ function DeleteDialog({ target, onClose, onDeleted }: { target: { id: string; na
     return () => {
       alive = false;
     };
-  }, [target]);
+  }, [target, attempt]);
 
   const confirm = async () => {
     if (!target) return;
@@ -536,7 +540,16 @@ function DeleteDialog({ target, onClose, onDeleted }: { target: { id: string; na
       )}
       {error && (
         <div className="mt-3">
-          <ErrorNotice error={error} />
+          <ErrorNotice
+            error={error}
+            action={
+              !preview ? (
+                <Button size="sm" onClick={() => setAttempt((a) => a + 1)}>
+                  Try again
+                </Button>
+              ) : undefined
+            }
+          />
         </div>
       )}
     </Dialog>

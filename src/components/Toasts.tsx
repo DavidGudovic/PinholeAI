@@ -20,7 +20,7 @@ export function Toasts() {
               : "bg-neutral-900 text-neutral-100 ring-black/10 dark:bg-neutral-100 dark:text-neutral-900 dark:ring-white/10",
           )}
         >
-          <span className="min-w-0 break-all">{t.text}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{t.text}</span>
           {t.action && (
             <button
               type="button"
