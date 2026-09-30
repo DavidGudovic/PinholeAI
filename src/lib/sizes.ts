@@ -21,7 +21,7 @@ export const MAX_SIDE = 4096;
 export function namedSizes(screen: { width: number; height: number } | null): NamedSize[] {
   const out: NamedSize[] = [];
   if (screen && screen.width > 0 && screen.height > 0) {
-    out.push({ id: "screen", label: "My screen", ratio: screen.width / screen.height, note: `${screen.width}×${screen.height}` });
+    out.push({ id: "screen", label: "My screen", ratio: screen.width / screen.height, note: "your screen’s shape" });
   }
   out.push(
     { id: "phone", label: "Phone", ratio: 9 / 16, note: "9:16, for a phone wallpaper or a story" },

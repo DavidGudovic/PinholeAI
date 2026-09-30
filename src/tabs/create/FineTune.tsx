@@ -103,12 +103,16 @@ const fromTri = (t: Tri): boolean | null => (t === "auto" ? null : t === "on");
 
 /** "My screen", "Phone", "Instagram", "Thumbnail": one click sets Width and Height. */
 function NamedSizeChips({ ui, width, height, onPick }: { ui: FamilyUi | null; width: number | null; height: number | null; onPick: (w: number, h: number) => void }) {
-  const screen = useMemo(() => screenPixels(), []);
-  const sizes = useMemo(() => namedSizes(screen), [screen]);
-  const active = sizes.find((n) => {
+  // Read on every render: the window may have moved to another monitor.
+  const screen = screenPixels();
+  const sizes = namedSizes(screen);
+  // Two names can give the same size (a 16:9 screen and Thumbnail): keep the one just clicked lit.
+  const [picked, setPicked] = useState<string | null>(null);
+  const matching = sizes.filter((n) => {
     const [w, h] = sizeForRatio(n.ratio, ui);
     return w === width && h === height;
   });
+  const active = matching.find((n) => n.id === picked) ?? matching[0];
   return (
     <div>
       <div role="group" aria-label="Named sizes" className="flex flex-wrap gap-1.5">
@@ -121,7 +125,10 @@ function NamedSizeChips({ ui, width, height, onPick }: { ui: FamilyUi | null; wi
               type="button"
               aria-pressed={on}
               title={`${n.note}: ${w}×${h}`}
-              onClick={() => onPick(w, h)}
+              onClick={() => {
+                setPicked(n.id);
+                onPick(w, h);
+              }}
               className={cx(
                 "h-8 rounded-lg border px-2.5 text-xs transition-colors",
                 focusRing,
@@ -137,7 +144,7 @@ function NamedSizeChips({ ui, width, height, onPick }: { ui: FamilyUi | null; wi
       </div>
       {active?.id === "screen" && screen && (
         <p className="mt-1 text-[11px] text-neutral-500">
-          Made at {width}×{height}. Use Upscale on the picture to reach your screen’s {screen.width}×{screen.height}.
+          Made at {width}×{height}, your screen’s shape. Use Upscale on the picture for a bigger one.
         </p>
       )}
     </div>

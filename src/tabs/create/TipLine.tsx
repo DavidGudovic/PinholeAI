@@ -43,10 +43,9 @@ export function TipLine({ hasBatch }: { hasBatch: boolean }) {
   const dispatch = useDispatch();
   const [, rerender] = useState(0);
   if (!show || closedThisSession) return null;
-  if (!sessionTip) {
-    const ids = eligibleTips({ hasBatch, canReference });
-    sessionTip = ids[Math.floor(Math.random() * ids.length)];
-  }
+  // Picked once per session; picked again only if it stopped making sense (another model, a single picture).
+  const ids = eligibleTips({ hasBatch, canReference });
+  if (!sessionTip || !ids.includes(sessionTip)) sessionTip = ids[Math.floor(Math.random() * ids.length)];
   const close = () => {
     closedThisSession = true;
     rerender((n) => n + 1);
