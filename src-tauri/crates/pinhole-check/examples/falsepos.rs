@@ -4,8 +4,11 @@
 //! rules 1 and 3 would block if the picture came from a brought-in photo of a person or a
 //! "safe images only" model), and how often each half of rule 2 fires on its own. A picture
 //! that would be blocked is deleted after it is measured.
+//! `FALSEPOS_VERBOSE=1` prints the scores behind each intimate or sexual count.
 fn main() {
     let mut args = std::env::args().skip(1);
+    // FALSEPOS_VERBOSE=1 also prints the scores of pictures counted as intimate or sexual.
+    let verbose = std::env::var_os("FALSEPOS_VERBOSE").is_some();
     let c = pinhole_check::Checker::new(args.next().expect("check dir").into());
     for dir in args {
         let mut files: Vec<_> = std::fs::read_dir(&dir)
@@ -32,6 +35,18 @@ fn main() {
             n += 1;
             let t = r.tags.unwrap_or_default();
             let tags = Some(&t);
+            if verbose
+                && (pinhole_check::rules::is_intimate(r.nudity, tags)
+                    || pinhole_check::rules::is_sexual(r.nudity, tags))
+            {
+                println!(
+                    "  {} nudity {:.2} questionable {:.2} explicit {:.2}",
+                    p.display(),
+                    r.nudity,
+                    t.questionable,
+                    t.explicit
+                );
+            }
             if pinhole_check::rules::is_intimate(r.nudity, tags) {
                 intimate += 1;
             }
