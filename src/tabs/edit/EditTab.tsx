@@ -157,7 +157,9 @@ export function EditTab() {
             <p className="mt-1.5 text-xs text-neutral-500">
               {e.mode == null
                 ? autoEdit
-                  ? "Picked automatically — you have an edit model."
+                  ? autoEdit.isEditModel
+                    ? "Picked automatically — you have an edit model."
+                    : "Picked automatically — one of your models can edit."
                   : "Picked automatically — Restyle works with your Create model."
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."

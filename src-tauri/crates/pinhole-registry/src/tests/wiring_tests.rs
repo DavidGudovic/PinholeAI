@@ -895,12 +895,8 @@ fn generators_that_edit_keep_create_dials_and_get_an_edit_default() {
             &hw(16.0),
         );
         assert!(approx(p.cfg, ui.default_cfg), "{}: cfg {}", f.id, p.cfg);
-        if ui.stay_close_shown && f.defaults.guidance.is_some() {
-            assert!(
-                approx(p.guidance.unwrap(), f.defaults.guidance.unwrap()),
-                "{}",
-                f.id
-            );
+        if let (true, Some(g)) = (ui.stay_close_shown, f.defaults.guidance) {
+            assert!(approx(p.guidance.unwrap(), g), "{}", f.id);
         }
     }
 }
