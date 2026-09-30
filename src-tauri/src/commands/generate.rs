@@ -85,6 +85,21 @@ pub async fn import_image(
         .map_err(join_err)?
 }
 
+/// Raw binary body: the settings a picture Pinhole saved carries, or null. The picture is not
+/// added to the session.
+#[tauri::command]
+pub async fn read_picture_settings(
+    request: Request<'_>,
+) -> Result<Option<session::PictureSettings>, CoreError> {
+    let bytes = match request.body() {
+        InvokeBody::Raw(b) => b.clone(),
+        _ => Vec::new(),
+    };
+    tauri::async_runtime::spawn_blocking(move || session::read_picture_settings(&bytes))
+        .await
+        .map_err(join_err)
+}
+
 /// Image bytes as an ArrayBuffer (PNG for generated images).
 #[tauri::command]
 pub async fn get_image(core: Core<'_>, id: String) -> Result<Response, CoreError> {
@@ -176,6 +191,7 @@ super::area_commands![
     cancel_generation,
     preview_final_prompt,
     import_image,
+    read_picture_settings,
     get_image,
     save_image,
     save_image_as,

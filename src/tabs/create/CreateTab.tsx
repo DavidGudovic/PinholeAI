@@ -19,7 +19,10 @@ import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "./AddonChips";
 import { Dials } from "./Dials";
 import { FineTuneDrawer } from "./FineTune";
+import { DropTarget } from "../../components/ImageDrop";
 import { PasteDialog, PasteSummary } from "./PasteDialog";
+import { ReuseNotice } from "./ReuseNotice";
+import { reuseSettingsFrom, type ReuseOutcome } from "./reuseSettings";
 import { onGenerationHandoff } from "./handoff";
 import { applyPastedText, type PasteOutcome } from "./pasteApply";
 import { PresetPicker, type PresetNotice } from "./PresetPicker";
@@ -88,6 +91,7 @@ function CreateWorkspace() {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [outcome, setOutcome] = useState<PasteOutcome | null>(null);
   const [presetNotice, setPresetNotice] = useState<PresetNotice | null>(null);
+  const [reuse, setReuse] = useState<ReuseOutcome | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
   // Pressed while a job runs, it waits in the queue with the settings as they are now.
@@ -112,6 +116,21 @@ function CreateWorkspace() {
     setOutcome(o);
     setPresetNotice(null);
     setError(null);
+  };
+
+  // A picture Pinhole saved, dropped on the results area: reuse how it was made.
+  const reuseFrom = async (file: File) => {
+    try {
+      const o = await reuseSettingsFrom(file, store, actions);
+      setReuse(o);
+      if (o.found) {
+        setOutcome(null);
+        setPresetNotice(null);
+      }
+      setError(null);
+    } catch (e) {
+      setError(api.asCoreError(e));
+    }
   };
 
   // "Use these settings" from a model's details page.
@@ -145,6 +164,7 @@ function CreateWorkspace() {
           <PromptBox ui={ui} onOpenPaste={() => setPasteOpen(true)} onApplyPasted={(t) => void applyPaste(t).catch((e) => setError(api.asCoreError(e)))} />
           <ReferenceSlot model={model} />
           <AddonChips model={model} />
+          {reuse && <ReuseNotice outcome={reuse} onDismiss={() => setReuse(null)} />}
           {outcome && <PasteSummary outcome={outcome} onDismiss={() => setOutcome(null)} onOutcome={setOutcome} />}
 
           <Dials ui={ui} />
@@ -170,9 +190,11 @@ function CreateWorkspace() {
       </aside>
 
       <div className="min-h-0 min-w-0 bg-neutral-100 dark:bg-neutral-950">
-        <div className="flex h-full min-h-0 flex-col">
-          <Results />
-        </div>
+        <DropTarget onFile={(f) => void reuseFrom(f)} className="h-full" label="Drop a picture made with Pinhole to reuse its settings">
+          <div className="flex h-full min-h-0 flex-col">
+            <Results />
+          </div>
+        </DropTarget>
       </div>
 
       <PasteDialog open={pasteOpen} onClose={() => setPasteOpen(false)} onApply={applyPaste} />

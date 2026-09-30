@@ -120,6 +120,8 @@ export const previewFinalPrompt = (req: T.GenerateRequest) =>
   invoke<T.FinalPromptPreview>("preview_final_prompt", { req });
 /** Put an image (PNG/JPEG/WebP bytes) into the in-memory session. Raw binary body. */
 export const importImage = (bytes: Uint8Array) => invoke<T.ImportedImage>("import_image", bytes);
+/** Settings inside a picture Pinhole saved (or null). Doesn't add the picture to the session. */
+export const readPictureSettings = (bytes: Uint8Array) => invoke<T.PictureSettings | null>("read_picture_settings", bytes);
 /** Bytes of a session image: PNG for generated/upscaled images; imported images keep their format (PNG/JPEG/WebP). */
 export const getImage = (id: string) => invoke<ArrayBuffer>("get_image", { id });
 /** Writes Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png. */

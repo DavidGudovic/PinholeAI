@@ -23,9 +23,9 @@ describe("Before you start", () => {
     render(<UseNotice onAgreed={onAgreed} />);
     expect(screen.getByText(/can't be turned off/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "usage guidelines" }));
-    expect(screen.getByText(/Sexual content involving anyone under 18/)).toBeTruthy();
+    expect(screen.getByText(/sexualizes minors, or anyone/)).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
-    expect(screen.queryByText(/Sexual content involving/)).toBeNull();
+    expect(screen.queryByText(/sexualizes minors, or anyone/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /Agree and continue/ }));
     await waitFor(() => expect(onAgreed).toHaveBeenCalled());
     expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: "system", noticeAccepted: NOTICE_VERSION }));

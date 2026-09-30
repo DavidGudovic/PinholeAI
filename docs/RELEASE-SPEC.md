@@ -142,10 +142,10 @@ allowed.
    `minor` or `sfwOnly` flag (§5) → explicit or intimate results are blocked. This uses
    CivitAI's own labels, not a classifier guess about the model.
 
-Block messages (plain words, no engine output):
-- Rule 1: "Pinhole doesn't make intimate images of real people from photos."
-- Rule 2: "Pinhole doesn't make sexual images of anyone who looks under 18."
-- Rule 3: "This model is marked for safe images only, by its creator or by CivitAI."
+Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
+this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
+(§7). It never names the rule, the content or what triggered it, has no retry hint, and never reads
+as an accusation, since a false block can hit an ordinary user (David, 2026-09-30).
 
 ### 3.3 How it runs
 
