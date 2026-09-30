@@ -25,8 +25,16 @@ export function CompareView({ before, after, width, height, beforeLabel = "Befor
         e.currentTarget.setPointerCapture(e.pointerId);
         setFromEvent(e);
       }}
-      onPointerMove={(e) => dragging.current && setFromEvent(e)}
+      // No button held means the drag ended somewhere we didn't hear about.
+      onPointerMove={(e) => dragging.current && e.buttons !== 0 && setFromEvent(e)}
       onPointerUp={() => {
+        dragging.current = false;
+      }}
+      // Pen/touch or the OS can take the pointer away: stop dragging then too.
+      onPointerCancel={() => {
+        dragging.current = false;
+      }}
+      onLostPointerCapture={() => {
         dragging.current = false;
       }}
     >

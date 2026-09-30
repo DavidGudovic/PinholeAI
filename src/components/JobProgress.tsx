@@ -1,5 +1,6 @@
-import type { Job } from "../lib/state/model";
+import type { Job, JobKind } from "../lib/state/model";
 import { useElapsed } from "../lib/state/hooks";
+import { useAppState } from "../lib/state/store";
 import { Button, ProgressBar, Spinner } from "./ui";
 
 /** Plain-words status for a running job. */
@@ -24,6 +25,18 @@ export function jobStatusText(job: Job, elapsed: number): string {
     default:
       return `${verb}…`;
   }
+}
+
+/**
+ * JobProgress for the running job when it is one of `kinds`. Only this component
+ * subscribes to the job object, so the ~3 progress ticks a second re-render the
+ * progress card and not the whole sidebar around it.
+ */
+export function LiveJobProgress({ kinds, onCancel, cancelling }: { kinds: readonly JobKind[]; onCancel: () => void; cancelling?: boolean }) {
+  // null for another tab's job, so its ticks don't re-render this one either.
+  const job = useAppState((s) => (s.job && kinds.includes(s.job.kind) ? s.job : null));
+  if (!job) return null;
+  return <JobProgress job={job} onCancel={onCancel} cancelling={cancelling} />;
 }
 
 export function JobProgress({ job, onCancel, cancelling }: { job: Job; onCancel: () => void; cancelling?: boolean }) {
