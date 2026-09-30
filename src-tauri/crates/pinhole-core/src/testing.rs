@@ -300,7 +300,7 @@ mod tests {
             );
         }
 
-        // Save (default: no metadata), then with "settings (no prompt)".
+        // Save (default: only the AI marker), then with "settings (no prompt)".
         let saved = session::save_image(&core, &res.images[0].id).unwrap();
         let name = std::path::Path::new(&saved.path)
             .file_name()
@@ -311,14 +311,19 @@ mod tests {
             name.starts_with("pinhole_") && name.ends_with("_1000.png"),
             "{name}"
         );
-        assert!(pinhole_engine::png::text_chunks(&std::fs::read(&saved.path).unwrap()).is_empty());
+        let is_marker =
+            |c: &(String, Vec<u8>)| c.0 == "iTXt" && c.1.starts_with(b"XML:com.adobe.xmp\0");
+        let chunks = pinhole_engine::png::text_chunks(&std::fs::read(&saved.path).unwrap());
+        assert_eq!(chunks.len(), 1);
+        assert!(is_marker(&chunks[0]));
         core.settings.write().saved_metadata = "settings".into();
         let saved2 = session::save_image(&core, &res.images[0].id).unwrap();
         assert_ne!(saved.path, saved2.path, "unique name on collision");
         let chunks = pinhole_engine::png::text_chunks(&std::fs::read(&saved2.path).unwrap());
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].1.starts_with(b"pinhole\0"));
-        assert!(has(&chunks[0].1, "\"seed\":1000"));
+        assert_eq!(chunks.len(), 2);
+        assert!(is_marker(&chunks[0]));
+        assert!(chunks[1].1.starts_with(b"pinhole\0"));
+        assert!(has(&chunks[1].1, "\"seed\":1000"));
 
         // Nothing under Data/ contains the prompt; last_used was updated (a number).
         assert!(scan_for(&tmp.path().join("Data"), SENTINEL.as_bytes()).is_empty());
@@ -854,7 +859,6 @@ mod tests {
             .id
         };
         let a = img(10);
-        // Image 2 has to be made in Pinhole (RELEASE-SPEC §5).
         let sdxl = register_fake_model(&core, "sdxl");
         let b = generate::generate(&core, GenerateRequest::txt2img(sdxl, "a green bottle"))
             .await
@@ -940,7 +944,7 @@ mod tests {
             .unwrap();
         assert_eq!(r.images[0].origin, Origin::Imported);
 
-        // Edit: image 1 may be brought in; image 2 must be made in Pinhole.
+        // Edit: either image brought in → Imported.
         let edit = |ids: Vec<String>| {
             let mut req = GenerateRequest::txt2img(klein.clone(), "put the boat from image 2 here");
             req.mode = GenMode::Edit;
@@ -956,14 +960,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.images[0].origin, Origin::Generated);
-        let sent = mock.requests().len();
-        for image2 in [photo.clone(), restyled_photo.clone()] {
-            let err = generate::generate(&core, edit(vec![made.id.clone(), image2]))
-                .await
-                .unwrap_err();
-            assert_eq!(err.message, generate::SECOND_IMAGE_IMPORTED);
-        }
-        assert_eq!(mock.requests().len(), sent, "refused before the engine");
+        // A brought-in image 2 makes the result Imported too (the image check covers it).
+        let r = generate::generate(&core, edit(vec![made.id.clone(), restyled_photo]))
+            .await
+            .unwrap();
+        assert_eq!(r.images[0].origin, Origin::Imported);
     }
 
     #[tokio::test]
@@ -2549,6 +2550,71 @@ mod tests {
                 .code,
             "invalid"
         );
+    }
+
+    /// RELEASE-SPEC §2: every picture Pinhole made leaves with the AI-generated
+    /// marker (Save, Save as, Copy), whatever the settings say; an untouched
+    /// import leaves without one.
+    #[tokio::test]
+    async fn exports_carry_the_ai_marker() {
+        let (tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let sdxl = register_fake_model(&core, "sdxl");
+        let xmp = |bytes: &[u8]| -> Option<String> {
+            pinhole_engine::png::text_chunks(bytes)
+                .into_iter()
+                .find(|(k, d)| k == "iTXt" && d.starts_with(b"XML:com.adobe.xmp\0"))
+                .map(|(_, d)| String::from_utf8_lossy(&d[22..]).into_owned())
+        };
+        let made = generate::generate(&core, GenerateRequest::txt2img(sdxl.clone(), "a boat"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut req = GenerateRequest::txt2img(sdxl, "at sunset");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(photo.clone());
+        req.strength = Some(0.5);
+        let restyled = generate::generate(&core, req).await.unwrap().images[0]
+            .id
+            .clone();
+
+        for with_settings in [false, true] {
+            core.settings.write().saved_metadata =
+                if with_settings { "settings" } else { "none" }.into();
+            let saved = std::fs::read(session::save_image(&core, &made).unwrap().path).unwrap();
+            let m = xmp(&saved).expect("marker on a Create result");
+            assert!(
+                m.contains("digitalsourcetype/trainedAlgorithmicMedia"),
+                "{m}"
+            );
+            assert!(!m.contains("Pinhole"), "no app name (David): {m}");
+            assert!(!m.contains("a boat"));
+            let path = tmp.path().join(format!("as_{with_settings}.png"));
+            let saved = std::fs::read(
+                session::save_image_as(&core, &restyled, path.to_str().unwrap())
+                    .unwrap()
+                    .path,
+            )
+            .unwrap();
+            let m = xmp(&saved).expect("marker on an edited photo");
+            assert!(
+                m.contains("digitalsourcetype/compositeWithTrainedAlgorithmicMedia"),
+                "{m}"
+            );
+            let saved = std::fs::read(session::save_image(&core, &photo).unwrap().path).unwrap();
+            assert!(xmp(&saved).is_none(), "an untouched import isn't AI-made");
+        }
+        // Copy uses the same export.
+        assert!(session::decode_rgba(&core, &made).is_ok());
     }
 
     fn last_generation_event(rec: &Recorder) -> Option<crate::events::GenerationProgress> {

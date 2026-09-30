@@ -136,6 +136,21 @@ pub fn add_text_chunk(bytes: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>
     insert_chunk(bytes, b"tEXt", &data)
 }
 
+/// Insert one uncompressed `iTXt` chunk (`keyword\0` + flags + empty language
+/// and translated keyword + UTF-8 text) before the first IDAT. Used for XMP
+/// (`XML:com.adobe.xmp`).
+pub fn add_itxt_chunk(bytes: &[u8], keyword: &str, text: &str) -> Result<Vec<u8>, PngError> {
+    if keyword.is_empty() || keyword.len() > 79 || !keyword.bytes().all(|b| (32..127).contains(&b))
+    {
+        return Err(PngError::BadKeyword);
+    }
+    let mut data = keyword.as_bytes().to_vec();
+    // NUL, compression flag 0, method 0, empty language tag, empty translated keyword.
+    data.extend_from_slice(&[0, 0, 0, 0, 0]);
+    data.extend_from_slice(text.replace('\0', "").as_bytes());
+    insert_chunk(bytes, b"iTXt", &data)
+}
+
 /// Insert an arbitrary chunk before the first IDAT (or IEND). Used by
 /// [`add_text_chunk`] and by the test mocks to simulate engine metadata.
 pub fn insert_chunk(bytes: &[u8], kind: &[u8; 4], data: &[u8]) -> Result<Vec<u8>, PngError> {
@@ -212,6 +227,20 @@ mod tests {
         write_chunk(&mut tail, b"tEXt", format!("late\0{prompt}").as_bytes());
         out.splice(iend..iend, tail);
         out
+    }
+
+    #[test]
+    fn add_itxt_chunk_writes_an_uncompressed_itxt() {
+        let clean = crate::image::encode_png_rgba(&[0, 0, 255, 255].repeat(4), 2, 2).unwrap();
+        let with = add_itxt_chunk(&clean, "XML:com.adobe.xmp", "<x>é</x>").unwrap();
+        let t = text_chunks(&with);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].0, "iTXt");
+        let mut want = b"XML:com.adobe.xmp\0\0\0\0\0".to_vec();
+        want.extend_from_slice("<x>é</x>".as_bytes());
+        assert_eq!(t[0].1, want);
+        assert!(crate::image::decode_rgba(&with).is_ok());
+        assert_eq!(add_itxt_chunk(&clean, "", "x"), Err(PngError::BadKeyword));
     }
 
     #[test]

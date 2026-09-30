@@ -163,10 +163,12 @@ pub async fn clear(core: &AppCore) {
     crate::generate::clear_engine_results(core).await;
 }
 
-/// RGBA8 pixels for the clipboard.
+/// RGBA8 pixels for the clipboard, from [`export_png`] (a clipboard picture
+/// carries no metadata; the pixel watermark will, RELEASE-SPEC §2).
 pub fn decode_rgba(core: &AppCore, id: &str) -> CoreResult<(Vec<u8>, u32, u32)> {
     let im = core.session.get(id).ok_or_else(missing)?;
-    img::decode_rgba(&im.bytes).map_err(|e| {
+    let bytes = export_png(core, &im)?;
+    img::decode_rgba(&bytes).map_err(|e| {
         CoreError::invalid("This image couldn't be decoded.").with_details(e.to_string())
     })
 }
@@ -193,17 +195,66 @@ fn settings_text(m: &ResultImage) -> String {
     .to_string()
 }
 
-/// Bytes to write: add the optional "settings (no prompt)" chunk to generated PNGs.
-fn bytes_for_save(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
-    let with_settings = core.settings.read().saved_metadata == "settings";
-    match (&im.meta, im.kind, with_settings) {
-        (Some(m), Kind::Png, true) => {
-            let clean = pinhole_engine::png::scrub(&im.bytes)
-                .map_err(|_| CoreError::internal("The image in memory is damaged."))?;
-            pinhole_engine::png::add_text_chunk(&clean, "pinhole", &settings_text(m))
-                .map_err(|_| CoreError::internal("Couldn't add the settings to the image."))
-        }
-        _ => Ok(im.bytes.as_ref().clone()),
+/// IPTC digital source type for an image Pinhole made (RELEASE-SPEC §2).
+const SOURCE_GENERATED: &str =
+    "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia";
+/// ... and for one made from a picture the user brought in.
+const SOURCE_COMPOSITE: &str =
+    "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia";
+
+/// ... and for a picture the user brought in that was only upscaled.
+const SOURCE_ENHANCED: &str =
+    "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced";
+
+/// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with only
+/// the IPTC digital source type ("made with AI"). No app name (David, 2026-09-30),
+/// prompt, seed, model, user or machine.
+pub fn ai_marker_xmp(origin: Origin, upscaled_import: bool) -> String {
+    let source = match origin {
+        Origin::Generated => SOURCE_GENERATED,
+        Origin::Imported if upscaled_import => SOURCE_ENHANCED,
+        Origin::Imported => SOURCE_COMPOSITE,
+    };
+    format!(
+        concat!(
+            r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">"#,
+            r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">"#,
+            r#"<rdf:Description rdf:about="""#,
+            r#" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/""#,
+            r#" Iptc4xmpExt:DigitalSourceType="{source}"/>"#,
+            r#"</rdf:RDF></x:xmpmeta>"#
+        ),
+        source = source,
+    )
+}
+
+/// An upscale (of an upscale…) of a picture the user brought in: no model ever ran on it.
+fn upscaled_import(m: &ResultImage) -> bool {
+    m.kind == crate::generate::ResultKind::Upscaled && m.model_id.is_empty()
+}
+
+/// Export (RELEASE-SPEC §1 item 4): the one function behind Save, Save as and
+/// Copy. Images made by Pinhole (generated, edited, upscaled) always get the
+/// AI-generated marker (there is no setting for it) plus the optional
+/// "settings (no prompt)" chunk. A picture the user added and didn't change
+/// leaves as it came in (already scrubbed at import).
+pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
+    let Some(m) = &im.meta else {
+        return Ok(im.bytes.as_ref().clone());
+    };
+    let damaged = |_| CoreError::internal("The image in memory is damaged.");
+    let clean = pinhole_engine::png::scrub(&im.bytes).map_err(damaged)?;
+    let marked = pinhole_engine::png::add_itxt_chunk(
+        &clean,
+        "XML:com.adobe.xmp",
+        &ai_marker_xmp(im.origin, upscaled_import(m)),
+    )
+    .map_err(damaged)?;
+    if core.settings.read().saved_metadata == "settings" {
+        pinhole_engine::png::add_text_chunk(&marked, "pinhole", &settings_text(m))
+            .map_err(|_| CoreError::internal("Couldn't add the settings to the image."))
+    } else {
+        Ok(marked)
     }
 }
 
@@ -211,7 +262,7 @@ fn bytes_for_save(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
 /// `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
 pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
     let im = core.session.get(id).ok_or_else(missing)?;
-    let bytes = bytes_for_save(core, &im)?;
+    let bytes = export_png(core, &im)?;
     let dir = core.data.outputs();
     fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
@@ -277,7 +328,7 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
         name.push(format!(".{}", im.kind.ext()));
         path.set_file_name(name);
     }
-    let bytes = bytes_for_save(core, &im)?;
+    let bytes = export_png(core, &im)?;
     write_file(&path, &bytes)?;
     Ok(SavedImage {
         path: path.to_string_lossy().into_owned(),
@@ -381,5 +432,25 @@ mod tests {
             assert!(v.get(k).is_none(), "{k}");
         }
         assert_eq!(v["seed"], 1234);
+    }
+
+    #[test]
+    fn ai_marker_says_made_with_ai_and_nothing_else() {
+        let gen = ai_marker_xmp(Origin::Generated, false);
+        assert!(
+            gen.contains("digitalsourcetype/trainedAlgorithmicMedia\""),
+            "{gen}"
+        );
+        assert!(!gen.contains("Pinhole") && !gen.contains(env!("CARGO_PKG_VERSION")));
+        assert!(
+            ai_marker_xmp(Origin::Imported, false).contains("compositeWithTrainedAlgorithmicMedia")
+        );
+        assert!(ai_marker_xmp(Origin::Imported, true).contains("algorithmicallyEnhanced"));
+        let mut m = meta("a");
+        assert!(!upscaled_import(&m));
+        m.kind = crate::generate::ResultKind::Upscaled;
+        assert!(!upscaled_import(&m), "upscale of a generated picture");
+        m.model_id.clear();
+        assert!(upscaled_import(&m));
     }
 }

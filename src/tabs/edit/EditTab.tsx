@@ -133,7 +133,7 @@ export function EditTab() {
   const fixing = mode === "fix";
   const extending = mode === "extend";
   const maskOn = fixing || (maskToggle && !extending);
-  // Image 2: only models that combine two images (Qwen Image Edit, FLUX.2).
+  // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
   const edits = useMemo(
@@ -199,6 +199,19 @@ export function EditTab() {
   useImagePaste(tab === "edit", (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
 
+  const loadSecond = async (f: File) => {
+    if (editBusy(store.getState())) return;
+    setError(null);
+    setImporting(true); // Apply waits for image 2
+    try {
+      await actions.importSecondToEdit(f);
+    } catch (err) {
+      setError(api.asCoreError(err));
+    } finally {
+      setImporting(false);
+    }
+  };
+  const secondPicker = useFilePicker((f) => void loadSecond(f));
 
   // A new current image means a new mask.
   useEffect(() => {
@@ -676,6 +689,7 @@ export function EditTab() {
 
           {mode === "instruction" && current && (
             <div>
+              {secondPicker.input}
               {second ? (
                 <div className="flex items-center gap-3 rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
                   <img
@@ -704,12 +718,15 @@ export function EditTab() {
                   </IconButton>
                 </div>
               ) : (
-                // RELEASE-SPEC §5: image 2 must be made in Pinhole (it could carry a real
-                // person's face), so there is no file picker here.
-                <p className="text-xs text-neutral-500">
-                  To use something from another picture, make it in Create and
-                  pick “Use as image 2” on it.
-                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={locked || importing}
+                  onClick={secondPicker.open}
+                  title="Use something from another picture, like an object or a logo"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" /> Add another image
+                </Button>
               )}
             </div>
           )}

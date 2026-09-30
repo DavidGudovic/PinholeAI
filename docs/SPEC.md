@@ -147,8 +147,10 @@ folder can overwrite each other's index (dual boot never does that).
 7. The CivitAI API key (optional) and the GitHub token (optional, Settings → Updates) are stored in
    the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
-9. Saved-image metadata: **none** by default. Optional setting "Include generation settings
-   (no prompt)" writes model name, seed, steps, dials into a PNG text chunk.
+9. Saved-image metadata: only the **AI-generated marker** by default (RELEASE-SPEC §2): XMP
+   `DigitalSourceType` only ("made with AI", no app name), always written to pictures Pinhole made (no
+   setting turns it off; an untouched imported picture gets none). Optional setting "Include
+   generation settings (no prompt)" also writes model name, seed, steps, dials into a PNG text chunk.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
     file or log (see CLAUDE.md).
 11. **The one exception is Styles** (§7): text the user explicitly saves as a named Style is
