@@ -156,6 +156,11 @@ folder can overwrite each other's index (dual boot never does that).
    `DigitalSourceType` only ("made with AI", no app name), always written to pictures Pinhole made (no
    setting turns it off; an untouched imported picture gets none). Optional setting "Include
    generation settings (no prompt)" also writes model name, seed, steps, dials into a PNG text chunk.
+   **Reuse settings**: dropping such a picture on Create's results area reads that chunk back (in Rust,
+   only the known fields, range-checked; the picture is not kept) and fills model (by id, else by name),
+   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler and size through the same mapping
+   as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
+   the chunk gets a short note saying how to have pictures carry it; other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
     file or log (see CLAUDE.md).
 11. **The one exception is Styles** (§7): text the user explicitly saves as a named Style is

@@ -179,6 +179,7 @@ fn settings_text(m: &ResultImage) -> String {
     serde_json::json!({
         "app": "Pinhole",
         "model": m.model_label,
+        "modelId": m.model_id,
         "family": m.family_id,
         "seed": m.seed,
         "steps": m.steps,
@@ -190,6 +191,84 @@ fn settings_text(m: &ResultImage) -> String {
         "height": m.height,
     })
     .to_string()
+}
+
+/// Keyword of the optional "settings (no prompt)" text chunk.
+const SETTINGS_KEYWORD: &str = "pinhole";
+/// The settings chunk is a few hundred bytes; anything bigger isn't ours.
+const MAX_SETTINGS_CHUNK: usize = 4096;
+
+/// What a picture saved with "Settings (no prompt)" says about how it was made (see
+/// [`settings_text`]). Read back so the user can reuse them; never contains a prompt.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PictureSettings {
+    pub model: Option<String>,
+    pub model_id: Option<String>,
+    pub family: Option<String>,
+    pub seed: Option<i64>,
+    pub steps: Option<u32>,
+    pub cfg: Option<f32>,
+    pub guidance: Option<f32>,
+    pub sampler: Option<String>,
+    pub scheduler: Option<String>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+fn plain_text(v: &serde_json::Value) -> Option<String> {
+    let s = v.as_str()?.trim();
+    (!s.is_empty() && s.chars().count() <= 120 && !s.chars().any(char::is_control))
+        .then(|| s.to_string())
+}
+
+fn number_in(v: &serde_json::Value, lo: f64, hi: f64) -> Option<f64> {
+    v.as_f64().filter(|n| n.is_finite() && *n >= lo && *n <= hi)
+}
+
+/// Read the settings chunk of a PNG Pinhole saved. `None` for any other file (no chunk, not a
+/// PNG, not ours, damaged). Only the known fields are taken, each range-checked: a file from
+/// somewhere else can carry anything in a chunk with this name. The picture is not kept.
+pub fn read_picture_settings(bytes: &[u8]) -> Option<PictureSettings> {
+    let chunk = pinhole_engine::png::text_chunks(bytes)
+        .into_iter()
+        .find(|(kind, data)| {
+            kind == "tEXt"
+                && data.len() <= MAX_SETTINGS_CHUNK
+                && data.starts_with(SETTINGS_KEYWORD.as_bytes())
+                && data.get(SETTINGS_KEYWORD.len()) == Some(&0)
+        })?
+        .1;
+    // tEXt is Latin-1; the writer replaced anything else with `?`.
+    let text: String = chunk[SETTINGS_KEYWORD.len() + 1..]
+        .iter()
+        .map(|b| *b as char)
+        .collect();
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if v.get("app")?.as_str()? != "Pinhole" {
+        return None;
+    }
+    let get = |k: &str| v.get(k).unwrap_or(&serde_json::Value::Null);
+    // Sizes beyond the Fine-tune range are an upscale's size, not a Create size.
+    let size = |k: &str| number_in(get(k), 64.0, 4096.0).map(|n| n as u32);
+    let (width, height) = match (size("width"), size("height")) {
+        (Some(w), Some(h)) => (Some(w), Some(h)),
+        _ => (None, None),
+    };
+    let out = PictureSettings {
+        model: plain_text(get("model")),
+        model_id: plain_text(get("modelId")),
+        family: plain_text(get("family")),
+        seed: number_in(get("seed"), 0.0, 9.0e15).map(|n| n as i64),
+        steps: number_in(get("steps"), 1.0, 150.0).map(|n| n as u32),
+        cfg: number_in(get("cfg"), 0.0, 30.0).map(|n| n as f32),
+        guidance: number_in(get("guidance"), 0.0, 30.0).map(|n| n as f32),
+        sampler: plain_text(get("sampler")),
+        scheduler: plain_text(get("scheduler")),
+        width,
+        height,
+    };
+    (out != PictureSettings::default()).then_some(out)
 }
 
 /// IPTC digital source type for an image Pinhole made (RELEASE-SPEC §2).
@@ -446,6 +525,67 @@ mod tests {
             assert!(v.get(k).is_none(), "{k}");
         }
         assert_eq!(v["seed"], 1234);
+    }
+
+    fn saved_with_settings(m: &ResultImage) -> Vec<u8> {
+        let png = img::encode_png_rgba(&[255, 0, 0, 255].repeat(4), 2, 2).unwrap();
+        pinhole_engine::png::add_text_chunk(&png, "pinhole", &settings_text(m)).unwrap()
+    }
+
+    #[test]
+    fn settings_read_back_from_a_saved_picture() {
+        let mut m = meta("x");
+        m.sampler = Some("euler_a".into());
+        m.scheduler = None;
+        (m.width, m.height) = (832, 1216);
+        let s = read_picture_settings(&saved_with_settings(&m)).expect("settings");
+        assert_eq!(s.seed, Some(1234));
+        assert_eq!(s.model_id.as_deref(), Some(m.model_id.as_str()));
+        assert_eq!(s.model.as_deref(), Some(m.model_label.as_str()));
+        assert_eq!(s.sampler.as_deref(), Some("euler_a"));
+        assert_eq!(s.scheduler, None);
+        assert_eq!((s.width, s.height), (Some(m.width), Some(m.height)));
+    }
+
+    #[test]
+    fn a_picture_without_the_chunk_or_not_ours_gives_nothing() {
+        let plain = img::encode_png_rgba(&[0, 0, 0, 255].repeat(4), 2, 2).unwrap();
+        assert!(read_picture_settings(&plain).is_none());
+        assert!(read_picture_settings(b"not a png").is_none());
+        let other =
+            pinhole_engine::png::add_text_chunk(&plain, "pinhole", r#"{"app":"Else","seed":1}"#)
+                .unwrap();
+        assert!(read_picture_settings(&other).is_none());
+        let junk = pinhole_engine::png::add_text_chunk(&plain, "pinhole", "{oops").unwrap();
+        assert!(read_picture_settings(&junk).is_none());
+        // A chunk with another name (like A1111's "parameters", which holds prompts) is never read.
+        let params = pinhole_engine::png::add_text_chunk(
+            &plain,
+            "parameters",
+            r#"{"app":"Pinhole","seed":1}"#,
+        )
+        .unwrap();
+        assert!(read_picture_settings(&params).is_none());
+    }
+
+    #[test]
+    fn out_of_range_values_are_dropped_and_extra_fields_ignored() {
+        let plain = img::encode_png_rgba(&[0, 0, 0, 255].repeat(4), 2, 2).unwrap();
+        let body = serde_json::json!({
+            "app": "Pinhole", "seed": 7, "steps": 100000, "cfg": -3, "width": 9000, "height": 512,
+            "sampler": "bad\nname", "model": "Good model", "prompt": "SECRET words",
+        })
+        .to_string();
+        let png = pinhole_engine::png::add_text_chunk(&plain, "pinhole", &body).unwrap();
+        let s = read_picture_settings(&png).unwrap();
+        assert_eq!(s.seed, Some(7));
+        assert_eq!(
+            (s.steps, s.cfg, s.width, s.height),
+            (None, None, None, None)
+        );
+        assert_eq!(s.sampler, None);
+        assert_eq!(s.model.as_deref(), Some("Good model"));
+        assert!(!format!("{s:?}").contains("SECRET"));
     }
 
     #[test]

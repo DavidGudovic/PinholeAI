@@ -424,6 +424,21 @@ export interface ImportedImage {
   height: number;
 }
 
+/** What a picture saved with "Settings (no prompt)" says about how it was made. Never a prompt. */
+export interface PictureSettings {
+  model?: string | null;
+  modelId?: string | null;
+  family?: string | null;
+  seed?: number | null;
+  steps?: number | null;
+  cfg?: number | null;
+  guidance?: number | null;
+  sampler?: string | null;
+  scheduler?: string | null;
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface SavedImage {
   path: string;
 }
