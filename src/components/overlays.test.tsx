@@ -1,10 +1,17 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { Button, Dialog, MenuItem, Popover, Sheet } from "./ui";
 import { useImagePaste } from "./ImageDrop";
 import { Toasts } from "./Toasts";
+import { ImageViewer, clampView, zoomAt } from "./ImageViewer";
 import { StoreContext, createStore } from "../lib/state/store";
 
 afterEach(cleanup);
@@ -49,8 +56,13 @@ function PasteProbe({ onFile }: { onFile: (f: File) => void }) {
 
 function pasteEvent(types: string[]) {
   const file = new File([new Uint8Array(4)], "clip.png", { type: "image/png" });
-  const e = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
-  Object.defineProperty(e, "clipboardData", { value: { types, files: [file], items: [] } });
+  const e = new Event("paste", {
+    bubbles: true,
+    cancelable: true,
+  }) as ClipboardEvent;
+  Object.defineProperty(e, "clipboardData", {
+    value: { types, files: [file], items: [] },
+  });
   return e;
 }
 
@@ -67,7 +79,9 @@ describe("image paste", () => {
   it("takes a file copied in a file manager, even in a text field", () => {
     const onFile = vi.fn();
     const { getByLabelText } = render(<PasteProbe onFile={onFile} />);
-    getByLabelText("text").dispatchEvent(pasteEvent(["text/plain", "text/uri-list", "Files"]));
+    getByLabelText("text").dispatchEvent(
+      pasteEvent(["text/plain", "text/uri-list", "Files"]),
+    );
     expect(onFile).toHaveBeenCalledTimes(1);
   });
 
@@ -108,7 +122,9 @@ describe("keyboard focus", () => {
     trigger.focus();
     fireEvent.click(trigger);
     await tick();
-    expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "First" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("menuitem", { name: "First" }),
+    );
     fireEvent.keyDown(window, { key: "Escape" });
     await tick();
     expect(screen.queryByRole("menuitem")).toBeNull();
@@ -140,7 +156,11 @@ describe("keyboard focus", () => {
       return (
         <>
           <Menu onDialog={() => setOpen(true)} />
-          <Dialog open={open} onClose={() => setOpen(false)} title="Save as preset">
+          <Dialog
+            open={open}
+            onClose={() => setOpen(false)}
+            title="Save as preset"
+          >
             <input aria-label="Name" />
           </Dialog>
         </>
@@ -173,7 +193,9 @@ describe("keyboard focus", () => {
     gear.focus();
     rerender(view(true));
     await tick();
-    expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Settings" }));
+    expect(document.activeElement).toBe(
+      screen.getByRole("dialog", { name: "Settings" }),
+    );
     rerender(view(false));
     await tick();
     expect(document.activeElement).toBe(gear);
@@ -191,9 +213,21 @@ describe("popover position", () => {
     );
     const trigger = screen.getByRole("button", { name: "Style" });
     let top = 100;
-    trigger.getBoundingClientRect = () => ({ top, bottom: top + 30, left: 10, right: 110, width: 100, height: 30, x: 10, y: top, toJSON: () => ({}) });
+    trigger.getBoundingClientRect = () => ({
+      top,
+      bottom: top + 30,
+      left: 10,
+      right: 110,
+      width: 100,
+      height: 30,
+      x: 10,
+      y: top,
+      toJSON: () => ({}),
+    });
     fireEvent.click(trigger);
-    const panel = screen.getByRole("menuitem", { name: "Watercolor" }).parentElement!;
+    const panel = screen.getByRole("menuitem", {
+      name: "Watercolor",
+    }).parentElement!;
     expect(panel.style.top).toBe("136px");
     top = 40;
     fireEvent.scroll(screen.getByTestId("aside"));
@@ -208,12 +242,20 @@ describe("looks", () => {
         Generate
       </Button>,
     );
-    expect(screen.getByRole("button", { name: "Generate" }).className).not.toMatch(/disabled:bg-/);
+    expect(
+      screen.getByRole("button", { name: "Generate" }).className,
+    ).not.toMatch(/disabled:bg-/);
   });
 
   it("toast text wraps at spaces, not mid-word", () => {
     const store = createStore();
-    store.dispatch({ type: "toast", toast: { id: 1, text: "The edit finished after the image changed, so it wasn't added." } });
+    store.dispatch({
+      type: "toast",
+      toast: {
+        id: 1,
+        text: "The edit finished after the image changed, so it wasn't added.",
+      },
+    });
     render(
       <StoreContext.Provider value={store}>
         <Toasts />
@@ -222,5 +264,50 @@ describe("looks", () => {
     const text = screen.getByText(/The edit finished/);
     expect(text.className).not.toMatch(/break-all/);
     expect(text.className).toMatch(/overflow-wrap:anywhere/);
+  });
+});
+
+describe("ImageViewer", () => {
+  const imgs = [
+    { url: "blob:a", width: 100, height: 100, alt: "A" },
+    { url: "blob:b", width: 100, height: 100, alt: "B" },
+  ];
+  it("moves between images with arrows and closes on Escape", () => {
+    const onIndex = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ImageViewer
+        images={imgs}
+        index={0}
+        onIndex={onIndex}
+        onClose={onClose}
+      />,
+    );
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(onIndex).toHaveBeenCalledWith(1);
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(onIndex).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onClose).toHaveBeenCalled();
+  });
+  it("zoom keeps the point under the cursor fixed and pans stay in bounds", () => {
+    const v = zoomAt({ scale: 1, x: 0, y: 0 }, 2, 50, 20);
+    expect(v).toEqual({ scale: 2, x: -50, y: -20 });
+    const c = clampView(
+      { scale: 50, x: 9999, y: -9999 },
+      { w: 200, h: 200 },
+      { w: 100, h: 100 },
+      1,
+    );
+    expect(c.scale).toBe(16);
+    expect(c.x).toBe((100 * 16 - 200) / 2);
+    expect(
+      clampView(
+        { scale: 0.1, x: 30, y: 30 },
+        { w: 200, h: 200 },
+        { w: 100, h: 100 },
+        1,
+      ),
+    ).toEqual({ scale: 1, x: 0, y: 0 });
   });
 });
