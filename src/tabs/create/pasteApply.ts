@@ -53,7 +53,7 @@ export async function applyParsed(
   resolveError: CoreError | null,
   store: Store,
   actions: Actions,
-  opts: { setPrompt: boolean; preferModelId?: string | null },
+  opts: { setPrompt: boolean; preferModelId?: string | null; /** Leave the add-ons as they are (the data names none). */ keepLoras?: boolean },
 ): Promise<PasteOutcome> {
   const s = store.getState();
   const usable = createModels(s.models);
@@ -95,7 +95,7 @@ export async function applyParsed(
       fineTune: plan.prompt.trim() || plan.fineTune.negativePrompt ? plan.fineTune : { ...plan.fineTune, negativePrompt: s.create.fineTune.negativePrompt },
       stick: plan.stick,
       ...(plan.shape ? { shape: plan.shape } : {}),
-      loras,
+      ...(opts.keepLoras ? {} : { loras }),
     },
   });
 
