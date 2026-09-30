@@ -125,11 +125,10 @@ impl DetailPlan {
             }
             let o = out.get_pixel_mut(self.crop.x + x, self.crop.y + y);
             let r = back.get_pixel(x, y).0;
-            for c in 0..3 {
-                let v = (u32::from(r[c]) * a + u32::from(o.0[c]) * (255 - a) + 127) / 255;
-                o.0[c] = v as u8;
+            // Colour only: alpha stays the source's.
+            for (dst, src) in o.0.iter_mut().zip(r).take(3) {
+                *dst = ((u32::from(src) * a + u32::from(*dst) * (255 - a) + 127) / 255) as u8;
             }
-            // Alpha stays the source's.
         }
         let (w, h) = out.dimensions();
         Ok(encode_png_rgba(out.as_raw(), w, h)?)

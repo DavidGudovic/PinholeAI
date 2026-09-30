@@ -213,7 +213,11 @@ export function EditTab() {
           : null;
       const startIndex = store.getState().edit.index;
       if (fixing && !m) {
-        setError({ code: "invalid", message: "Paint over the spot to fix first.", details: null });
+        setError({
+          code: "invalid",
+          message: "Paint over the spot to fix first.",
+          details: null,
+        });
         return;
       }
       await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
@@ -674,27 +678,30 @@ export function EditTab() {
                   />
                   {!fixing && (
                     <>
-                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
-                    Output size
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <Segmented
-                      size="sm"
-                      ariaLabel="Output size"
-                      value={size}
-                      onChange={setSize}
-                      options={[
-                        { value: "smaller" as SizeChoice, label: "Smaller" },
-                        { value: "normal" as SizeChoice, label: "Normal" },
-                        { value: "larger" as SizeChoice, label: "Larger" },
-                      ]}
-                    />
-                    {outSize && (
-                      <span className="text-xs text-neutral-500 tabular-nums">
-                        {outSize[0]}×{outSize[1]}
+                      <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                        Output size
                       </span>
-                    )}
-                  </div>
+                      <div className="flex items-center gap-2">
+                        <Segmented
+                          size="sm"
+                          ariaLabel="Output size"
+                          value={size}
+                          onChange={setSize}
+                          options={[
+                            {
+                              value: "smaller" as SizeChoice,
+                              label: "Smaller",
+                            },
+                            { value: "normal" as SizeChoice, label: "Normal" },
+                            { value: "larger" as SizeChoice, label: "Larger" },
+                          ]}
+                        />
+                        {outSize && (
+                          <span className="text-xs text-neutral-500 tabular-nums">
+                            {outSize[0]}×{outSize[1]}
+                          </span>
+                        )}
+                      </div>
                     </>
                   )}
                   <label
