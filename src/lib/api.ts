@@ -57,10 +57,6 @@ export const checkForUpdates = () => invoke<T.UpdateCheck>("check_for_updates");
 export const installUpdate = (version: string) => invoke<void>("install_update", { version });
 /** Opens the GitHub release page (or the releases list) in the system browser. */
 export const openReleasePage = (version: string | null) => invoke<void>("open_release_page", { version });
-/** Optional GitHub token (OS keychain only) so updates work while the repository is private. */
-export const hasGithubToken = () => invoke<boolean>("has_github_token");
-export const setGithubToken = (token: string) => invoke<void>("set_github_token", { token });
-export const clearGithubToken = () => invoke<void>("clear_github_token");
 
 // ---------------------------------------------------------------- engine (engine agent)
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
