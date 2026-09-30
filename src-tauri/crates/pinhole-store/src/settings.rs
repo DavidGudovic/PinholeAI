@@ -42,6 +42,10 @@ pub struct Settings {
     pub describe_model: String,
     /// Helper model for "Improve my prompt": `auto` or a `captioner.helpers` id.
     pub improve_model: String,
+    /// Version of the first-launch "Before you start" notice the user agreed to (0 = none).
+    pub notice_accepted: u32,
+    /// The one-time Edit notice (first photo from the computer opened in Edit) was shown.
+    pub edit_notice_seen: bool,
 }
 
 impl Default for Settings {
@@ -62,6 +66,8 @@ impl Default for Settings {
             models_folder: None,
             describe_model: "auto".into(),
             improve_model: "auto".into(),
+            notice_accepted: 0,
+            edit_notice_seen: false,
         }
     }
 }
@@ -217,6 +223,8 @@ mod tests {
             text_encoder_on_cpu: "on".into(),
             describe_model: "describe".into(),
             improve_model: "qwen25_vl_7b".into(),
+            notice_accepted: 1,
+            edit_notice_seen: true,
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"
@@ -351,6 +359,8 @@ mod tests {
             "addTriggerWords",
             "firstRunDone",
             "engineBackend",
+            "noticeAccepted",
+            "editNoticeSeen",
         ] {
             assert!(v.get(key).is_some(), "{key}");
         }

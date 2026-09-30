@@ -15,6 +15,7 @@ import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, Settings } from "../types";
 import { startMockDownload } from "./models";
+import { NOTICE_VERSION } from "../../firstrun/UseNotice";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const err = (code: string, message: string, details: string | null = null): CoreError => ({ code, message, details });
@@ -60,6 +61,8 @@ export function mockSettings(): Settings {
       modelsFolder: null,
       describeModel: "auto",
       improveModel: "auto",
+      noticeAccepted: f.skipFirstRun ? NOTICE_VERSION : 0,
+      editNoticeSeen: false,
     };
     settings = initial;
     return initial;
@@ -290,6 +293,7 @@ const table: MockTable = {
     return hardwareView();
   },
   open_data_folder: async () => undefined,
+  quit_app: async () => undefined,
   models_folder_info: async (): Promise<ModelsFolderInfo> => modelsFolderInfo(),
   preview_models_folder: async (a): Promise<ModelsFolderPreview> => {
     await sleep(150);

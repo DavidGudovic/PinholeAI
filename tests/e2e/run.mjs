@@ -477,6 +477,12 @@ try {
   await driver.wait(async () => (await bodyText()).length > 20, 30000, "app did not render");
 
   // ---------------------------------------------------------------- first run
+  await step("use-notice", async () => {
+    await waitText("Before you start");
+    await shot("00-before-you-start");
+    await clickButton("I agree");
+  });
+
   await step("firstrun-welcome", async (note) => {
     await waitText("Welcome to Pinhole");
     note(`title=${await driver.getTitle()}`);

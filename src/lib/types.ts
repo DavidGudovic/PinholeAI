@@ -58,6 +58,10 @@ export interface Settings {
   describeModel: string;
   /** Helper model for "Improve my prompt": "auto" or a HelperModel id. */
   improveModel: string;
+  /** Version of the first-launch notice the user agreed to (0 = none). */
+  noticeAccepted?: number;
+  /** The one-time Edit notice was shown. */
+  editNoticeSeen?: boolean;
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";

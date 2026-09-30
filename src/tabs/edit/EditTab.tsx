@@ -372,6 +372,26 @@ export function EditTab() {
     tryAgain: canTryAgain ? () => void run(true) : undefined,
     describe: current ? () => actions.sendToDescribe(current.id) : undefined,
   });
+  // One-time notice the first time a picture from the computer is edited (RELEASE-SPEC §7).
+  const rootId = e.chain[0]?.imageId;
+  const rootImported = useAppState(
+    (s) =>
+      !!rootId &&
+      s.results.find((r) => r.id === rootId)?.origin !== "generated",
+  );
+  const editNoticeSeen = useAppState(
+    (s) => s.settings?.editNoticeSeen ?? true,
+  );
+  const [editNoticeClosed, setEditNoticeClosed] = useState(false);
+  const showEditNotice = rootImported && !editNoticeSeen && !editNoticeClosed;
+  const closeEditNotice = () => {
+    setEditNoticeClosed(true);
+    void api
+      .getSettings()
+      .then((s) => api.setSettings({ ...s, editNoticeSeen: true }))
+      .then((s) => dispatch({ type: "setSettings", settings: s }))
+      .catch(() => undefined);
+  };
   const loras = useAppState((s) => s.loras);
   const addTriggerWords = useAppState(
     (s) => s.settings?.addTriggerWords ?? true,
@@ -414,6 +434,21 @@ export function EditTab() {
         className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
       >
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-4 pb-5">
+          {showEditNotice && (
+            <div
+              role="note"
+              className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200"
+            >
+              <p className="flex-1">
+                Only edit photos of people who have agreed to it. Making sexual
+                or humiliating images of real people without their consent is a
+                crime in many countries.
+              </p>
+              <Button size="sm" variant="ghost" onClick={closeEditNotice}>
+                OK
+              </Button>
+            </div>
+          )}
           <div>
             <Segmented
               stretch

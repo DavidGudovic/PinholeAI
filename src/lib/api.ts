@@ -13,6 +13,7 @@ export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const getSettings = () => invoke<T.Settings>("get_settings");
 /** Saves settings.yaml and applies side effects (offline flag, theme, GPU override). */
 export const setSettings = (settings: T.Settings) => invoke<T.Settings>("set_settings", { settings });
+export const quitApp = () => invoke<void>("quit_app");
 export const getHardware = () => invoke<T.HardwareView>("get_hardware");
 export const openDataFolder = () => invoke<void>("open_data_folder");
 export const openOutputsFolder = () => invoke<void>("open_outputs_folder");
