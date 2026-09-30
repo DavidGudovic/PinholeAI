@@ -291,7 +291,7 @@ function onEscapeKey(e: KeyboardEvent) {
   top.close();
 }
 
-function useEscape(open: boolean, onClose: () => void) {
+export function useEscape(open: boolean, onClose: () => void) {
   const close = useRef(onClose);
   useEffect(() => {
     close.current = onClose;

@@ -1,13 +1,48 @@
 // Edit (img2img + instruction editing), SPEC §5.2.
 // The image lives in the Rust session (RAM); the edit chain is an in-memory undo stack.
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Trash2, Undo2, WandSparkles } from "lucide-react";
-import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
+import {
+  ArrowRight,
+  Brush,
+  ChevronDown,
+  Columns2,
+  Copy,
+  Eraser,
+  ImagePlus,
+  Maximize2,
+  Redo2,
+  Save,
+  ScanText,
+  SlidersHorizontal,
+  Trash,
+  Trash2,
+  Undo2,
+  WandSparkles,
+} from "lucide-react";
+import {
+  DropTarget,
+  DropZone,
+  useFilePicker,
+  useImagePaste,
+} from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { LiveJobProgress } from "../../components/JobProgress";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
-import { AutoTextarea, Button, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
+import { ImageViewer } from "../../components/ImageViewer";
+import {
+  AutoTextarea,
+  Button,
+  IconButton,
+  Kbd,
+  Segmented,
+  Slider,
+  Spinner,
+  Toggle,
+  cx,
+  focusRing,
+  inputClass,
+} from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly } from "../models/lib/words";
@@ -16,9 +51,18 @@ import { defaultStayClosePosition, sizeMultiple } from "../../lib/paste/map";
 import type { CoreError, Quality } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
-import { createModels, editModels, type ChangeAmount, type EditMode } from "../../lib/state/model";
+import {
+  createModels,
+  editModels,
+  type ChangeAmount,
+  type EditMode,
+} from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
-import { editOutputSize, settingsSummary, type EditSizeChoice } from "../../lib/state/request";
+import {
+  editOutputSize,
+  settingsSummary,
+  type EditSizeChoice,
+} from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "../create/AddonChips";
 import { LoraSection } from "../create/FineTune";
@@ -53,7 +97,9 @@ export function EditTab() {
   const [erase, setErase] = useState(false);
   const [painted, setPainted] = useState(false);
   const [compare, setCompare] = useState(false);
-  const [compareWith, setCompareWith] = useState<"previous" | "original">("previous");
+  const [compareWith, setCompareWith] = useState<"previous" | "original">(
+    "previous",
+  );
   const [size, setSize] = useState<SizeChoice>("normal");
   const [moreOpen, setMoreOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -63,24 +109,48 @@ export function EditTab() {
 
   const creates = useMemo(() => createModels(models), [models]);
   // `models` is the real dependency: autoEditModel() reads the current list from the store.
-  const autoEditOne = useMemo(() => (models ? actions.autoEditModel() : null), [actions, models]);
+  const autoEditOne = useMemo(
+    () => (models ? actions.autoEditModel() : null),
+    [actions, models],
+  );
   const mode: EditMode = e.mode ?? (autoEditOne ? "instruction" : "restyle");
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
-  const edits = useMemo(() => editModels(models, twoImages), [models, twoImages]);
-  const autoEdit = useMemo(() => (twoImages ? (models ? actions.autoEditModel(true) : null) : autoEditOne), [actions, models, twoImages, autoEditOne]);
-  const editModelId = (e.editModelId && edits.some((m) => m.id === e.editModelId) ? e.editModelId : null) ?? autoEdit?.id ?? null;
+  const edits = useMemo(
+    () => editModels(models, twoImages),
+    [models, twoImages],
+  );
+  const autoEdit = useMemo(
+    () =>
+      twoImages ? (models ? actions.autoEditModel(true) : null) : autoEditOne,
+    [actions, models, twoImages, autoEditOne],
+  );
+  const editModelId =
+    (e.editModelId && edits.some((m) => m.id === e.editModelId)
+      ? e.editModelId
+      : null) ??
+    autoEdit?.id ??
+    null;
   const editFit = edits.find((m) => m.id === editModelId)?.fit ?? null;
-  const restyleModelId = e.restyleModelId ?? createModelId ?? creates[0]?.id ?? null;
+  const restyleModelId =
+    e.restyleModelId ?? createModelId ?? creates[0]?.id ?? null;
   const model = useModel(mode === "instruction" ? editModelId : restyleModelId);
   const ui = useFamilyUi(model?.familyId);
 
   const node = e.chain[e.index] ?? null;
   const current = node ? images[node.imageId] : undefined;
-  const prevNode = compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
+  const prevNode =
+    compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
-  const outSize = current ? editOutputSize(current.width, current.height, size, sizeMultiple(model?.familyId)) : null;
+  const outSize = current
+    ? editOutputSize(
+        current.width,
+        current.height,
+        size,
+        sizeMultiple(model?.familyId),
+      )
+    : null;
   const myJob = jobKind === "edit";
 
   const load = async (f: File) => {
@@ -123,11 +193,21 @@ export function EditTab() {
   // during the export doesn't get as far as the job and report "still working".
   const running = useRef(false);
   const run = async () => {
-    if (running.current || store.getState().job || importing || !current || !model) return;
+    if (
+      running.current ||
+      store.getState().job ||
+      importing ||
+      !current ||
+      !model
+    )
+      return;
     running.current = true;
     setError(null);
     try {
-      const m = maskOn && painted && !twoImages ? await mask.current?.exportPng() : null;
+      const m =
+        maskOn && painted && !twoImages
+          ? await mask.current?.exportPng()
+          : null;
       const startIndex = store.getState().edit.index;
       await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
       if (store.getState().edit.index > startIndex) {
@@ -148,7 +228,13 @@ export function EditTab() {
     const onKey = (ev: KeyboardEvent) => {
       if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== "z") return;
       const t = ev.target as HTMLElement | null;
-      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable)) return;
+      if (
+        t &&
+        (t.tagName === "TEXTAREA" ||
+          t.tagName === "INPUT" ||
+          t.isContentEditable)
+      )
+        return;
       ev.preventDefault();
       if (store.getState().job?.kind === "edit") return;
       const s = store.getState().edit;
@@ -160,21 +246,40 @@ export function EditTab() {
 
   const needsEditModel = mode === "instruction" && !autoEdit;
   const text = mode === "instruction" ? e.instruction : e.restylePrompt;
-  const canRun = !!current && !!model && !job && !importing && (text.trim().length > 0 || !!e.styleId) && !needsEditModel;
+  const canRun =
+    !!current &&
+    !!model &&
+    !job &&
+    !importing &&
+    (text.trim().length > 0 || !!e.styleId) &&
+    !needsEditModel;
 
   return (
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
-      <aside aria-label="Edit settings" className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+      <aside
+        aria-label="Edit settings"
+        className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
+      >
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-4 pb-5">
           <div>
             <Segmented
               stretch
               ariaLabel="Edit mode"
               value={mode}
-              onChange={(m) => dispatch({ type: "patchEdit", patch: { mode: m } })}
+              onChange={(m) =>
+                dispatch({ type: "patchEdit", patch: { mode: m } })
+              }
               options={[
-                { value: "instruction" as EditMode, label: "Describe a change", title: "Tell it what to change; the rest stays" },
-                { value: "restyle" as EditMode, label: "Restyle", title: "Redraw the whole image in a new look" },
+                {
+                  value: "instruction" as EditMode,
+                  label: "Describe a change",
+                  title: "Tell it what to change; the rest stays",
+                },
+                {
+                  value: "restyle" as EditMode,
+                  label: "Restyle",
+                  title: "Redraw the whole image in a new look",
+                },
               ]}
             />
             <p className="mt-1.5 text-xs text-neutral-500">
@@ -195,7 +300,11 @@ export function EditTab() {
               <div className="space-y-3">
                 <div className="rounded-xl bg-neutral-50 p-3 text-sm dark:bg-neutral-800/50">
                   <div className="font-medium">
-                    {noGpu ? "Describing a change needs a graphics card" : twoImages ? "Combining two images needs another edit model" : "Get the best edit model for your GPU"}
+                    {noGpu
+                      ? "Describing a change needs a graphics card"
+                      : twoImages
+                        ? "Combining two images needs another edit model"
+                        : "Get the best edit model for your GPU"}
                   </div>
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {noGpu
@@ -205,11 +314,22 @@ export function EditTab() {
                         : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
-                <RecommendedCards roles={twoImages ? ["edit"] : ["edit", "edit_alt"]} families={twoImages ? TWO_IMAGE_PICKS : undefined} compact />
+                <RecommendedCards
+                  roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                  families={twoImages ? TWO_IMAGE_PICKS : undefined}
+                  compact
+                />
               </div>
             ) : (
               <>
-                <ModelPicker models={edits} value={editModelId} onChange={(id) => dispatch({ type: "patchEdit", patch: { editModelId: id } })} label="Edit model" />
+                <ModelPicker
+                  models={edits}
+                  value={editModelId}
+                  onChange={(id) =>
+                    dispatch({ type: "patchEdit", patch: { editModelId: id } })
+                  }
+                  label="Edit model"
+                />
                 {editFit && editFit !== "fits" && !noGpu && (
                   <RecommendedCards
                     roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
@@ -226,7 +346,10 @@ export function EditTab() {
                   />
                 )}
                 <div>
-                  <label htmlFor="edit-instruction" className="mb-1.5 block text-sm font-medium">
+                  <label
+                    htmlFor="edit-instruction"
+                    className="mb-1.5 block text-sm font-medium"
+                  >
                     What should change?
                   </label>
                   <AutoTextarea
@@ -239,16 +362,25 @@ export function EditTab() {
                         ? "e.g. put the bottle from image 2 on the shelf in the background, same label and colors"
                         : "e.g. make it evening with warm street lights, or replace the mug with a water bottle"
                     }
-                    onChange={(ev) => dispatch({ type: "patchEdit", patch: { instruction: ev.target.value } })}
+                    onChange={(ev) =>
+                      dispatch({
+                        type: "patchEdit",
+                        patch: { instruction: ev.target.value },
+                      })
+                    }
                   />
                 </div>
                 {(ui?.stayCloseShown ?? true) && (
                   <div>
-                    <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">Stay close to original</div>
+                    <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">
+                      Stay close to original
+                    </div>
                     <Slider
                       ariaLabel="Stay close to original"
                       value={e.stayClose ?? defaultStayClosePosition(ui)}
-                      onChange={(v) => dispatch({ type: "patchEdit", patch: { stayClose: v } })}
+                      onChange={(v) =>
+                        dispatch({ type: "patchEdit", patch: { stayClose: v } })
+                      }
                       left="Loose"
                       right="Close"
                     />
@@ -259,12 +391,25 @@ export function EditTab() {
           ) : (
             <>
               {creates.length ? (
-                <ModelPicker models={creates} value={restyleModelId} onChange={(id) => dispatch({ type: "patchEdit", patch: { restyleModelId: id } })} label="Model" />
+                <ModelPicker
+                  models={creates}
+                  value={restyleModelId}
+                  onChange={(id) =>
+                    dispatch({
+                      type: "patchEdit",
+                      patch: { restyleModelId: id },
+                    })
+                  }
+                  label="Model"
+                />
               ) : (
                 <RecommendedCards roles={["realistic", "anime"]} compact />
               )}
               <div>
-                <label htmlFor="edit-restyle" className="mb-1.5 block text-sm font-medium">
+                <label
+                  htmlFor="edit-restyle"
+                  className="mb-1.5 block text-sm font-medium"
+                >
                   What should it look like?
                 </label>
                 <AutoTextarea
@@ -273,16 +418,25 @@ export function EditTab() {
                   maxRows={10}
                   value={e.restylePrompt}
                   placeholder="e.g. a watercolor painting of the same scene"
-                  onChange={(ev) => dispatch({ type: "patchEdit", patch: { restylePrompt: ev.target.value } })}
+                  onChange={(ev) =>
+                    dispatch({
+                      type: "patchEdit",
+                      patch: { restylePrompt: ev.target.value },
+                    })
+                  }
                 />
               </div>
               <div>
-                <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">How much to change</div>
+                <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                  How much to change
+                </div>
                 <Segmented
                   stretch
                   ariaLabel="How much to change"
                   value={e.change}
-                  onChange={(v) => dispatch({ type: "patchEdit", patch: { change: v } })}
+                  onChange={(v) =>
+                    dispatch({ type: "patchEdit", patch: { change: v } })
+                  }
                   options={[
                     { value: "subtle" as ChangeAmount, label: "Subtle" },
                     { value: "medium" as ChangeAmount, label: "Medium" },
@@ -300,16 +454,39 @@ export function EditTab() {
               {secondPicker.input}
               {second ? (
                 <div className="flex items-center gap-3 rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
-                  <img src={second.url} alt="Image 2" className="h-12 w-12 shrink-0 rounded-md object-cover" draggable={false} />
+                  <img
+                    src={second.url}
+                    alt="Image 2"
+                    className="h-12 w-12 shrink-0 rounded-md object-cover"
+                    draggable={false}
+                  />
                   <p className="min-w-0 flex-1 text-xs text-neutral-500">
-                    <span className="font-medium text-neutral-700 dark:text-neutral-300">Image 2.</span> Call the picture you're editing “image 1” and this one “image 2”.
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">
+                      Image 2.
+                    </span>{" "}
+                    Call the picture you're editing “image 1” and this one
+                    “image 2”.
                   </p>
-                  <IconButton label="Remove image 2" size="sm" variant="ghost" disabled={myJob} onClick={() => dispatch({ type: "editSetSecond", ref: null })}>
+                  <IconButton
+                    label="Remove image 2"
+                    size="sm"
+                    variant="ghost"
+                    disabled={myJob}
+                    onClick={() =>
+                      dispatch({ type: "editSetSecond", ref: null })
+                    }
+                  >
                     <Trash className="h-3.5 w-3.5" />
                   </IconButton>
                 </div>
               ) : (
-                <Button size="sm" variant="ghost" disabled={myJob || importing} onClick={secondPicker.open} title="Use something from another picture, like an object or a logo">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={myJob || importing}
+                  onClick={secondPicker.open}
+                  title="Use something from another picture, like an object or a logo"
+                >
                   <ImagePlus className="h-3.5 w-3.5" /> Add another image
                 </Button>
               )}
@@ -317,8 +494,19 @@ export function EditTab() {
           )}
 
           <div className="flex flex-wrap items-center gap-2">
-            <StylePicker value={e.styleId} onChange={(id) => dispatch({ type: "patchEdit", patch: { styleId: id } })} familyId={model?.familyId} familyLabel={model?.familyLabel} />
-            {e.styleId && mode === "instruction" && <span className="text-xs text-neutral-500">“make it look like: …”</span>}
+            <StylePicker
+              value={e.styleId}
+              onChange={(id) =>
+                dispatch({ type: "patchEdit", patch: { styleId: id } })
+              }
+              familyId={model?.familyId}
+              familyLabel={model?.familyLabel}
+            />
+            {e.styleId && mode === "instruction" && (
+              <span className="text-xs text-neutral-500">
+                “make it look like: …”
+              </span>
+            )}
           </div>
 
           {!twoImages && (
@@ -331,7 +519,11 @@ export function EditTab() {
                     <Brush className="h-3.5 w-3.5" /> Only change here
                   </span>
                 }
-                hint={maskOn ? "Paint over the part of the image that may change." : "Optional: paint the area to change."}
+                hint={
+                  maskOn
+                    ? "Paint over the part of the image that may change."
+                    : "Optional: paint the area to change."
+                }
               />
               {maskOn && (
                 <div className="mt-3 space-y-2.5">
@@ -342,36 +534,113 @@ export function EditTab() {
                       value={erase ? "erase" : "paint"}
                       onChange={(v) => setErase(v === "erase")}
                       options={[
-                        { value: "paint", label: (<><Brush className="h-3 w-3" /> Paint</>) },
-                        { value: "erase", label: (<><Eraser className="h-3 w-3" /> Erase</>) },
+                        {
+                          value: "paint",
+                          label: (
+                            <>
+                              <Brush className="h-3 w-3" /> Paint
+                            </>
+                          ),
+                        },
+                        {
+                          value: "erase",
+                          label: (
+                            <>
+                              <Eraser className="h-3 w-3" /> Erase
+                            </>
+                          ),
+                        },
                       ]}
                     />
-                    <Button size="sm" variant="ghost" onClick={() => mask.current?.clear()} disabled={!painted}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => mask.current?.clear()}
+                      disabled={!painted}
+                    >
                       <Trash className="h-3.5 w-3.5" /> Clear
                     </Button>
                   </div>
-                  <Slider ariaLabel="Brush size" min={6} max={160} step={1} value={brush} onChange={setBrush} left="Brush" right={<span className="tabular-nums">{brush}px</span>} />
+                  <Slider
+                    ariaLabel="Brush size"
+                    min={6}
+                    max={160}
+                    step={1}
+                    value={brush}
+                    onChange={setBrush}
+                    left="Brush"
+                    right={<span className="tabular-nums">{brush}px</span>}
+                  />
                 </div>
               )}
             </div>
           )}
 
           <section className="rounded-xl border border-neutral-200 dark:border-neutral-800">
-            <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)} className={cx("flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium", focusRing)}>
-              <SlidersHorizontal className="h-4 w-4 text-neutral-500" /> Fine-tune
-              <ChevronDown className={cx("ml-auto h-4 w-4 text-neutral-400 transition-transform", moreOpen && "rotate-180")} />
+            <button
+              type="button"
+              aria-expanded={moreOpen}
+              onClick={() => setMoreOpen((o) => !o)}
+              className={cx(
+                "flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium",
+                focusRing,
+              )}
+            >
+              <SlidersHorizontal className="h-4 w-4 text-neutral-500" />{" "}
+              Fine-tune
+              <ChevronDown
+                className={cx(
+                  "ml-auto h-4 w-4 text-neutral-400 transition-transform",
+                  moreOpen && "rotate-180",
+                )}
+              />
             </button>
             {moreOpen && (
               <div className="space-y-3 border-t border-neutral-200 px-3 pt-3 pb-4 dark:border-neutral-800">
                 <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-sm">
-                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Quality</span>
-                  <Segmented size="sm" ariaLabel="Quality" value={e.quality} onChange={(q) => dispatch({ type: "patchEdit", patch: { quality: q } })} options={(["fast", "balanced", "best"] as Quality[]).map((q, i) => ({ value: q, label: q[0].toUpperCase() + q.slice(1), title: ui ? `${ui.qualitySteps[i]} steps` : undefined }))} />
-                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Output size</span>
+                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    Quality
+                  </span>
+                  <Segmented
+                    size="sm"
+                    ariaLabel="Quality"
+                    value={e.quality}
+                    onChange={(q) =>
+                      dispatch({ type: "patchEdit", patch: { quality: q } })
+                    }
+                    options={(["fast", "balanced", "best"] as Quality[]).map(
+                      (q, i) => ({
+                        value: q,
+                        label: q[0].toUpperCase() + q.slice(1),
+                        title: ui ? `${ui.qualitySteps[i]} steps` : undefined,
+                      }),
+                    )}
+                  />
+                  <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                    Output size
+                  </span>
                   <div className="flex items-center gap-2">
-                    <Segmented size="sm" ariaLabel="Output size" value={size} onChange={setSize} options={[{ value: "smaller" as SizeChoice, label: "Smaller" }, { value: "normal" as SizeChoice, label: "Normal" }, { value: "larger" as SizeChoice, label: "Larger" }]} />
-                    {outSize && <span className="text-xs text-neutral-500 tabular-nums">{outSize[0]}×{outSize[1]}</span>}
+                    <Segmented
+                      size="sm"
+                      ariaLabel="Output size"
+                      value={size}
+                      onChange={setSize}
+                      options={[
+                        { value: "smaller" as SizeChoice, label: "Smaller" },
+                        { value: "normal" as SizeChoice, label: "Normal" },
+                        { value: "larger" as SizeChoice, label: "Larger" },
+                      ]}
+                    />
+                    {outSize && (
+                      <span className="text-xs text-neutral-500 tabular-nums">
+                        {outSize[0]}×{outSize[1]}
+                      </span>
+                    )}
                   </div>
-                  <label htmlFor="edit-seed" className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
+                  <label
+                    htmlFor="edit-seed"
+                    className="text-xs font-medium text-neutral-600 dark:text-neutral-400"
+                  >
                     Seed
                   </label>
                   <input
@@ -382,12 +651,22 @@ export function EditTab() {
                     value={e.seed ?? ""}
                     onChange={(ev) => {
                       const n = Number.parseInt(ev.target.value, 10);
-                      dispatch({ type: "patchEdit", patch: { seed: Number.isFinite(n) && n >= 0 ? n : null } });
+                      dispatch({
+                        type: "patchEdit",
+                        patch: {
+                          seed: Number.isFinite(n) && n >= 0 ? n : null,
+                        },
+                      });
                     }}
                   />
                   <LoraSection model={model} target="edit" />
                 </div>
-                <p className="text-[11px] text-neutral-400">Size keeps your image’s shape. {ui ? `${ui.label} defaults are used for everything else.` : ""}</p>
+                <p className="text-[11px] text-neutral-400">
+                  Size keeps your image’s shape.{" "}
+                  {ui
+                    ? `${ui.label} defaults are used for everything else.`
+                    : ""}
+                </p>
               </div>
             )}
           </section>
@@ -405,7 +684,13 @@ export function EditTab() {
               }}
             />
           ) : (
-            <Button variant="primary" size="lg" className="w-full" disabled={!canRun} onClick={() => void run()}>
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              disabled={!canRun}
+              onClick={() => void run()}
+            >
               <WandSparkles className="h-4 w-4" />
               {mode === "instruction" ? "Apply edit" : "Restyle"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
@@ -414,50 +699,132 @@ export function EditTab() {
               </span>
             </Button>
           )}
-          {!current && !myJob && <p className="text-center text-xs text-neutral-500">Add an image to start.</p>}
-          {job && !myJob && <p className="text-center text-xs text-neutral-500">Busy creating — editing is available when it finishes.</p>}
-          {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void run()} />}
+          {!current && !myJob && (
+            <p className="text-center text-xs text-neutral-500">
+              Add an image to start.
+            </p>
+          )}
+          {job && !myJob && (
+            <p className="text-center text-xs text-neutral-500">
+              Busy creating — editing is available when it finishes.
+            </p>
+          )}
+          {error && (
+            <ErrorWithFix
+              error={error}
+              onDismiss={() => setError(null)}
+              onRetry={() => void run()}
+            />
+          )}
         </div>
       </aside>
 
-      <DropTarget onFile={(f) => void load(f)} className="flex min-h-0 min-w-0 flex-col bg-neutral-100 dark:bg-neutral-950" label="Drop to edit this image">
+      <DropTarget
+        onFile={(f) => void load(f)}
+        className="flex min-h-0 min-w-0 flex-col bg-neutral-100 dark:bg-neutral-950"
+        label="Drop to edit this image"
+      >
         {picker.input}
         {!current ? (
           <div className="flex min-h-0 flex-1 p-6">
-            <DropZone onFile={(f) => void load(f)} title="Add an image to edit" busy={importing}>
+            <DropZone
+              onFile={(f) => void load(f)}
+              title="Add an image to edit"
+              busy={importing}
+            >
               {importing && <Spinner className="mt-3 h-4 w-4" />}
             </DropZone>
           </div>
         ) : (
           <>
             <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-              <IconButton label="Undo" disabled={e.index === 0 || myJob} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
+              <IconButton
+                label="Undo"
+                disabled={e.index === 0 || myJob}
+                onClick={() =>
+                  dispatch({ type: "editGoto", index: e.index - 1 })
+                }
+              >
                 <Undo2 className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Redo" disabled={e.index >= e.chain.length - 1 || myJob} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
+              <IconButton
+                label="Redo"
+                disabled={e.index >= e.chain.length - 1 || myJob}
+                onClick={() =>
+                  dispatch({ type: "editGoto", index: e.index + 1 })
+                }
+              >
                 <Redo2 className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Delete this edit" disabled={e.index === 0 || job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
+              <IconButton
+                label="Delete this edit"
+                disabled={e.index === 0 || job}
+                onClick={() => dispatch({ type: "editDelete", index: e.index })}
+              >
                 <Trash2 className="h-4 w-4" />
               </IconButton>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
-              <Button size="sm" variant={compare && before ? "secondary" : "ghost"} disabled={!before && e.index === 0} aria-pressed={compare && !!before} onClick={() => setCompare((c) => !c)}>
+              <Button
+                size="sm"
+                variant={compare && before ? "secondary" : "ghost"}
+                disabled={!before && e.index === 0}
+                aria-pressed={compare && !!before}
+                onClick={() => setCompare((c) => !c)}
+              >
                 <Columns2 className="h-3.5 w-3.5" /> Compare
               </Button>
               {compare && e.index > 1 && (
-                <Segmented size="sm" ariaLabel="Compare with" value={compareWith} onChange={setCompareWith} options={[{ value: "previous", label: "Previous" }, { value: "original", label: "Original" }]} />
+                <Segmented
+                  size="sm"
+                  ariaLabel="Compare with"
+                  value={compareWith}
+                  onChange={setCompareWith}
+                  options={[
+                    { value: "previous", label: "Previous" },
+                    { value: "original", label: "Original" },
+                  ]}
+                />
               )}
               <div className="ml-auto flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" disabled={myJob} onClick={picker.open} title="Edit a different image" aria-label="New image">
-                  <ImagePlus className="h-3.5 w-3.5" /> <span className="hidden xl:inline">New image</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={myJob}
+                  onClick={picker.open}
+                  title="Edit a different image"
+                  aria-label="New image"
+                >
+                  <ImagePlus className="h-3.5 w-3.5" />{" "}
+                  <span className="hidden xl:inline">New image</span>
                 </Button>
-                <Button size="sm" onClick={() => void actions.save(current.id).catch((err) => setError(api.asCoreError(err)))}>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    void actions
+                      .save(current.id)
+                      .catch((err) => setError(api.asCoreError(err)))
+                  }
+                >
                   <Save className="h-3.5 w-3.5" /> Save
                 </Button>
-                <IconButton label="Copy image" size="sm" variant="secondary" onClick={() => void actions.copyImage(current.id).catch((err) => setError(api.asCoreError(err)))}>
+                <IconButton
+                  label="Copy image"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() =>
+                    void actions
+                      .copyImage(current.id)
+                      .catch((err) => setError(api.asCoreError(err)))
+                  }
+                >
                   <Copy className="h-3.5 w-3.5" />
                 </IconButton>
-                <IconButton label="Describe this image" size="sm" variant="secondary" onClick={() => actions.sendToDescribe(current.id)}>
+                <IconButton
+                  label="Describe this image"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => actions.sendToDescribe(current.id)}
+                >
                   <ScanText className="h-3.5 w-3.5" />
                 </IconButton>
               </div>
@@ -466,7 +833,11 @@ export function EditTab() {
             <Stage
               current={current}
               before={compare ? before : undefined}
-              beforeLabel={compareWith === "original" ? "Original" : (prevNode?.label ?? "Before")}
+              beforeLabel={
+                compareWith === "original"
+                  ? "Original"
+                  : (prevNode?.label ?? "Before")
+              }
               afterLabel={node?.label ?? "After"}
               maskOn={maskOn && !twoImages && !(compare && before)}
               maskRef={mask}
@@ -474,24 +845,66 @@ export function EditTab() {
               erase={erase}
               onPainted={setPainted}
             />
-            {node?.meta && <p className="-mt-3 shrink-0 pb-3 text-center text-xs text-neutral-500 tabular-nums">{settingsSummary(node.meta)}</p>}
+            {node?.meta && (
+              <p className="-mt-3 shrink-0 pb-3 text-center text-xs text-neutral-500 tabular-nums">
+                {settingsSummary(node.meta)}
+              </p>
+            )}
 
             <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">
-              <ol className="flex items-center gap-1.5 overflow-x-auto pb-1" aria-label="Edit history">
+              <ol
+                className="flex items-center gap-1.5 overflow-x-auto pb-1"
+                aria-label="Edit history"
+              >
                 {e.chain.map((n, i) => {
                   const img = images[n.imageId];
                   return (
-                    <li key={n.imageId} className="flex shrink-0 items-center gap-1.5">
-                      {i > 0 && <ArrowRight className="h-3.5 w-3.5 text-neutral-400" aria-hidden />}
+                    <li
+                      key={n.imageId}
+                      className="flex shrink-0 items-center gap-1.5"
+                    >
+                      {i > 0 && (
+                        <ArrowRight
+                          className="h-3.5 w-3.5 text-neutral-400"
+                          aria-hidden
+                        />
+                      )}
                       <button
                         type="button"
                         aria-current={i === e.index ? "step" : undefined}
                         disabled={myJob && i !== e.index}
                         onClick={() => dispatch({ type: "editGoto", index: i })}
-                        className={cx("group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50", focusRing, i === e.index ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-neutral-100 dark:hover:bg-neutral-800")}
+                        className={cx(
+                          "group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50",
+                          focusRing,
+                          i === e.index
+                            ? "bg-amber-50 dark:bg-amber-500/10"
+                            : "hover:bg-neutral-100 dark:hover:bg-neutral-800",
+                        )}
                       >
-                        {img && <img src={img.url} alt="" className={cx("h-14 w-14 rounded-md object-cover ring-2", i === e.index ? "ring-amber-500" : "ring-transparent")} draggable={false} />}
-                        <span className={cx("text-[11px]", i === e.index ? "font-medium text-amber-900 dark:text-amber-200" : "text-neutral-500")}>{n.label}</span>
+                        {img && (
+                          <img
+                            src={img.url}
+                            alt=""
+                            className={cx(
+                              "h-14 w-14 rounded-md object-cover ring-2",
+                              i === e.index
+                                ? "ring-amber-500"
+                                : "ring-transparent",
+                            )}
+                            draggable={false}
+                          />
+                        )}
+                        <span
+                          className={cx(
+                            "text-[11px]",
+                            i === e.index
+                              ? "font-medium text-amber-900 dark:text-amber-200"
+                              : "text-neutral-500",
+                          )}
+                        >
+                          {n.label}
+                        </span>
                       </button>
                     </li>
                   );
@@ -528,10 +941,21 @@ function Stage({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const box = useFitBox(container, current.width, current.height);
+  const [viewing, setViewing] = useState(false);
   return (
-    <div ref={container} className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6">
+    <div
+      ref={container}
+      className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6"
+    >
       {box.width > 0 && before && (
-        <CompareView before={before} after={current} width={box.width} height={box.height} beforeLabel={beforeLabel} afterLabel={afterLabel} />
+        <CompareView
+          before={before}
+          after={current}
+          width={box.width}
+          height={box.height}
+          beforeLabel={beforeLabel}
+          afterLabel={afterLabel}
+        />
       )}
       {/* Kept mounted while comparing so a painted mask isn't lost. */}
       <div
@@ -539,9 +963,48 @@ function Stage({
         className="relative overflow-hidden rounded-lg shadow-lg ring-1 ring-black/5 dark:ring-white/10"
         style={{ width: box.width, height: box.height }}
       >
-        <img src={current.url} alt={`Image being edited (${afterLabel})`} className="absolute inset-0 h-full w-full" draggable={false} />
-        <MaskCanvas ref={maskRef} width={current.width} height={current.height} displayWidth={box.width} brush={brush} erase={erase} active={maskOn} onPaintedChange={onPainted} />
+        <img
+          src={current.url}
+          alt={`Image being edited (${afterLabel})`}
+          className="absolute inset-0 h-full w-full"
+          draggable={false}
+        />
+        {!maskOn && (
+          <IconButton
+            label="View full screen"
+            size="sm"
+            className="absolute top-2 right-2 z-10 bg-black/40 text-white hover:bg-black/60"
+            onClick={() => setViewing(true)}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </IconButton>
+        )}
+        <MaskCanvas
+          ref={maskRef}
+          width={current.width}
+          height={current.height}
+          displayWidth={box.width}
+          brush={brush}
+          erase={erase}
+          active={maskOn}
+          onPaintedChange={onPainted}
+        />
       </div>
+      {viewing && (
+        <ImageViewer
+          images={[
+            {
+              url: current.url,
+              width: current.width,
+              height: current.height,
+              alt: `Image being edited (${afterLabel})`,
+            },
+          ]}
+          index={0}
+          onIndex={() => {}}
+          onClose={() => setViewing(false)}
+        />
+      )}
     </div>
   );
 }
