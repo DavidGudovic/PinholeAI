@@ -213,11 +213,10 @@ greyed out with "Made for SDXL models, so it isn't used with this one" and is le
 request. Nothing is shown when no add-on is in use.
 
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
-or "the same character somewhere else". Only models whose architecture takes reference images
-(`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision file)
-use it. **Add a reference picture** (shown for every Create model, so it can be found) opens a
-file, and a picture can also be dropped; for models that use it, also pasted (Ctrl/Cmd+V) or picked
-from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+or "the same character somewhere else". Shown only for models whose architecture takes reference
+images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
+file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
+(Ctrl/Cmd+V) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
 `ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
 result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
@@ -227,10 +226,12 @@ recently used), or **Use it in Edit** when none is installed; Generate then says
 of quietly dropping it.
 
 **Same character** (result card): new pictures of the character or subject in that image, with one
-button and no new mode. It uses the first of: the Create model, if it takes a reference picture;
-another installed one that does (switched to, as above); else Edit → **Describe a change** with the
-image loaded, which offers the one-click edit model when none is installed. A short note says to
-describe the new scene ("the same character on a beach"). The image keeps its id, so its origin
+button and no new mode or setting. It uses the first of: the Create model, if it takes a reference
+picture; another installed one that does and can run now (ready, not "Too big"; switched to); else
+Edit → **Describe a change** with the image loaded (any image 2 cleared), which offers the one-click
+edit model when none is installed. An Imported result (made from a picture the user added) always
+goes to Edit, so the Edit notice about photos of people shows. A short note says to describe the
+new scene ("the same character on a beach"). The image keeps its id, so its origin
 (Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
 **Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe

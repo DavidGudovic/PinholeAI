@@ -209,7 +209,8 @@ export function makeActions(store: Store) {
     if (!model) throw { code: "not_found", message: "Pick a model first — or get one of the recommended models.", details: null } as CoreError;
     if (!s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
     if (s.create.refImageId && !takesReference(model)) {
-      throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Switch to a model that can, or remove the picture.`, details: null } as CoreError;
+      const fix = referenceModel(s.models) ? "Switch to a model that can" : "Use it in Edit";
+      throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. ${fix}, or remove the picture.`, details: null } as CoreError;
     }
     const { create, loras, settings } = s;
     const imageIds = create.refImageId ? [create.refImageId] : [];
@@ -402,8 +403,13 @@ export function makeActions(store: Store) {
     const ref = s.images[id];
     if (!ref) return;
     const current = (s.models ?? []).find((m) => m.id === s.create.modelId) ?? null;
-    const able = takesReference(current) ? current : referenceModel(s.models);
-    if (able) {
+    // Only switch to a model that can run now; otherwise Edit, which offers a one-click model.
+    const usable = (m: InstalledModel | null) => !!m && takesReference(m) && !m.missingComponents.length && m.fit !== "tooBig";
+    const other = referenceModel(s.models);
+    const able = usable(current) ? current : usable(other) ? other : null;
+    // A picture the user added goes through Edit, which shows its notice about photos of people.
+    const imported = s.results.find((r) => r.id === id)?.origin === "imported";
+    if (able && !imported) {
       if (able !== current) dispatch({ type: "selectModel", modelId: able.id });
       dispatch({ type: "createSetRef", ref });
       setTab("create");
@@ -421,6 +427,8 @@ export function makeActions(store: Store) {
     }
     dispatch({ type: "editLoad", ref });
     dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    // One picture in, not a two-image combine with a leftover image 2.
+    if (s.edit.secondImageId) dispatch({ type: "editSetSecond", ref: null });
     if (s.create.refImageId === id) dispatch({ type: "createSetRef", ref: null });
     setTab("edit");
     toast("Describe the new scene, like “the same character on a beach”.", { ms: 7000 });

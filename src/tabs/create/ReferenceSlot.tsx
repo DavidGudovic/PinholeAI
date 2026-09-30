@@ -1,7 +1,7 @@
 // Optional reference picture for Create ("in the style of this picture", "the same character").
-// Drop, paste, choose a file or pick a picture from this session. Models that can't use one (only
-// FLUX.2 and Qwen-Image 2.1 can) still show the button, then offer a model that can, or Edit.
-// Like every session image it stays in memory; it never goes into a preset.
+// Shown only for models that take one (FLUX.2, Qwen-Image 2.1), or while a picture is set; the
+// "Same character" result action finds the right model. Drop, paste, choose a file or pick a
+// picture from this session. Like every session image it stays in memory; it never goes into a preset.
 import { useState } from "react";
 import { ImagePlus, Trash, TriangleAlert } from "lucide-react";
 import { DropTarget, useFilePicker, useImagePaste } from "../../components/ImageDrop";
@@ -29,8 +29,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
   const [error, setError] = useState<CoreError | null>(null);
 
   const able = takesReference(model);
-  // Paste only where a picture is expected, so a model that can't use one keeps paste for text.
-  const pasting = able || !!ref;
+  const shown = able || !!ref;
   const load = async (f: File) => {
     setError(null);
     setImporting(true);
@@ -42,8 +41,9 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
       setImporting(false);
     }
   };
-  useImagePaste(tab === "create" && pasting, (f) => void load(f));
+  useImagePaste(tab === "create" && shown, (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
+  if (!shown) return null;
 
   if (ref) {
     const suggest = able ? null : referenceModel(models);
@@ -84,16 +84,12 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
     );
   }
 
-  const recent = able ? results.filter((r) => images[r.id]).slice(0, RECENT) : [];
+  const recent = results.filter((r) => images[r.id]).slice(0, RECENT);
   return (
     <DropTarget onFile={(f) => void load(f)} label="Drop to use as the reference picture">
       {picker.input}
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={
-            able
-              ? `Optional: make something in the style of a picture, or with the same character or subject. Drop, paste (${modKey}+V) or choose one.`
-              : "Optional: make something in the style of a picture, or with the same character or subject. Drop or choose one."
-          }>
+        <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={`Optional: make something in the style of a picture, or with the same character or subject. Drop, paste (${modKey}+V) or choose one.`}>
           {importing ? <Spinner className="h-3.5 w-3.5" /> : <ImagePlus className="h-3.5 w-3.5" />} Add a reference picture
         </Button>
         {recent.length > 0 && (

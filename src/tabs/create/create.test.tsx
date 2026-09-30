@@ -325,12 +325,11 @@ describe("reference picture", () => {
   const klein = { ...model, id: "k", friendlyName: "FLUX.2 klein", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"] } as InstalledModel;
   const sdxl = { ...model, id: "s", friendlyName: "Juggernaut", familyId: "sdxl", modes: ["txt2img", "img2img"] } as InstalledModel;
 
-  it("is offered for every model; session pictures only for models that take one", () => {
+  it("is offered only for models that take one, and a session picture can be picked", () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "setModels", models: [sdxl, klein] });
     const { rerender } = withApp(store, <ReferenceSlot model={sdxl} />);
-    expect(screen.getByRole("button", { name: /Add a reference picture/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Use as the reference picture" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add a reference picture/ })).toBeNull();
 
     rerender(
       <AppProvider store={store}>
