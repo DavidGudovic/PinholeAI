@@ -311,6 +311,8 @@ export interface FineTune {
 export interface LoraUse {
   loraId: string;
   weight: number;
+  /** Trigger words picked on the add-on's chip. Unset = the default pick (see `pickedTriggerWords`). */
+  words?: string[];
 }
 
 // ---------------------------------------------------------------- generation
@@ -323,7 +325,7 @@ export interface GenerateRequest {
   dials: Dials;
   fineTune: FineTune;
   loras: LoraUse[];
-  /** Add LoRA trigger words to the prompt (in memory). */
+  /** Add LoRA trigger words to the prompt (in memory): each add-on's `words`, or all of them when unset. */
   addTriggerWords: boolean;
   /** img2img (Restyle): source image id in the session. */
   initImageId?: string | null;

@@ -41,6 +41,8 @@ export const cancelDownload = (groupId: string) => invoke<void>("cancel_download
 // ---------------------------------------------------------------- models (catalog agent)
 export const listModels = () => invoke<T.InstalledModel[]>("list_models");
 export const listLoras = () => invoke<T.InstalledLora[]>("list_loras");
+/** Replace an add-on's trigger words with the user's own list (saved in installed.json; not prompt text). */
+export const setLoraTriggerWords = (loraId: string, words: string[]) => invoke<T.InstalledLora>("set_lora_trigger_words", { loraId, words });
 export const listHelpers = () => invoke<T.InstalledHelper[]>("list_helpers");
 export const deleteHelper = (helperId: string) => invoke<void>("delete_helper", { helperId });
 export const openModelsFolder = () => invoke<void>("open_models_folder");

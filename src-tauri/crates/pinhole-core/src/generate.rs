@@ -144,6 +144,10 @@ pub const ENCODER_FAILED_MESSAGE: &str = "The engine couldn't read your prompt. 
 pub struct LoraUse {
     pub lora_id: String,
     pub weight: f32,
+    /// Trigger words picked on the add-on's chip; `None` = all of them. Only
+    /// words the add-on actually lists are used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub words: Option<Vec<String>>,
 }
 
 /// `GenerateRequest` — prompt-bearing: Deserialize only, redacting Debug.
@@ -712,12 +716,17 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                 },
             });
             if req.add_trigger_words {
-                if let Some(c) = &f.civitai {
-                    for w in &c.trained_words {
-                        let w = w.trim();
-                        if !w.is_empty() && !triggers.iter().any(|t| t.eq_ignore_ascii_case(w)) {
-                            triggers.push(w.to_string());
-                        }
+                for w in f.trigger_words() {
+                    let w = w.trim();
+                    let picked = l
+                        .words
+                        .as_ref()
+                        .is_none_or(|p| p.iter().any(|p| p.trim().eq_ignore_ascii_case(w)));
+                    if picked
+                        && !w.is_empty()
+                        && !triggers.iter().any(|t| t.eq_ignore_ascii_case(w))
+                    {
+                        triggers.push(w.to_string());
                     }
                 }
             }
@@ -725,10 +734,9 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     }
 
     let mut prompt = req.prompt.trim().to_string();
-    let lower = prompt.to_lowercase();
     let missing: Vec<&String> = triggers
         .iter()
-        .filter(|t| !lower.contains(&t.to_lowercase()))
+        .filter(|t| !contains_phrase(&prompt, t))
         .collect();
     if !missing.is_empty() {
         let joined = missing
@@ -782,6 +790,19 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 
 /// The installed model + its family. Edit mode uses the best installed edit model
 /// when the chosen one isn't an edit model.
+/// Is `phrase` already in `text` as whole words (case-insensitive)? "art" is
+/// not in "heart", so a trigger word isn't skipped by a longer word.
+fn contains_phrase(text: &str, phrase: &str) -> bool {
+    let (text, phrase) = (text.to_lowercase(), phrase.trim().to_lowercase());
+    if phrase.is_empty() {
+        return true;
+    }
+    let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+    text.match_indices(&phrase).any(|(i, m)| {
+        !word(text[..i].chars().next_back()) && !word(text[i + m.len()..].chars().next())
+    })
+}
+
 fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(InstalledFile, Family)> {
     let reg = core.registry();
     let idx = core.installed.lock();

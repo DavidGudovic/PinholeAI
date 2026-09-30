@@ -103,15 +103,13 @@ const fromTri = (t: Tri): boolean | null => (t === "auto" ? null : t === "on");
 export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
   const [open, setOpen] = useState(false);
   const c = useAppState((s) => s.create);
-  const loras = useAppState((s) => s.loras);
-  const settings = useAppState((s) => s.settings);
   const styles = useAppState((s) => s.styles);
   const dispatch = useDispatch();
   const ft = c.fineTune;
   const set = (patch: Partial<FineTune>) => dispatch({ type: "setFineTune", patch });
 
   const changedKeys = Object.keys(ft).filter((k) => k !== "negativePrompt" || !!ft.negativePrompt?.trim());
-  const changedCount = changedKeys.length + (c.loras.length ? 1 : 0) + (c.addTriggerWords != null ? 1 : 0);
+  const changedCount = changedKeys.length + (c.loras.length ? 1 : 0);
 
   const stickPos = c.stick ?? defaultStickPosition(ui);
   const steps = ui ? ui.qualitySteps[qualityIndex(c.quality)] : null;
@@ -123,9 +121,6 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
   const hiresDefaultOn = !!ui?.hiresAtBest && c.quality === "best";
   const hiresOn = ft.hires ?? hiresDefaultOn;
   const style = styles.find((s) => s.id === c.styleId) ?? null;
-  const triggerDefault = settings?.addTriggerWords ?? true;
-  const addTrigger = c.addTriggerWords ?? triggerDefault;
-  const triggerWords = c.loras.flatMap((u) => loras.find((l) => l.id === u.loraId)?.trainedWords ?? []);
 
   return (
     <section className="rounded-xl border border-neutral-200 dark:border-neutral-800">
@@ -147,7 +142,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
             type="button"
             className={cx("shrink-0 rounded px-1.5 py-1 text-xs text-neutral-500 hover:text-neutral-900 dark:hover:text-white", focusRing)}
             onClick={() => {
-              dispatch({ type: "patchCreate", patch: { fineTune: ft.negativePrompt ? { negativePrompt: ft.negativePrompt } : {}, loras: [], addTriggerWords: null } });
+              dispatch({ type: "patchCreate", patch: { fineTune: ft.negativePrompt ? { negativePrompt: ft.negativePrompt } : {}, loras: [] } });
             }}
             title="Reset everything except your negative prompt"
           >
@@ -269,16 +264,6 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
           )}
 
           <LoraSection model={model} />
-          {c.loras.length > 0 && (
-            <Row full label="Trigger words" def={triggerDefault ? "on" : "off"} changed={c.addTriggerWords != null} onReset={() => dispatch({ type: "patchCreate", patch: { addTriggerWords: null } })}>
-              <Toggle
-                checked={addTrigger}
-                onChange={(v) => dispatch({ type: "patchCreate", patch: { addTriggerWords: v } })}
-                label="Add trigger words automatically"
-                hint={triggerWords.length ? triggerWords.join(", ") : "These add-ons have no trigger words"}
-              />
-            </Row>
-          )}
 
           <FinalPromptPreview ui={ui} model={model} />
           <p className="col-span-2 text-[11px] text-neutral-400">Pinhole picks all of these from the model’s registry entry. Moving a simple dial above hands control back to it.</p>

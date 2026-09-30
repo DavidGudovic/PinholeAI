@@ -353,7 +353,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                         ))}
                       </div>
                     ) : (
-                      <span className="text-xs text-neutral-400">None needed</span>
+                      <span className="text-xs text-neutral-400">None saved</span>
                     )}
                   </Td>
                   <Td className="whitespace-nowrap text-neutral-600 tabular-nums dark:text-neutral-400">{formatBytes(l.sizeBytes)}</Td>

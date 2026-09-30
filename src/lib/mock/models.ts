@@ -747,6 +747,15 @@ const table: MockTable = {
     await sleep(80);
     return state().loras.map(toLora);
   },
+  set_lora_trigger_words: async (a) => {
+    await sleep(120);
+    const l = state().loras.find((x) => x.id === String(a.loraId));
+    if (!l) throw err("not_found", "That add-on isn't installed any more.");
+    const out: string[] = [];
+    for (const w of (a.words as string[]).map((x) => x.trim())) if (w && !out.some((o) => o.toLowerCase() === w.toLowerCase())) out.push(w);
+    l.trainedWords = out;
+    return toLora(l);
+  },
   list_helpers: async () => {
     await sleep(60);
     return captionerInstalled ? [{ id: "describe", friendlyName: "Describe model", purpose: "describe", sizeBytes: (1930 + 845) * 1_000_000 }] : [];

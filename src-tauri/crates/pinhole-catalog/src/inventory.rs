@@ -99,11 +99,7 @@ pub fn installed_lora_view(file: &InstalledFile) -> InstalledLora {
         friendly_name: file.friendly_name.clone(),
         family_id: file.family.clone(),
         base_model: file.civitai.as_ref().and_then(|c| c.base_model.clone()),
-        trained_words: file
-            .civitai
-            .as_ref()
-            .map(|c| c.trained_words.clone())
-            .unwrap_or_default(),
+        trained_words: file.trigger_words().to_vec(),
         size_bytes: file.size_bytes,
         civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),

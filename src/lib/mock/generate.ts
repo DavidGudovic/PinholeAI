@@ -318,8 +318,12 @@ async function preview(req: GenerateRequest): Promise<FinalPromptPreview> {
   let prompt = req.prompt.trim();
   if (req.addTriggerWords && req.loras.length) {
     const loras = await invoke<InstalledLora[]>("list_loras");
-    const words = req.loras.flatMap((u) => loras.find((l) => l.id === u.loraId)?.trainedWords ?? []);
-    if (words.length) prompt = `${prompt}, ${words.join(", ")}`;
+    const words = req.loras.flatMap((u) => {
+      const all = loras.find((l) => l.id === u.loraId)?.trainedWords ?? [];
+      return u.words ? all.filter((w) => u.words!.some((p) => p.toLowerCase() === w.toLowerCase())) : all;
+    });
+    const missing = words.filter((w) => !new RegExp(`(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}\\p{N}])`, "iu").test(prompt));
+    if (missing.length) prompt = prompt ? `${prompt}, ${missing.join(", ")}` : missing.join(", ");
   }
   if (style) prompt = natural ? `${prompt}. Style: ${style.positive}` : `${prompt}, ${style.positive}`;
   if (ui.autoPromptPrefix && req.fineTune.autoPromptPrefix !== false) prompt = `${ui.autoPromptPrefix}${prompt}`;

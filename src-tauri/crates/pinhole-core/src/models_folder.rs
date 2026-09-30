@@ -649,6 +649,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: None,
             dtype: None,
+            trigger_words: None,
         };
         let mut idx = core.installed.lock();
         idx.upsert(f.clone());

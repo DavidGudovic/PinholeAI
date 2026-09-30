@@ -199,8 +199,14 @@ menu lists installed style add-ons that work with the current model and ends wit
 for <model>…**, which opens Models → Browse on style add-ons for that model.
 
 **Style add-ons in use**: while at least one LoRA is added, a row of chips under the prompt shows
-each one with its strength ("Film look 0.8 ×"). Clicking a chip shows a Strength slider (0–1.5)
-and its trigger words; × removes it. An add-on made for another architecture stays in the list
+each one with its strength and the trigger words it adds ("Film look 0.8 + film photo ×").
+Clicking a chip shows a Strength slider (0–1.5) and the add-on's trigger words as ticks: ticked
+words are added to the end of the prompt at request time, in memory, and not twice if the user
+typed them (whole-word match). By default a short list (up to 3) is all ticked; a longer list is
+usually alternatives (one per character or outfit), so only the first is. With "Add trigger words
+automatically" off in Settings none are ticked until the user ticks one. **Edit** (or **Add** when
+none are saved, e.g. an add-on added from disk) lets the user type the add-on's trigger words,
+which replace CivitAI's list in `installed.json` (add-on metadata, never prompt text). × removes it. An add-on made for another architecture stays in the list
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
@@ -325,7 +331,7 @@ model in small text.
    resume + SHA-256 verification.
 4. If CivitAI answers 401/403, prompt for an API key (explain why; optional; stored in keychain).
 5. For LoRAs, save trigger words from the version's `trainedWords` into `installed.json`,
-   and offer a toggle "Add trigger words automatically".
+   and offer a toggle "Add trigger words automatically" (the default for the chip's ticks, §5.1).
 6. An installed style add-on's card, its details page and its Installed row have a **Use**
    button: it adds the add-on to Create at strength 0.8 (once), switches to Create and says so;
    when the current model can't use it, the message says which models it is made for.

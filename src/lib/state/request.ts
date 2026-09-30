@@ -16,7 +16,7 @@ import type {
   ResultImage,
   Settings,
 } from "../types";
-import { CHANGE_STRENGTH, compactFineTune, loraCompatible, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
+import { CHANGE_STRENGTH, compactFineTune, loraCompatible, pickedTriggerWords, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
 
 /** Fine-tune values that may be stored in a preset (never the negative prompt). */
 export const PRESET_FINE_TUNE_KEYS = [
@@ -71,10 +71,11 @@ export function effectiveFineTune(ft: FineTune, ui: FamilyUi | null): FineTune {
   return out;
 }
 
-export function activeLoras(c: CreateParams, loras: InstalledLora[], model: InstalledModel | null): LoraUse[] {
-  return c.loras.filter((u) => {
+/** Add-ons that work with `model`, each with the trigger words it adds (`autoAdd` = the Settings default). */
+export function activeLoras(c: CreateParams, loras: InstalledLora[], model: InstalledModel | null, autoAdd = true): LoraUse[] {
+  return c.loras.flatMap((u) => {
     const l = loras.find((x) => x.id === u.loraId);
-    return !!l && loraCompatible(l, model?.familyId);
+    return l && loraCompatible(l, model?.familyId) ? [{ loraId: u.loraId, weight: u.weight, words: pickedTriggerWords(u, l, autoAdd) }] : [];
   });
 }
 
@@ -89,8 +90,8 @@ export function buildCreateRequest(
     styleId: c.styleId,
     dials: createDials(c, opts.ui),
     fineTune: effectiveFineTune(c.fineTune, opts.ui),
-    loras: activeLoras(c, opts.loras, opts.model),
-    addTriggerWords: c.addTriggerWords ?? opts.settings?.addTriggerWords ?? true,
+    loras: activeLoras(c, opts.loras, opts.model, opts.settings?.addTriggerWords ?? true),
+    addTriggerWords: true,
   };
 }
 

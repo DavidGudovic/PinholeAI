@@ -406,6 +406,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: None,
             dtype: None,
+            trigger_words: None,
         }
     }
 

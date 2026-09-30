@@ -58,6 +58,21 @@ pub struct InstalledFile {
     /// Dominant dtype/quant from the header (`bf16`, `q4_k`…).
     #[serde(default)]
     pub dtype: Option<String>,
+    /// LoRA trigger words the user typed in (overrides CivitAI's `trainedWords`;
+    /// the only source for add-ons added from disk). Add-on metadata, never prompt text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_words: Option<Vec<String>>,
+}
+
+impl InstalledFile {
+    /// LoRA trigger words: the user's own list if they set one, else CivitAI's.
+    pub fn trigger_words(&self) -> &[String] {
+        match (&self.trigger_words, &self.civitai) {
+            (Some(w), _) => w,
+            (None, Some(c)) => &c.trained_words,
+            (None, None) => &[],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -336,6 +351,7 @@ mod tests {
             last_used: None,
             observed_vram_gb: Some(7.5),
             dtype: Some("fp16".into()),
+            trigger_words: None,
         }
     }
 
