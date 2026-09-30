@@ -154,6 +154,12 @@ impl Model {
     }
 }
 
+/// A version (and its model, when fetched) CivitAI marks as a real person or a minor.
+pub fn version_is_person_or_minor(version: &ModelVersion, model: Option<&Model>) -> bool {
+    model.is_some_and(Model::is_person_or_minor)
+        || version.model.as_ref().is_some_and(|m| m.poi || m.minor)
+}
+
 /// Why a model CivitAI marks `poi` / `minor` can't be installed (RELEASE-SPEC §5, Level 1).
 pub const PERSON_OR_MINOR_REASON: &str =
     "Pinhole doesn't install models that CivitAI marks as showing a real person or someone under 18.";

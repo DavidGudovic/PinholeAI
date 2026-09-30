@@ -266,9 +266,7 @@ pub fn build_plan(
         blocked_reason =
             Some("This model was archived by its creator and can't be downloaded.".into());
     }
-    if model.is_some_and(|m| m.is_person_or_minor())
-        || version.model.as_ref().is_some_and(|m| m.poi || m.minor)
-    {
+    if crate::api::version_is_person_or_minor(version, model) {
         blocked_reason = Some(crate::api::PERSON_OR_MINOR_REASON.into());
     }
 
@@ -583,7 +581,7 @@ mod tests {
         minor.minor = true;
         let p = build_plan(&env, &v, Some(&minor), 100_000_000_000, false, None);
         assert_eq!(p.blocked_reason.as_deref(), reason);
-        // Paste / "Use these settings" only have the version's `model` object.
+        // Only the version's `model` object (the `/models` fetch is best effort).
         let mut v2 = v.clone();
         v2.model = Some(crate::api::VersionModel {
             poi: true,
