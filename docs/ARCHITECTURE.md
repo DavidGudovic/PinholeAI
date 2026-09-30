@@ -21,6 +21,7 @@ src-tauri/                 Tauri 2 app crate `pinhole` (thin: commands + event b
     pinhole-engine/        engine pins/install, sd-server + llama-server processes, API clients, PNG scrub,
                            Edit crop/blend helpers (detail.rs = Fix details, extend.rs = Extend)
     pinhole-catalog/       CivitAI API client, filters, safe-file selection, card view models
+    pinhole-check/         local image check (RELEASE-SPEC §3): pinned ONNX files, rules, tract runner
     pinhole-core/          AppCore service layer (Tauri-free) used by commands and tests
 tests/                     crate `pinhole-tests`: privacy sentinel scan, offline test, engine smoke test
 src/                       React + TS UI
@@ -42,6 +43,7 @@ pieces (net, store) are small enough to audit.
 | **net** | `crates/pinhole-net/**`, `core/src/downloads.rs`, `commands/downloads.rs` | — |
 | **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library,update}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
 | **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
+| **image check** | `crates/pinhole-check/**`, `core/src/imagecheck.rs` (fail closed at result intake) | net, store |
 | **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
 | **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |
 | **UI Models/Settings/First run** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**` | api.ts |

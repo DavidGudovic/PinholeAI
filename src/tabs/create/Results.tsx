@@ -13,6 +13,7 @@ import {
   UserRound,
   WandSparkles,
 } from "lucide-react";
+import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { ImageViewer } from "../../components/ImageViewer";
@@ -224,6 +225,7 @@ function Preview({
       <p className="text-center text-xs text-neutral-500 tabular-nums">
         {settingsSummary(result)}
       </p>
+      {import.meta.env.DEV && <CheckReadings id={result.id} />}
       <TipLine hasBatch={hasBatch} />
       {error && (
         <div className="mx-auto w-full max-w-xl">

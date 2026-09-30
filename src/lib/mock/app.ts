@@ -13,7 +13,7 @@
 //   ?lowdisk        only 9 GB free on the Data drive (see catalog.ts)
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
-import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, Settings } from "../types";
+import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, SafetyCheckStatus, Settings } from "../types";
 import { startMockDownload } from "./models";
 import { NOTICE_VERSION } from "../../firstrun/UseNotice";
 
@@ -35,6 +35,8 @@ export function mockFlags() {
     busyGpu: p.has("busygpu"),
     /** Adds an installed FLUX.2 klein model (reference picture in Create). */
     flux2: p.has("flux2"),
+    /** The safety check's files aren't downloaded yet (tries "Set up safety check"). */
+    noCheck: p.has("nocheck"),
     theme: theme === "dark" || theme === "light" || theme === "system" ? (theme as Settings["theme"]) : null,
   };
 }
@@ -266,6 +268,53 @@ function downloadEngine(backend: string): Promise<EngineStatus> {
   });
 }
 
+// ---------------------------------------------------------------- safety check
+// Mirrors Rust imagecheck: files ready unless ?nocheck (or a first run); set up together with
+// the engine or with "Set up safety check".
+let checkReady: boolean | null = null;
+let pendingCheck: Promise<SafetyCheckStatus> | null = null;
+const CHECK_BYTES = 1_067_069_633;
+
+function checkState(): SafetyCheckStatus {
+  if (checkReady == null) checkReady = !mockFlags().noCheck && (mockFlags().skipFirstRun || backends().size > 0);
+  return { ready: checkReady, downloading: pendingCheck != null, downloadBytes: checkReady ? 0 : CHECK_BYTES };
+}
+
+export function mockCheckReady(): boolean {
+  return checkState().ready;
+}
+
+function installCheck(): Promise<SafetyCheckStatus> {
+  if (checkState().ready) return Promise.resolve(checkState());
+  if (pendingCheck) return pendingCheck;
+  if (mockSettings().offline) return Promise.reject(err("offline", "Offline mode is on. Turn it off in Settings to browse or download."));
+  pendingCheck = new Promise<SafetyCheckStatus>((resolve, reject) => {
+    startMockDownload(
+      "Safety check",
+      [
+        { name: "Safety check: image classifier", bytes: 344_569_044 },
+        { name: "Safety check: tagger", bytes: 378_536_310 },
+        { name: "Safety check: tagger labels", bytes: 308_468 },
+        { name: "Safety check: face finder", bytes: 232_589 },
+        { name: "Safety check: age estimate", bytes: 343_423_222 },
+      ],
+      {
+        kind: "safetyCheck",
+        durationMs: 6000,
+        onDone: () => {
+          checkReady = true;
+          resolve(checkState());
+        },
+        onFail: (e) => reject(e),
+        onCancel: () => reject(err("cancelled", "Cancelled")),
+      },
+    );
+  }).finally(() => {
+    pendingCheck = null;
+  });
+  return pendingCheck;
+}
+
 // ---------------------------------------------------------------- local file picker (plugin-dialog)
 let pickCount = 0;
 const FAKE_PICKS = [
@@ -319,7 +368,14 @@ const table: MockTable = {
       "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 4070          free  11500 MiB, budget  10988 MiB",
       "[INFO ] main.cpp:149  - listening on: http://127.0.0.1:5000",
     ].join("\n"),
-  install_engine: () => installEngine(),
+  install_engine: () => {
+    void installCheck().catch(() => undefined);
+    return installEngine();
+  },
+  safety_check_status: async () => checkState(),
+  install_safety_check: () => installCheck(),
+  check_readings: async () =>
+    "nudity 0.04 (the mock shows made-up readings; dev builds of the app show the real ones)",
   "plugin:dialog|open": async (a) => {
     await sleep(300);
     // Only the "Add a file I already have" picker (model filters) gets a fake path; others look cancelled.

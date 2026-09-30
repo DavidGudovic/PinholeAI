@@ -743,6 +743,8 @@ pub enum DownloadKind {
     Upscaler,
     /// A new version of Pinhole itself (Settings → Check for updates).
     AppUpdate,
+    /// The image check's model files.
+    SafetyCheck,
 }
 
 /// Progress of a group (what the UI shows as one row).

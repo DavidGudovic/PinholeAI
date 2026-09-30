@@ -20,6 +20,7 @@ import type {
   InstalledModel,
   ImageOrigin,
   ResultImage,
+  SafetyCheckStatus,
 } from "../types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -221,6 +222,15 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
   cancelled = false;
   const started = Date.now();
   try {
+    // Like Rust: the check's files first (ensure_ready), then the engine.
+    const check = await invoke<SafetyCheckStatus>("safety_check_status").catch(() => null);
+    if (check && !check.ready)
+      throw err(
+        "check_missing",
+        check.downloading
+          ? "Pinhole's safety check is still downloading (see Downloads). Try again when it's done."
+          : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+      );
     const engine = await invoke<EngineStatus>("engine_status").catch(() => null);
     if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Set up engine”.");
     const models = await invoke<InstalledModel[]>("list_models");

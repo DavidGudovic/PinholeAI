@@ -49,7 +49,7 @@ minutes after your last picture. An engine build that requires a per-launch pass
 ## Acceptable use
 
 Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-this entirely on your own computer, so your work never leaves your device.
+this with AI running entirely on your own computer, so your work never leaves your device.
 
 When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
 and to each model's licence. You are responsible for what you make.
@@ -126,7 +126,7 @@ Uninstalling does not delete `Data/` — remove it yourself to free the disk spa
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.88), Node.js 22, and the
+Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.91), Node.js 22, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/):
 
 - **Windows:** Microsoft C++ Build Tools (MSVC) and WebView2 (preinstalled on Windows 11).

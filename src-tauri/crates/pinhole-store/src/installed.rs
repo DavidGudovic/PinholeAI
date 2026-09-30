@@ -32,6 +32,10 @@ pub struct CivitaiRef {
     /// page can show it offline. Shown only after the UI sanitizes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator_notes: Option<CreatorNotes>,
+    /// CivitAI marks the model "safe images only": the image check blocks intimate
+    /// results while it (or a LoRA with this mark) is in use (RELEASE-SPEC §4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sfw_only: bool,
 }
 
 /// Most bytes kept per description (CivitAI descriptions are usually a few KB).
@@ -648,6 +652,7 @@ mod tests {
                 trained_words: vec!["tw".into()],
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             }),
             added_at: 1_700_000_000,
             last_used: None,

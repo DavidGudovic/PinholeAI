@@ -939,6 +939,13 @@ try {
 
     await step("create-generate-real", async (note) => {
       assert(realModelName, "no real model");
+      // Nothing is made without the image check's files (~1.1 GB from Hugging Face). The engine
+      // step started their download; wait for it (or start it) before generating.
+      const t0check = Date.now();
+      const check = await invoke("safety_check_status");
+      if (!check.ready && !check.downloading) await driver.executeScript("window.__TAURI_INTERNALS__.invoke('install_safety_check').catch(() => undefined)");
+      await driver.wait(async () => (await invoke("safety_check_status")).ready, 20 * 60 * 1000, "safety check files not downloaded");
+      note(`safety check ready after ${((Date.now() - t0check) / 1000).toFixed(0)} s`);
       await openTab("Create");
       await click("//aside[@aria-label='Create settings']//button[starts-with(@aria-label,'Model: ')]");
       await click(`//div[@role='listbox']//*[normalize-space(.)=${lit(realModelName)}]`);

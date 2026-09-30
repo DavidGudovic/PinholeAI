@@ -96,9 +96,11 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
 
 ## 3. Local image check — Level 2
 
-All local and offline. CPU only via ONNX Runtime (`ort` crate) → **zero VRAM**. Loaded on demand,
-unloaded when idle (like the captioner). Scores and verdicts are held in memory only and are
-**never logged or written anywhere** — same rules as prompts.
+Built 2026-09-30 (crate `pinhole-check`, wired in `pinhole-core/src/imagecheck.rs`). All local
+and offline: small ONNX classifiers run on the processor through `tract` (pure Rust, no native
+library to download or ship) → **zero VRAM**. Loaded on first use, dropped after 5 minutes idle.
+Scores and verdicts are held in memory only and are **never logged or written anywhere** — same
+rules as prompts. Safe mode doesn't change any of it.
 
 ### 3.1 Where each image came from
 
@@ -117,30 +119,42 @@ Every image in the session carries its origin, inherited by everything made from
 - Markers inside a file (C2PA, including Pinhole's own) are **never** trusted to mark an import as
   Generated: anyone can write one onto a real photo.
 
+Each session image also keeps the brought-in pictures it was made from (`SessionImage::made_from`,
+memory only), so rule 1 below still sees the original after it is discarded, through any number
+of steps. A picture saved in this session and opened again keeps them too (SHA-256 of the saved
+file → its sources, memory only, cleared by Reset); a file changed outside Pinhole starts a new
+chain as a brought-in picture.
+
 ### 3.2 What is blocked
 
-Three rules. Nothing else is blocked: adult images of fictional adults (Safe mode is a catalog
-setting, not a generation filter), swimwear, art nudes and every SFW edit of a real photo stay
-allowed.
+Three rules (`pinhole_check::rules`). Nothing else is blocked: adult images of adults (Safe mode is
+a catalog setting, not a generation filter), swimwear, art nudes and every ordinary edit of a real
+photo stay allowed. "Intimate" = nudity score ≥ 0.8 **and** the tagger's questionable + explicit
+rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" and stays allowed.
 
-1. **Real photo made intimate.** The result is Imported, a face is found in one of its Imported
-   inputs (image 1, image 2 or a Create reference picture), **and** the result
-   is clearly less clothed than the input: its intimate score crosses the threshold **and** is
-   higher than the input's by a set margin. "Intimate" means nudity, underwear only, see-through
-   clothing or sexual activity — confirm where the UK definition starts (§10) and set the
-   threshold there. Comparing with the input is what keeps a beach photo edited to "make it
-   sunset" from being blocked. Applies to every mode whose result is Imported (Edit, Restyle, Extend, Create with a reference picture).
-2. **Anyone who looks under 18, sexual.** Every mode, every source. The result is explicit
-   **and** either:
-   - photo style: the age model says under 18 with high confidence, or
-   - drawn / anime style: the tagger returns an explicit child tag above its threshold.
+1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
+   brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
+   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 40 px) and was **not** intimate when
+   brought in. Comparing with the original import (not the direct input) means a photo can't be
+   walked towards intimate in small steps. An intimate picture brought in that way can be edited:
+   it existed before Pinhole saw it.
+2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
+   (explicit ≥ 0.35, or intimate with nudity ≥ 0.85) **and** either:
+   - the tagger's `loli`, `shota` or `child` tag ≥ 0.5 (drawn or photo), or
+   - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
+     whose age estimate says under 10 with ≥ 0.6. On 100 FairFace photos, adults scored at most
+     0.05 and ages 3–9 0.77 on average.
 
-   Drawn images never use the age model (it is trained on photos, and adult characters are often
-   drawn young). How an image is sorted into photo or drawn style is decided during
-   implementation and measured with the rest (§4).
-3. **Model flagged for safe images only.** Any resource in the request carries CivitAI's `poi`,
-   `minor` or `sfwOnly` flag (§5) → explicit or intimate results are blocked. This uses
-   CivitAI's own labels, not a classifier guess about the model.
+   Drawn images never use the age estimate (it is trained on photos, and adult characters are
+   often drawn young). Aimed at clear children, honestly: apparent-age models are off by several
+   years, so teenagers are left to the word check and the child tags (SAFETY.md says so).
+3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
+   `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
+   Models flagged `poi` or `minor` can't be installed at all (§5). Known limits: the flag is set
+   only by installs from Browse / paste with the model's data (a file matched by hash gets none),
+   and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
+
+If one picture of a batch is blocked, the whole batch is dropped.
 
 Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
 this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
@@ -149,38 +163,48 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
 
 ### 3.3 How it runs
 
-- **In order, cheapest first:** the explicit / intimate classifier runs on every result. The face
-  detector runs only on Imported inputs, once, at intake (which also scores the input's intimate
-  level for rule 1). The age model or tagger runs only on results already found explicit. Most
-  images pay for one small classifier.
-- **Coverage:** Create, Variations, Upscale, Restyle, Edit, and live previews if they are ever
-  turned on (`engine_features.taesd_preview`).
-- **Hide each result until it has been checked** (a few hundred ms). Check image N while image
-  N+1 generates.
-- **Fail closed:** if a safety model file is missing or its SHA-256 doesn't match, results can't be
-  shown and Edit on Imported images is off, with a plain message and a one-click re-download.
-- **Budget:** ≤ 1 s per image on CPU, ≤ 500 MB RAM while loaded, 0 VRAM.
-- **Config:** thresholds, margins, model URLs and hashes in `config/safety.yaml` (data, not code).
-  Code clamps every threshold to a safe range, so the YAML can tune the rules but can't turn one
-  off (like Safe mode).
+- **In order:** the nudity classifier and the tagger run on every result (the tagger always, so an
+  explicit picture the nudity model scores low still reaches the child tags); the face finder and
+  age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
+  finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
+  About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
+- **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
+  before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the
+  UI. Upscale is not re-checked: it has the same content as its (checked or brought-in) source.
+  There are no live previews; if they are ever turned on they must pass the check too.
+- **Fail closed:** Create and Edit stop with `check_missing` ("Set up safety check", one click)
+  while any file is absent or has the wrong size; every file is SHA-256 checked as it loads, and a
+  damaged one stops the result the same way. A check that fails to run (`check_failed`) drops the
+  result. The files download with the engine (Settings → Engine, first run) or from that button.
+- **Blocked pictures don't linger:** after a block the engine is stopped once the job ends, since
+  it keeps finished jobs readable on its local port.
+- **Nothing to switch off:** the files' URLs (pinned commits), sizes and SHA-256 values and every
+  threshold are constants in `pinhole-check`, not config. Only the core's `test-util` build (tests)
+  can put a stand-in check in place.
+- **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
+  loaded, 0 VRAM.
 
-### 3.4 Candidate models
+### 3.4 Models (verified by download, 2026-09-30)
 
-Sizes approximate — **verify each licence before bundling**.
-
-| Job | Candidate | Licence | Size |
+| Job | Model (pinned commit on Hugging Face) | Licence | Size |
 |---|---|---|---|
-| Face in an Imported input | YuNet (OpenCV Zoo) | MIT | ~0.2 MB |
-| Explicit **and** intimate (underwear, see-through), photos | needs classes beyond "explicit"; ViT-base NSFW classifiers (e.g. Falconsai) are explicit-only — verify candidates | Apache 2.0 | ~90–350 MB |
-| Apparent age, photos only | pick one whose licence allows redistribution | — | ~1–100 MB |
-| Explicit rating + child tags, drawn / anime | WD14-style tagger | Apache 2.0 | ~300–450 MB |
+| Nudity (restrictive: revealing clothes score high too) | `AdamCodd/vit-base-nsfw-detector` ONNX (ViT-base 384) | Apache 2.0 | 345 MB |
+| Rating + child tags + photo style | `SmilingWolf/wd-vit-tagger-v3` + `selected_tags.csv` | Apache 2.0 | 379 MB |
+| Face finder | `opencv/face_detection_yunet` 2023mar | MIT | 0.2 MB |
+| Age estimate (photos only) | `onnx-community/fairface_age_image_detection-ONNX` | Apache 2.0 | 343 MB |
 
-Avoid: InsightFace models (non-commercial research only), NudeNet (AGPL via YOLOv8) unless that
-licence is acceptable, the original SD "safety checker" (~1.2 GB, CLIP-L, no better). Don't run
-classifiers on the GPU — a second CUDA context alone costs several hundred MB of VRAM.
+Rejected: `Freepik/nsfw_image_detector` (no ONNX), `AdamCodd/vit-nsfw-stable-diffusion` (CC BY-NC-ND,
+gated), InsightFace (non-commercial), NudeNet (AGPL), the SD safety checker (~1.2 GB, no better).
+The nudity model is weaker on generated pictures (86 % accuracy on its author's test) — one more
+reason §4's measurement comes before Level 2.
 
-**Testing rule:** never collect, generate or store prohibited images as test fixtures. Test the
-blocking logic with mocked classifier scores; measure false positives on harmless images only (§4).
+**Testing rule:** never collect, generate or store prohibited images as test fixtures. The rules
+are unit-tested with made-up scores (`pinhole-check` and the core's `testing` tests); false
+positives are measured on harmless images only (§4). Dev builds (`npm run tauri dev`) show every
+reading of the shown picture under it (all steps, the watermark, whether it would count as a face
+in a brought-in photo) and the rule plus scores in a block's Details; release builds show and keep
+none. `cargo run --release -p pinhole-check --example measure -- <check dir> <image>…`
+prints them for a folder of test pictures.
 
 ---
 
@@ -197,8 +221,10 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
 - **Nothing is recorded:** no counters, strikes, lockouts or logs. Each block stands alone.
-- **Details toggle:** shows which rule fired and the scores (held in memory), so a user can report
-  a false positive in a GitHub issue by hand, without the image. Nothing is ever sent automatically.
+- **No details for users:** release builds show only the neutral message (David, 2026-09-30: never
+  say what triggered). Dev builds show the rule and scores for tuning (§3.4). A user can still
+  report a false positive in a GitHub issue by hand, describing what they tried. Nothing is ever
+  sent automatically.
 
 ---
 
@@ -426,7 +452,7 @@ templates, posts and UI.
 - [ ] §1 choke points exist and every path goes through them
 - [ ] §2 AI marker: metadata + C2PA + watermark, always on, tests pass (or the documented fallback)
 - [ ] §3 origin tracking, the three block rules, fail-closed, coverage of every mode
-- [ ] §4 false-positive bar met for every rule; block messages and Details toggle
+- [ ] §4 false-positive bar met for every rule (the check itself is built, §3)
 - [ ] §5 flags stored at install; SFW-only rule; flagged models back in the catalog
 - [ ] §6 licence field everywhere; acceptance for non-commercial, gated and filter-requiring models
 - [ ] §7 first-run acceptable-use screen + Edit notice

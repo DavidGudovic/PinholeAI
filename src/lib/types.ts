@@ -96,6 +96,14 @@ export interface HardwareView {
 }
 
 // ---------------------------------------------------------------- engine
+/** SafetyCheckStatus (imagecheck.rs): the image check's files. Nothing is made until `ready`. */
+export interface SafetyCheckStatus {
+  ready: boolean;
+  downloading: boolean;
+  /** Bytes still to download. */
+  downloadBytes: number;
+}
+
 export interface EngineStatus {
   installed: boolean;
   installing: boolean;
@@ -119,7 +127,7 @@ export interface EngineStatus {
 export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
 
 /** What a download group fetches (match on this, never on the label). */
-export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate";
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate" | "safetyCheck";
 
 export interface GroupStatus {
   groupId: string;

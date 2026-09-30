@@ -1015,6 +1015,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                 trained_words: v.trained_words.clone(),
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             });
             resolution = families::resolve_family(
                 &registry,
@@ -1286,6 +1287,7 @@ mod tests {
                 trained_words: vec![],
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             }),
             dtype: Some("f16".into()),
         };

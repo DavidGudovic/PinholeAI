@@ -243,6 +243,11 @@ impl DataDir {
         self.root.join("engine")
     }
 
+    /// The image check's model files (`pinhole_check::files`).
+    pub fn safety_check(&self) -> PathBuf {
+        self.root.join("check")
+    }
+
     /// `/`-separated path of `path` relative to the Data root (the form stored in
     /// `installed.json`), or `None` if `path` is not inside the Data folder.
     ///

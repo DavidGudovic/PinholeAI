@@ -51,6 +51,12 @@ export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
 export const engineOutput = () => invoke<string>("engine_output");
 /** Downloads + verifies + unpacks the engine for the current backend. Progress via onDownload. */
 export const installEngine = () => invoke<T.EngineStatus>("install_engine");
+/** The image check's files (RELEASE-SPEC §4). Create and Edit stop with `check_missing` until they're in place. */
+export const safetyCheckStatus = () => invoke<T.SafetyCheckStatus>("safety_check_status");
+/** Downloads the image check's files; resolves when they're in place. Progress via onDownload. */
+export const installSafetyCheck = () => invoke<T.SafetyCheckStatus>("install_safety_check");
+/** Dev builds only: the image check's scores for a recent result (null in release builds). */
+export const checkReadings = (id: string) => invoke<string | null>("check_readings", { id });
 
 // ---------------------------------------------------------------- downloads (net agent)
 export const listDownloads = () => invoke<T.GroupStatus[]>("list_downloads");
