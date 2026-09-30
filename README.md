@@ -12,7 +12,8 @@ decision can be seen and changed in the **Fine-tune** drawer.
   Realistic, Anime, Edit and Describe models that fit. Every model shows how much VRAM it needs
   (**Fits / Tight / Too big**).
 - **Built-in CivitAI browser** with plain-language filters (Realistic · Anime · Illustration · 3D ·
-  Brand & product), safe-only by default, paid/early-access hidden by default, SafeTensor/GGUF only.
+  Brand & product). Safe mode is on by default, paid/early-access models are hidden by default,
+  and only SafeTensor/GGUF files are offered.
 - **Create** (text → image), **Edit** ("make it evening", "replace the mug with a bottle"),
   **Describe** (image → prompt), reusable **Styles** and **Presets**.
 - **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
@@ -167,16 +168,12 @@ PINHOLE_SMOKE=1 cargo test -p pinhole-tests --test engine_smoke --release -- --n
 
 ## CI and releases
 
-CI is tiered to keep GitHub Actions minutes low (the repo is private; Windows minutes bill 2x):
+GitHub Actions only run when started by hand (the repo is private and minutes are limited).
+Before merging, run `scripts/check.sh` locally: privacy lint, frontend tests, build, `cargo fmt`,
+`cargo test` and `clippy`.
 
-| When | What runs | Billed minutes |
-|---|---|---|
-| Every push / PR (code changes) | frontend tests + build + privacy lint, `cargo test` on Ubuntu | ~4 |
-| Push to `main` | + `cargo test` on Windows, engine smoke + app end-to-end (Ubuntu 24.04 + Windows), real-app WebDriver e2e | ~40 |
-| Docs-only changes | nothing | 0 |
-
-A newer push cancels the older run on the same branch (runs on `main` always finish).
-
+- **CI**: Actions → **CI** → Run workflow. Without options it runs the fast checks; tick *full*
+  for Windows tests, the engine smoke (Linux + Windows) and the real-app WebDriver e2e.
 - **Installers on demand**: Actions → **Bundle** → Run workflow (installers only), or Actions →
   **CI** → Run workflow with *installers* ticked. Downloads appear on the run's Summary page:
   `pinhole-windows-x64` (setup exe + portable zip + SHA256SUMS), `pinhole-windows-x64-portable`,
@@ -185,7 +182,7 @@ A newer push cancels the older run on the same branch (runs on `main` always fin
   `src-tauri/tauri.conf.json`; untick *draft* to publish), or push that tag. Publishes a
   **pre-release** (personal test build, see `docs/RELEASE-SPEC.md`) with all files and
   `SHA256SUMS.txt`.
-- **Verify pins** (`verify-pins.yml`, on `config/**` changes or by hand): checks every model and
+- **Verify pins** (`verify-pins.yml`, by hand): checks every model and
   engine URL + SHA-256 in `config/*.yaml` against Hugging Face / GitHub, CivitAI `baseModel`
   strings against the live API, and suggests values for remaining `TODO`s.
 
@@ -196,8 +193,9 @@ src-tauri/        Tauri app + Rust crates (registry, net, store, hardware, engin
 src/              React + TypeScript UI
 config/           shipped YAML: models.yaml, engine.yaml, catalog-filters.yaml, styles/, presets/
 tests/            workspace integration tests (privacy, offline, engine smoke)
-scripts/          CI helpers (Node, no dependencies): privacy lint, pin verification, packaging
-docs/             SPEC.md (what), ARCHITECTURE.md (how)
+scripts/          check.sh, privacy lint, pin verification, packaging (Node, no dependencies)
+docs/             PROJECT-BRIEF.md (status), SPEC.md (what), ARCHITECTURE.md (how),
+                  RELEASE-SPEC.md (what must be done before any build is shared)
 ```
 
 | Create | Paste from CivitAI | Models |
@@ -211,6 +209,9 @@ Model knowledge belongs in `config/models.yaml`, not in code.
 
 Version 0.2 — in active development (milestones M0–M5 in [`docs/SPEC.md`](docs/SPEC.md#11-milestones)).
 Expect rough edges; model recommendations and VRAM numbers are still being measured.
+
+This is a personal test build. No build is shared until everything in
+[`docs/RELEASE-SPEC.md`](docs/RELEASE-SPEC.md) is done, including its safeguards against misuse.
 
 ## License
 
