@@ -340,7 +340,7 @@ export interface GenerateRequest {
   initImageId?: string | null;
   /** Restyle "How much to change": 0.35 | 0.55 | 0.75 */
   strength?: number | null;
-  /** Instruction edit: reference images (ref_images). */
+  /** Instruction edit: the images to edit (ref_images). Create: the optional reference picture. */
   refImageIds?: string[];
   /** Optional "Only change here" mask (session image id, white = change). */
   maskImageId?: string | null;

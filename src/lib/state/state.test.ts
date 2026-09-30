@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { createModels, editModels, initialState, reducer, referencedImageIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -298,6 +298,32 @@ describe("requests", () => {
     expect(referencedImageIds(s).has("b")).toBe(false);
     s = reducer(reducer(s, { type: "editSetSecond", ref: ref("c") }), { type: "clearSession" });
     expect(s.edit.secondImageId).toBeNull();
+  });
+
+  it("sends Create's reference picture and keeps it while it or a batch uses it", () => {
+    const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], fit: "fits" });
+    const big = model("big", "flux2_dev", { modes: ["txt2img", "img2img", "edit"], fit: "tooBig", lastUsed: 99 });
+    expect(referenceModel([model("s", "sdxl"), big, k])?.id).toBe("k");
+    expect(referenceModel([model("s", "sdxl")])).toBeNull();
+    expect(takesReference(k) && !takesReference(model("s", "sdxl"))).toBe(true);
+
+    let s = run(withModels(), { type: "patchCreate", patch: { prompt: "a lighthouse" } }, { type: "createSetRef", ref: ref("r") });
+    expect(s.images.r).toBeDefined();
+    const req = buildCreateRequest(s.create, { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null });
+    expect(req).toMatchObject({ mode: "txt2img", refImageIds: ["r"] });
+    // Presets never carry the picture.
+    expect(JSON.stringify(presetFromCreate("p", s.create, { model: k, loras: [] }))).not.toContain('"r"');
+
+    // Removing it from the slot keeps it while a batch made with it can still run Variations.
+    s = run(s, { type: "addResults", batch: { id: "b", request: req }, images: [result("a", 1)], refs: [ref("a")] }, { type: "createSetRef", ref: null });
+    expect(s.create.refImageId).toBeNull();
+    expect(s.images.r).toBeDefined();
+    s = run(s, { type: "removeResult", id: "a" });
+    expect(s.images.r).toBeUndefined();
+
+    s = run(s, { type: "createSetRef", ref: ref("r2") }, { type: "clearSession" });
+    expect(s.create.refImageId).toBeNull();
+    expect(buildCreateRequest(s.create, { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null }).refImageIds).toBeUndefined();
   });
 
   it("sends the Edit tab's add-ons that fit the edit's model, with their trigger words", () => {

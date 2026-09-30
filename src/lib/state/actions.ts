@@ -11,6 +11,7 @@ import {
   editModels,
   isActiveDownload,
   loraCompatible,
+  takesReference,
   willQueue,
   type EditMode,
   type ImgRef,
@@ -206,10 +207,14 @@ export function makeActions(store: Store) {
     const model = currentCreateModel();
     if (!model) throw { code: "not_found", message: "Pick a model first — or get one of the recommended models.", details: null } as CoreError;
     if (!s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
+    if (s.create.refImageId && !takesReference(model)) {
+      throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Switch to a model that can, or remove the picture.`, details: null } as CoreError;
+    }
     const { create, loras, settings } = s;
+    const imageIds = create.refImageId ? [create.refImageId] : [];
     await queueBatch(
       create.count,
-      queueEntry("create", create.prompt, model, create.count),
+      queueEntry("create", create.prompt, model, create.count, imageIds),
       async () => {
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
         return buildCreateRequest(create, { ui, loras, model, settings });
@@ -235,6 +240,7 @@ export function makeActions(store: Store) {
             return { req, ...(await generateNow(req, nonce)) };
           },
           count,
+          entry.imageIds,
         );
         if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
         // The model's lastUsed changed; refresh quietly so the picker order stays right.
@@ -249,7 +255,7 @@ export function makeActions(store: Store) {
 
   function runBatch(req: GenerateRequest) {
     const model = (get().models ?? []).find((m) => m.id === req.modelId);
-    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count), async () => req);
+    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count, req.refImageIds ?? []), async () => req);
   }
 
   /** Same prompt and settings, new seeds. */
@@ -387,6 +393,14 @@ export function makeActions(store: Store) {
       throw busyError();
     }
     dispatch({ type: "editLoad", ref });
+  }
+
+  /** Create's optional reference picture. */
+  async function importCreateReference(blob: Blob) {
+    const ref = await importBlob(blob).catch((e) => {
+      throw api.asCoreError(e);
+    });
+    dispatch({ type: "createSetRef", ref });
   }
 
   /** The optional second image for "Describe a change". */
@@ -579,6 +593,7 @@ export function makeActions(store: Store) {
     removeResult,
     importToEdit,
     importSecondToEdit,
+    importCreateReference,
     importToDescribe,
     runEdit,
     upscaleEdit,
