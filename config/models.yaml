@@ -238,12 +238,12 @@ components:
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
     size_mb: 853
-  # Qwen2.5-VL 7B variant that describes adult content of adults instead of refusing ("abliterated",
-  # huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated, Apache-2.0), GGUF by mradermacher. Offered only
+  # Qwen2.5-VL 7B fine-tune that is less restrictive than the stock model (upstream
+  # huihui-ai/Qwen2.5-VL-7B-Instruct-*, Apache-2.0), GGUF by mradermacher. Offered only
   # with Safe mode Off; the word check still runs on its output. Its vision file is not needed:
   # all 519 tensors of this repo's mmproj-Q8_0 are byte-identical to qwen25_vl_7b_mmproj (only the
   # GGUF name metadata differs, checked 2026-09-30), so it shares that one.
-  qwen25_vl_7b_abliterated_q4km:
+  qwen25_vl_7b_safe_off_q4km:
     kind: llm
     file: Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-abliterated-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
@@ -1207,10 +1207,10 @@ captioner:
       title: "Qwen2.5-VL 7B"
       note: "Writes fuller, more careful prompts and descriptions. Large download; shared with Qwen Image Edit."
       components: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]
-    - id: qwen25_vl_7b_abliterated
+    - id: qwen25_vl_7b_safe_off
       title: "Qwen2.5-VL 7B for Safe mode Off"
-      note: "Describes and writes adult content of adults plainly instead of refusing. Only while Safe mode is Off; the word check still applies."
-      components: [qwen25_vl_7b_abliterated_q4km, qwen25_vl_7b_mmproj]
+      note: "Less restrictive helper for Describe and Improve. Only while Safe mode is Off; the word check still applies."
+      components: [qwen25_vl_7b_safe_off_q4km, qwen25_vl_7b_mmproj]
       needs_safe_off: true
   prompts:
     sentence: >
@@ -1242,10 +1242,10 @@ captioner:
     # Added instead of `safe` while Safe mode is Off. The word check still runs on the idea and
     # on the answer whatever Safe mode says.
     adult: >
-      Adult content is allowed. If the idea is sexual or includes nudity, keep it and write it plainly
-      and specifically instead of softening or leaving it out, and describe every person in it as an
-      adult. Add nothing sexual or nude the user did not ask for. If the idea includes anyone under 18,
-      keep the whole prompt non-sexual and fully clothed.
+      Adult themes are allowed. If the idea includes nudity or sexual content between adults, keep
+      it and describe it clearly instead of softening or leaving it out, and describe every person in
+      it as an adult. Add nothing of that kind the user did not ask for. If the idea includes anyone under 18, keep
+      the whole prompt non-sexual and fully clothed.
     avoid: >
       Do not write any of these words or phrases, they are added separately: {words}.
 

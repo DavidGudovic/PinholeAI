@@ -356,22 +356,16 @@ pub(crate) mod tests {
         let page = live("month");
         let reason = |n: &str| s.adult_reason(by_name(&page, n));
         assert_eq!(reason("Babes"), Some(AdultReason::Tag("bimbo".into())));
-        assert_eq!(
-            reason("MiaoMiao Harem"),
-            Some(AdultReason::NameWord("harem".into()))
-        );
-        assert_eq!(
-            reason("REED_XXX"),
-            Some(AdultReason::NameWord("xxx".into()))
-        );
-        assert_eq!(
-            reason("Vixon’s Milk Factory"),
-            Some(AdultReason::NameWord("milk factory".into()))
-        );
-        assert_eq!(
-            reason("Moody Krea 2 Mix (uncensored)"),
-            Some(AdultReason::NameWord("uncensored".into()))
-        );
+        // Explicit real names are replaced by "Sample Model …" in the fixtures; "NSFW" keeps
+        // the name-word rule on the ones whose real name matched it.
+        for n in [
+            "Sample Model A3",
+            "Sample Model A13",
+            "Sample Model A16",
+            "Sample Model A22",
+        ] {
+            assert_eq!(reason(n), Some(AdultReason::NameWord("nsfw".into())), "{n}");
+        }
         assert_eq!(
             reason("Unholy Desire Mix"),
             Some(AdultReason::Tag("porn".into()))
@@ -439,9 +433,9 @@ pub(crate) mod tests {
             "One obsession",
             "Babes By Stable Yogi",
             "Analog Madness",
-            "NTR MIX",
+            "Sample Model C26",
             "PicX_real",
-            "Uber Realistic",
+            "Sample Model A10",
             "WAI-illustrious-SDXL",
         ] {
             assert!(s.adult_reason(by_name(&page, hide)).is_some(), "{hide}");
@@ -486,7 +480,7 @@ pub(crate) mod tests {
             Some(AdultReason::NameWord("babes".into()))
         );
         assert_eq!(
-            s.adult_reason(by_name(&page, "苍铭明月")),
+            s.adult_reason(by_name(&page, "Sample Style D1 NSFW")),
             Some(AdultReason::NoSafeContent),
             "nsfwLevel 30: no PG image at all"
         );

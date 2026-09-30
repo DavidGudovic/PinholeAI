@@ -2098,10 +2098,7 @@ mod tests {
             .into_iter()
             .map(|m| m.id)
             .collect();
-        assert_eq!(
-            ids,
-            ["describe", "qwen25_vl_7b", "qwen25_vl_7b_abliterated"]
-        );
+        assert_eq!(ids, ["describe", "qwen25_vl_7b", "qwen25_vl_7b_safe_off"]);
 
         let dir = core.data.models(ModelKind::Captioner);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2122,13 +2119,13 @@ mod tests {
             };
             register_download(&core, &file, reg).unwrap();
         };
-        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("ab.gguf", "qwen25_vl_7b_safe_off_q4km");
         add("p7.gguf", "qwen25_vl_7b_mmproj");
         // Only the Safe-mode-Off helper is listed, with the shared vision file.
         let rows = list_helpers(&core).unwrap();
         assert_eq!(
             rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            ["qwen25_vl_7b_abliterated"]
+            ["qwen25_vl_7b_safe_off"]
         );
         assert_eq!(rows[0].size_bytes, 8);
         // Automatic uses it while Safe mode is Off.
@@ -2143,15 +2140,13 @@ mod tests {
             rows.iter()
                 .map(|r| (r.id.as_str(), r.size_bytes))
                 .collect::<Vec<_>>(),
-            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_abliterated", 4)]
+            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_safe_off", 4)]
         );
         assert!(crate::describe::list_helper_models(&core)
             .iter()
             .filter(|m| m.id != "describe")
             .all(|m| m.installed && m.removable));
-        delete_helper(&core, "qwen25_vl_7b_abliterated")
-            .await
-            .unwrap();
+        delete_helper(&core, "qwen25_vl_7b_safe_off").await.unwrap();
         assert!(!dir.join("ab.gguf").exists());
         assert!(dir.join("p7.gguf").exists() && dir.join("m7.gguf").exists());
         let rows = list_helpers(&core).unwrap();
@@ -2162,7 +2157,7 @@ mod tests {
         );
 
         // Safe mode On: the Safe-mode-Off helper is never picked, even when installed.
-        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("ab.gguf", "qwen25_vl_7b_safe_off_q4km");
         delete_helper(&core, "qwen25_vl_7b").await.unwrap();
         assert!(
             dir.join("p7.gguf").exists(),
@@ -2175,13 +2170,10 @@ mod tests {
         crate::app::set_settings(&core, st).unwrap();
         assert!(crate::describe::list_helper_models(&core)
             .iter()
-            .all(|m| m.id != "qwen25_vl_7b_abliterated"));
+            .all(|m| m.id != "qwen25_vl_7b_safe_off"));
         let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
         assert!(s.source.is_none(), "nothing else is installed");
         // Installed helpers still lists it, so it can be removed.
-        assert_eq!(
-            list_helpers(&core).unwrap()[0].id,
-            "qwen25_vl_7b_abliterated"
-        );
+        assert_eq!(list_helpers(&core).unwrap()[0].id, "qwen25_vl_7b_safe_off");
     }
 }

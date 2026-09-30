@@ -2413,7 +2413,7 @@ mod tests {
             .and_then(|t| t.as_str())
             .unwrap()
             .to_string();
-        assert!(system.contains("Adult content is allowed"), "{system}");
+        assert!(system.contains("Adult themes are allowed"), "{system}");
         assert!(system.contains("anyone under 18"), "{system}");
         assert!(!system.contains("safe for work"), "{system}");
     }
