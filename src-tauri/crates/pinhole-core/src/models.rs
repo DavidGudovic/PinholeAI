@@ -186,7 +186,11 @@ pub fn register_download(
                 .filter(|_| same_file)
                 .and_then(|p| p.observed_vram_gb),
             dtype: reg.dtype,
-            trigger_words: None,
+            // The user's own trigger words describe the file, so keep them for the same file.
+            trigger_words: previous
+                .as_ref()
+                .filter(|_| same_file)
+                .and_then(|p| p.trigger_words.clone()),
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
@@ -1172,9 +1176,11 @@ mod tests {
             "paths are Data-relative"
         );
 
-        // Same path again → same id (no duplicates).
+        // Same path again → same id (no duplicates), the user's trigger words kept.
+        core.installed.lock().files[0].trigger_words = Some(vec!["mine".into()]);
         let again = register_download(&core, &file, reg).unwrap();
         assert_eq!(again.id, entry.id);
+        assert_eq!(again.trigger_words, Some(vec!["mine".into()]));
         assert_eq!(core.installed.lock().files.len(), 1);
 
         // Listed as an installed model.

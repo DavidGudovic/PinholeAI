@@ -318,10 +318,12 @@ async function preview(req: GenerateRequest): Promise<FinalPromptPreview> {
   let prompt = req.prompt.trim();
   if (req.addTriggerWords && req.loras.length) {
     const loras = await invoke<InstalledLora[]>("list_loras");
-    const words = req.loras.flatMap((u) => {
+    const words: string[] = [];
+    for (const u of req.loras) {
       const all = loras.find((l) => l.id === u.loraId)?.trainedWords ?? [];
-      return u.words ? all.filter((w) => u.words!.some((p) => p.toLowerCase() === w.toLowerCase())) : all;
-    });
+      for (const w of u.words ? all.filter((w) => u.words!.some((p) => p.trim().toLowerCase() === w.toLowerCase())) : all)
+        if (!words.some((x) => x.toLowerCase() === w.toLowerCase())) words.push(w);
+    }
     const missing = words.filter((w) => !new RegExp(`(^|[^\\p{L}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}\\p{N}])`, "iu").test(prompt));
     if (missing.length) prompt = prompt ? `${prompt}, ${missing.join(", ")}` : missing.join(", ");
   }

@@ -104,11 +104,17 @@ function TriggerWords({ lora, picked, onPick }: { lora: InstalledLora; picked: s
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const words = lora.trainedWords;
-  const isPicked = (w: string) => picked.includes(w);
-  const toggle = (w: string) => onPick(isPicked(w) ? picked.filter((p) => p !== w) : words.filter((x) => x === w || isPicked(x)));
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const isPicked = (w: string) => picked.some((p) => same(p, w));
+  const toggle = (w: string) => onPick(isPicked(w) ? picked.filter((p) => !same(p, w)) : words.filter((x) => same(x, w) || isPicked(x)));
 
   const save = async () => {
     if (draft == null) return;
+    // Unchanged: keep CivitAI's entries as they are (one entry can hold commas).
+    if (draft.trim() === words.join(", ")) {
+      setDraft(null);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {

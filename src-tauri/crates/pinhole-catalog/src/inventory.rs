@@ -99,11 +99,23 @@ pub fn installed_lora_view(file: &InstalledFile) -> InstalledLora {
         friendly_name: file.friendly_name.clone(),
         family_id: file.family.clone(),
         base_model: file.civitai.as_ref().and_then(|c| c.base_model.clone()),
-        trained_words: file.trigger_words().to_vec(),
+        trained_words: trigger_word_list(file.trigger_words()),
         size_bytes: file.size_bytes,
         civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
     }
+}
+
+/// Trimmed, non-empty, without case-insensitive repeats (CivitAI lists aren't
+/// deduplicated), so each word is one tick on the add-on's chip.
+fn trigger_word_list(words: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for w in words.iter().map(|w| w.trim()) {
+        if !w.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(w)) {
+            out.push(w.to_string());
+        }
+    }
+    out
 }
 
 /// Installed component files that only `model_id` needs: components its family
@@ -416,7 +428,8 @@ mod tests {
     #[test]
     fn lora_view() {
         let mut l = with_civitai(model("l", "sdxl_pony", ModelKind::Lora, "l.safetensors"), 5);
-        l.civitai.as_mut().unwrap().trained_words = vec!["pnkstyle".into()];
+        l.civitai.as_mut().unwrap().trained_words =
+            vec!["pnkstyle".into(), " PNKstyle ".into(), "".into()];
         let v = installed_lora_view(&l);
         assert_eq!(v.trained_words, ["pnkstyle"]);
         assert_eq!(v.civitai_version_id, Some(5));
