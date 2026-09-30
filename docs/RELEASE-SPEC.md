@@ -265,7 +265,7 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
-  box (local, can't be turned off, keeps no record) and "By continuing, you agree to the usage
+  box (local, can't be turned off) and "By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
   involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
@@ -298,6 +298,9 @@ templates, posts and UI.
   computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
   "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
   behind".
+- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
+  disk", "never saved"). Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save."
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real

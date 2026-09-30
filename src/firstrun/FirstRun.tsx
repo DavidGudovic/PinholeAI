@@ -161,7 +161,7 @@ export function FirstRun(props: { onDone: () => void }) {
               </p>
               <ul className="mx-auto mt-8 grid max-w-lg gap-4 text-left text-sm text-neutral-600 dark:text-neutral-400">
                 <Feature icon={<Lock className="h-4 w-4" />} title="You choose what gets saved">
-                  New pictures are kept in memory until you click Save.
+                  Nothing is saved until you press Save.
                 </Feature>
                 <Feature icon={<Sparkles className="h-4 w-4" />} title="No expert knowledge needed">
                   Pinhole picks the right models and settings for your computer.
