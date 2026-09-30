@@ -63,7 +63,8 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
 CI runs on CPU only, so these are built but unproven:
 - Z-Image Turbo (Q8 model + Q8 encoder) on 16 GB while another program holds ~9 GB of VRAM.
 - The out-of-memory retries (text encoder on the processor, then VAE tiling) and the Settings toggle.
-- Krea 2 Turbo on 12 and 16 GB: speed and whether it fits.
+- Qwen-Image 2.1 (now the Realistic and Edit pick): Q6_K on 12 GB, Q8_0 on 16 GB, bf16 on 24 GB:
+  speed, fit, edit quality, and the Q4_K edit pick on 6–10 GB (all figures are estimates).
 - Windows: the leftover-engine sweep at start and the `nvidia-smi` "other programs" note.
 - Defaults and VRAM figures for the new families (priority: FLUX.2 klein, Anima, Chroma, SD 3.5,
   Qwen-Image 2.1); int8 files on Vulkan.
