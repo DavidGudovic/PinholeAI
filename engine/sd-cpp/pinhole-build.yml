@@ -157,8 +157,15 @@ jobs:
           cmake -B build -DCMAKE_CXX_FLAGS='/bigobj' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release ${{ env.COMMON_FLAGS }} ${{ matrix.flags }}
           cmake --build build
       - name: Check the patch is in
+        # The CUDA build needs nvcuda.dll from an NVIDIA driver (not on the runner) to start,
+        # so look for the option text in the binary instead.
         shell: bash
-        run: src/build/bin/sd-server.exe --help | grep -- --reject-origin > /dev/null
+        run: |
+          if [ "${{ matrix.build }}" = cuda12 ]; then
+            grep -a -- --reject-origin src/build/bin/sd-server.exe > /dev/null
+          else
+            src/build/bin/sd-server.exe --help | grep -- --reject-origin > /dev/null
+          fi
       - name: Pack
         run: |
           Copy-Item src/ggml/LICENSE src/build/bin/ggml.txt
