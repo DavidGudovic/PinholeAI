@@ -247,7 +247,8 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
 /// - look-alike letters (Cyrillic and Greek capitals and small letters, small capitals, styled
 ///   and boxed letters) made Latin;
 /// - twice more with numbers and symbols read as letters (`0`→o, `1`→i, then `1`→l, `3`→e,
-///   `4`/`@`→a, `5`/`$`→s, `7`→t, `|`, and `!` inside a word), only in words that also have
+///   `4`/`@`→a, `5`/`$`→s, `7`→t, `|`, and `!` except at the end
+///   of a word, where it is punctuation), only in words that also have
 ///   letters.
 ///
 /// In every list, spaced-out letters are joined ("l o l i", "l.o.l.i") and a word made of two
@@ -255,9 +256,27 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
 fn views(text: &str) -> Vec<Vec<String>> {
     // Compatibility forms (fullwidth, superscript, squared, letterlike, ligatures…) become
     // plain letters; accents come apart from their letters and are dropped. Apostrophes are
-    // dropped so "Kim's ex" reads "kims ex", not "s ex".
+    // dropped so "Kim's ex" reads "kims ex", not "s ex". Fractions stay whole ("18½" isn't
+    // "181 2"), and a character that would expand to more than 4 is a space too (keeps long
+    // input fast).
     let plain: String = text
-        .nfkd()
+        .chars()
+        .flat_map(|c| -> Vec<char> {
+            match c {
+                '\u{00BC}'..='\u{00BE}' | '\u{2044}' | '\u{2150}'..='\u{215F}' | '\u{2189}' => {
+                    vec![c]
+                }
+                'ŀ' | 'Ŀ' => vec!['l'],
+                _ => {
+                    let d: Vec<char> = std::iter::once(c).nfkd().collect();
+                    if d.len() > 4 {
+                        vec![' ']
+                    } else {
+                        d
+                    }
+                }
+            }
+        })
         .filter(|c| !is_invisible(*c) && !is_accent(*c) && !is_apostrophe(*c))
         .collect();
     let clean = plain.to_lowercase();
@@ -302,16 +321,16 @@ fn is_invisible(c: char) -> bool {
         | '\u{E0100}'..='\u{E01EF}')
 }
 
-/// Combining accents (left over once letters are taken apart).
+/// Combining accents (left over once letters are taken apart) and enclosing marks.
 fn is_accent(c: char) -> bool {
-    matches!(c, '\u{0300}'..='\u{036F}' | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}'
+    matches!(c, '\u{0300}'..='\u{036F}' | '\u{0488}'..='\u{0489}' | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}'
         | '\u{20D0}'..='\u{20FF}' | '\u{FE20}'..='\u{FE2F}')
 }
 
 fn is_apostrophe(c: char) -> bool {
     matches!(
         c,
-        '\'' | '\u{2018}' | '\u{2019}' | '\u{02BC}' | '`' | '\u{00B4}'
+        '\'' | '\u{2018}' | '\u{2019}' | '\u{02BB}' | '\u{02BC}' | '\u{2032}' | '`' | '\u{00B4}'
     )
 }
 
@@ -344,7 +363,8 @@ fn fold_capital(c: char) -> Option<char> {
         .map(|(_, to)| *to)
 }
 
-/// One lowercase character without its accent, or its Latin look-alike.
+/// One lowercase character without its accent, or its Latin look-alike. Most accented and
+/// styled letters are already plain after NFKD in [`views`]; the tables stay as a fallback.
 fn fold(c: char) -> Vec<char> {
     const ACCENTS: &[(&str, char)] = &[
         ("àáâãäåāăąǎȁȃạảấầẩẫậắằẳẵặ", 'a'),
@@ -448,8 +468,8 @@ fn leet(word: &str, one: char) -> String {
     if !word.chars().any(|c| c.is_alphabetic()) {
         return word.to_string();
     }
-    // "!" is a letter only inside a word ("lol!" stays "lol").
-    word.trim_matches('!')
+    // A trailing "!" is punctuation ("lol!" stays "lol"); elsewhere it is a letter.
+    word.trim_end_matches('!')
         .chars()
         .map(|c| match c {
             '0' => 'o',
@@ -755,6 +775,9 @@ mod tests {
             "\u{FF4C}\u{FF4F}\u{FF4C}\u{FF49}, nude",
             // More invisible characters.
             "lo\u{2800}li, nu\u{FFF9}de",
+            // A "!" leading a word is a letter; a middle-dot "l".
+            "!nfant, nude",
+            "lo\u{0140}i, nude",
             // Stretched plurals, glued phrases.
             "kiiids, nude",
             "littlegirls, nude",
@@ -794,13 +817,24 @@ mod tests {
             "o k, kids, let's go",
             "lol! nude-colored heels, lol!!",
             "Kim's ex took the kids to the zoo",
-            "Sm\u{00F6}rg\u{00E5}sbord for the kids' party",
-            "\u{2116} 5 school bus, \u{2122} logo, \u{00BD} price",
+            "Sm\u{00F6}rg\u{00E5}sbord, nude lipstick",
+            "\u{2116} 5 school bus, \u{2122} logo, \u{00BD} price, nude lipstick",
+            "18\u{00BD} year old whisky, naked flame of a candle",
+            "cheese aged 1\u{00BD} years, naked flame",
+            "\u{00BD} year old cheese, naked flame",
         ]
         .into_iter()
         .filter(|t| pairs_minor_with_sexual(t))
         .collect::<Vec<_>>();
         assert!(wrong.is_empty(), "blocked: {wrong:?}");
+    }
+
+    #[test]
+    fn characters_that_expand_a_lot_stay_fast() {
+        let text = "\u{FDFA}".repeat(10_000) + " kids, nude";
+        let start = std::time::Instant::now();
+        assert!(pairs_minor_with_sexual(&text));
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
