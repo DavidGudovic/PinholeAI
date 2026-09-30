@@ -136,7 +136,11 @@ folder can overwrite each other's index (dual boot never does that).
 
 1. No prompt text is ever written to disk, logs, crash dumps, presets, file names, or PNG metadata.
 2. Generated images live in RAM until the user clicks **Save**. Closing the app discards them.
-3. **Reset** button: drops all in-memory images and prompt fields immediately.
+   Closing the window or pressing Reset while some pictures were never saved asks first
+   (**Save all…** to a folder / close without saving / go back). Which pictures count as saved is
+   kept in memory only (paths, no prompt).
+3. **Reset** button: drops all in-memory images and prompt fields immediately (after the question
+   above when pictures are unsaved).
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
@@ -272,7 +276,16 @@ the one-time download, then improves. Not in Edit: instruction edits are short c
 sky a sunset") and a fuller rewrite would drift from what should change.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**.
+new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
+more than one picture is unsaved.
+
+**Prompt recall:** Up (at the start of the box) and Down step through the prompts sent earlier in
+this session, like a shell; Down past the newest restores what was typed. Kept in memory only (last
+50), gone on Reset or close.
+
+**Done alert:** when a picture (or the last job in the queue) finishes while the window is in the
+background, the taskbar icon flashes. Settings has a toggle for a soft chime (off by default,
+made in code, no sound file).
 
 **Paste from CivitAI**: CivitAI's "Copy generation data" button yields A1111-style text (prompt,
 `Negative prompt:`, `Steps: …, Sampler: …, CFG scale: …, Seed: …, Size: …, Clip skip: …, Civitai

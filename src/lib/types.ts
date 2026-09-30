@@ -43,6 +43,8 @@ export interface Settings {
   savedMetadata: "none" | "settings";
   theme: "system" | "light" | "dark";
   addTriggerWords: boolean;
+  /** Soft sound when pictures finish while the window is in the background. */
+  soundOnDone: boolean;
   firstRunDone: boolean;
   /** auto | cuda | vulkan | cpu */
   engineBackend: string;
@@ -441,6 +443,12 @@ export interface PictureSettings {
 
 export interface SavedImage {
   path: string;
+}
+
+/** What "Save all" wrote; `failed` counts images that couldn't be saved. */
+export interface SavedBatch {
+  saved: { id: string; path: string }[];
+  failed: number;
 }
 
 // ---------------------------------------------------------------- describe

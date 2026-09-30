@@ -58,6 +58,17 @@ Honest limitations:
   **Reset** and 5 minutes after your last image. A proper fix (an engine build that
   requires a per-launch password) is planned. The Describe engine already uses one.
 
+## Acceptable use
+
+When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
+and to each model's licence. You're responsible for what you make.
+
+Pinhole has a built-in safety check. It checks prompts and pictures on your computer and stops
+the most harmful content. The check works offline, can't be turned off and keeps no record.
+
+To report a problem with the safeguards, use GitHub's private vulnerability reporting
+(**Security → Report a vulnerability** on this repository).
+
 ## Install
 
 Download the latest build from the [Releases](../../releases) page (or, for development builds,

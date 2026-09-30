@@ -15,7 +15,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use pinhole_engine::image::{self as img, Kind};
 
-use crate::generate::{ImportedImage, Origin, ResultImage, SavedImage};
+use crate::generate::{ImportedImage, Origin, ResultImage, SavedBatch, SavedEntry, SavedImage};
 use crate::{AppCore, CoreError, CoreResult};
 
 /// One image held in RAM.
@@ -354,10 +354,43 @@ pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
 /// Save into `Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.<ext>` (unique suffix
 /// `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
 pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
+    save_into(core, id, &core.data.outputs())
+}
+
+/// "Save all": every listed image into a folder the user picked, named like
+/// `save_image`. One failure doesn't stop the rest; the caller sees which were saved.
+pub fn save_images_to(core: &AppCore, ids: &[String], dir: &str) -> CoreResult<SavedBatch> {
+    let dir = PathBuf::from(dir);
+    if !dir.is_absolute() || !dir.is_dir() {
+        return Err(CoreError::invalid("Pick an existing folder to save to."));
+    }
+    let mut saved = Vec::new();
+    let mut failed = 0;
+    let mut first_err = None;
+    for id in ids {
+        match save_into(core, id, &dir) {
+            Ok(s) => saved.push(SavedEntry {
+                id: id.clone(),
+                path: s.path,
+            }),
+            Err(e) => {
+                failed += 1;
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    if saved.is_empty() {
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+    }
+    Ok(SavedBatch { saved, failed })
+}
+
+fn save_into(core: &AppCore, id: &str, dir: &Path) -> CoreResult<SavedImage> {
     let im = core.session.get(id).ok_or_else(missing)?;
     let bytes = export_png(core, &im)?;
-    let dir = core.data.outputs();
-    fs::create_dir_all(&dir).map_err(|e| io_err(&dir, e))?;
+    fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let tag = im
         .meta
@@ -394,7 +427,7 @@ pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
     }
     Err(CoreError::new(
         "io",
-        "Couldn't find a free file name in the outputs folder.",
+        "Couldn't find a free file name in that folder.",
     ))
 }
 
@@ -484,6 +517,39 @@ mod tests {
             parent_id: Some("p".into()),
             origin: Origin::Generated,
         }
+    }
+
+    #[test]
+    fn save_all_writes_every_image_to_the_chosen_folder() {
+        let (tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
+        let epoch = core.session.epoch();
+        assert!(core
+            .session
+            .insert_generated_since(epoch, png.clone(), meta("a")));
+        assert!(core.session.insert_generated_since(epoch, png, meta("b")));
+        let dir = tmp.path().join("picked");
+        fs::create_dir_all(&dir).unwrap();
+        let ids = vec!["a".to_string(), "b".to_string(), "gone".to_string()];
+        let batch = save_images_to(&core, &ids, dir.to_str().unwrap()).unwrap();
+        assert_eq!((batch.saved.len(), batch.failed), (2, 1));
+        assert_eq!(batch.saved[0].id, "a");
+        let names: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names.len(),
+            2,
+            "same seed and second still get unique names: {names:?}"
+        );
+        assert!(names
+            .iter()
+            .all(|n| n.starts_with("pinhole_") && n.ends_with(".png")));
+        // Nothing saved, or a folder that isn't there: an error, not a silent no-op.
+        assert!(save_images_to(&core, &["gone".to_string()], dir.to_str().unwrap()).is_err());
+        assert!(save_images_to(&core, &ids, tmp.path().join("missing").to_str().unwrap()).is_err());
     }
 
     #[test]

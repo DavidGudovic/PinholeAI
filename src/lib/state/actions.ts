@@ -13,6 +13,7 @@ import {
   loraCompatible,
   referenceModel,
   takesReference,
+  unsavedIds,
   willQueue,
   type EditMode,
   type ImgRef,
@@ -24,7 +25,7 @@ import {
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
-import { canSaveAs, chooseSavePath, copyText } from "./platform";
+import { canSaveAs, chooseFolder, chooseSavePath, closeWindow, copyText, notifyDone, primeSound, windowInBackground } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
 
 let uidCounter = 0;
@@ -103,12 +104,17 @@ export function makeActions(store: Store) {
     if (get().job) throw busyError();
     cancelRequested = false;
     dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
+    let ok = false;
     try {
-      return await work();
+      const out = await work();
+      ok = true;
+      return out;
     } catch (e) {
       throw api.asCoreError(e);
     } finally {
       dispatch({ type: "jobEnd" });
+      // Finished while the user is elsewhere (and nothing else is waiting): flash the taskbar, chime if asked.
+      if (ok && kind !== "describe" && !get().queue.length && windowInBackground()) notifyDone(!!get().settings?.soundOnDone);
       startNextQueued();
     }
   }
@@ -124,6 +130,8 @@ export function makeActions(store: Store) {
   function enqueue(entry: Omit<QueuedJob, "id">, run: () => Promise<void>): Promise<void> {
     // Pressed while Reset is clearing the session: it belongs to the cleared session.
     if (resetting) return Promise.resolve();
+    // The click that started this is the moment a WebView will let the chime's audio start.
+    if (get().settings?.soundOnDone) primeSound();
     if (!willQueue(get())) return run();
     const id = uid("q");
     return new Promise<void>((resolve, reject) => {
@@ -218,6 +226,7 @@ export function makeActions(store: Store) {
       create.count,
       queueEntry("create", create.prompt, model, create.count, imageIds),
       async () => {
+        dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
         return buildCreateRequest(create, { ui, loras, model, settings });
       },
@@ -300,6 +309,7 @@ export function makeActions(store: Store) {
   // ---------------------------------------------------------------- results
   async function save(id: string) {
     const saved = await api.saveImage(id);
+    dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
     toast(`Saved to ${saved.path}`, { action: { label: "Show folder", run: () => void api.openOutputsFolder() }, ms: 8000 });
     return saved;
   }
@@ -309,8 +319,38 @@ export function makeActions(store: Store) {
     const path = await chooseSavePath(`pinhole_${seed ?? "image"}.png`);
     if (!path) return null;
     const saved = await api.saveImageAs(id, path);
+    dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
     toast(`Saved to ${saved.path}`);
     return saved;
+  }
+
+  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled; throws if some couldn't be saved. */
+  async function saveAll(): Promise<boolean> {
+    const ids = unsavedIds(get());
+    if (!ids.length) return true;
+    const dir = await chooseFolder("Save all pictures to…");
+    if (!dir) return false;
+    const batch = await api.saveImagesTo(ids, dir);
+    dispatch({ type: "markSaved", entries: batch.saved });
+    const n = batch.saved.length;
+    if (n) toast(`Saved ${n} ${n === 1 ? "picture" : "pictures"} to ${dir}`, { ms: 8000 });
+    if (batch.failed) {
+      throw { code: "io", message: `${batch.failed} of ${n + batch.failed} pictures couldn't be saved. Check that the folder can be written to, then try again.`, details: null } as CoreError;
+    }
+    return true;
+  }
+
+  /** The window is closing (or Reset was pressed): true = go ahead; false = unsaved pictures, the question dialog is now showing. */
+  function requestLeave(what: "close" | "clear"): boolean {
+    if (!unsavedIds(get()).length) return true;
+    dispatch({ type: "askLeave", what });
+    return false;
+  }
+
+  async function finishLeave(what: "close" | "clear") {
+    dispatch({ type: "askLeave", what: null });
+    if (what === "close") await closeWindow();
+    else await clearSession();
   }
 
   async function copyImage(id: string) {
@@ -621,6 +661,11 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- session
+  /** The Reset button: asks first when there are unsaved pictures. */
+  async function clearSessionChecked() {
+    if (requestLeave("clear")) await clearSession();
+  }
+
   async function clearSession() {
     resetting = true;
     try {
@@ -664,6 +709,9 @@ export function makeActions(store: Store) {
     cancel,
     save,
     saveAs,
+    saveAll,
+    requestLeave,
+    finishLeave,
     copyImage,
     copyTextToClipboard,
     setTab,
@@ -683,6 +731,7 @@ export function makeActions(store: Store) {
     upscaleEdit,
     autoEditModel,
     clearSession,
+    clearSessionChecked,
     onEngine,
     activeDownloads,
     clearFinishedDownloads,
