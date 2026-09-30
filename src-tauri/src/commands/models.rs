@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use pinhole_core::linked::LinkedFolderView;
 use pinhole_core::models::{
     AddFileResult, DeletePreview, InstalledHelper, InstalledLora, InstalledModel, PastedResource,
     RecommendedPick, ResolvedResources,
@@ -59,6 +60,43 @@ pub async fn confirm_family(
     family_id: String,
 ) -> Result<AddFileResult, CoreError> {
     pinhole_core::models::confirm_family(&core, &token, &family_id)
+}
+
+#[tauri::command]
+pub async fn install_missing_parts(
+    core: State<'_, Arc<AppCore>>,
+    model_id: String,
+) -> Result<InstallStarted, CoreError> {
+    pinhole_core::models::install_missing_parts(core.inner(), &model_id).await
+}
+
+#[tauri::command]
+pub async fn list_linked_folders(
+    core: State<'_, Arc<AppCore>>,
+) -> Result<Vec<LinkedFolderView>, CoreError> {
+    Ok(pinhole_core::linked::list(&core))
+}
+
+#[tauri::command]
+pub async fn add_linked_folder(
+    core: State<'_, Arc<AppCore>>,
+    path: String,
+) -> Result<LinkedFolderView, CoreError> {
+    pinhole_core::linked::add(core.inner(), &path)
+}
+
+#[tauri::command]
+pub async fn remove_linked_folder(
+    core: State<'_, Arc<AppCore>>,
+    id: String,
+) -> Result<(), CoreError> {
+    pinhole_core::linked::remove(&core, &id).await
+}
+
+#[tauri::command]
+pub async fn rescan_linked_folders(core: State<'_, Arc<AppCore>>) -> Result<(), CoreError> {
+    pinhole_core::linked::rescan_all(core.inner());
+    Ok(())
 }
 
 #[tauri::command]
@@ -161,6 +199,11 @@ super::area_commands![
     install_recommended,
     add_local_model,
     confirm_family,
+    install_missing_parts,
+    list_linked_folders,
+    add_linked_folder,
+    remove_linked_folder,
+    rescan_linked_folders,
     preview_delete,
     delete_model,
     resolve_civitai_resources,

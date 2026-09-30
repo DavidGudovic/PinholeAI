@@ -15,6 +15,7 @@ import type {
   GroupStatus,
   InstalledLora,
   InstalledModel,
+  LinkedFolder,
   PastedResource,
   RecommendedPick,
   ResolvedResource,
@@ -740,6 +741,40 @@ function resolveOne(r: PastedResource): ResolvedResource {
   };
 }
 
+// ---------------------------------------------------------------- other apps' models folders
+let linkedFolders: LinkedFolder[] = [];
+
+function linkedView(f: LinkedFolder): LinkedFolder {
+  const s = state();
+  const models = s.models.filter((m) => m.linkedFolder === f.name).length;
+  const addons = s.loras.filter((l) => l.linkedFolder === f.name).length;
+  return { ...f, models, addons };
+}
+
+async function addLinkedFolder(path: string): Promise<LinkedFolder> {
+  await sleep(200);
+  if (linkedFolders.some((f) => f.path === path)) throw err("invalid", "You've already added this folder.");
+  const name = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+  const id = Math.random().toString(36).slice(2, 10);
+  const folder: LinkedFolder = { id, path, name, available: true, scanning: true, models: 0, addons: 0, parts: 0, notUsed: 0 };
+  linkedFolders.push(folder);
+  setTimeout(() => {
+    const s = state();
+    const base = { styleBadge: null, isEditModel: false, lastUsed: null, civitaiModelId: null, civitaiVersionId: null, baseModel: null, licenseNote: null, linkedFolder: name };
+    s.models.push(
+      { ...base, id: `m_${id}_1`, friendlyName: "juggernautXL v9", familyId: "sdxl", familyLabel: FAMILIES.sdxl.label, modes: FAMILIES.sdxl.modes, sizeBytes: 6600 * MB, vram: { gb: 10, minGb: 6, estimate: true }, relPath: `linked/${id}/checkpoints/juggernautXL_v9.safetensors` },
+      { ...base, id: `m_${id}_2`, friendlyName: "ponyDiffusionV6XL", familyId: "sdxl_pony", familyLabel: FAMILIES.sdxl_pony.label, modes: FAMILIES.sdxl_pony.modes, sizeBytes: 6600 * MB, vram: { gb: 10, minGb: 6, estimate: true }, relPath: `linked/${id}/checkpoints/ponyDiffusionV6XL.safetensors` },
+      { ...base, id: `m_${id}_3`, friendlyName: "flux1 dev fp8", familyId: "flux1_dev", familyLabel: FAMILIES.flux1_dev.label, modes: FAMILIES.flux1_dev.modes, sizeBytes: 11900 * MB, vram: { gb: 14, minGb: 10, estimate: true }, licenseNote: FAMILIES.flux1_dev.license, relPath: `linked/${id}/unet/flux1-dev-fp8.safetensors` },
+    );
+    s.loras.push({ id: `l_${id}_1`, friendlyName: "Watercolor wash", familyId: "sdxl", baseModel: "SDXL 1.0", trainedWords: ["watercolor"], sizeBytes: 220 * MB, civitaiModelId: null, civitaiVersionId: null, linkedFolder: name, relPath: `linked/${id}/loras/watercolor.safetensors` });
+    const f = linkedFolders.find((x) => x.id === id);
+    if (f) Object.assign(f, { scanning: false, parts: 1, notUsed: 4 });
+    modelsChanged();
+  }, 1500);
+  modelsChanged();
+  return linkedView(folder);
+}
+
 // ---------------------------------------------------------------- table
 const table: MockTable = {
   list_models: async () => {
@@ -782,6 +817,39 @@ const table: MockTable = {
     if (!p) throw err("not_found", "Please add the file again.");
     pendingChoices.delete(String(a.token));
     return registerLocal(p.path, String(a.familyId));
+  },
+  install_missing_parts: async (a) => {
+    await sleep(200);
+    const s = state();
+    const m = s.models.find((x) => x.id === String(a.modelId));
+    if (!m?.familyId) throw err("not_found", "That model isn't installed any more.");
+    const missing = missingFor(m.familyId);
+    if (!missing.length) throw err("invalid", "This model already has every part it needs.");
+    const groupId = startMockDownload(`Parts for ${m.friendlyName}`, missing.map((id) => ({ name: COMPONENTS[id].path.split("/").pop()!, bytes: COMPONENTS[id].mb * MB })), {
+      onDone: () => {
+        for (const id of missing) s.components.add(id);
+        modelsChanged();
+      },
+    });
+    return { groupId };
+  },
+  list_linked_folders: async () => {
+    await sleep(60);
+    return linkedFolders.map(linkedView);
+  },
+  add_linked_folder: (a) => addLinkedFolder(String(a.path)),
+  remove_linked_folder: async (a) => {
+    await sleep(150);
+    const f = linkedFolders.find((x) => x.id === String(a.id));
+    if (!f) throw err("not_found", "That folder isn't in the list any more.");
+    linkedFolders = linkedFolders.filter((x) => x !== f);
+    models = state().models.filter((m) => m.linkedFolder !== f.name);
+    loras = state().loras.filter((l) => l.linkedFolder !== f.name);
+    modelsChanged();
+  },
+  rescan_linked_folders: async () => {
+    await sleep(100);
+    modelsChanged();
   },
   preview_delete: async (a) => {
     await sleep(150);

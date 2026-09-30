@@ -323,7 +323,9 @@ const table: MockTable = {
   "plugin:dialog|open": async (a) => {
     await sleep(300);
     // Only the "Add a file I already have" picker (model filters) gets a fake path; others look cancelled.
-    const opts = a.options as { filters?: { extensions: string[] }[]; directory?: boolean } | undefined;
+    const opts = a.options as { filters?: { extensions: string[] }[]; directory?: boolean; title?: string } | undefined;
+    // Models → "Use models from another app" gets a fake ComfyUI folder.
+    if (opts?.directory && opts.title?.includes("ComfyUI")) return "C:\\AI\\ComfyUI";
     // Settings → Models folder → "Change…" gets a fake shared-drive folder.
     if (opts?.directory) return "D:\\Shared\\Pinhole Models";
     const filters = (opts?.filters ?? []).flatMap((f) => f.extensions);

@@ -75,6 +75,14 @@ export const installRecommended = (role: string) => invoke<T.InstallStarted>("in
 export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_local_model", { path });
 export const confirmFamily = (token: string, familyId: string) =>
   invoke<T.AddFileResult>("confirm_family", { token, familyId });
+/** Download the parts (VAE, text encoders) an installed model still needs, from its family's list. */
+export const installMissingParts = (modelId: string) => invoke<T.InstallStarted>("install_missing_parts", { modelId });
+/** Other apps' models folders used in place (read-only: Pinhole never writes, moves or deletes there). */
+export const listLinkedFolders = () => invoke<T.LinkedFolder[]>("list_linked_folders");
+export const addLinkedFolder = (path: string) => invoke<T.LinkedFolder>("add_linked_folder", { path });
+export const removeLinkedFolder = (id: string) => invoke<void>("remove_linked_folder", { id });
+/** Look through the linked folders again for new or changed files (progress via models-changed). */
+export const rescanLinkedFolders = () => invoke<void>("rescan_linked_folders");
 export const previewDelete = (modelId: string) => invoke<T.DeletePreview>("preview_delete", { modelId });
 export const deleteModel = (modelId: string) => invoke<void>("delete_model", { modelId });
 /** Paste from CivitAI: match resources to installed files or installable CivitAI versions. No prompt text is sent. */

@@ -91,10 +91,23 @@ pub fn installed_model_view(
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
         base_model: file.civitai.as_ref().and_then(|c| c.base_model.clone()),
         low_bit: file.dtype.as_deref().and_then(families::low_bit_quant),
+        linked_folder: linked_folder_name(index, file),
     }
 }
 
-pub fn installed_lora_view(file: &InstalledFile) -> InstalledLora {
+/// Display name of the linked folder `file` is in (its last path part).
+pub fn linked_folder_name(index: &InstalledIndex, file: &InstalledFile) -> Option<String> {
+    let id = pinhole_store::installed::linked_folder_id(&file.rel_path)?;
+    let folder = index.linked.folder(id)?;
+    let path = std::path::Path::new(&folder.path);
+    Some(
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| folder.path.clone()),
+    )
+}
+
+pub fn installed_lora_view(index: &InstalledIndex, file: &InstalledFile) -> InstalledLora {
     InstalledLora {
         id: file.id.clone(),
         friendly_name: file.friendly_name.clone(),
@@ -104,6 +117,7 @@ pub fn installed_lora_view(file: &InstalledFile) -> InstalledLora {
         size_bytes: file.size_bytes,
         civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
+        linked_folder: linked_folder_name(index, file),
     }
 }
 
@@ -147,7 +161,8 @@ pub fn orphaned_components<'a>(
         let Some(comp) = registry.component(id) else {
             continue;
         };
-        for f in index.files.iter().filter(|f| {
+        // Files in the user's other models folders are never deleted.
+        for f in index.files.iter().filter(|f| !f.is_linked()).filter(|f| {
             f.component_id.as_deref() == Some(id.as_str())
                 || (f.component_id.is_none()
                     && families::normalize_sha(&comp.sha256)
@@ -449,7 +464,7 @@ mod tests {
         let mut l = with_civitai(model("l", "sdxl_pony", ModelKind::Lora, "l.safetensors"), 5);
         l.civitai.as_mut().unwrap().trained_words =
             vec!["pnkstyle".into(), " PNKstyle ".into(), "".into()];
-        let v = installed_lora_view(&l);
+        let v = installed_lora_view(&InstalledIndex::new(), &l);
         assert_eq!(v.trained_words, ["pnkstyle"]);
         assert_eq!(v.civitai_version_id, Some(5));
         assert_eq!(v.family_id.as_deref(), Some("sdxl_pony"));

@@ -257,7 +257,10 @@ pub fn list_models(core: &AppCore) -> CoreResult<Vec<InstalledModel>> {
 
 pub fn list_loras(core: &AppCore) -> CoreResult<Vec<InstalledLora>> {
     let index = snapshot(core);
-    let mut out: Vec<InstalledLora> = index.loras().map(inventory::installed_lora_view).collect();
+    let mut out: Vec<InstalledLora> = index
+        .loras()
+        .map(|f| inventory::installed_lora_view(&index, f))
+        .collect();
     out.sort_by_key(|l| l.friendly_name.to_lowercase());
     Ok(out)
 }
@@ -294,7 +297,8 @@ pub fn set_lora_trigger_words(
         .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
         .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
     file.trigger_words = Some(clean);
-    let view = inventory::installed_lora_view(file);
+    let file = file.clone();
+    let view = inventory::installed_lora_view(&index, &file);
     index.save(&core.data)?;
     Ok(view)
 }
@@ -463,10 +467,14 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
     {
         let index = core.installed.lock();
-        if helper_files(core, &index, helper_id).is_empty() {
+        let files = helper_files(core, &index, helper_id);
+        if files.is_empty() {
             return Err(CoreError::not_found(
                 "That helper isn't installed any more.",
             ));
+        }
+        if files.iter().any(|f| f.is_linked()) {
+            return Err(CoreError::invalid(LINKED_DELETE));
         }
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;
@@ -517,7 +525,7 @@ pub fn view_of(core: &AppCore, file: &InstalledFile) -> AddFileResult {
     if file.kind == ModelKind::Lora {
         AddFileResult {
             model: None,
-            lora: Some(inventory::installed_lora_view(file)),
+            lora: Some(inventory::installed_lora_view(&index, file)),
             needs_choice: None,
         }
     } else {
@@ -579,6 +587,39 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
         PickAction::Captioner => crate::describe::install_captioner(core, None).await,
         PickAction::Nothing => Err(CoreError::internal("Nothing to install.")),
     }
+}
+
+/// Download the parts (VAE, text encoders) an installed model still needs,
+/// from its family's registry list (models added from disk or another app's
+/// folder, which have no CivitAI version to install from).
+pub async fn install_missing_parts(
+    core: &Arc<AppCore>,
+    model_id: &str,
+) -> CoreResult<InstallStarted> {
+    let (label, files) = {
+        let registry = core.registry();
+        let hw = crate::app::hw_context(core);
+        let index = snapshot(core);
+        let model = index
+            .get(model_id)
+            .ok_or_else(|| CoreError::not_found("That model isn't installed any more."))?;
+        let family = model
+            .family
+            .as_deref()
+            .and_then(|f| registry.family(f))
+            .ok_or_else(|| {
+                CoreError::invalid("Pinhole doesn't know which parts this model needs.")
+            })?;
+        let files = recommend::parts_to_run(&registry, family, &hw, &index);
+        (model.friendly_name.clone(), files)
+    };
+    if files.is_empty() {
+        return Err(CoreError::invalid(
+            "This model already has every part it needs.",
+        ));
+    }
+    let items = files.into_iter().map(|f| (f, None)).collect();
+    start_install(core, format!("Parts for {label}"), items, None).await
 }
 
 // ------------------------------------------------------------------ download groups
@@ -1098,6 +1139,9 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
+/// Pinhole never deletes files in another app's models folder.
+pub(crate) const LINKED_DELETE: &str = "This model is in another app's models folder, so Pinhole doesn't delete it. Delete it in that app, or remove the folder from Pinhole's list.";
+
 /// Ids of the entries deleting `model_id` removes: the model and the
 /// components no other model needs (by id: two entries can share a path).
 fn delete_ids(
@@ -1105,8 +1149,11 @@ fn delete_ids(
     index: &pinhole_store::InstalledIndex,
     model_id: &str,
 ) -> CoreResult<Vec<String>> {
-    if index.get(model_id).is_none() {
+    let Some(target) = index.get(model_id) else {
         return Err(CoreError::not_found("That model isn't installed any more."));
+    };
+    if target.is_linked() {
+        return Err(CoreError::invalid(LINKED_DELETE));
     }
     let orphans = inventory::orphaned_components(registry, index, model_id);
     Ok(std::iter::once(model_id.to_string())
@@ -1134,7 +1181,8 @@ fn remove_entries(
             .iter()
             .any(|o| o.id != f.id && !ids.contains(&o.id) && same(&o.rel_path))
             || index.unknown_uses(&f.rel_path);
-        if inventory::is_safe_rel_path(&f.rel_path) && !shared {
+        // Never delete a file in the user's other models folders.
+        if inventory::is_safe_rel_path(&f.rel_path) && !shared && !f.is_linked() {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
                 Ok(()) => {}

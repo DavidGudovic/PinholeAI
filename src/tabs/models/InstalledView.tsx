@@ -9,6 +9,7 @@ import {
   deleteHelper,
   deleteModel,
   getSettings,
+  installMissingParts,
   listHelpers,
   listLoras,
   listModels,
@@ -29,6 +30,7 @@ import { useHardware, useOnHardwareChange, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
 import { requestAddonBrowse } from "./lib/session";
 import { UseAddonButton } from "./UseAddon";
+import { AddLinkedFolderButton, LinkedFolders } from "./LinkedFolders";
 
 type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
 
@@ -84,6 +86,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
   const [choice, setChoice] = useState<NeedsChoice | null>(null);
   const [detailsFor, setDetailsFor] = useState<CatalogCard | null>(null);
   const [content, setContent] = useState<ContentMode>("safe");
+  const [linkedVersion, setLinkedVersion] = useState(0);
   const hw = useHardware();
 
   const refresh = useCallback(async () => {
@@ -166,6 +169,18 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
     }
   };
 
+  // Models from another app's folder have no CivitAI version to install parts from.
+  const getParts = (m: InstalledModel) => {
+    if (m.civitaiVersionId != null && !m.linkedFolder) {
+      setMissingFor(m);
+      return;
+    }
+    setAddError(null);
+    installMissingParts(m.id)
+      .then(() => setNotice(`Downloading the missing parts for “${m.friendlyName}”. You can follow it in Downloads.`))
+      .catch((e) => setAddError(asCoreError(e)));
+  };
+
   // No image models or add-ons: offer the recommended picks (helpers alone don't count).
   const noModels = models !== null && loras !== null && models.length === 0 && loras.length === 0;
   const nothing = noModels && helpers.length === 0;
@@ -191,6 +206,14 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           <Button onClick={() => void pickFile()} disabled={!!adding}>
             <FilePlus2 className="h-4 w-4" /> Add a file I already have
           </Button>
+          <AddLinkedFolderButton
+            onAdded={(f) => {
+              setAddError(null);
+              setNotice(`Pinhole is looking through “${f.name}”. The models it can use show up below, and nothing in that folder is changed.`);
+              setLinkedVersion((v) => v + 1);
+            }}
+            onError={setAddError}
+          />
           <Button variant="ghost" onClick={onBrowse}>
             <Compass className="h-4 w-4" /> Browse CivitAI
           </Button>
@@ -225,6 +248,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
           </span>
         </p>
       )}
+
+      <LinkedFolders version={linkedVersion} />
 
       {noModels && (
         <section className="space-y-3">
@@ -279,6 +304,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                       <span className="font-medium text-neutral-900 dark:text-neutral-100">{m.friendlyName}</span>
                       {m.styleBadge && <Badge>{m.styleBadge}</Badge>}
                       {m.isEditModel && <Badge tone="blue">Edit</Badge>}
+                      {m.linkedFolder && <Badge>In {m.linkedFolder}</Badge>}
                     </div>
                     <div className="mt-0.5 text-xs text-neutral-500 lg:hidden">{m.familyLabel ?? "Unknown kind"}</div>
                     {m.licenseNote && <div className="mt-0.5 text-[11px] text-neutral-500">License: {m.licenseNote}</div>}
@@ -296,8 +322,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                             ? "Needed for Describe a change in Edit; creating works without it."
                             : "It won't run until they're downloaded."}
                         </span>
-                        {m.civitaiVersionId != null && (
-                          <Button size="sm" onClick={() => setMissingFor(m)}>
+                        {(m.civitaiVersionId != null || m.familyId) && (
+                          <Button size="sm" onClick={() => getParts(m)}>
                             Get missing parts
                           </Button>
                         )}
@@ -315,9 +341,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                           <Puzzle className="h-4 w-4" />
                         </IconButton>
                       )}
-                      <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
-                        <Trash2 className="h-4 w-4" />
-                      </IconButton>
+                      {!m.linkedFolder && (
+                        <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
+                          <Trash2 className="h-4 w-4" />
+                        </IconButton>
+                      )}
                     </RowActions>
                   </Td>
                 </tr>
@@ -344,7 +372,12 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
             <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
               {loras.map((l) => (
                 <tr key={l.id} className="align-top hover:bg-neutral-50 dark:hover:bg-neutral-800/40">
-                  <Td className="font-medium text-neutral-900 dark:text-neutral-100">{l.friendlyName}</Td>
+                  <Td className="font-medium text-neutral-900 dark:text-neutral-100">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span>{l.friendlyName}</span>
+                      {l.linkedFolder && <Badge>In {l.linkedFolder}</Badge>}
+                    </div>
+                  </Td>
                   <Td className="text-neutral-600 dark:text-neutral-400">{l.baseModel ?? l.familyId ?? "Any"}</Td>
                   <Td className="hidden md:table-cell">
                     {l.trainedWords.length ? (
@@ -363,9 +396,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   <Td>
                     <RowActions card={detailsCard(l, "LORA", null)} onShow={showDetails}>
                       <UseAddonButton loraId={l.id} name={l.friendlyName} />
-                      <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
-                        <Trash2 className="h-4 w-4" />
-                      </IconButton>
+                      {!l.linkedFolder && (
+                        <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
+                          <Trash2 className="h-4 w-4" />
+                        </IconButton>
+                      )}
                     </RowActions>
                   </Td>
                 </tr>
@@ -408,7 +443,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
 
       {noModels && (
         <EmptyState icon={<FilePlus2 className="h-6 w-6" />} title="Already have a model file?">
-          Use <b>Add a file I already have</b> to pick a .safetensors or .gguf file. Pinhole works out what kind of model it is.
+          Use <b>Add a file I already have</b> to pick a .safetensors or .gguf file, or <b>Use models from another app</b> to use your ComfyUI, A1111 or
+          Forge models where they are. Pinhole works out what kind of model each file is.
         </EmptyState>
       )}
 

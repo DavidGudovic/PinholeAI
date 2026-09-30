@@ -31,7 +31,8 @@ engine setting), **Paste from CivitAI** (reads "Copy generation data" text in me
 settings, matches or installs the checkpoint/LoRAs), Edit (instruction edit with Qwen Image Edit /
 Kontext, Restyle, Fix details, Extend (wider/taller canvas), "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
 Styles (the only user text ever stored), Presets (never the prompt), Models (CivitAI browser with
-plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big"),
+plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big",
+use a ComfyUI / A1111 / Forge models folder in place),
 first-run "Recommended for your GPU", Settings (Offline mode, GPU/VRAM overrides, backend, content
 mode, API key in the OS keychain, theme), portable mode (`Data/` next to the exe).
 

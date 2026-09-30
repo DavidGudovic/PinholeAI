@@ -18,6 +18,7 @@ pub mod events;
 pub mod gallery;
 pub mod generate;
 pub mod library;
+pub mod linked;
 pub mod models;
 pub mod models_folder;
 pub mod session;
@@ -77,6 +78,8 @@ pub struct AppCore {
     pub describe: describe::DescribeState,
     /// Catalog/model-install state (e.g. pending family choices, API key cache).
     pub models: models::ModelsState,
+    /// Other apps' models folders being looked through (RAM only).
+    pub linked: linked::LinkedRuntime,
 }
 
 impl AppCore {
@@ -123,6 +126,7 @@ impl AppCore {
             gen: generate::GenState::default(),
             describe: describe::DescribeState::default(),
             models: models::ModelsState::default(),
+            linked: linked::LinkedRuntime::default(),
         }))
     }
 
@@ -134,6 +138,7 @@ impl AppCore {
         app::start_hardware_detection(self);
         downloads::start_event_forwarding(self);
         describe::start_idle_watchdog(self);
+        linked::start(self);
     }
 
     /// Stop engines (app exit).

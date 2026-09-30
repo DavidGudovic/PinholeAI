@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { DeletePreview, HardwareView, InstalledModel, RecommendedPick, Settings } from "../../lib/types";
+import type { DeletePreview, HardwareView, InstalledModel, LinkedFolder, RecommendedPick, Settings } from "../../lib/types";
 
 const hw = vi.hoisted(() => ({ ready: [] as (() => void)[] }));
 const api = vi.hoisted(() => ({
@@ -22,6 +22,10 @@ const api = vi.hoisted(() => ({
   }),
   onDownload: vi.fn(() => Promise.resolve(() => undefined)),
   listDownloads: vi.fn(() => Promise.resolve([])),
+  listLinkedFolders: vi.fn<() => Promise<LinkedFolder[]>>(() => Promise.resolve([])),
+  rescanLinkedFolders: vi.fn(() => Promise.resolve()),
+  removeLinkedFolder: vi.fn(() => Promise.resolve()),
+  installMissingParts: vi.fn(() => Promise.resolve({ groupId: "g" })),
 }));
 vi.mock("../../lib/api", async (orig) => ({ ...(await orig<typeof import("../../lib/api")>()), ...api }));
 
@@ -105,5 +109,36 @@ describe("InstalledView", () => {
     expect(await screen.findByText("models/test.safetensors")).toBeTruthy();
     expect(api.previewDelete).toHaveBeenCalledTimes(2);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Try again" })).toBeNull());
+  });
+
+  it("lists another app's folder; its models can't be deleted and get their parts from Pinhole's list", async () => {
+    const linked = { ...model("fits"), id: "m2", friendlyName: "Comfy model", linkedFolder: "ComfyUI", missingComponents: ["VAE · ae.safetensors"], civitaiVersionId: 5 };
+    api.listModels.mockResolvedValue([model("fits"), linked]);
+    api.listLinkedFolders.mockResolvedValue([
+      { id: "f1", path: "/home/me/ComfyUI", name: "ComfyUI", available: true, scanning: false, models: 1, addons: 2, parts: 1, notUsed: 3 },
+    ]);
+    render(<InstalledView onBrowse={() => undefined} />);
+    expect(await screen.findByText("1 model · 2 style add-ons · 1 part for other models")).toBeTruthy();
+    expect(screen.getByText("In ComfyUI")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete Test model" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Delete Comfy model" })).toBeNull();
+    // Looked through again once per visit.
+    await waitFor(() => expect(api.rescanLinkedFolders).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Get missing parts" }));
+    await waitFor(() => expect(api.installMissingParts).toHaveBeenCalledWith("m2"));
+    expect(await screen.findByText(/Downloading the missing parts for “Comfy model”/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Stop using ComfyUI" }));
+    await waitFor(() => expect(api.removeLinkedFolder).toHaveBeenCalledWith("f1"));
+  });
+
+  it("says when a linked folder's drive isn't connected", async () => {
+    api.listModels.mockResolvedValue([]);
+    api.listLinkedFolders.mockResolvedValue([
+      { id: "f1", path: "/mnt/usb/models", name: "models", available: false, scanning: false, models: 0, addons: 0, parts: 0, notUsed: 0 },
+    ]);
+    render(<InstalledView onBrowse={() => undefined} />);
+    expect(await screen.findByText(/Not connected\. Connect its drive/)).toBeTruthy();
   });
 });
