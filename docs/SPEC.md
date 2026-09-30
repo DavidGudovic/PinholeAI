@@ -228,8 +228,12 @@ Two modes, picked automatically:
 1. **Instruction edit** (default when an edit model is installed): the user types what to change:
    "make it evening with warm street lights" or "replace the mug with a water bottle". Uses the
    edit family (Qwen Image Edit 2511 preferred, Flux.1 Kontext as the lower-VRAM option) with
-   the image passed as `ref_images[0]`.
-   - Dial: **Stay close to original** (maps to the family's guidance setting).
+   the image passed as `ref_images[0]`. Installed generators whose architecture can also edit
+   from a reference image are offered too (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein
+   and dev); they rank after the dedicated edit models and stay in Create. Qwen-Image 2.1 can
+   edit as well but needs Qwen3-VL's vision weights, which are not in the registry yet.
+   - Dial: **Stay close to original** (maps to the family's guidance setting; hidden when the
+     family has a fixed CFG and no guidance, e.g. distilled FLUX.2 klein).
    - Optional **"Only change here"** brush: paint a mask → `mask_image`.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).

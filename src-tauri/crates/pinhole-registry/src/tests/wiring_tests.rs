@@ -866,6 +866,41 @@ fn stick_default_round_trips_for_every_family() {
     }
 }
 
+/// Generators that can also edit (FLUX.2) stay Create models, are offered in
+/// Edit, and their "Stay close" default reproduces the registry defaults.
+#[test]
+fn generators_that_edit_keep_create_dials_and_get_an_edit_default() {
+    let reg = shipped();
+    for id in ["flux2_klein_4b", "flux2_klein_9b_base", "flux2_dev"] {
+        let f = fam(id);
+        assert!(can_edit(f) && !is_edit_family(f), "{id}");
+    }
+    assert!(can_edit(fam("qwen_image_edit_2511")) && is_edit_family(fam("flux1_kontext")));
+    assert!(!can_edit(fam("sdxl")) && !can_edit(fam("qwen_image")));
+
+    // klein distilled: fixed CFG, no guidance → no dial to show.
+    assert!(!family_ui(reg, fam("flux2_klein_4b")).stay_close_shown);
+    let ui = family_ui(reg, fam("flux2_klein_9b_base"));
+    assert!(ui.stay_close_shown && !ui.is_edit_family);
+    assert!(approx(ui.stay_close_default, 1.0 - ui.stick_default));
+
+    for f in reg.families().filter(|f| can_edit(f)) {
+        let ui = family_ui(reg, f);
+        let p = resolve_params(
+            reg,
+            f,
+            &dials(Shape::Square, Quality::Balanced, ui.stay_close_default, 1),
+            &FineTune::default(),
+            GenMode::Edit,
+            &hw(16.0),
+        );
+        assert!(approx(p.cfg, ui.default_cfg), "{}: cfg {}", f.id, p.cfg);
+        if let (true, Some(g)) = (ui.stay_close_shown, f.defaults.guidance) {
+            assert!(approx(p.guidance.unwrap(), g), "{}", f.id);
+        }
+    }
+}
+
 // ----------------------------------------------------------------------------- families added 2026-09-28
 
 /// Required components for `family` at `vram`, wired to `/c/<component id>`.

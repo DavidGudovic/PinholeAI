@@ -59,7 +59,7 @@ pub fn installed_model_view(
                 .into_iter()
                 .map(|(_, c)| families::component_label(c))
                 .collect();
-            let is_edit = f.role.as_deref() == Some("edit") || f.modes.iter().any(|m| m == "edit");
+            let is_edit = pinhole_registry::wiring::is_edit_family(f);
             (
                 Some(need),
                 Some(fit),
@@ -378,6 +378,12 @@ mod tests {
         assert_eq!(v.civitai_version_id, Some(7));
         assert_eq!(v.base_model.as_deref(), Some("SDXL 1.0"));
         assert_eq!(v.style_badge, None, "no badge guessed for CivitAI files");
+
+        // A generator that can also edit: a Create model with the `edit` mode.
+        let k = model("k", "flux2_klein_4b", ModelKind::Diffusion, "k.gguf");
+        let v = installed_model_view(&reg, &index(vec![k.clone()]), &k, &hw(16.0));
+        assert!(!v.is_edit_model);
+        assert!(v.modes.iter().any(|m| m == "txt2img") && v.modes.iter().any(|m| m == "edit"));
 
         // No usable GPU: sized against RAM. SD 1.5 runs (slowly), Z-Image does not.
         let v = installed_model_view(&reg, &idx, &zit, &hw_cpu(32.0));
