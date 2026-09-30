@@ -121,12 +121,13 @@ Three rules. Nothing else is blocked: adult images of fictional adults (Safe mod
 setting, not a generation filter), swimwear, art nudes and every SFW edit of a real photo stay
 allowed.
 
-1. **Real photo made intimate.** The source is Imported, a face is found in it, **and** the result
+1. **Real photo made intimate.** The result is Imported, a face is found in one of its Imported
+   inputs (image 1, image 2 or a Create reference picture), **and** the result
    is clearly less clothed than the input: its intimate score crosses the threshold **and** is
    higher than the input's by a set margin. "Intimate" means nudity, underwear only, see-through
    clothing or sexual activity — confirm where the UK definition starts (§10) and set the
    threshold there. Comparing with the input is what keeps a beach photo edited to "make it
-   sunset" from being blocked. Applies to Edit (instruction and "Only change here") and Restyle.
+   sunset" from being blocked. Applies to every mode whose result is Imported (Edit, Restyle, Extend, Create with a reference picture).
 2. **Anyone who looks under 18, sexual.** Every mode, every source. The result is explicit
    **and** either:
    - photo style: the age model says under 18 with high confidence, or
@@ -222,12 +223,10 @@ blocking logic with mocked classifier scores; measure false positives on harmles
     install it themselves).
   - `recommended.realistic_detail` (Krea 2) and `recommended.edit` / `edit_alt` (FLUX.1 Kontext):
     one-click only once §3 ships and §6 licence acceptance is in place.
-- **Edit references** (changed 2026-09-30; two-image "Describe a change" and Create's reference
-  picture were built): the picture being edited may be Imported; **image 2 must be Generated**
-  (made in Pinhole), checked in the core (`generate.rs`, `SECOND_IMAGE_IMPORTED`) and in the UI
-  (no file picker for image 2; "Use as image 2" refuses an Imported result). Once the face
-  detector (§3) exists, an Imported image 2 without a face is allowed. A Create run with an
-  Imported reference picture makes an Imported result (§3.1), so rule 1 covers it.
+- **Edit references** (David, 2026-09-30): two-image "Describe a change" and Create's reference
+  picture stay, with any picture as input. Every Imported input (image 1, image 2, a Create
+  reference picture) makes the result Imported (§3.1), and rule 1's face check looks at all of
+  them, so a real person's face brought in as image 2 is covered by the image check (§3).
 - **"Edit this image" on CivitAI examples** stays; the image counts as Imported (§3.1).
 
 ---
@@ -392,7 +391,7 @@ templates, posts and UI.
 
 - [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
 - [x] §5 `sdxl_pony` removed from `recommended.anime`
-- [x] §5 Edit image 2 must be made in Pinhole (replaces the one-reference cap)
+- [x] §5 Edit references: covered by origin tracking + the image check (replaces the one-reference cap)
 - [ ] §7 acceptable-use section in the README
 - [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and

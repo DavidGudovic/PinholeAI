@@ -102,14 +102,6 @@ describe("use as image 2", () => {
     expect(store.getState().edit.secondImageId).toBeNull();
   });
 
-  it("refuses a result made from a picture the user added", () => {
-    const { store, actions } = setup();
-    store.dispatch({ type: "editLoad", ref: ref("a") });
-    store.dispatch({ type: "addResults", batch: null, images: [{ ...img("b"), origin: "imported" }], refs: [ref("b")] });
-    actions.sendToEditSecond("b");
-    expect(store.getState().edit.secondImageId).toBeNull();
-  });
-
   it("does nothing when the image is already image 1", () => {
     const { store, actions } = setup();
     store.dispatch({ type: "editLoad", ref: ref("a") });

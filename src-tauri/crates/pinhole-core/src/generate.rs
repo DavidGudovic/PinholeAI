@@ -2028,11 +2028,6 @@ async fn generate_inner(
             // The Edit tab sends the image being edited plus at most one more.
             for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
-                if source.is_some() && img.origin == Origin::Imported {
-                    // RELEASE-SPEC §5: a second picture could bring a real person's face
-                    // into the edit. Until the face check exists, it must be made in Pinhole.
-                    return Err(CoreError::invalid(SECOND_IMAGE_IMPORTED));
-                }
                 input_origins.push(img.origin);
                 if source.is_none() {
                     source = Some(img);
@@ -2576,9 +2571,6 @@ fn touch_last_used(core: &AppCore, model_id: &str) {
 }
 
 // ================================================================ upscale
-
-/// Refusal for an Edit's second picture that was brought in (RELEASE-SPEC §5).
-pub(crate) const SECOND_IMAGE_IMPORTED: &str = "The second picture has to be one made in Pinhole. Pictures from your computer can only be the picture you edit.";
 
 /// Refusal for sources the upscaler can't take: 2× also runs at 4× first.
 pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: the upscaler works at 4× first, up to 8192 pixels per side. Try a smaller image.";

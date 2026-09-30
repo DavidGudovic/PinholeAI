@@ -859,7 +859,6 @@ mod tests {
             .id
         };
         let a = img(10);
-        // Image 2 has to be made in Pinhole (RELEASE-SPEC §5).
         let sdxl = register_fake_model(&core, "sdxl");
         let b = generate::generate(&core, GenerateRequest::txt2img(sdxl, "a green bottle"))
             .await
@@ -945,7 +944,7 @@ mod tests {
             .unwrap();
         assert_eq!(r.images[0].origin, Origin::Imported);
 
-        // Edit: image 1 may be brought in; image 2 must be made in Pinhole.
+        // Edit: either image brought in → Imported.
         let edit = |ids: Vec<String>| {
             let mut req = GenerateRequest::txt2img(klein.clone(), "put the boat from image 2 here");
             req.mode = GenMode::Edit;
@@ -961,14 +960,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.images[0].origin, Origin::Generated);
-        let sent = mock.requests().len();
-        for image2 in [photo.clone(), restyled_photo.clone()] {
-            let err = generate::generate(&core, edit(vec![made.id.clone(), image2]))
-                .await
-                .unwrap_err();
-            assert_eq!(err.message, generate::SECOND_IMAGE_IMPORTED);
-        }
-        assert_eq!(mock.requests().len(), sent, "refused before the engine");
+        // A brought-in image 2 makes the result Imported too (the image check covers it).
+        let r = generate::generate(&core, edit(vec![made.id.clone(), restyled_photo]))
+            .await
+            .unwrap();
+        assert_eq!(r.images[0].origin, Origin::Imported);
     }
 
     #[tokio::test]

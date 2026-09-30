@@ -246,12 +246,9 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
       if (!session.get(req.refImageIds[0])) throw err("not_found", "The reference picture is no longer in memory. Add it again.");
     }
     const mask = req.maskImageId ? (session.get(req.maskImageId) ?? null) : null;
-    // Like Rust: image 2 must be made in Pinhole; a result is "imported" if any input is.
+    // Like Rust: a result is "imported" if any picture it's made from is.
     const inputs = [...(req.refImageIds ?? []).slice(0, req.mode === "edit" ? 2 : 1), ...(req.mode === "img2img" && req.initImageId ? [req.initImageId] : [])];
     const originOf = (id: string) => session.get(id)?.meta?.origin ?? "imported";
-    if (req.mode === "edit" && inputs.length > 1 && originOf(inputs[1]) !== "generated") {
-      throw err("invalid", "The second picture has to be one made in Pinhole. Pictures from your computer can only be the picture you edit.");
-    }
     const origin: ImageOrigin = inputs.some((id) => originOf(id) !== "generated") ? "imported" : "generated";
 
     // Model switch → "Loading <model>… (~10–30 s)" (shortened here).

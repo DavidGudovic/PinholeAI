@@ -383,10 +383,6 @@ export function makeActions(store: Store) {
       dispatch({ type: "editLoad", ref });
       if (edit.secondImageId === id) dispatch({ type: "editSetSecond", ref: null });
       toast("Loaded as image 1. Pick another image to use as image 2.");
-    } else if (get().results.find((r) => r.id === id)?.origin !== "generated") {
-      // RELEASE-SPEC §5: image 2 could bring a real person's face into the edit.
-      toast("Image 2 has to be a picture made in Pinhole. This one came from a picture you added.");
-      return;
     } else {
       dispatch({ type: "editSetSecond", ref });
       dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
@@ -438,6 +434,19 @@ export function makeActions(store: Store) {
     }
     dispatch({ type: "createSetRef", ref });
   }
+  /** The optional second image for "Describe a change". */
+  async function importSecondToEdit(blob: Blob) {
+    if (editBusy(get())) throw busyError();
+    const ref = await importBlob(blob).catch((e) => {
+      throw api.asCoreError(e);
+    });
+    if (editBusy(get())) {
+      releaseRefs([ref], true);
+      throw busyError();
+    }
+    dispatch({ type: "editSetSecond", ref });
+  }
+
 
 
   async function importToDescribe(blob: Blob) {
@@ -623,6 +632,7 @@ export function makeActions(store: Store) {
     removeResult,
     importToEdit,
     importCreateReference,
+    importSecondToEdit,
     importToDescribe,
     runEdit,
     upscaleEdit,
