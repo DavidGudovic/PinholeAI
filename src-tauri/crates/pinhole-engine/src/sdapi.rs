@@ -356,11 +356,22 @@ enum Http {
     Plain(reqwest::Client),
 }
 
-/// Client for one sd-server instance.
+/// Environment variable the patched sd-server reads its per-launch API key from
+/// (`--api-key`, env form so the key doesn't show up in the process list).
+/// Upstream sd-server at the current pin ignores it (and the bearer header).
+pub const API_KEY_ENV: &str = "SD_API_KEY";
+
+/// Patched sd-server flag: refuse every request that carries an `Origin` header
+/// (web pages) and send no CORS headers. Upstream sd-server at the current pin
+/// doesn't know it and would refuse to start.
+pub const REJECT_ORIGIN_FLAG: &str = "--reject-origin";
+
+/// Client for one sd-server instance. `Debug` leaves out the API key.
 #[derive(Clone)]
 pub struct SdClient {
     http: Http,
     base: String,
+    api_key: Option<String>,
 }
 
 impl std::fmt::Debug for SdClient {
@@ -382,6 +393,20 @@ impl SdClient {
         Self {
             http: Http::Local(local),
             base: base.into().trim_end_matches('/').to_string(),
+            api_key: None,
+        }
+    }
+
+    /// Send `Authorization: Bearer <key>` with every request.
+    pub fn with_api_key(mut self, key: impl Into<String>) -> Self {
+        self.api_key = Some(key.into()).filter(|k| !k.is_empty());
+        self
+    }
+
+    fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(k) => rb.bearer_auth(k),
+            None => rb,
         }
     }
 
@@ -400,6 +425,7 @@ impl SdClient {
         Self {
             http: Http::Plain(client),
             base,
+            api_key: None,
         }
     }
 
@@ -408,13 +434,14 @@ impl SdClient {
     }
 
     fn get(&self, path: &str) -> Result<reqwest::RequestBuilder, ApiError> {
-        match &self.http {
+        let rb = match &self.http {
             Http::Local(c) => c
                 .get(&self.base, path)
-                .map_err(|e| ApiError::Net(e.to_string())),
+                .map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
-            Http::Plain(c) => Ok(c.get(format!("{}{}", self.base, path))),
-        }
+            Http::Plain(c) => c.get(format!("{}{}", self.base, path)),
+        };
+        Ok(self.auth(rb))
     }
 
     fn post<B: Serialize + ?Sized>(
@@ -422,13 +449,14 @@ impl SdClient {
         path: &str,
         body: &B,
     ) -> Result<reqwest::RequestBuilder, ApiError> {
-        match &self.http {
+        let rb = match &self.http {
             Http::Local(c) => c
                 .post_json(&self.base, path, body)
-                .map_err(|e| ApiError::Net(e.to_string())),
+                .map_err(|e| ApiError::Net(e.to_string()))?,
             #[cfg(any(test, feature = "test-util"))]
-            Http::Plain(c) => Ok(c.post(format!("{}{}", self.base, path)).json(body)),
-        }
+            Http::Plain(c) => c.post(format!("{}{}", self.base, path)).json(body),
+        };
+        Ok(self.auth(rb))
     }
 
     /// `true` once `GET /sdcpp/v1/capabilities` answers 200 (model loaded).

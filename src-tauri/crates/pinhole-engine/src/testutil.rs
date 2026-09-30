@@ -40,6 +40,9 @@ pub struct MockOptions {
     pub engine_log: Option<Arc<crate::LogBuffer>>,
     /// Cap for the side length of returned images (keeps tests fast).
     pub max_side: u32,
+    /// Like the patched sd-server with `--api-key` / `SD_API_KEY`: every
+    /// request needs `Authorization: Bearer <key>` (401 otherwise).
+    pub api_key: Option<String>,
 }
 
 impl Default for MockOptions {
@@ -51,6 +54,7 @@ impl Default for MockOptions {
             fail_outputs: Vec::new(),
             engine_log: None,
             max_side: 1024,
+            api_key: None,
         }
     }
 }
@@ -109,7 +113,16 @@ impl MockSdServer {
                         let Ok((sock, _)) = acc else { continue };
                         let (st, opts) = (st.clone(), opts.clone());
                         tokio::spawn(async move {
-                            let _ = serve(sock, move |m, p, _h, b| sd_route(&st, &opts, m, p, b)).await;
+                            let _ = serve(sock, move |m, p, h, b| {
+                                let authorized = opts.api_key.as_ref().is_none_or(|k| {
+                                    let want = format!("Bearer {k}");
+                                    h.iter().any(|(n, v)| n.eq_ignore_ascii_case("authorization") && *v == want)
+                                });
+                                if !authorized {
+                                    return (401, json!({"error": "invalid or missing API key"}));
+                                }
+                                sd_route(&st, &opts, m, p, b)
+                            }).await;
                         });
                     }
                 }
