@@ -60,6 +60,8 @@ export interface CreateParams {
   /** prompt-bearing (negativePrompt). Unset/null fields = registry default. */
   fineTune: FineTune;
   loras: LoraUse[];
+  /** Optional reference picture ("in the style of this picture"); session RAM. Never in presets. */
+  refImageId: string | null;
 }
 
 /** The request behind a batch of results — used by "Variations". prompt-bearing, memory only. */
@@ -195,6 +197,7 @@ export const initialCreate = (): CreateParams => ({
   count: 1,
   fineTune: {},
   loras: [],
+  refImageId: null,
 });
 
 export const initialEdit = (): EditParams => ({
@@ -283,6 +286,7 @@ export type Action =
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
   | { type: "editSetSecond"; ref: ImgRef | null }
+  | { type: "createSetRef"; ref: ImgRef | null }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
   | { type: "describeClear" }
@@ -296,6 +300,16 @@ export type Action =
 /** Models usable in the Create tab (text-to-image). */
 export function createModels(models: InstalledModel[] | null): InstalledModel[] {
   return (models ?? []).filter((m) => m.modes.includes("txt2img") && !m.isEditModel);
+}
+
+/** Create models that can take a reference picture (generators that can also edit: FLUX.2). */
+export const takesReference = (m: Pick<InstalledModel, "modes"> | null | undefined) => !!m?.modes.includes("edit");
+
+/** The installed Create model to suggest for a reference picture: a ready one that fits, most recently used first. */
+export function referenceModel(models: InstalledModel[] | null): InstalledModel | null {
+  const able = createModels(models).filter(takesReference);
+  const fitting = able.filter((m) => m.fit !== "tooBig");
+  return pickDefaultModel(fitting.length ? fitting : able);
 }
 
 /** Installed instruction-edit models. */
@@ -347,8 +361,13 @@ export function loraCompatible(lora: InstalledLora, modelFamily: string | null |
 }
 
 /** Every session image id the UI still shows. */
-export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job">>): Set<string> {
+export function referencedImageIds(
+  s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job" | "create" | "batches">>,
+): Set<string> {
   const ids = new Set<string>();
+  if (s.create?.refImageId) ids.add(s.create.refImageId);
+  // "Variations" re-sends a batch's reference picture.
+  for (const b of Object.values(s.batches ?? {})) for (const id of b.request.refImageIds ?? []) ids.add(id);
   for (const id of s.job?.imageIds ?? []) ids.add(id);
   for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);
@@ -360,11 +379,7 @@ export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "descr
 
 /** Drop image refs nothing points at (their blob URLs get revoked by the store). */
 function pruneImages(s: AppState): AppState {
-  const keep = referencedImageIds(s);
-  const keys = Object.keys(s.images);
-  if (keys.every((k) => keep.has(k))) return s;
-  const images: Record<string, ImgRef> = {};
-  for (const k of keys) if (keep.has(k)) images[k] = s.images[k];
+  // Batches first: a batch whose results are all gone no longer holds its reference picture.
   const batches: Record<string, Batch> = {};
   const resultBatch: Record<string, string> = {};
   for (const r of s.results) {
@@ -374,6 +389,11 @@ function pruneImages(s: AppState): AppState {
       if (s.batches[b]) batches[b] = s.batches[b];
     }
   }
+  const keep = referencedImageIds({ ...s, batches });
+  const keys = Object.keys(s.images);
+  if (keys.every((k) => keep.has(k))) return s;
+  const images: Record<string, ImgRef> = {};
+  for (const k of keys) if (keep.has(k)) images[k] = s.images[k];
   return { ...s, images, batches, resultBatch };
 }
 
@@ -596,6 +616,10 @@ function inner(s: AppState, a: Action): AppState {
       return a.ref
         ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id } }
         : { ...s, edit: { ...s.edit, secondImageId: null } };
+    case "createSetRef":
+      return a.ref
+        ? { ...s, images: withRefs(s.images, [a.ref]), create: { ...s.create, refImageId: a.ref.id } }
+        : { ...s, create: { ...s.create, refImageId: null } };
     case "patchEdit":
       return { ...s, edit: { ...s.edit, ...a.patch } };
     case "describeLoad":
@@ -614,7 +638,7 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: {},
-        create: { ...c, prompt: "", presetId: c.presetId, fineTune: compactFineTune({ vaeTiling }) },
+        create: { ...c, prompt: "", presetId: c.presetId, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
         results: [],
         selectedResultId: null,
         batches: {},

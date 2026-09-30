@@ -92,6 +92,7 @@ export function buildCreateRequest(
     fineTune: effectiveFineTune(c.fineTune, opts.ui),
     loras: activeLoras(c, opts.loras, opts.model, opts.settings?.addTriggerWords ?? true),
     addTriggerWords: true,
+    ...(c.refImageId ? { refImageIds: [c.refImageId] } : {}),
   };
 }
 
