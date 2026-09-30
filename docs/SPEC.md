@@ -335,10 +335,13 @@ list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, 
 Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
 **Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
 sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
-else the 3B. Only installed helpers can be picked; a removed one reads as Automatic. **Models →
+else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off (none yet). The word check runs on the output of every helper model.
+mode is Off, and while Off, Automatic uses it first once installed: Qwen2.5-VL 7B abliterated
+(Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
+another installed helper still uses). Installed models still lists it while Safe mode is On, so it
+can be removed. The word check runs on the output of every helper model.
 
 ### 5.3 Describe (img2text)
 
