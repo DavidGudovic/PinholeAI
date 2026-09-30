@@ -1630,48 +1630,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn word_check_blocks_generate_before_the_engine() {
+    async fn word_check_leaves_the_users_own_prompt_alone() {
+        // Only text the Describe model writes is checked (David, 2026-09-30); the prompt at
+        // Generate is left to the release image check.
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
-        // The sexual half comes from a saved style: the combined prompt is what is checked.
-        let style = crate::library::save_style(
-            &core,
-            pinhole_store::styles::Style {
-                id: String::new(),
-                name: "Check".into(),
-                positive: "nude".into(),
-                negative: None,
-                families: vec![],
-                thumbnail: None,
-                builtin: false,
-            },
-        )
-        .unwrap();
-        let mut req = GenerateRequest::txt2img(model.clone(), "a child");
-        req.style_id = Some(style.id.clone());
-        let e = generate::generate(&core, req).await.unwrap_err();
-        assert_eq!(e.code, "blocked");
-        assert!(e.details.is_none());
-        assert!(mock.requests().is_empty(), "nothing reaches the engine");
-
-        // An add-on's trigger words count even when they aren't added to the prompt.
-        let lora = register_fake_lora(&core, "sdxl", &["loli"]);
-        let mut req = GenerateRequest::txt2img(model.clone(), "1girl, nude");
-        req.loras = vec![generate::LoraUse {
-            lora_id: lora,
-            weight: 1.0,
-            words: None,
-        }];
-        req.add_trigger_words = false;
-        let e = generate::generate(&core, req).await.unwrap_err();
-        assert_eq!(e.code, "blocked");
-        assert!(mock.requests().is_empty());
-
-        // Under-18 terms in the negative prompt are how people keep them out.
-        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
-        req.fine_tune.negative_prompt = Some("child, loli".into());
+        let req = GenerateRequest::txt2img(model, "a child, nude");
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
     }
@@ -1694,16 +1660,6 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, "blocked", "the improved text isn't shown");
-        let sent = llama.requests().len();
-        let e = describe::improve_prompt(&core, "loli, lewd", None, &[])
-            .await
-            .unwrap_err();
-        assert_eq!(e.code, "blocked");
-        assert_eq!(
-            llama.requests().len(),
-            sent,
-            "the idea isn't sent to the model"
-        );
     }
 
     #[tokio::test]

@@ -506,7 +506,6 @@ pub async fn improve_prompt(
             "That prompt is already long. Improve works on shorter ideas.",
         ));
     }
-    crate::text_check::check(idea)?;
     let _folder = crate::models::folder_read(core)?;
     let reg = core.registry();
     let template = family_id
