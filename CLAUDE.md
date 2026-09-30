@@ -140,9 +140,8 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
   Don't frame it as hiding what someone made ("forgets everything", "wipes your tracks", "nobody
   will see"). The top-bar control is **Reset**. No one-click adult-content shortcuts in the UI.
 - Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
-  disk", "never saved"), and never frame it as privacy or leaving no trace. The reason is a tidy
-  drive (other tools auto-save every image): say it at most once per surface, e.g. "Won't fill up
-  your drive. Only the pictures you save are kept." The privacy rules above still apply to the code.
+  disk", "never saved"). Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save." The privacy rules above still apply to the code.
 - Edit examples change scenes, objects, lighting or style — never a real person's body or clothes
   while keeping their face.
 - Screenshots and examples: safe for work, fictional subjects, no real people.

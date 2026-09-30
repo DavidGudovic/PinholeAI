@@ -1,7 +1,7 @@
 // OWNER: frontend B. Full-screen first-run flow (engine download → recommended models).
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ArrowLeft, ArrowRight, Check, CircleCheck, Cpu, Download, Gpu, HardDrive, MemoryStick, RotateCw, ShieldCheck, Sparkles, TriangleAlert, WifiOff } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CircleCheck, Cpu, Download, Gpu, Lock, MemoryStick, RotateCw, ShieldCheck, Sparkles, TriangleAlert, WifiOff } from "lucide-react";
 import { asCoreError, getHardware, getSettings, onHardwareReady, setSettings } from "../lib/api";
 import type { CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
@@ -160,8 +160,8 @@ export function FirstRun(props: { onDone: () => void }) {
                 Your prompts and images stay on your computer. Pinhole only goes online when you browse CivitAI, download something or check for updates.
               </p>
               <ul className="mx-auto mt-8 grid max-w-lg gap-4 text-left text-sm text-neutral-600 dark:text-neutral-400">
-                <Feature icon={<HardDrive className="h-4 w-4" />} title="Won't fill up your drive">
-                  Only the pictures you save are kept.
+                <Feature icon={<Lock className="h-4 w-4" />} title="You choose what gets saved">
+                  Nothing is saved until you press Save.
                 </Feature>
                 <Feature icon={<Sparkles className="h-4 w-4" />} title="No expert knowledge needed">
                   Pinhole picks the right models and settings for your computer.
