@@ -360,3 +360,13 @@ describe("reference picture", () => {
     expect(store.getState().create.refImageId).toBeNull();
   });
 });
+
+describe("prompt box toolbar", () => {
+  it("wraps onto a second line instead of squeezing Style under the Improve model picker", async () => {
+    withApp(createStore(), <PromptBox ui={null} onOpenPaste={() => undefined} onApplyPasted={() => undefined} />);
+    const improve = await screen.findByRole("button", { name: /Improve/ });
+    const toolbar = improve.closest(".border-t") as HTMLElement;
+    expect(toolbar.className).toContain("flex-wrap");
+    expect(toolbar.querySelector("[aria-label^='Style']")).toBeTruthy();
+  });
+});

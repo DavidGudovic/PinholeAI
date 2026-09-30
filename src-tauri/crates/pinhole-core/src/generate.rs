@@ -931,11 +931,15 @@ fn component_label(kind: &str) -> &'static str {
 /// Diffusion → `--diffusion-model`): CivitAI all-in-one Flux files are
 /// checkpoints of a diffusion-only family and carry their own VAE/encoders, so
 /// for those, missing shared components are not an error.
+/// `edit`: the run edits a reference image. Only then is a missing vision
+/// encoder (`llm_vision`) an error: a generator that can also edit (Qwen-Image
+/// 2.1) still creates without it.
 pub(crate) fn model_files(
     core: &AppCore,
     model: &InstalledFile,
     family: &Family,
     hw: &HwContext,
+    edit: bool,
 ) -> CoreResult<ModelFiles> {
     let layout = match model.kind {
         ModelKind::Checkpoint => Layout::AllInOne,
@@ -967,6 +971,7 @@ pub(crate) fn model_files(
                 components.insert(rc.kind.clone(), idx.abs_path(&core.data, f));
             }
             _ if components_optional => {}
+            _ if rc.kind == "llm_vision" && !edit => {}
             _ => {
                 let file = reg
                     .component(&rc.component_id)
@@ -2022,7 +2027,13 @@ async fn generate_inner(
         None
     };
 
-    let files = model_files(core, &prep.model, &prep.family, &hw)?;
+    let files = model_files(
+        core,
+        &prep.model,
+        &prep.family,
+        &hw,
+        req.mode == GenMode::Edit,
+    )?;
     let extras = LaunchExtras {
         lora_dir: Some(core.data.models(ModelKind::Lora)),
         upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),
@@ -2634,7 +2645,7 @@ async fn upscale_inner(
             let prep_model = model_and_family(core, &model_id)?;
             label.clone_from(&prep_model.0.friendly_name);
             let hw = crate::app::hw_context(core);
-            let files = model_files(core, &prep_model.0, &prep_model.1, &hw)?;
+            let files = model_files(core, &prep_model.0, &prep_model.1, &hw, false)?;
             let extras = LaunchExtras {
                 lora_dir: Some(core.data.models(ModelKind::Lora)),
                 upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),

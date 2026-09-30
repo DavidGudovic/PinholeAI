@@ -388,6 +388,18 @@ mod tests {
         assert_eq!(v.base_model.as_deref(), Some("SDXL 1.0"));
         assert_eq!(v.style_badge, None, "no badge guessed for CivitAI files");
 
+        // Qwen-Image 2.1 installed before its vision tower was a part: it asks for it.
+        let q21 = model("q21", "qwen_image_21", ModelKind::Diffusion, "q21.gguf");
+        let v = installed_model_view(&reg, &index(vec![q21.clone()]), &q21, &hw(16.0));
+        assert!(v.multi_ref && !v.is_edit_model && v.modes.iter().any(|m| m == "edit"));
+        assert!(
+            v.missing_components
+                .iter()
+                .any(|m| m == "Vision encoder · mmproj-Qwen3VL-8B-Instruct-F16.gguf"),
+            "{:?}",
+            v.missing_components
+        );
+
         // A generator that can also edit: a Create model with the `edit` mode.
         let k = model("k", "flux2_klein_4b", ModelKind::Diffusion, "k.gguf");
         let v = installed_model_view(&reg, &index(vec![k.clone()]), &k, &hw(16.0));
