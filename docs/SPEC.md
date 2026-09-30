@@ -695,8 +695,9 @@ build is shared.
 - **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
   Prompts are never sent to a server for moderation. Already in: a word check
   (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,
-  whatever Safe mode says, on what the Describe model writes (Describe and Improve my prompt).
-  The user's own prompt isn't checked; that is left to the release image check.
+  whatever Safe mode says: the prompt at Generate in Create and every Edit mode (after styles,
+  trigger words and add-ons), the idea sent to Improve my prompt, what Describe / Improve write
+  back, and Browse search text.
 
 ### Implementation decisions (v1 build-out)
 - **Live TAESD preview is deferred**: `sd-server` has no preview API and `--taesd` replaces the

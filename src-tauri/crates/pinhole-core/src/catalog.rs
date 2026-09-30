@@ -160,6 +160,7 @@ pub async fn browse(
     mut query: BrowseQuery,
     for_family: Option<String>,
 ) -> CoreResult<BrowsePage> {
+    crate::text_check::check(&query.query)?;
     let generation = core.models.browse_gen.fetch_add(1, Ordering::SeqCst) + 1;
     if core.offline.get() {
         return Ok(BrowsePage::offline(query.cursor));
@@ -502,6 +503,15 @@ mod tests {
         core.offline.set(true);
         let page = browse(&core, BrowseQuery::default(), None).await.unwrap();
         assert!(page.offline && page.items.is_empty());
+        let blocked = BrowseQuery {
+            query: "loli nsfw".into(),
+            ..BrowseQuery::default()
+        };
+        assert_eq!(
+            browse(&core, blocked, None).await.unwrap_err().code,
+            "blocked",
+            "the word check runs on Browse search text"
+        );
         assert_eq!(
             fetch_preview(&core, "https://evil.example/x.jpeg")
                 .await
