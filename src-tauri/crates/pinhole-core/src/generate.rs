@@ -1992,9 +1992,15 @@ async fn generate_inner(
         Some((src, mask)) => {
             let area = u64::from(params.width) * u64::from(params.height);
             let multiple = wiring::size_multiple(&prep.family);
-            let plan = DetailPlan::new(src.bytes.as_slice(), mask.bytes.as_slice(), |w, h| {
-                size_like(w, h, area, multiple)
+            // Decode, resize, blur and encode: off the async workers.
+            let (src_bytes, mask_bytes) = (src.bytes.clone(), mask.bytes.clone());
+            let plan = tokio::task::spawn_blocking(move || {
+                DetailPlan::new(&src_bytes, &mask_bytes, |w, h| {
+                    size_like(w, h, area, multiple)
+                })
             })
+            .await
+            .map_err(|_| CoreError::internal("Fixing details stopped unexpectedly."))?
             .map_err(|e| match e {
                 DetailError::NothingPainted => {
                     CoreError::invalid("Paint over the spot to fix first.")
@@ -2004,7 +2010,7 @@ async fn generate_inner(
             (width, height) = plan.work;
             init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
             mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
-            Some(plan)
+            Some(Arc::new(plan))
         }
         None => None,
     };
@@ -2153,12 +2159,17 @@ async fn generate_inner(
         })?;
         if let Some(plan) = &fix {
             // Paste the redrawn box back into the whole image.
-            png = plan.blend(&png).map_err(|_| {
-                CoreError::new(
-                    "engine_failed",
-                    "The engine returned a damaged image. Try again.",
-                )
-            })?;
+            let plan = plan.clone();
+            png = tokio::task::spawn_blocking(move || plan.blend(&png))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(|| {
+                    CoreError::new(
+                        "engine_failed",
+                        "The engine returned a damaged image. Try again.",
+                    )
+                })?;
         }
         let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
         let meta = ResultImage {

@@ -250,7 +250,8 @@ Two modes, picked automatically:
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
 3. **Fix details** (same models as Restyle): the user paints over a small spot such as a face or
    hand; an optional "What is it?" text is the prompt. Rust takes a padded box around the mask
-   (a quarter of its longer side, at least 32 px; at least 128 px and at most 2:1 overall),
+   (a quarter of its longer side, at least 32 px; at least 128 px and no more than 2:1 where the
+   image allows),
    scales it to about the Quality dial's native area, inpaints only that box (img2img +
    `mask_image`, one image, no hires fix), scales the result back down and pastes it into the
    source with a feathered edge. The result keeps the source's size; no face detector is used.
