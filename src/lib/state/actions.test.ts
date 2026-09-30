@@ -35,6 +35,13 @@ vi.mock("../api", async (orig) => {
   };
 });
 
+let background = false;
+const notifyDone = vi.fn();
+vi.mock("./platform", async (orig) => {
+  const real = await orig<typeof import("./platform")>();
+  return { ...real, windowInBackground: () => background, notifyDone: (sound: boolean) => notifyDone(sound), primeSound: () => undefined };
+});
+
 const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
@@ -67,6 +74,7 @@ beforeEach(() => {
   failGetImage = new Set();
   globalThis.URL.createObjectURL = vi.fn((b: Blob) => `blob:${b.size}`) as typeof URL.createObjectURL;
   globalThis.URL.revokeObjectURL = vi.fn();
+  background = false;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -550,5 +558,75 @@ describe("queue", () => {
     await tick();
     expect(apiMod.generate).toHaveBeenCalledTimes(1);
     expect(store.getState().job).toBeNull();
+  });
+});
+
+describe("unsaved pictures", () => {
+  it("lets Reset and close go ahead when everything is saved, and asks otherwise", () => {
+    const { store, actions } = setup();
+    expect(actions.requestLeave("close")).toBe(true);
+    store.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] });
+    expect(actions.requestLeave("close")).toBe(false);
+    expect(store.getState().leave).toBe("close");
+    store.dispatch({ type: "askLeave", what: null });
+    store.dispatch({ type: "markSaved", entries: [{ id: "a", path: "/x/a.png" }] });
+    expect(actions.requestLeave("clear")).toBe(true);
+    expect(store.getState().leave).toBeNull();
+  });
+
+  it("remembers the prompt of each Generate for Up/Down recall", async () => {
+    const { store, actions } = setup();
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await run;
+    expect(store.getState().promptHistory).toEqual(["a lighthouse"]);
+  });
+});
+
+describe("done alert", () => {
+  it("flashes when a picture finishes while the window is in the background", async () => {
+    const { store, actions } = setup();
+    background = true;
+    store.dispatch({ type: "setSettings", settings: { soundOnDone: true } as never });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await run;
+    expect(notifyDone).toHaveBeenCalledWith(true);
+  });
+
+  it("stays quiet while the window is in front, on cancel, and until the queue is empty", async () => {
+    const { store, actions } = setup();
+    // The fake listModels() returns nothing, which empties the list after each batch.
+    const restore = async () => {
+      await tick();
+      store.dispatch({ type: "setModels", models: [model] });
+    };
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    await restore();
+    expect(notifyDone).not.toHaveBeenCalled();
+
+    background = true;
+    const cancelled = actions.generateCreate();
+    await tick();
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await cancelled;
+    await restore();
+    expect(notifyDone).not.toHaveBeenCalled();
+
+    const one = actions.generateCreate();
+    await tick();
+    const two = actions.generateCreate(); // queued behind the first
+    pending!({ images: [img("b")] } as GenerateResult);
+    await one;
+    expect(notifyDone).not.toHaveBeenCalled();
+    await tick();
+    pending!({ images: [img("c")] } as GenerateResult);
+    await two;
+    expect(notifyDone).toHaveBeenCalledTimes(1);
   });
 });

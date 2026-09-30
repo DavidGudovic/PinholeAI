@@ -64,7 +64,7 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <Button
           variant="ghost"
           size="md"
-          onClick={() => void actions.clearSession()}
+          onClick={() => void actions.clearSessionChecked()}
           title="Start over: clears the prompt fields and every unsaved image"
           className="px-2.5"
         >

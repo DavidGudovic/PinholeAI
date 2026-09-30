@@ -183,6 +183,12 @@ export interface AppState {
   batches: Record<string, Batch>;
   /** result image id → batch id */
   resultBatch: Record<string, string>;
+  /** image id → where it was saved this session (paths only). Drives the "unsaved pictures" warning. */
+  saved: Record<string, string>;
+  /** Prompts sent this session, oldest first. Memory only; Up/Down in the prompt box. */
+  promptHistory: string[];
+  /** Waiting for the user to decide what to do about unsaved pictures before closing / resetting. */
+  leave: "close" | "clear" | null;
   edit: EditParams;
   describe: DescribeParams;
   job: Job | null;
@@ -248,6 +254,9 @@ export function initialState(): AppState {
     selectedResultId: null,
     batches: {},
     resultBatch: {},
+    saved: {},
+    promptHistory: [],
+    leave: null,
     edit: initialEdit(),
     describe: initialDescribe(),
     job: null,
@@ -284,6 +293,9 @@ export type Action =
   | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[] }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
+  | { type: "markSaved"; entries: { id: string; path: string }[] }
+  | { type: "pushPrompt"; prompt: string }
+  | { type: "askLeave"; what: "close" | "clear" | null }
   | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
@@ -369,6 +381,15 @@ export function pickedTriggerWords(u: LoraUse, lora: InstalledLora | undefined, 
 export function loraCompatible(lora: InstalledLora, modelFamily: string | null | undefined): boolean {
   if (!lora.familyId || !modelFamily) return true;
   return baseArch(lora.familyId) === baseArch(modelFamily);
+}
+
+export const PROMPT_HISTORY_MAX = 50;
+
+/** Pictures made this session (Create results and Edit results) that haven't been saved yet. */
+export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved">): string[] {
+  const ids = new Set<string>(s.results.map((r) => r.id));
+  for (const n of s.edit.chain) if (n.meta) ids.add(n.imageId);
+  return [...ids].filter((id) => !s.saved[id]);
 }
 
 /** Every session image id the UI still shows. */
@@ -575,6 +596,18 @@ function inner(s: AppState, a: Action): AppState {
       const selectedResultId = s.selectedResultId === a.id ? (results[Math.min(i, results.length - 1)]?.id ?? null) : s.selectedResultId;
       return { ...s, results, selectedResultId };
     }
+    case "markSaved": {
+      const saved = { ...s.saved };
+      for (const e of a.entries) saved[e.id] = e.path;
+      return { ...s, saved };
+    }
+    case "pushPrompt": {
+      const p = a.prompt.trim();
+      if (!p || s.promptHistory[s.promptHistory.length - 1] === p) return s;
+      return { ...s, promptHistory: [...s.promptHistory, p].slice(-PROMPT_HISTORY_MAX) };
+    }
+    case "askLeave":
+      return s.leave === a.what ? s : { ...s, leave: a.what };
     case "jobStart":
       return {
         ...s,
@@ -654,6 +687,9 @@ function inner(s: AppState, a: Action): AppState {
         selectedResultId: null,
         batches: {},
         resultBatch: {},
+        saved: {},
+        promptHistory: [],
+        leave: null,
         edit: { ...initialEdit(), mode: s.edit.mode, editModelId: s.edit.editModelId, restyleModelId: s.edit.restyleModelId, loras: s.edit.loras },
         describe: { ...initialDescribe(), style: s.describe.style },
         queue: [],

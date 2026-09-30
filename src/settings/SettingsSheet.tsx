@@ -401,6 +401,11 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you, in memory only. Pick which ones on the add-on’s chip under the prompt."
           control={<Toggle checked={settings.addTriggerWords} onChange={(v) => update({ addTriggerWords: v })} label={<span className="sr-only">Add trigger words automatically</span>} />}
         />
+        <Row
+          label="Play a soft sound when a picture is ready"
+          hint="Only when Pinhole is in the background. The taskbar icon flashes either way."
+          control={<Toggle checked={settings.soundOnDone} onChange={(v) => update({ soundOnDone: v })} label={<span className="sr-only">Play a soft sound when a picture is ready</span>} />}
+        />
       </Section>
 
       <Section title="Helper models">

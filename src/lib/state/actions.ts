@@ -12,6 +12,7 @@ import {
   isActiveDownload,
   loraCompatible,
   takesReference,
+  unsavedIds,
   willQueue,
   type EditMode,
   type ImgRef,
@@ -23,7 +24,7 @@ import {
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
-import { canSaveAs, chooseSavePath, copyText } from "./platform";
+import { canSaveAs, chooseFolder, chooseSavePath, closeWindow, copyText, notifyDone, primeSound, windowInBackground } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
 
 let uidCounter = 0;
@@ -102,12 +103,18 @@ export function makeActions(store: Store) {
     if (get().job) throw busyError();
     cancelRequested = false;
     dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
+    if (get().settings?.soundOnDone) primeSound();
+    let ok = false;
     try {
-      return await work();
+      const out = await work();
+      ok = true;
+      return out;
     } catch (e) {
       throw api.asCoreError(e);
     } finally {
       dispatch({ type: "jobEnd" });
+      // Finished while the user is elsewhere (and nothing else is waiting): flash the taskbar, chime if asked.
+      if (ok && !get().queue.length && windowInBackground()) notifyDone(!!get().settings?.soundOnDone);
       startNextQueued();
     }
   }
@@ -211,6 +218,7 @@ export function makeActions(store: Store) {
       throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Switch to a model that can, or remove the picture.`, details: null } as CoreError;
     }
     const { create, loras, settings } = s;
+    dispatch({ type: "pushPrompt", prompt: create.prompt });
     const imageIds = create.refImageId ? [create.refImageId] : [];
     await queueBatch(
       create.count,
@@ -298,6 +306,7 @@ export function makeActions(store: Store) {
   // ---------------------------------------------------------------- results
   async function save(id: string) {
     const saved = await api.saveImage(id);
+    dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
     toast(`Saved to ${saved.path}`, { action: { label: "Show folder", run: () => void api.openOutputsFolder() }, ms: 8000 });
     return saved;
   }
@@ -307,8 +316,35 @@ export function makeActions(store: Store) {
     const path = await chooseSavePath(`pinhole_${seed ?? "image"}.png`);
     if (!path) return null;
     const saved = await api.saveImageAs(id, path);
+    dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
     toast(`Saved to ${saved.path}`);
     return saved;
+  }
+
+  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled or some failed. */
+  async function saveAll(): Promise<boolean> {
+    const ids = unsavedIds(get());
+    if (!ids.length) return true;
+    const dir = await chooseFolder("Save all pictures to…");
+    if (!dir) return false;
+    const batch = await api.saveImagesTo(ids, dir);
+    dispatch({ type: "markSaved", entries: batch.saved });
+    const n = batch.saved.length;
+    toast(batch.failed ? `Saved ${n} of ${n + batch.failed} pictures to ${dir}` : `Saved ${n} ${n === 1 ? "picture" : "pictures"} to ${dir}`, { ms: 8000 });
+    return batch.failed === 0;
+  }
+
+  /** The window is closing (or Reset was pressed): true = go ahead; false = unsaved pictures, the question dialog is now showing. */
+  function requestLeave(what: "close" | "clear"): boolean {
+    if (!unsavedIds(get()).length) return true;
+    dispatch({ type: "askLeave", what });
+    return false;
+  }
+
+  async function finishLeave(what: "close" | "clear") {
+    dispatch({ type: "askLeave", what: null });
+    if (what === "close") await closeWindow();
+    else await clearSession();
   }
 
   async function copyImage(id: string) {
@@ -577,6 +613,11 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- session
+  /** The Reset button: asks first when there are unsaved pictures. */
+  async function clearSessionChecked() {
+    if (requestLeave("clear")) await clearSession();
+  }
+
   async function clearSession() {
     resetting = true;
     try {
@@ -620,6 +661,9 @@ export function makeActions(store: Store) {
     cancel,
     save,
     saveAs,
+    saveAll,
+    requestLeave,
+    finishLeave,
     copyImage,
     copyTextToClipboard,
     setTab,
@@ -638,6 +682,7 @@ export function makeActions(store: Store) {
     upscaleEdit,
     autoEditModel,
     clearSession,
+    clearSessionChecked,
     onEngine,
     activeDownloads,
     clearFinishedDownloads,

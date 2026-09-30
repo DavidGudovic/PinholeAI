@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Logo } from "./components/Logo";
 import { Toasts } from "./components/Toasts";
+import { UnsavedDialog } from "./components/UnsavedDialog";
+import { onCloseRequested } from "./lib/state/platform";
 import { TopBar } from "./components/TopBar";
 import { ShortcutsList } from "./components/ShortcutsList";
 import { Button, Dialog, Spinner } from "./components/ui";
@@ -56,6 +58,15 @@ function Shell() {
 
   // Settings saved anywhere in the UI (sheet, first run) → apply immediately (theme, trigger words…).
   useEffect(() => onSettingsChanged((s) => dispatch({ type: "setSettings", settings: s })), [dispatch]);
+
+  // Closing the window with unsaved pictures asks first (the dialog is UnsavedDialog).
+  useEffect(
+    () =>
+      onCloseRequested((prevent) => {
+        if (!actions.requestLeave("close")) prevent();
+      }),
+    [actions],
+  );
 
   // Ctrl/Cmd+Enter → the current tab's main action (Generate / Edit / Describe);
   // E / D / S / F / R and Ctrl/Cmd+Shift+S → see lib/shortcuts.ts; ? → the shortcuts list.
@@ -155,6 +166,7 @@ function Shell() {
       >
         <ShortcutsList />
       </Dialog>
+      <UnsavedDialog />
       <Toasts />
     </div>
   );

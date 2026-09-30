@@ -112,6 +112,19 @@ pub async fn save_image_as(
         .map_err(join_err)?
 }
 
+/// "Save all": every listed image into a folder the user picked.
+#[tauri::command]
+pub async fn save_images_to(
+    core: Core<'_>,
+    ids: Vec<String>,
+    dir: String,
+) -> Result<pinhole_core::generate::SavedBatch, CoreError> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || session::save_images_to(&core, &ids, &dir))
+        .await
+        .map_err(join_err)?
+}
+
 #[tauri::command]
 pub async fn copy_image(
     app: tauri::AppHandle,
@@ -166,6 +179,7 @@ super::area_commands![
     get_image,
     save_image,
     save_image_as,
+    save_images_to,
     copy_image,
     discard_image,
     clear_session,
