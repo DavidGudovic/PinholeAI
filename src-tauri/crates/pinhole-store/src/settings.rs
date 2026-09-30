@@ -38,6 +38,10 @@ pub struct Settings {
     /// `Data/models/`. Only changed by moving the models (`set_models_folder`
     /// in pinhole-core), never by a plain settings save.
     pub models_folder: Option<String>,
+    /// Helper model for Describe: `auto` or a `captioner.helpers` id.
+    pub describe_model: String,
+    /// Helper model for "Improve my prompt": `auto` or a `captioner.helpers` id.
+    pub improve_model: String,
 }
 
 impl Default for Settings {
@@ -56,6 +60,8 @@ impl Default for Settings {
             engine_backend: "auto".into(),
             text_encoder_on_cpu: "auto".into(),
             models_folder: None,
+            describe_model: "auto".into(),
+            improve_model: "auto".into(),
         }
     }
 }
@@ -99,6 +105,15 @@ impl Settings {
         }
         if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
             self.text_encoder_on_cpu = d.text_encoder_on_cpu;
+        }
+        // Unknown ids are checked where they are used (a helper may be removed from the list).
+        for m in [&mut self.describe_model, &mut self.improve_model] {
+            let t = m.trim().to_string();
+            *m = if t.is_empty() || t.len() > 64 {
+                "auto".into()
+            } else {
+                t
+            };
         }
         self.models_folder = self
             .models_folder
@@ -200,6 +215,8 @@ mod tests {
             first_run_done: true,
             engine_backend: "vulkan".into(),
             text_encoder_on_cpu: "on".into(),
+            describe_model: "describe".into(),
+            improve_model: "qwen25_vl_7b".into(),
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"

@@ -61,7 +61,7 @@ function Shell() {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.tagName === "SELECT" || t.isContentEditable);
-      if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey && !typing && !document.querySelector('[role="dialog"]')) {
+      if (e.key === "?" && settings?.firstRunDone && !e.ctrlKey && !e.metaKey && !e.altKey && !typing && !document.querySelector('[role="dialog"]')) {
         e.preventDefault();
         setShortcutsOpen(true);
         return;
@@ -82,7 +82,7 @@ function Shell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab]);
+  }, [tab, settings?.firstRunDone]);
 
   if (!settings) {
     return (
