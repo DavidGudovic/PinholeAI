@@ -16,17 +16,17 @@ use crate::CheckError;
 type Model = Arc<TypedRunnableModel>;
 
 /// Indices of the tags the rules read, in the tagger's output.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct TagIndex {
     general: usize,
     sensitive: usize,
     questionable: usize,
     explicit: usize,
-    loli: usize,
-    shota: usize,
-    child: usize,
+    minor: Vec<usize>,
     realistic: usize,
     photorealistic: usize,
+    nude: Vec<usize>,
+    underwear: Vec<usize>,
     count: usize,
 }
 
@@ -219,16 +219,17 @@ impl Checker {
         if v.len() != ix.count {
             return Err(CheckError::Damaged(files::TAGGER.label));
         }
+        let highest = |at: &[usize]| at.iter().map(|&i| v[i]).fold(0.0, f32::max);
         Ok(Tags {
             general: v[ix.general],
             sensitive: v[ix.sensitive],
             questionable: v[ix.questionable],
             explicit: v[ix.explicit],
-            loli: v[ix.loli],
-            shota: v[ix.shota],
-            child: v[ix.child],
+            minor: highest(&ix.minor),
             realistic: v[ix.realistic],
             photorealistic: v[ix.photorealistic],
+            nude: highest(&ix.nude),
+            underwear: highest(&ix.underwear),
         })
     }
 
@@ -324,27 +325,46 @@ fn tagger_input(img: &RgbImage) -> Tensor {
     .into()
 }
 
+/// The tagger tags each signal reads, by `tag_id` (first column of the pinned
+/// `selected_tags.csv`, whose SHA-256 is checked, so the ids can't drift).
+mod tag_ids {
+    /// The rating rows: general, sensitive, questionable, explicit.
+    pub const RATINGS: [u32; 4] = [9999999, 9999998, 9999997, 9999996];
+    /// A drawn character tagged as a child (3 tags).
+    pub const MINOR: &[u32] = &[128, 2614, 12667];
+    /// Photo style: realistic, photorealistic.
+    pub const PHOTO_STYLE: [u32; 2] = [376102, 462982];
+    /// Nudity and sexual content (10 tags).
+    pub const NUDE: &[u32] = &[
+        2365, 822149, 3593, 4528, 8889, 533356, 510254, 4378, 4190, 2357,
+    ];
+    /// Underwear, lingerie and see-through clothing (5 tags; swimwear isn't one of them).
+    pub const UNDERWEAR: &[u32] = &[464906, 391, 3796, 319, 451371];
+}
+
 /// Rows of `selected_tags.csv` (`tag_id,name,category,count`) in output order.
 fn tag_index(csv: &[u8]) -> Option<TagIndex> {
     let text = std::str::from_utf8(csv).ok()?;
-    let names: Vec<&str> = text
+    let ids: Vec<Option<u32>> = text
         .lines()
         .skip(1)
         .filter(|l| !l.is_empty())
-        .map(|l| l.split(',').nth(1).unwrap_or(""))
+        .map(|l| l.split(',').next().and_then(|id| id.parse().ok()))
         .collect();
-    let at = |n: &str| names.iter().position(|t| *t == n);
+    let at = |id: u32| ids.iter().position(|t| *t == Some(id));
+    let all = |list: &[u32]| list.iter().map(|&id| at(id)).collect::<Option<Vec<_>>>();
+    use tag_ids::*;
     Some(TagIndex {
-        general: at("general")?,
-        sensitive: at("sensitive")?,
-        questionable: at("questionable")?,
-        explicit: at("explicit")?,
-        loli: at("loli")?,
-        shota: at("shota")?,
-        child: at("child")?,
-        realistic: at("realistic")?,
-        photorealistic: at("photorealistic")?,
-        count: names.len(),
+        general: at(RATINGS[0])?,
+        sensitive: at(RATINGS[1])?,
+        questionable: at(RATINGS[2])?,
+        explicit: at(RATINGS[3])?,
+        minor: all(MINOR)?,
+        realistic: at(PHOTO_STYLE[0])?,
+        photorealistic: at(PHOTO_STYLE[1])?,
+        nude: all(NUDE)?,
+        underwear: all(UNDERWEAR)?,
+        count: ids.len(),
     })
 }
 
@@ -459,20 +479,26 @@ mod tests {
 
     #[test]
     fn tag_index_reads_the_csv_order() {
-        let csv = b"tag_id,name,category,count\n9999999,general,9,1\n9999998,sensitive,9,1\n9999995,questionable,9,1\n9999997,explicit,9,1\n1,loli,0,1\n2,shota,0,1\n3,child,0,1\n4,realistic,0,1\n5,photorealistic,0,1\n6,1girl,0,1\n";
-        let ix = tag_index(csv).unwrap();
+        use tag_ids::*;
+        let mut ids: Vec<u32> = RATINGS.to_vec();
+        ids.extend(MINOR);
+        ids.extend(PHOTO_STYLE);
+        ids.push(1);
+        ids.extend(NUDE);
+        ids.extend(UNDERWEAR);
+        let csv: String = std::iter::once("tag_id,name,category,count\n".to_string())
+            .chain(ids.iter().map(|id| format!("{id},tag,0,1\n")))
+            .collect();
+        let ix = tag_index(csv.as_bytes()).unwrap();
         assert_eq!(
-            (
-                ix.general,
-                ix.explicit,
-                ix.loli,
-                ix.photorealistic,
-                ix.count
-            ),
-            (0, 3, 4, 8, 10)
+            (ix.general, ix.explicit, ix.minor.clone(), ix.photorealistic),
+            (0, 3, vec![4, 5, 6], 8)
         );
+        assert_eq!(ix.nude, (10..20).collect::<Vec<_>>());
+        assert_eq!(ix.underwear, (20..25).collect::<Vec<_>>());
+        assert_eq!(ix.count, 25);
         // A list without the tags the rules need is rejected.
-        assert!(tag_index(b"tag_id,name,category,count\n1,1girl,0,1\n").is_none());
+        assert!(tag_index(b"tag_id,name,category,count\n1,tag,0,1\n").is_none());
     }
 
     #[test]

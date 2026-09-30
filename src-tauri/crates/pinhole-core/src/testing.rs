@@ -1874,7 +1874,7 @@ mod tests {
 
         // Upscales go through the image check like every made picture.
         let mut readings = intimate_adult();
-        readings.tags.as_mut().unwrap().child = 0.9;
+        readings.tags.as_mut().unwrap().minor = 0.9;
         use_check(
             &core,
             FakeCheck {
@@ -1952,6 +1952,7 @@ mod tests {
                 questionable: 0.6,
                 explicit: 0.3,
                 realistic: 0.8,
+                nude: 0.9,
                 ..Default::default()
             }),
             faces: Some(vec![pinhole_check::Face {
@@ -2019,7 +2020,7 @@ mod tests {
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
         let mut readings = intimate_adult();
-        readings.tags.as_mut().unwrap().child = 0.9;
+        readings.tags.as_mut().unwrap().minor = 0.9;
         let fake = FakeCheck {
             readings,
             ..Default::default()

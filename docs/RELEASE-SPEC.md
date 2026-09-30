@@ -149,8 +149,12 @@ chain as a brought-in picture.
 
 Three rules (`pinhole_check::rules`). Nothing else is blocked: adult images of adults (Safe mode is
 a catalog setting, not a generation filter), swimwear, art nudes and every ordinary edit of a real
-photo stay allowed. "Intimate" = nudity score ≥ 0.8 **and** the tagger's questionable + explicit
-rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" and stays allowed.
+photo stay allowed. "Intimate" (rules 1 and 3) = one of the tagger's nudity tags or underwear /
+lingerie / see-through tags ≥ 0.5, **and** either nudity score ≥ 0.8 with the tagger's
+questionable + explicit rating ≥ 0.5, or an explicit rating ≥ 0.35. The tags are needed because
+the nudity model and the questionable rating also fire on swimwear (2026-09-30 measurement:
+about 1 in 5 anime swimwear pictures counted before; ruling: adults-only change, rule 2 stays
+as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids`).
 
 1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
    brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
@@ -159,8 +163,9 @@ rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" a
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
    it existed before Pinhole saw it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
-   (explicit ≥ 0.35, or intimate with nudity ≥ 0.85) **and** either:
-   - the tagger's `loli`, `shota` or `child` tag ≥ 0.5 (drawn or photo), or
+   (explicit ≥ 0.35, or nudity ≥ 0.85 with questionable + explicit ≥ 0.5; no tags needed, so
+   swimwear can count here) **and** either:
+   - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
      whose age estimate says under 10 with ≥ 0.6. On 100 FairFace photos, adults scored at most
      0.05 and ages 3–9 0.77 on average.

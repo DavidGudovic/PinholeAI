@@ -357,8 +357,8 @@ pub fn describe(r: &Readings) -> String {
     let mut s = format!("nudity {:.2}", r.nudity);
     if let Some(t) = &r.tags {
         s += &format!(
-            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · child tags {:.2}/{:.2}/{:.2} · photo {:.2}/{:.2}",
-            t.general, t.sensitive, t.questionable, t.explicit, t.loli, t.shota, t.child, t.realistic, t.photorealistic
+            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2}",
+            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic
         );
     }
     if let Some(faces) = &r.faces {
