@@ -23,6 +23,7 @@ import { useActions } from "../../lib/state/AppProvider";
 import type { ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
+import { TipLine } from "./TipLine";
 import { useAppState, useDispatch } from "../../lib/state/store";
 
 export function Results() {
@@ -209,6 +210,7 @@ function Preview({
       <p className="text-center text-xs text-neutral-500 tabular-nums">
         {settingsSummary(result)}
       </p>
+      <TipLine hasBatch={hasBatch} />
       {error && (
         <div className="mx-auto w-full max-w-xl">
           <ErrorWithFix error={error} onDismiss={() => setError(null)} />

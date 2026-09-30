@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
+import { namedSizes, screenPixels, sizeForRatio } from "../../lib/sizes";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
 import { asCoreError, previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
@@ -99,6 +100,49 @@ function NumberInput({
 type Tri = "auto" | "on" | "off";
 const tri = (v: boolean | null | undefined): Tri => (v == null ? "auto" : v ? "on" : "off");
 const fromTri = (t: Tri): boolean | null => (t === "auto" ? null : t === "on");
+
+/** "My screen", "Phone", "Instagram", "Thumbnail": one click sets Width and Height. */
+function NamedSizeChips({ ui, width, height, onPick }: { ui: FamilyUi | null; width: number | null; height: number | null; onPick: (w: number, h: number) => void }) {
+  const screen = useMemo(() => screenPixels(), []);
+  const sizes = useMemo(() => namedSizes(screen), [screen]);
+  const active = sizes.find((n) => {
+    const [w, h] = sizeForRatio(n.ratio, ui);
+    return w === width && h === height;
+  });
+  return (
+    <div>
+      <div role="group" aria-label="Named sizes" className="flex flex-wrap gap-1.5">
+        {sizes.map((n) => {
+          const [w, h] = sizeForRatio(n.ratio, ui);
+          const on = active?.id === n.id;
+          return (
+            <button
+              key={n.id}
+              type="button"
+              aria-pressed={on}
+              title={`${n.note}: ${w}×${h}`}
+              onClick={() => onPick(w, h)}
+              className={cx(
+                "h-8 rounded-lg border px-2.5 text-xs transition-colors",
+                focusRing,
+                on
+                  ? "border-amber-500 bg-amber-50 font-medium text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
+                  : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white",
+              )}
+            >
+              {n.label}
+            </button>
+          );
+        })}
+      </div>
+      {active?.id === "screen" && screen && (
+        <p className="mt-1 text-[11px] text-neutral-500">
+          Made at {width}×{height}. Use Upscale on the picture to reach your screen’s {screen.width}×{screen.height}.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
   const [open, setOpen] = useState(false);
@@ -215,6 +259,9 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
             </div>
           </Row>
 
+          <Row full label="Named sizes" def={`${sw}×${sh}`} changed={ft.width != null || ft.height != null} onReset={() => set({ width: null, height: null })}>
+            <NamedSizeChips ui={ui} width={ft.width ?? null} height={ft.height ?? null} onPick={(w, h) => set({ width: w, height: h })} />
+          </Row>
           <Row label="Width" htmlFor="ft-width" def={sw} changed={ft.width != null} onReset={() => set({ width: null })}>
             <NumberInput id="ft-width" integer step={64} min={256} max={4096} value={ft.width} placeholder={String(sw)} onChange={(v) => set({ width: v })} />
           </Row>

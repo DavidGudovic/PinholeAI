@@ -212,6 +212,18 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Named sizes** (Fine-tune, above Width and Height): **My screen** (the monitor's shape), **Phone**
+(9:16), **Instagram** (4:5) and **Thumbnail** (16:9). One click sets Width and Height to that shape at
+about the model's usual picture area (its Square size), in multiples of 64. "My screen" notes that
+Upscale reaches the monitor's own resolution.
+
+**Starter ideas**: while the prompt box is empty, a few plain example chips ("Cabin in the snow",
+"Watercolor fox"…) fill it on click, with a hint to try Improve. Examples stay fictional and safe for work.
+
+**Tip line**: one quiet "Tip" under a picture in Create about a feature that is easy to miss (Keep this
+look, Variations, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
+per app session; × closes it, **Don't show tips** (or Settings → Show tips) turns it off for good.
+
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
 or "the same character somewhere else". Shown only for models whose architecture takes reference
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev today); **Add a reference
@@ -611,6 +623,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
+- Show tips (on by default)
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
