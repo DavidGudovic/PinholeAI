@@ -66,8 +66,16 @@ instead of a refactor:
   `imagecheck::check_results` makes. Every made picture (Create, Edit in every mode, batches,
   Upscale) reaches the UI through it; imported pictures go in through `import_image` only.
 - `pinhole-core/src/one_way.rs` fails if a session picture or a checked value is built
-  anywhere else, if the engine's `submit`/`upscale` is called outside generate.rs, or if the
-  app turns on the test-only constructors.
+  anywhere else, if the engine's `submit`/`upscale`/`job` is called outside generate.rs, if
+  anything but `sdapi.rs` names the engine's picture endpoints, or if the app's Cargo.toml
+  turns on the test-only constructors (`test-util`). Release builds build the app package
+  alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
+  `test-util` in through `tests/`, so never ship a workspace build.
+- Upscale now needs the check's files and can be blocked like any made picture (so an
+  upscale of a brought-in photo can hit a false block on a borderline picture).
+- Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
+  output are checked with `text_check::check` in describe.rs; that text only reaches the
+  image engine through Create, where the type applies.
 
 ---
 

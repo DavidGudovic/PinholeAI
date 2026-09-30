@@ -2678,10 +2678,10 @@ pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: 
 /// upscaler is downloaded on first use. Needs the engine running (any model).
 pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
     let _folder = crate::models::folder_read(core)?;
-    crate::imagecheck::ensure_ready(core)?;
     if factor != 2 && factor != 4 {
         return Err(CoreError::invalid("Upscale works at 2× or 4×."));
     }
+    crate::imagecheck::ensure_ready(core)?;
     // The result is dropped when Reset happens meanwhile (see `Session::insert_generated`).
     let session_epoch = core.session.epoch();
     let src = core

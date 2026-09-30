@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-/// Every non-test Rust file of the app, with its `#[cfg(test)] mod tests` part cut off.
+/// Every non-test Rust file of the app, with its inline test modules cut out.
 fn product_sources() -> Vec<(PathBuf, String)> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut out = Vec::new();
@@ -23,17 +23,69 @@ fn product_sources() -> Vec<(PathBuf, String)> {
                 && !matches!(name.as_str(), "testing.rs" | "testutil.rs" | "one_way.rs")
                 && !name.ends_with("_tests.rs")
             {
-                let text = std::fs::read_to_string(&p).unwrap();
-                let product = match text.find("#[cfg(test)]\nmod tests") {
-                    Some(i) => text[..i].to_string(),
-                    None => text,
-                };
-                out.push((p, product));
+                let text = std::fs::read_to_string(&p).unwrap().replace("\r\n", "\n");
+                // Comments don't call anything; drop them so docs can name the endpoints.
+                let code: String = without_test_modules(&text)
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("//"))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
+                out.push((p, code));
             }
         }
     }
     assert!(out.len() > 50, "found only {} source files", out.len());
     out
+}
+
+/// `text` without its inline `#[cfg(test)] mod … { … }` blocks (brace-matched, so product
+/// code after a test module is still scanned; `mod tests;` pointing at a file is kept).
+fn without_test_modules(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find("#[cfg(test)]\nmod ") {
+        let after = &rest[i..];
+        let line_end = after.find('\n').map_or(after.len(), |n| n + 1);
+        let header_end = line_end
+            + after[line_end..]
+                .find('\n')
+                .unwrap_or(after.len() - line_end);
+        let header = &after[line_end..header_end];
+        out.push_str(&rest[..i]);
+        if header.trim_end().ends_with(';') || !header.contains('{') {
+            out.push_str(&after[..header_end]);
+            rest = &after[header_end..];
+            continue;
+        }
+        let open = line_end + header.find('{').unwrap();
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (k, c) in after[open..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = open + k + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+#[test]
+fn test_modules_are_cut_but_code_after_them_is_kept() {
+    let t = "a\n#[cfg(test)]\nmod tests;\nb\n#[cfg(test)]\nmod tests {\n    fn x() { y() }\n}\nc\n";
+    let kept = without_test_modules(t);
+    assert!(kept.contains('a') && kept.contains('b') && kept.contains('c'));
+    assert!(kept.contains("mod tests;"));
+    assert!(!kept.contains("fn x"));
 }
 
 /// Files (by name) whose product code contains `needle`.
@@ -65,6 +117,14 @@ fn the_image_engine_is_asked_for_pictures_only_by_generate() {
     // results go through `imagecheck::check_results` in generate.rs.
     assert_eq!(files_with(".submit("), ["generate.rs"]);
     assert_eq!(files_with(".upscale("), ["generate.rs"]);
+    assert_eq!(files_with("::submit("), Vec::<String>::new());
+    assert_eq!(files_with("::upscale("), Vec::<String>::new());
+    // Job results hold the pictures too: read only by generate.rs.
+    assert_eq!(files_with(".job("), ["generate.rs"]);
+    // No request to the engine's picture endpoints except through SdClient.
+    assert_eq!(files_with("/sdcpp/v1/img_gen"), ["sdapi.rs"]);
+    assert_eq!(files_with("/sdcpp/v1/upscale"), ["sdapi.rs"]);
+    assert_eq!(files_with("/sdcpp/v1/jobs"), ["sdapi.rs"]);
     assert_eq!(files_with(".insert_generated("), ["generate.rs"]);
     assert_eq!(
         files_with("check_results("),
