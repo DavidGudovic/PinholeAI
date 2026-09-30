@@ -110,6 +110,15 @@ export function hideFinished() {
   changed();
 }
 
+/**
+ * "Clear finished" in the top bar and in Models → Downloads: the two lists have their own
+ * stores (the app reducer and this one), so one button clears both.
+ */
+export function clearFinishedEverywhere(actions: { clearFinishedDownloads: () => void }) {
+  actions.clearFinishedDownloads();
+  hideFinished();
+}
+
 export async function cancelGroup(groupId: string) {
   await cancelDownload(groupId);
 }

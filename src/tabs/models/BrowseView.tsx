@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
 import { asCoreError, browseCatalog, catalogFilters, listLoras, listModels, onModelsChanged } from "../../lib/api";
 import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
-import { Button, ErrorNotice, Segmented, Toggle, inputClass } from "../../components/ui";
+import { Button, ErrorNotice, Segmented, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
 import { CatalogCardView } from "./CatalogCardView";
 import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, Select, Skeleton } from "./controls";
@@ -17,6 +17,7 @@ import { ModelDetails } from "./ModelDetails";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
 import { PageStore } from "./lib/pageStore";
 import { measureSince } from "./lib/perf";
+import { useScrollRoot } from "./lib/preview";
 import {
   COMMERCIAL_OPTIONS,
   KIND_OPTIONS,
@@ -211,13 +212,18 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
   // Infinite scroll (not when the backend hit its extra-request cap: then "Load more").
   const sentinel = useRef<HTMLDivElement>(null);
+  // Observe relative to the tab's own scroller: with the viewport as root the margin is ignored.
+  const scrollRoot = useScrollRoot();
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !nextCursor || partial || phase !== "idle" || error || typeof IntersectionObserver === "undefined") return;
-    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), { rootMargin: SCROLL_AHEAD });
+    const io = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && void fetchPage(nextCursor), {
+      root: scrollRoot,
+      rootMargin: SCROLL_AHEAD,
+    });
     io.observe(el);
     return () => io.disconnect();
-  }, [nextCursor, partial, phase, error, fetchPage]);
+  }, [nextCursor, partial, phase, error, fetchPage, scrollRoot]);
 
   const update = (patch: Partial<BrowseFilters>) => {
     pristine.current = false;
@@ -325,7 +331,11 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm">Runs on my card</span>} />
           )}
           {changed > 0 && (
-            <button type="button" onClick={clearFilters} className="ml-auto inline-flex items-center gap-1 text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100">
+            <button
+              type="button"
+              onClick={clearFilters}
+              className={cx("ml-auto inline-flex items-center gap-1 rounded text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100", focusRing)}
+            >
               <X className="h-3.5 w-3.5" /> Clear filters
             </button>
           )}
