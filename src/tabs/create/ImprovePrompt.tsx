@@ -30,6 +30,8 @@ export function useImprovePrompt(familyId: string | null | undefined) {
   const actions = useActions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CoreError | null>(null);
+  // The helper's answer was unusable: the prompt stays as it was.
+  const [note, setNote] = useState<string | null>(null);
   // The helper model isn't installed: offer it (bytes to download).
   const [needHelper, setNeedHelper] = useState<number | null>(null);
   const [installing, setInstalling] = useState(false);
@@ -50,6 +52,7 @@ export function useImprovePrompt(familyId: string | null | undefined) {
     const id = ++runId.current;
     const nonce = s.sessionNonce;
     setError(null);
+    setNote(null);
     setBusy(true);
     try {
       const status = await api.captionerStatus().catch(() => null);
@@ -60,10 +63,15 @@ export function useImprovePrompt(familyId: string | null | undefined) {
       setNeedHelper(null);
       const loras = store.getState().loras;
       const avoid = activeLoras(store.getState().create, loras, model, s.settings?.addTriggerWords ?? true).flatMap((u) => u.words ?? []);
-      const text = (await api.improvePrompt(base, familyId ?? null, avoid)).trim();
+      const answer = await api.improvePrompt(base, familyId ?? null, avoid);
+      const text = answer.text.trim();
       const now = store.getState();
       // Dropped when Reset was pressed or the prompt was edited meanwhile: the answer no longer fits.
       if (id === runId.current && now.sessionNonce === nonce && now.create.prompt === base && text) {
+        if (answer.note) {
+          setNote(answer.note);
+          return;
+        }
         dispatch({ type: "patchCreate", patch: { prompt: text } });
         setUndo({ before: base, after: text });
       }
@@ -130,7 +138,7 @@ export function useImprovePrompt(familyId: string | null | undefined) {
 
   const installingNow = !!dl && isActiveDownload(dl);
   const notice =
-    needHelper !== null || error ? (
+    needHelper !== null || error || note ? (
       <div className="space-y-2">
         {needHelper !== null && (
           <div className="pinhole-pop space-y-2 rounded-xl border border-neutral-200 px-3 py-2.5 text-sm dark:border-neutral-800" role="status">
@@ -151,6 +159,11 @@ export function useImprovePrompt(familyId: string | null | undefined) {
               </div>
             )}
           </div>
+        )}
+        {note && (
+          <p className="px-1 text-xs text-neutral-500" role="status">
+            {note}
+          </p>
         )}
         {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void run()} />}
       </div>

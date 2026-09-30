@@ -22,7 +22,7 @@ vi.mock("../../lib/api", async (orig) => {
     saveImage: vi.fn(() => saveImageCall.promise),
     previewFinalPrompt: vi.fn(async () => ({ prompt: "p", negative: null })),
     captionerStatus: vi.fn(async () => ({ available: true, source: "default", downloadBytes: 0, running: false })),
-    improvePrompt: vi.fn(async (p: string) => `${p}, in soft light`),
+    improvePrompt: vi.fn(async (p: string) => ({ text: `${p}, in soft light`, note: null })),
   };
 });
 
@@ -228,13 +228,22 @@ describe("Improve my prompt", () => {
 
   it("drops the answer when the prompt was edited meanwhile", async () => {
     let done!: (v: string) => void;
-    vi.mocked(api.improvePrompt).mockImplementationOnce(() => new Promise<string>((r) => (done = r)));
+    vi.mocked(api.improvePrompt).mockImplementationOnce(() => new Promise<{ text: string; note: string | null }>((r) => (done = (text: string) => r({ text, note: null }))));
     const store = box("a fox");
     fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
     await waitFor(() => expect(api.improvePrompt).toHaveBeenCalled());
     store.dispatch({ type: "patchCreate", patch: { prompt: "a wolf" } });
     await act(async () => done("a fox, long text"));
     expect(store.getState().create.prompt).toBe("a wolf");
+  });
+
+  it("keeps the prompt and says so when the helper's answer was unusable", async () => {
+    vi.mocked(api.improvePrompt).mockResolvedValueOnce({ text: "a fox", note: "The helper couldn't improve this one, so your prompt is unchanged." });
+    const store = box("a fox");
+    fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
+    await screen.findByText(/prompt is unchanged/);
+    expect(store.getState().create.prompt).toBe("a fox");
+    expect(screen.queryByRole("button", { name: /Undo/ })).toBeNull();
   });
 
   it("offers the helper model when it isn't installed", async () => {

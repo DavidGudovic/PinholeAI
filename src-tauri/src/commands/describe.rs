@@ -33,7 +33,7 @@ pub async fn improve_prompt(
     prompt: String,
     family_id: Option<String>,
     avoid: Vec<String>,
-) -> Result<String, CoreError> {
+) -> Result<describe::ImprovedPrompt, CoreError> {
     describe::improve_prompt(core.inner(), &prompt, family_id.as_deref(), &avoid).await
 }
 

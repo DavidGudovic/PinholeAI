@@ -113,7 +113,7 @@ export const describeImage = (imageId: string, style: T.DescribeStyle) =>
   invoke<string>("describe_image", { imageId, style });
 /** "Improve my prompt": a short idea → a fuller prompt (local helper model). `avoid` = add-on trigger words. */
 export const improvePrompt = (prompt: string, familyId: string | null, avoid: string[]) =>
-  invoke<string>("improve_prompt", { prompt, familyId, avoid });
+  invoke<T.ImprovedPrompt>("improve_prompt", { prompt, familyId, avoid });
 
 // ---------------------------------------------------------------- library (store agent)
 export const listStyles = () => invoke<T.Style[]>("list_styles");

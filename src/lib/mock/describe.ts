@@ -83,7 +83,7 @@ const table: MockTable = {
     const idea = String(a.prompt ?? "").trim();
     if (!idea) throw err("invalid", "Type a few words about your picture first.");
     const fam = String(a.familyId ?? "");
-    return improved(idea, /sd15|sdxl|pony|illustrious/.test(fam));
+    return { text: improved(idea, /sd15|sdxl|pony|illustrious/.test(fam)), note: null };
   },
   describe_image: async (a) => {
     const st = await status();

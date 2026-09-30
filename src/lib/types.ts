@@ -416,6 +416,11 @@ export interface CaptionerStatus {
 }
 
 export type DescribeStyle = "sentence" | "tags";
+/** "Improve my prompt" answer. `note` set = the helper's answer was unusable and `text` is the prompt unchanged. */
+export interface ImprovedPrompt {
+  text: string;
+  note: string | null;
+}
 
 // ---------------------------------------------------------------- styles / presets
 export interface Style {

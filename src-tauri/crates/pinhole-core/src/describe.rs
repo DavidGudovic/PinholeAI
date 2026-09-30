@@ -486,6 +486,72 @@ fn tidy_improved(text: &str, avoid: &[String]) -> String {
     joined.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// `ImprovedPrompt` in src/lib/types.ts. `note` is set when the model's answer was unusable:
+/// `text` is then the user's own words, unchanged.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImprovedPrompt {
+    pub text: String,
+    pub note: Option<String>,
+}
+
+/// Drop repeated tags / sentences (case-insensitive). Returns the cleaned text and whether the
+/// answer was a repetition loop ("bedroom, bedroom, …") or said nothing beyond the idea.
+fn collapse_repeats(text: &str, idea: &str, tags: bool) -> (String, bool) {
+    let norm = |p: &str| -> String {
+        p.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let pieces: Vec<String> = if tags {
+        text.split(',').map(|p| p.trim().to_string()).collect()
+    } else {
+        // Sentences, each keeping its ending mark.
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            cur.push(c);
+            // Only at the end of a sentence: "f/1.8" stays in one piece.
+            if matches!(c, '.' | '!' | '?') && chars.peek().is_none_or(|n| n.is_whitespace()) {
+                out.push(std::mem::take(&mut cur).trim().to_string());
+            }
+        }
+        // A last sentence cut off by the token limit is dropped (when a whole one came before).
+        if !cur.trim().is_empty() && !out.is_empty() {
+            cur.clear();
+        }
+        out.push(cur.trim().to_string());
+        out
+    };
+    let pieces: Vec<String> = pieces.into_iter().filter(|p| !norm(p).is_empty()).collect();
+    let total = pieces.len();
+    let mut seen = std::collections::HashSet::new();
+    let unique: Vec<String> = pieces
+        .into_iter()
+        .filter(|p| seen.insert(norm(p)))
+        .collect();
+    let cleaned = unique.join(if tags { ", " } else { " " });
+    // The same word four times in a row ("the the the the") is a loop too.
+    let words: Vec<String> = norm(&cleaned).split(' ').map(str::to_string).collect();
+    let word_loop = words.windows(4).any(|w| w.iter().all(|x| *x == w[0]));
+    let mostly_repeats = total >= 4 && (total - unique.len()) * 2 > total;
+    let too_thin = if tags {
+        unique.len() < 3
+    } else {
+        cleaned.split_whitespace().count() < 6
+    };
+    let adds_nothing = norm(&cleaned) == norm(idea);
+    (
+        cleaned,
+        word_loop || mostly_repeats || too_thin || adds_nothing,
+    )
+}
+
 /// Turn a short idea into a fuller prompt with the local text model (the Describe model).
 /// `family_id` picks tags vs sentences; `avoid` = trigger words of the add-ons in use.
 /// PRIVACY: the prompt goes only to the loopback llama-server and back; never logged or stored.
@@ -494,7 +560,7 @@ pub async fn improve_prompt(
     prompt: &str,
     family_id: Option<&str>,
     avoid: &[String],
-) -> CoreResult<String> {
+) -> CoreResult<ImprovedPrompt> {
     let idea = prompt.trim();
     if idea.is_empty() {
         return Err(CoreError::invalid(
@@ -517,7 +583,7 @@ pub async fn improve_prompt(
         .ok_or_else(|| {
             CoreError::not_found("Improve my prompt isn't available. Update Pinhole.")
         })?;
-    let max_tokens = if template == "tags" { 200 } else { 300 };
+    let max_tokens = if template == "tags" { 120 } else { 200 };
 
     let _busy = BusyGuard::new(&core.describe);
     let client = ensure_llama(core).await?;
@@ -528,15 +594,19 @@ pub async fn improve_prompt(
             _ => CoreError::new("engine_failed", "Improving the prompt failed. Try again.").with_details(format!("{e}\n{tail}")),
         }
     })?;
-    let text = tidy_improved(&text, avoid);
-    if text.is_empty() {
-        return Err(CoreError::new(
-            "engine_failed",
-            "The helper model returned nothing. Try again.",
-        ));
-    }
+    let (text, degenerate) =
+        collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
+    // Before the fallback: text that would be blocked never comes back, even when short.
     crate::text_check::check(&text)?;
-    Ok(text)
+    if degenerate {
+        return Ok(ImprovedPrompt {
+            text: idea.to_string(),
+            note: Some(
+                "The helper couldn't improve this one, so your prompt is unchanged. Try adding a few more words.".into(),
+            ),
+        });
+    }
+    Ok(ImprovedPrompt { text, note: None })
 }
 
 /// 32 random bytes as hex: llama-server's API key for one launch.
@@ -805,6 +875,46 @@ mod tests {
         assert_eq!(
             tidy_improved("A cat in the sks style.", &["sks".to_string()]),
             "A cat in the style."
+        );
+    }
+
+    #[test]
+    fn repetition_loops_are_caught_and_repeats_collapsed() {
+        let looped = vec!["bedroom"; 60].join(", ");
+        assert!(collapse_repeats(&looped, "bedroom", true).1);
+        assert!(collapse_repeats("the the the the the", "x", false).1);
+        assert!(
+            collapse_repeats("bedroom", "bedroom", true).1,
+            "adds nothing"
+        );
+        // A few repeats are just collapsed.
+        let (t, bad) = collapse_repeats(
+            "bedroom, cozy, Cozy, soft light, bedroom, warm lamp, morning sun",
+            "bedroom",
+            true,
+        );
+        assert!(!bad);
+        assert_eq!(t, "bedroom, cozy, soft light, warm lamp, morning sun");
+        let (t, bad) = collapse_repeats(
+            "A cozy bedroom at dawn. Soft light fills the room. A cozy bedroom at dawn.",
+            "bedroom",
+            false,
+        );
+        assert!(!bad);
+        assert_eq!(t, "A cozy bedroom at dawn. Soft light fills the room.");
+    }
+
+    #[test]
+    fn sentences_keep_decimals_and_drop_a_cut_off_tail() {
+        let (t, bad) = collapse_repeats(
+            "A portrait shot at f/1.8 in warm light. The background is soft and calm. The sky is",
+            "portrait",
+            false,
+        );
+        assert!(!bad);
+        assert_eq!(
+            t,
+            "A portrait shot at f/1.8 in warm light. The background is soft and calm."
         );
     }
 
