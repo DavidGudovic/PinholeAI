@@ -27,6 +27,7 @@ semver = { workspace = true }
 zip = { workspace = true }
 
 [dev-dependencies]
+pinhole-net = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 

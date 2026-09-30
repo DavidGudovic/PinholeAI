@@ -48,6 +48,8 @@ pub struct ModelsState {
     pub(crate) filters: OnceLock<Arc<CatalogFilters>>,
     /// Recent CivitAI `/models` answers (RAM only; see `pinhole_catalog::cache`).
     pub(crate) page_cache: OnceLock<Arc<PageCache>>,
+    /// Recent CivitAI version + model answers for the Install dialog (RAM only).
+    pub(crate) versions: crate::catalog::VersionCache,
     /// Bumped by every Browse request; an older one still paging stops early.
     pub(crate) browse_gen: AtomicU64,
     /// A purge of expired cache entries is scheduled.
@@ -536,13 +538,25 @@ pub(crate) async fn start_install(
         // Read the index while holding `dests`: a finishing install registers its
         // file before releasing its name, so every name is in one or the other.
         let index = snapshot(core);
+        // The files are registered once downloaded: say now if that can't work
+        // (e.g. installed.json is from a newer Pinhole), not after the download.
+        index.check_savable(&core.data)?;
+        // "Add a file" copies waiting for a family choice (on disk, not indexed yet).
+        let pending: Vec<PathBuf> = core
+            .models
+            .pending
+            .lock()
+            .values()
+            .map(|pa| pa.path.clone())
+            .collect();
         for (f, civitai) in items {
             let dir = models_dir_for_write(core, f.kind)?;
-            // Never overwrite a registered file, one planned in this group or one
-            // another running install is downloading to.
+            // Never overwrite a registered file, one planned in this group, one
+            // another running install is downloading to or a pending added file.
             let dest = local::unique_path(&dir, &f.file_name, |p| {
                 planned.iter().any(|(d, _, _)| d == p)
                     || dests.contains(p)
+                    || pending.iter().any(|d| d == p)
                     || (p.exists()
                         && core
                             .data
@@ -597,8 +611,10 @@ pub(crate) async fn start_install(
                 }
             }
         }
-        // Failures are reported through the group's `download-progress` status.
+        // Failures are reported through the group's `download-progress` status,
+        // registration failures too (the group is marked failed after all).
         let planned_dests: Vec<PathBuf> = planned.iter().map(|(d, _, _)| d.clone()).collect();
+        let mut register_error: Option<CoreError> = None;
         if let Ok(files) = result {
             let same_len = files.len() == planned.len();
             for (i, (dest, _, reg)) in planned.into_iter().enumerate() {
@@ -615,9 +631,16 @@ pub(crate) async fn start_install(
                     })
                     .await
                     .unwrap_or(fallback);
-                    let _ = register_download(&task_core, &file, reg);
+                    if let Err(e) = register_download(&task_core, &file, reg) {
+                        register_error.get_or_insert(e);
+                    }
                 }
             }
+        }
+        if let Some(e) = register_error {
+            task_core
+                .downloads
+                .fail_done(&task_group, &e.code, &e.message);
         }
         // Only now (registered, or failed) may another install pick these names.
         let mut dests = task_core.models.inflight_dests.lock();
@@ -673,6 +696,15 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
     tokio::task::spawn_blocking(f)
         .await
         .map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))
+}
+
+/// A name in [`ModelsState::inflight_dests`], released on drop.
+struct ReservedDest<'a>(&'a AppCore, PathBuf);
+
+impl Drop for ReservedDest<'_> {
+    fn drop(&mut self) {
+        self.0.models.inflight_dests.lock().remove(&self.1);
+    }
 }
 
 /// "Add a file I already have": check the extension, read the header, copy the
@@ -736,10 +768,10 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     // anything else (even a leftover in Data/models) is copied into it.
     let in_place = src_canon.starts_with(&models_root)
         || (core.data.models_home.is_none() && src_canon.starts_with(&data_root));
-    let (dest, sha256, size_bytes) = if in_place {
+    let (dest, sha256, size_bytes, _reserved) = if in_place {
         let p = src_canon.clone();
         let (sha, size) = blocking(move || local::hash_file(&p)).await??;
-        (src_canon, sha, size)
+        (src_canon, sha, size, None)
     } else {
         let dir = core.data.models_dir_for_write(kind)?; // folder lock held above
         check_free_space(&dir, header.file_size).map_err(|e| disk_space_error(e, ""))?;
@@ -747,7 +779,18 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
             src.file_name().and_then(|n| n.to_str()).unwrap_or("model"),
             ext,
         );
-        let dest = local::unique_path(&dir, &name, |p| p.exists());
+        // Not a name a download is writing to (only its `.part` exists yet),
+        // and reserved like one until this add is registered or pending, so a
+        // download starting meanwhile doesn't pick it either.
+        let dest = {
+            let mut dests = core.models.inflight_dests.lock();
+            let dest = local::unique_path(&dir, &name, |p| {
+                p.exists() || local::part_path(p).exists() || dests.contains(p)
+            });
+            dests.insert(dest.clone());
+            dest
+        };
+        let reserved = ReservedDest(core, dest.clone());
         let (from, to) = (src.clone(), dest.clone());
         let (sha, size) = blocking(move || local::copy_and_hash(&from, &to))
             .await?
@@ -755,7 +798,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                 CoreError::new("io", "Pinhole couldn't copy the file into its Data folder.")
                     .with_details(e.to_string())
             })?;
-        (dest, sha, size)
+        (dest, sha, size, Some(reserved))
     };
     let mut pending = PendingAdd {
         path: dest,
@@ -906,6 +949,12 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
             .map(|f| index.abs_path(&core.data, f))
             .collect()
     };
+    // Stopping the engine under a job would fail it as if the engine crashed.
+    if crate::generate::unload_interrupts_job(core, model_id, &paths).await {
+        return Err(CoreError::invalid(
+            "Wait for the current pictures to finish, then delete it.",
+        ));
+    }
     crate::generate::unload_model(core, model_id, &paths).await;
     let failed;
     {
@@ -1665,6 +1714,84 @@ mod tests {
             .lock()
             .contains(&dir.join("style.safetensors")));
         let _ = core.downloads.wait(&ga.group_id).await;
+    }
+
+    /// An install whose files couldn't be registered afterwards is refused
+    /// before anything downloads (not a finished download nothing shows).
+    #[tokio::test]
+    async fn install_is_refused_when_the_index_cant_be_saved() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION + 1;
+        let a = lora_file(
+            "https://civitai.com/api/download/models/1",
+            "style.safetensors",
+        );
+        let e = start_install(&core, "A".into(), vec![(a, None)], None)
+            .await
+            .unwrap_err();
+        assert!(e.message.contains("newer version"), "{}", e.message);
+        assert!(core.downloads.status().is_empty(), "nothing queued");
+        assert!(core.models.inflight_dests.lock().is_empty());
+        assert!(core.models.inflight.lock().is_empty());
+    }
+
+    /// "Add a file" never picks the name a download is writing to (only its
+    /// `.part` exists yet), and a download never picks the name of an added
+    /// file waiting for a family choice.
+    #[tokio::test]
+    async fn add_a_file_and_downloads_never_share_a_name() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true); // no CivitAI lookup, downloads fail fast
+        let dir = core.data.models(ModelKind::Checkpoint);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A queued download of Clash.safetensors, a running one of Clash-2.
+        core.models
+            .inflight_dests
+            .lock()
+            .insert(dir.join("Clash.safetensors"));
+        std::fs::write(local::part_path(&dir.join("Clash-2.safetensors")), b"bytes").unwrap();
+        let src = tmp.path().join("Clash.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let out = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+        assert!(out.needs_choice.is_some(), "SDXL-shaped: waits for a pick");
+        let added = core
+            .models
+            .pending
+            .lock()
+            .values()
+            .next()
+            .unwrap()
+            .path
+            .clone();
+        assert_eq!(added, dir.join("Clash-3.safetensors"));
+        assert_eq!(
+            std::fs::read(local::part_path(&dir.join("Clash-2.safetensors"))).unwrap(),
+            b"bytes",
+            "the running download's .part is untouched"
+        );
+        assert_eq!(
+            *core.models.inflight_dests.lock(),
+            HashSet::from([dir.join("Clash.safetensors")]),
+            "the add's own reservation is released"
+        );
+        // A new download of the same name skips the added file (pending or registered).
+        core.models.inflight_dests.lock().clear();
+        let f = FileToGet {
+            kind: ModelKind::Checkpoint,
+            ..lora_file(
+                "https://civitai.com/api/download/models/3",
+                "Clash-3.safetensors",
+            )
+        };
+        let g = start_install(&core, "C".into(), vec![(f, None)], None)
+            .await
+            .unwrap();
+        assert_eq!(
+            *core.models.inflight_dests.lock(),
+            HashSet::from([dir.join("Clash-3-2.safetensors")])
+        );
+        let _ = core.downloads.wait(&g.group_id).await;
     }
 
     #[tokio::test]
