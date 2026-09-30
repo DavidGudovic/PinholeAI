@@ -224,8 +224,9 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 - **Recommended models:**
   - Level 1: remove `sdxl_pony` from `recommended.anime` (Pony stays a supported family; people
     install it themselves).
-  - `recommended.realistic_detail` (Krea 2) and `recommended.edit` / `edit_alt` (FLUX.1 Kontext):
-    one-click only once §3 ships and §6 licence acceptance is in place.
+  - `recommended.realistic` / `edit` (Qwen-Image 2.1, Qwen Research License, non-commercial):
+    one-click only once §3 ships and §6 licence acceptance is in place. (Krea 2 and FLUX.1
+    Kontext are no longer one-click picks since 2026-09-30.)
 - **Edit references** (David, 2026-09-30): two-image "Describe a change" and Create's reference
   picture stay, with any picture as input. Every Imported input (image 1, image 2, a Create
   reference picture) makes the result Imported (§3.1), and rule 1's face check looks at all of
@@ -243,14 +244,15 @@ blocking logic with mocked classifier scores; measure false positives on harmles
     The configured Kontext URL is a third-party re-upload that skips Black Forest Labs' gate.
   - Qwen2.5-VL-3B (default captioner) — reportedly the Qwen Research (non-commercial) licence;
     verify, or switch to an Apache-2.0 captioner.
-  - Krea 2 (one-click `recommended.realistic_detail`, GGUF mirror realrebelai/KREA-2_GGUFs) —
+  - Krea 2 (registry files from the GGUF mirror realrebelai/KREA-2_GGUFs; no longer one-click) —
     Krea 2 Community License v1 (LICENSE.pdf in krea-ai/krea-2 and Comfy-Org/Krea-2): allows
     use, copying, redistribution and derivatives, but §4.2 requires content filters for any
     deployment and §2.3 limits commercial use to < $1M yearly revenue. Show the licence
     (link to the PDF) and require acceptance; the mirror's own LICENSE file is empty, so
     Pinhole must show it. §3 is the content filter.
   - Other non-commercial families now in the registry: FLUX.2 dev / klein 9B (FLUX
-    Non-Commercial), Anima (CircleStone Labs non-commercial), Qwen-Image 2.1 (Qwen Research),
+    Non-Commercial), Anima (CircleStone Labs non-commercial), Qwen-Image 2.1 (Qwen Research; now the one-click
+    Realistic and Edit pick),
     SD 3.x (Stability Community License) — licence acceptance before their first download.
 - Store only the accepted licence id + version in `settings.yaml`.
 - SD 1.5 / SDXL (OpenRAIL-M / ++) use restrictions are repeated in the terms (§7).

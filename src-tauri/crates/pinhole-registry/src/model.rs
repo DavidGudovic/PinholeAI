@@ -319,6 +319,10 @@ pub struct RecommendedCandidate {
     /// Describe role: `reuse` | `default`
     #[serde(default)]
     pub captioner: Option<String>,
+    /// Registry candidates: picked only when a version at least this good
+    /// (`q6_k`, `q8_0`…) Fits; otherwise the next candidate.
+    #[serde(default)]
+    pub min_quant: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

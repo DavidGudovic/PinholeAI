@@ -647,17 +647,19 @@ export function makeActions(store: Store) {
     }
   }
 
-  /** The edit model Pinhole picks automatically (the registry lists edit families best-first). */
   /** Best installed edit model; with `twoImages`, only ones that combine two images. */
   function autoEditModel(twoImages = false): InstalledModel | null {
     const list = editModels(get().models, twoImages).filter((m) => !m.missingComponents.length);
     const all = list.length ? list : editModels(get().models, twoImages);
-    const rank = (m: InstalledModel) => (m.familyId === "qwen_image_edit_2511" ? 0 : m.familyId === "flux1_kontext" ? 1 : 2);
+    // Qwen-Image 2.1 (the recommended edit model, it also creates) first, then the dedicated
+    // edit models, then other generators that can edit (FLUX.2).
+    const rank = (m: InstalledModel) =>
+      m.familyId === "qwen_image_21" ? 0 : m.familyId === "qwen_image_edit_2511" ? 1 : m.familyId === "flux1_kontext" ? 2 : m.isEditModel ? 3 : 4;
     const fitRank = (m: InstalledModel) => (m.fit === "fits" ? 0 : m.fit === "tight" ? 1 : m.fit === "tooBig" ? 3 : 2);
-    // One image: dedicated edit models first unless they're too big; then generators that can edit (FLUX.2).
+    // One image: the models ranked above generators first unless they're too big.
     // Two images need more memory, so a model that fits wins (FLUX.2 klein over a tight Qwen Edit).
-    const tier = (m: InstalledModel) => (twoImages ? fitRank(m) : m.isEditModel && m.fit !== "tooBig" ? 0 : 1);
-    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || Number(b.isEditModel) - Number(a.isEditModel) || rank(a) - rank(b))[0] ?? null;
+    const tier = (m: InstalledModel) => (twoImages ? fitRank(m) : rank(m) < 4 && m.fit !== "tooBig" ? 0 : 1);
+    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || rank(a) - rank(b))[0] ?? null;
   }
 
   // ---------------------------------------------------------------- session

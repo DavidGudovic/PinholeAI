@@ -416,6 +416,20 @@ describe("autoEditModel", () => {
     expect(actions.autoEditModel()?.id).toBe("k");
   });
 
+  it("prefers Qwen-Image 2.1 over the older edit models when it fits", () => {
+    const { store, actions } = setup();
+    const q21: InstalledModel = { ...model, id: "21", familyId: "qwen_image_21", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" };
+    const qwen: InstalledModel = { ...model, id: "q", familyId: "qwen_image_edit_2511", modes: ["edit"], isEditModel: true, fit: "fits" };
+    const kontext: InstalledModel = { ...model, id: "x", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" };
+    store.dispatch({ type: "setModels", models: [kontext, qwen, q21] });
+    expect(actions.autoEditModel()?.id).toBe("21");
+    expect(actions.autoEditModel(true)?.id).toBe("21");
+    store.dispatch({ type: "setModels", models: [kontext, qwen, { ...q21, fit: "tight" }] });
+    expect(actions.autoEditModel()?.id).toBe("q");
+    store.dispatch({ type: "setModels", models: [kontext, { ...q21, fit: "tooBig" }] });
+    expect(actions.autoEditModel()?.id).toBe("x");
+  });
+
   it("with two images, only models that combine them, and one that fits wins", () => {
     const { store, actions } = setup();
     const klein: InstalledModel = { ...model, id: "k", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" };

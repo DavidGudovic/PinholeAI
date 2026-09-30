@@ -932,7 +932,7 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
                 .cloned()
                 .ok_or_else(|| {
                     CoreError::not_found(if two_images {
-                        "None of your models can combine two images. Remove the second image, or get Qwen Image Edit or a FLUX.2 model."
+                        "None of your models can combine two images. Remove the second image, or get Qwen-Image 2.1 from the Edit tab."
                     } else {
                         "No edit model is installed yet. Get one from the Edit tab."
                     })
