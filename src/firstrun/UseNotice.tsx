@@ -45,8 +45,8 @@ export function UseNotice(props: { onAgreed: () => void }) {
             <ShieldCheck className="h-4 w-4 text-emerald-600" /> Built-in safety check
           </h2>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-            Pinhole checks prompts and pictures on your computer to keep them within the usage guidelines. The check
-            works offline, can't be turned off and keeps no record.
+            It reviews your prompts and the pictures Pinhole makes, right on your computer, and won't create anything
+            that breaks the usage guidelines. It works offline, can't be turned off, and keeps no record.
           </p>
         </div>
 
