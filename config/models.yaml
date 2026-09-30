@@ -239,8 +239,9 @@ components:
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
     size_mb: 853
-  # Qwen2.5-VL 7B with its refusals removed ("abliterated", huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated,
-  # Apache-2.0), GGUF by mradermacher. The helper for Safe mode Off. Its vision file is not needed:
+  # Qwen2.5-VL 7B variant that describes adult content of adults instead of refusing ("abliterated",
+  # huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated, Apache-2.0), GGUF by mradermacher. Offered only
+  # with Safe mode Off; the word check still runs on its output. Its vision file is not needed:
   # all 519 tensors of this repo's mmproj-Q8_0 are byte-identical to qwen25_vl_7b_mmproj (only the
   # GGUF name metadata differs, checked 2026-09-30), so it shares that one.
   qwen25_vl_7b_abliterated_q4km:

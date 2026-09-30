@@ -8,7 +8,7 @@ every decision can be overridden.
 
 ## 1. Principles (in priority order)
 
-1. **Private by construction.** Prompts are never written anywhere. No telemetry, no analytics,
+1. **Local by design.** Prompts are kept in memory, not written to disk. No telemetry, no analytics,
    no crash reporting, no automatic update checks. The only network traffic is traffic the user
    starts (browsing CivitAI, downloading a model or engine, pressing "Check for updates").
 2. **Zero-knowledge default path.** A new user never has to know what a VAE, text encoder,
