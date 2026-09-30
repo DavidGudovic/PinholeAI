@@ -358,6 +358,24 @@ export function makeActions(store: Store) {
     setTab("edit");
   }
 
+  /** "Use as image 2": opens "Describe a change" with this image as image 2. With no image 1 yet it becomes image 1. */
+  function sendToEditSecond(id: string) {
+    const ref = get().images[id];
+    if (!ref) return;
+    if (editBusy(get())) {
+      toast("Wait for the edits in progress to finish first.");
+      return;
+    }
+    if (!get().edit.chain.length) {
+      dispatch({ type: "editLoad", ref });
+      toast("Loaded as image 1. Pick another image to use as image 2.");
+    } else {
+      dispatch({ type: "editSetSecond", ref });
+      dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    }
+    setTab("edit");
+  }
+
   function sendToDescribe(id: string) {
     const ref = get().images[id];
     if (!ref) return;
@@ -574,6 +592,7 @@ export function makeActions(store: Store) {
     addLora,
     setLoraTriggerWords,
     sendToEdit,
+    sendToEditSecond,
     sendToDescribe,
     useAsPrompt,
     removeResult,

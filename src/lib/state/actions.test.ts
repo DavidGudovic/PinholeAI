@@ -78,6 +78,29 @@ function setup() {
   return { store, actions };
 }
 
+describe("use as image 2", () => {
+  it("keeps image 1, sets image 2 and opens Describe a change", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { mode: "restyle" } });
+    store.dispatch({ type: "editSetSecond", ref: ref("b") });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    actions.sendToEditSecond("b");
+    const s = store.getState();
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+    expect(s.edit.secondImageId).toBe("b");
+    expect(s.edit.mode).toBe("instruction");
+    expect(s.tab).toBe("edit");
+  });
+
+  it("becomes image 1 when Edit is empty", () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editSetSecond", ref: ref("b") });
+    actions.sendToEditSecond("b");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+  });
+});
+
 describe("async results after the screen moved on", () => {
   it("drops an edit result when another image was loaded while it ran", async () => {
     const { store, actions } = setup();
