@@ -214,8 +214,9 @@ blocking logic with mocked classifier scores; measure false positives on harmles
   - **Level 1:** models with `poi` or `minor` are not offered for install (Browse, model details,
     Paste from CivitAI, Use these settings). `sfwOnly` models show a "Safe images only" badge.
   - **Level 2:** flagged models are shown and installable again. The flags are stored in
-    `installed.json` at install time (model metadata, not prompts) and looked up by hash for
-    files added by hand, when online. While any flagged resource is loaded, §3.2 rule 3 applies.
+    `installed.json` at install time (model metadata, not prompts). Files added by hand get flags
+    only from the by-hash lookup "Add a file" already does when it can't tell the type; no
+    background or folder-wide lookups (privacy, 2026-09-30). While any flagged resource is loaded, §3.2 rule 3 applies.
     This mirrors CivitAI's own rule and keeps the legitimate SFW uses (satire of public figures,
     historical figures, an avatar model of yourself, child characters in SFW art).
 - **Recommended models:**
