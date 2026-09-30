@@ -21,7 +21,7 @@ import {
   type Toast,
 } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
-import { buildCreateRequest, buildEditRequest, extendCanvas, variationRequest } from "./request";
+import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseSavePath, copyText } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
@@ -473,9 +473,6 @@ export function makeActions(store: Store) {
     if (opts.mode === "fix" && !opts.mask) {
       throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
     }
-    if (opts.mode === "extend" && !extendCanvas(source.width, source.height, s.edit.extendTo, s.edit.extendSide, null)) {
-      throw { code: "invalid", message: "The picture is already this shape. Pick another shape to extend it.", details: null } as CoreError;
-    }
     if (opts.mode !== "fix" && opts.mode !== "extend" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
@@ -505,6 +502,7 @@ export function makeActions(store: Store) {
               loras,
               autoAdd: settings?.addTriggerWords ?? true,
             });
+            // Checked here, with the model's own shape sizes.
             if (opts.mode === "extend" && !req.extend) {
               throw { code: "invalid", message: "The picture is already this shape. Pick another shape to extend it.", details: null } as CoreError;
             }

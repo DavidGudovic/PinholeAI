@@ -146,8 +146,9 @@ export function extendCanvas(w: number, h: number, to: ExtendTo, side: ExtendSid
   let width = w;
   let height = h;
   if (to === "around") {
-    width = Math.round(w * EXTEND_AROUND);
-    height = Math.round(h * EXTEND_AROUND);
+    // At least a pixel on each side, even for tiny pictures.
+    width = Math.max(w + 2, Math.round(w * EXTEND_AROUND));
+    height = Math.max(h + 2, Math.round(h * EXTEND_AROUND));
   } else {
     const [sw, sh] = ui?.shapes[to] ?? DEFAULT_SHAPE_SIZES[to];
     const want = sw / sh;

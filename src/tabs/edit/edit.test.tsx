@@ -169,6 +169,33 @@ describe("Edit tab", () => {
     expect(req.extend!.width).toBeGreaterThan(100);
   });
 
+  it("Try again on an Extend redoes it from the smaller step before", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    const meta = { id: "b", kind: "generated", width: 114, height: 64, seed: 1, modelId: "m", modelLabel: "Test model", familyId: "sdxl", steps: 8, cfg: 5, guidance: null, sampler: null, scheduler: null, parentId: "a" } as const;
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "editPush", ref: { id: "b", url: "blob:b", width: 114, height: 64 }, meta, after: 0 });
+    });
+    // As after extending to Wide: the settings stay.
+    act(() => store.dispatch({ type: "patchEdit", patch: { mode: "extend", extendTo: "wide" } }));
+    await flush();
+    // The shown result is wide already, but the step it came from isn't.
+    expect((screen.getByRole("button", { name: /^Extend/ }) as HTMLButtonElement).disabled).toBe(true);
+    const again = screen.getByRole("button", { name: "Try again" });
+    expect((again as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(again);
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    const req = vi.mocked(api.generate).mock.calls[0][0];
+    expect(req).toMatchObject({ initImageId: "a", extend: { height: 64 } });
+  });
+
   it("runs one edit when Restyle is pressed twice while the mask is exported", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

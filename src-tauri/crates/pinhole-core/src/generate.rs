@@ -1861,8 +1861,6 @@ async fn engine_died(core: &AppCore) -> Option<Option<i32>> {
 
 // ================================================================ generate
 
-/// Size for img2img / edit: keep the source aspect ratio at about the dial's
-/// area, rounded to the family's size multiple (SD1.5/SDXL 64, others 16).
 /// A job that draws part of a picture and blends it back ("Fix details", "Extend").
 #[derive(Clone)]
 enum Redraw {
@@ -1880,6 +1878,8 @@ impl Redraw {
     }
 }
 
+/// Size for img2img / edit: keep the source aspect ratio at about the dial's
+/// area, rounded to the family's size multiple (SD1.5/SDXL 64, others 16).
 fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u32) {
     let aspect = src_w.max(1) as f64 / src_h.max(1) as f64;
     let area = (target_area.max(256 * 256)) as f64;
@@ -2009,7 +2009,9 @@ async fn generate_inner(
     if req.extend.is_some()
         && (req.fix_details || req.mode != GenMode::Img2img || mask_src.is_some())
     {
-        return Err(CoreError::invalid("Add an image to extend first."));
+        return Err(CoreError::invalid(
+            "Extend works on its own: switch off the brush and pick Extend again.",
+        ));
     }
     let fix_source = if req.fix_details {
         match (req.mode, &source, mask_src) {

@@ -350,8 +350,20 @@ export function EditTab() {
   // An upscale step has nothing to redo; the original has no step before it.
   // Fix details redoes the step with the spot painted for it. Not while edits run or wait:
   // redoing a step drops the steps after it, which could be their results.
+  // Extend redoes from the step before, which is smaller than the shown result.
+  const prevImg =
+    e.index > 0 ? images[e.chain[e.index - 1]?.imageId] : undefined;
+  const canExtendAgain =
+    extending &&
+    ready &&
+    !!prevImg &&
+    !!extendCanvas(prevImg.width, prevImg.height, e.extendTo, e.extendSide, ui);
   const canTryAgain =
-    (fixing ? ready && !!masks.current.get(current?.id ?? "") : canRun) &&
+    (fixing
+      ? ready && !!masks.current.get(current?.id ?? "")
+      : extending
+        ? canExtendAgain
+        : canRun) &&
     !locked &&
     e.index > 0 &&
     !!node?.meta &&
@@ -1255,7 +1267,9 @@ function Stage({
       }
     : { left: 0, top: 0, width: box.width, height: box.height };
   const [viewing, setViewing] = useState(false);
-  useShortcuts("edit", { fullscreen: maskOn ? undefined : () => setViewing(true) });
+  useShortcuts("edit", {
+    fullscreen: maskOn ? undefined : () => setViewing(true),
+  });
   return (
     <div
       ref={container}

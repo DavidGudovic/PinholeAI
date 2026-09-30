@@ -291,6 +291,8 @@ describe("requests", () => {
     expect(extendCanvas(1024, 1024, "square", "both", ui)).toBeNull();
     // All around keeps the shape and centres the picture; the side choice doesn't apply.
     expect(extendCanvas(1000, 500, "around", "start", ui)).toEqual({ width: 1300, height: 650, left: 150, top: 75 });
+    // Tiny pictures still grow on every side.
+    expect(extendCanvas(1, 1, "around", "both", ui)).toEqual({ width: 3, height: 3, left: 1, top: 1 });
   });
 
   it("offers generators that can edit in both Create and Edit", () => {
