@@ -51,7 +51,7 @@ import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly } from "../models/lib/words";
 import * as api from "../../lib/api";
 import { defaultStayClosePosition, sizeMultiple } from "../../lib/paste/map";
-import type { CoreError, Quality } from "../../lib/types";
+import type { CoreError, ExtendCanvas, Quality } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
@@ -67,6 +67,7 @@ import { modKey } from "../../lib/state/platform";
 import {
   buildEditRequest,
   editOutputSize,
+  extendCanvas,
   settingsSummary,
   type EditSizeChoice,
 } from "../../lib/state/request";
@@ -74,6 +75,7 @@ import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "../create/AddonChips";
 import { LoraSection, PromptPreview } from "../create/FineTune";
 import { CompareView } from "./CompareView";
+import { ExtendControls } from "./ExtendControls";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
 
@@ -126,9 +128,10 @@ export function EditTab() {
     [actions, models],
   );
   const mode: EditMode = e.mode ?? (autoEditOne ? "instruction" : "restyle");
-  // Fix details always uses the brush.
+  // Fix details always uses the brush; Extend never does.
   const fixing = mode === "fix";
-  const maskOn = fixing || maskToggle;
+  const extending = mode === "extend";
+  const maskOn = fixing || (maskToggle && !extending);
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
@@ -167,6 +170,16 @@ export function EditTab() {
       )
     : null;
   const myJob = isEditJob(jobKind);
+  const canvas =
+    extending && current
+      ? extendCanvas(
+          current.width,
+          current.height,
+          e.extendTo,
+          e.extendSide,
+          ui,
+        )
+      : null;
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
@@ -322,10 +335,17 @@ export function EditTab() {
       ? e.instruction
       : fixing
         ? e.fixPrompt
-        : e.restylePrompt;
+        : extending
+          ? e.extendPrompt
+          : e.restylePrompt;
   const ready = !!current && !!model && !importing && !needsEditModel;
   const canRun =
-    ready && (fixing ? painted : text.trim().length > 0 || !!e.styleId);
+    ready &&
+    (fixing
+      ? painted
+      : extending
+        ? !!canvas
+        : text.trim().length > 0 || !!e.styleId);
   // An upscale step has nothing to redo; the original has no step before it.
   // Fix details redoes the step with the spot painted for it. Not while edits run or wait:
   // redoing a step drops the steps after it, which could be their results.
@@ -341,7 +361,10 @@ export function EditTab() {
   );
   const previewReq = useMemo(
     () =>
-      current && model && outSize && (text.trim() || e.styleId || fixing)
+      current &&
+      model &&
+      outSize &&
+      (text.trim() || e.styleId || fixing || extending)
         ? buildEditRequest(e, {
             mode,
             source: current,
@@ -377,6 +400,7 @@ export function EditTab() {
           <div>
             <Segmented
               stretch
+              size="sm"
               ariaLabel="Edit mode"
               value={mode}
               onChange={(m) =>
@@ -398,6 +422,12 @@ export function EditTab() {
                   label: "Fix details",
                   title: "Redraw a small spot, like a face or hand, sharper",
                 },
+                {
+                  value: "extend" as EditMode,
+                  label: "Extend",
+                  title:
+                    "Make the picture wider or taller; the new edges are drawn to match",
+                },
               ]}
             />
             <p className="mt-1.5 text-xs text-neutral-500">
@@ -411,7 +441,9 @@ export function EditTab() {
                   ? "Say what should change. Everything else stays the same."
                   : fixing
                     ? "Paint over a small spot, like a face or hand. It's redrawn larger, then blended back in."
-                    : "Redraws the whole picture with your description."}
+                    : extending
+                      ? "Pick a new shape. Pinhole adds space around your picture and draws what fits there."
+                      : "Redraws the whole picture with your description."}
             </p>
           </div>
 
@@ -525,8 +557,46 @@ export function EditTab() {
               ) : (
                 <RecommendedCards roles={["realistic", "anime"]} compact />
               )}
+              {extending && current && (
+                <ExtendControls
+                  to={e.extendTo}
+                  side={e.extendSide}
+                  width={current.width}
+                  height={current.height}
+                  ui={ui}
+                  onChange={(patch) => dispatch({ type: "patchEdit", patch })}
+                />
+              )}
               <div>
-                {fixing ? (
+                {extending ? (
+                  <>
+                    <label
+                      htmlFor="edit-extend"
+                      className="mb-1.5 block text-sm font-medium"
+                    >
+                      What's in the picture?{" "}
+                      <span className="font-normal text-neutral-500">
+                        (optional)
+                      </span>
+                    </label>
+                    <AutoTextarea
+                      id="edit-extend"
+                      minRows={2}
+                      maxRows={6}
+                      value={e.extendPrompt}
+                      placeholder="e.g. a sandy beach at sunset with palm trees"
+                      onChange={(ev) =>
+                        dispatch({
+                          type: "patchEdit",
+                          patch: { extendPrompt: ev.target.value },
+                        })
+                      }
+                    />
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Describe the whole scene, not just the new part.
+                    </p>
+                  </>
+                ) : fixing ? (
                   <>
                     <label
                       htmlFor="edit-fix"
@@ -575,24 +645,26 @@ export function EditTab() {
                   </>
                 )}
               </div>
-              <div>
-                <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">
-                  How much to change
+              {!extending && (
+                <div>
+                  <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                    How much to change
+                  </div>
+                  <Segmented
+                    stretch
+                    ariaLabel="How much to change"
+                    value={e.change}
+                    onChange={(v) =>
+                      dispatch({ type: "patchEdit", patch: { change: v } })
+                    }
+                    options={[
+                      { value: "subtle" as ChangeAmount, label: "Subtle" },
+                      { value: "medium" as ChangeAmount, label: "Medium" },
+                      { value: "strong" as ChangeAmount, label: "Strong" },
+                    ]}
+                  />
                 </div>
-                <Segmented
-                  stretch
-                  ariaLabel="How much to change"
-                  value={e.change}
-                  onChange={(v) =>
-                    dispatch({ type: "patchEdit", patch: { change: v } })
-                  }
-                  options={[
-                    { value: "subtle" as ChangeAmount, label: "Subtle" },
-                    { value: "medium" as ChangeAmount, label: "Medium" },
-                    { value: "strong" as ChangeAmount, label: "Strong" },
-                  ]}
-                />
-              </div>
+              )}
             </>
           )}
 
@@ -658,7 +730,7 @@ export function EditTab() {
             )}
           </div>
 
-          {!twoImages && (
+          {!twoImages && !extending && (
             <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
               {fixing ? (
                 <div>
@@ -778,7 +850,7 @@ export function EditTab() {
                       }),
                     )}
                   />
-                  {!fixing && (
+                  {!fixing && !extending && (
                     <>
                       <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
                         Output size
@@ -841,7 +913,9 @@ export function EditTab() {
                 <p className="text-[11px] text-neutral-400">
                   {fixing
                     ? "The picture keeps its size; only the painted spot changes. "
-                    : "Size keeps your image’s shape. "}
+                    : extending
+                      ? "The picture keeps its detail; the new space is drawn at the model's size and scaled to fit. "
+                      : "Size keeps your image’s shape. "}
                   {ui
                     ? `${ui.label} defaults are used for everything else.`
                     : ""}
@@ -882,7 +956,9 @@ export function EditTab() {
                   ? "Apply edit"
                   : fixing
                     ? "Fix details"
-                    : "Restyle"}
+                    : extending
+                      ? "Extend"
+                      : "Restyle"}
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
@@ -1054,6 +1130,7 @@ export function EditTab() {
               }
               afterLabel={node?.label ?? "After"}
               maskOn={maskOn && !twoImages && !(compare && before)}
+              canvas={canvas && !(compare && before) ? canvas : null}
               maskRef={mask}
               brush={brush}
               erase={erase}
@@ -1142,6 +1219,7 @@ function Stage({
   brush,
   erase,
   onPainted,
+  canvas,
 }: {
   current: { id: string; url: string; width: number; height: number };
   before?: { id: string; url: string; width: number; height: number };
@@ -1152,9 +1230,24 @@ function Stage({
   brush: number;
   erase: boolean;
   onPainted: (b: boolean) => void;
+  /** Extend's new canvas (source pixels): shown as a dashed frame around the picture. */
+  canvas: ExtendCanvas | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
-  const box = useFitBox(container, current.width, current.height);
+  const box = useFitBox(
+    container,
+    canvas?.width ?? current.width,
+    canvas?.height ?? current.height,
+  );
+  // With a canvas, `box` is the canvas; the picture sits inside it.
+  const pic = canvas
+    ? {
+        left: (canvas.left / canvas.width) * box.width,
+        top: (canvas.top / canvas.height) * box.height,
+        width: (current.width / canvas.width) * box.width,
+        height: (current.height / canvas.height) * box.height,
+      }
+    : { left: 0, top: 0, width: box.width, height: box.height };
   const [viewing, setViewing] = useState(false);
   return (
     <div
@@ -1171,11 +1264,27 @@ function Stage({
           afterLabel={afterLabel}
         />
       )}
+      {canvas && !before && box.width > 0 && (
+        <div
+          aria-label="New space"
+          className="absolute rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-500/10"
+          style={{ width: box.width, height: box.height }}
+        />
+      )}
       {/* Kept mounted while comparing so a painted mask isn't lost. */}
       <div
         hidden={!!before || box.width === 0}
-        className="relative overflow-hidden rounded-lg shadow-lg ring-1 ring-black/5 dark:ring-white/10"
-        style={{ width: box.width, height: box.height }}
+        className={cx(
+          "relative overflow-hidden shadow-lg ring-1 ring-black/5 dark:ring-white/10",
+          canvas ? "rounded-sm" : "rounded-lg",
+        )}
+        style={{
+          width: pic.width,
+          height: pic.height,
+          transform: canvas
+            ? `translate(${pic.left + pic.width / 2 - box.width / 2}px, ${pic.top + pic.height / 2 - box.height / 2}px)`
+            : undefined,
+        }}
       >
         <img
           src={current.url}
@@ -1197,7 +1306,7 @@ function Stage({
           ref={maskRef}
           width={current.width}
           height={current.height}
-          displayWidth={box.width}
+          displayWidth={pic.width}
           brush={brush}
           erase={erase}
           active={maskOn}

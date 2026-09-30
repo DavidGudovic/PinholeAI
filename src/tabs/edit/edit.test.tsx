@@ -138,6 +138,37 @@ describe("Edit tab", () => {
     expect(req).toMatchObject({ mode: "img2img", fixDetails: true, maskImageId: "mask", initImageId: "a", prompt: "" });
   });
 
+  it("Extend picks a new shape and side, has no brush and sends the canvas", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+    });
+    fireEvent.click(await screen.findByRole("radio", { name: "Extend" }));
+    await flush();
+    expect(screen.queryByRole("switch", { name: /Only change here/ })).toBeNull();
+    expect(screen.queryByText(/How much to change/)).toBeNull();
+    // The picture is square already: Square can't be picked.
+    expect((screen.getByRole("radio", { name: "Square" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Wide" }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Right" }));
+    expect(screen.getByLabelText("New space")).toBeTruthy();
+    const go = screen.getByRole("button", { name: /^Extend/ });
+    expect((go as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(go);
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    const req = vi.mocked(api.generate).mock.calls[0][0];
+    expect(req).toMatchObject({ mode: "img2img", initImageId: "a", strength: 1, maskImageId: null, prompt: "" });
+    expect(req.extend).toMatchObject({ height: 64, left: 0, top: 0 });
+    expect(req.extend!.width).toBeGreaterThan(100);
+  });
+
   it("runs one edit when Restyle is pressed twice while the mask is exported", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

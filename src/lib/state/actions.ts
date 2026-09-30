@@ -20,7 +20,7 @@ import {
   type Toast,
 } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
-import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
+import { buildCreateRequest, buildEditRequest, extendCanvas, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseSavePath, copyText } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
@@ -422,11 +422,15 @@ export function makeActions(store: Store) {
     const node = s.edit.chain[at];
     const source = node ? s.images[node.imageId] : undefined;
     if (!node || !source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
-    const text = opts.mode === "instruction" ? s.edit.instruction : opts.mode === "fix" ? s.edit.fixPrompt : s.edit.restylePrompt;
+    const text =
+      opts.mode === "instruction" ? s.edit.instruction : opts.mode === "fix" ? s.edit.fixPrompt : opts.mode === "extend" ? s.edit.extendPrompt : s.edit.restylePrompt;
     if (opts.mode === "fix" && !opts.mask) {
       throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
     }
-    if (opts.mode !== "fix" && !text.trim() && !s.edit.styleId) {
+    if (opts.mode === "extend" && !extendCanvas(source.width, source.height, s.edit.extendTo, s.edit.extendSide, null)) {
+      throw { code: "invalid", message: "The picture is already this shape. Pick another shape to extend it.", details: null } as CoreError;
+    }
+    if (opts.mode !== "fix" && opts.mode !== "extend" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
         message: opts.mode === "instruction" ? "Say what should change first." : "Describe how it should look (or pick a style) first.",
@@ -455,6 +459,9 @@ export function makeActions(store: Store) {
               loras,
               autoAdd: settings?.addTriggerWords ?? true,
             });
+            if (opts.mode === "extend" && !req.extend) {
+              throw { code: "invalid", message: "The picture is already this shape. Pick another shape to extend it.", details: null } as CoreError;
+            }
             const { images, refs } = await generateNow(req, nonce);
             // Added after the step it was made from, replacing later steps. A queued edit of an
             // earlier step goes at the end instead, keeping the edits made since; if that step is

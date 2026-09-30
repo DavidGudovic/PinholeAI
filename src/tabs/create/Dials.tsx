@@ -2,16 +2,11 @@
 import type { ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { Segmented, Slider, Toggle, cx, focusRing } from "../../components/ui";
-import { SHAPE_LABEL, defaultStickPosition, stickValue } from "../../lib/paste/map";
+import { DEFAULT_SHAPE_SIZES, SHAPE_LABEL, defaultStickPosition, stickValue } from "../../lib/paste/map";
 import type { FamilyUi, Quality, Shape } from "../../lib/types";
 import { useAppState, useDispatch } from "../../lib/state/store";
 
-export const FALLBACK_SHAPES: Record<Shape, [number, number]> = {
-  square: [1024, 1024],
-  portrait: [832, 1216],
-  landscape: [1216, 832],
-  wide: [1344, 768],
-};
+export const FALLBACK_SHAPES: Record<Shape, [number, number]> = DEFAULT_SHAPE_SIZES;
 const SHAPES: Shape[] = ["square", "portrait", "landscape", "wide"];
 const QUALITIES: Quality[] = ["fast", "balanced", "best"];
 export const qualityIndex = (q: Quality) => QUALITIES.indexOf(q);
@@ -32,34 +27,65 @@ export function ShapeChips({ value, onChange, shapes }: { value: Shape; onChange
     <div role="radiogroup" aria-label="Shape" className="grid grid-cols-4 gap-1.5">
       {SHAPES.map((s) => {
         const [w, h] = shapes[s] ?? FALLBACK_SHAPES[s];
-        const active = s === value;
-        const max = 18;
-        const iw = w >= h ? max : Math.round((max * w) / h);
-        const ih = h >= w ? max : Math.round((max * h) / w);
-        return (
-          <button
-            key={s}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            title={`${w}×${h}`}
-            onClick={() => onChange(s)}
-            className={cx(
-              "flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border text-xs transition-colors",
-              focusRing,
-              active
-                ? "border-amber-500 bg-amber-50 font-medium text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
-                : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-300 hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-600 dark:hover:text-white",
-            )}
-          >
-            <span className="flex h-5 w-5 items-center justify-center" aria-hidden>
-              <span className={cx("rounded-[3px] border-[1.5px]", active ? "border-amber-600 bg-amber-500/15 dark:border-amber-400" : "border-current opacity-70")} style={{ width: iw, height: ih }} />
-            </span>
-            {SHAPE_LABEL[s]}
-          </button>
-        );
+        return <ShapeChip key={s} active={s === value} w={w} h={h} title={`${w}×${h}`} label={SHAPE_LABEL[s]} onClick={() => onChange(s)} />;
       })}
     </div>
+  );
+}
+
+/** One shape chip (a radio): an outline of `w`×`h` above the label. `inset` draws a smaller box inside it. */
+export function ShapeChip({
+  active,
+  w,
+  h,
+  label,
+  title,
+  onClick,
+  disabled,
+  inset,
+}: {
+  active: boolean;
+  w: number;
+  h: number;
+  label: ReactNode;
+  title?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  inset?: boolean;
+}) {
+  const max = 18;
+  const iw = w >= h ? max : Math.round((max * w) / h);
+  const ih = h >= w ? max : Math.round((max * h) / w);
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={cx(
+        "flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        focusRing,
+        active
+          ? "border-amber-500 bg-amber-50 font-medium text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
+          : "border-neutral-200 bg-white text-neutral-600 enabled:hover:border-neutral-300 enabled:hover:text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:enabled:hover:border-neutral-600 dark:enabled:hover:text-white",
+      )}
+    >
+      <span className="flex h-5 w-5 items-center justify-center" aria-hidden>
+        <span
+          className={cx(
+            "flex items-center justify-center rounded-[3px] border-[1.5px]",
+            active ? "border-amber-600 bg-amber-500/15 dark:border-amber-400" : "border-current opacity-70",
+            inset && "border-dashed",
+          )}
+          style={{ width: iw, height: ih }}
+        >
+          {inset && <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: iw / 2, height: ih / 2 }} />}
+        </span>
+      </span>
+      <span className="max-w-full truncate px-0.5">{label}</span>
+    </button>
   );
 }
 

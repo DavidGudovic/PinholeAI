@@ -1,9 +1,10 @@
 // Pure builders: app state → GenerateRequest, presets ↔ Create params.
 // PRIVACY: requests contain prompt text — memory only. Presets never do.
 
-import { defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
+import { DEFAULT_SHAPE_SIZES, defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
 import type {
   Dials,
+  ExtendCanvas,
   FamilyUi,
   FineTune,
   GenerateRequest,
@@ -16,7 +17,7 @@ import type {
   ResultImage,
   Settings,
 } from "../types";
-import { CHANGE_STRENGTH, FIX_STRENGTH, compactFineTune, loraCompatible, pickedTriggerWords, type CreateParams, type EditMode, type EditParams, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
+import { CHANGE_STRENGTH, FIX_STRENGTH, compactFineTune, loraCompatible, pickedTriggerWords, type CreateParams, type EditMode, type EditParams, type ExtendSide, type ExtendTo, type ImgRef, PRESET_KEYS, type PresetBase, type PresetSettings } from "./model";
 
 /** Fine-tune values that may be stored in a preset (never the negative prompt). */
 export const PRESET_FINE_TUNE_KEYS = [
@@ -129,6 +130,40 @@ export function editOutputSize(w: number, h: number, choice: EditSizeChoice, mul
   return [round(w), round(h)];
 }
 
+/** "All around": each side grows by this much (1.3 = 15% more on every side). */
+export const EXTEND_AROUND = 1.3;
+/** Shapes within this aspect-ratio factor count as the same (nothing to extend). */
+const SAME_SHAPE = 1.02;
+
+/**
+ * Extend's canvas for a `w`×`h` source: the smallest canvas of the new shape that holds the
+ * source (never cropping), with the space on the chosen side(s); "around" keeps the shape and
+ * adds space on every side. `null` when the picture already has that shape.
+ */
+export function extendCanvas(w: number, h: number, to: ExtendTo, side: ExtendSide, ui: FamilyUi | null): ExtendCanvas | null {
+  if (!(w > 0 && h > 0)) return null;
+  let width = w;
+  let height = h;
+  if (to === "around") {
+    width = Math.round(w * EXTEND_AROUND);
+    height = Math.round(h * EXTEND_AROUND);
+  } else {
+    const [sw, sh] = ui?.shapes[to] ?? DEFAULT_SHAPE_SIZES[to];
+    const want = sw / sh;
+    const have = w / h;
+    if (want > have * SAME_SHAPE) width = Math.round(h * want);
+    else if (want < have / SAME_SHAPE) height = Math.round(w / want);
+    else return null;
+  }
+  const place = (extra: number, s: ExtendSide) => (s === "start" ? extra : s === "end" ? 0 : Math.floor(extra / 2));
+  return {
+    width,
+    height,
+    left: place(width - w, to === "around" ? "both" : side),
+    top: place(height - h, to === "around" ? "both" : side),
+  };
+}
+
 export function buildEditRequest(
   e: EditParams,
   opts: {
@@ -160,6 +195,24 @@ export function buildEditRequest(
       // Image 1 = the one being edited; image 2 = the optional second image (no mask with two).
       refImageIds: e.secondImageId ? [opts.source.id, e.secondImageId] : [opts.source.id],
       maskImageId: e.secondImageId ? null : opts.maskImageId,
+    };
+  }
+  if (opts.mode === "extend") {
+    // Rust draws the canvas at about the Quality dial's area and returns it at the canvas size.
+    const extendFineTune: FineTune = e.seed != null ? { seed: e.seed } : {};
+    return {
+      modelId: opts.model.id,
+      mode: "img2img",
+      prompt: e.extendPrompt.trim(),
+      styleId: e.styleId,
+      dials: { shape: "square", quality: e.quality, stick: defaultStickPosition(opts.ui), count: 1 },
+      fineTune: extendFineTune,
+      loras,
+      addTriggerWords: true,
+      initImageId: opts.source.id,
+      strength: 1,
+      maskImageId: null,
+      extend: extendCanvas(opts.source.width, opts.source.height, e.extendTo, e.extendSide, opts.ui),
     };
   }
   if (opts.mode === "fix") {

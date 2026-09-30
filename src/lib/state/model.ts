@@ -1,7 +1,7 @@
 // App state (pure): shape, initial values and the reducer.
 //
 // PRIVACY: this state holds prompt text (create.prompt, fineTune.negativePrompt,
-// edit.instruction, edit.restylePrompt, edit.fixPrompt, describe.text, batch requests). It lives
+// edit.instruction, edit.restylePrompt, edit.fixPrompt, edit.extendPrompt, describe.text, batch requests). It lives
 // in memory only — never persist it (no localStorage/sessionStorage/IndexedDB),
 // never log it, never put it in URLs. "Reset" (top bar) clears it.
 
@@ -68,8 +68,12 @@ export interface Batch {
   request: GenerateRequest;
 }
 
-/** "fix" = Fix details: redraw a painted spot at the model's size and blend it back. */
-export type EditMode = "instruction" | "restyle" | "fix";
+/** "fix" = Fix details: redraw a painted spot at the model's size and blend it back. "extend" = Extend: grow the canvas and draw the new space. */
+export type EditMode = "instruction" | "restyle" | "fix" | "extend";
+/** Extend's new shape; "around" = same shape, a bit more on every side. */
+export type ExtendTo = Shape | "around";
+/** Where Extend adds the space: left/top, both sides, or right/bottom. */
+export type ExtendSide = "start" | "both" | "end";
 export type ChangeAmount = "subtle" | "medium" | "strong";
 export const CHANGE_STRENGTH: Record<ChangeAmount, number> = { subtle: 0.35, medium: 0.55, strong: 0.75 };
 /** Fix details redraws the spot from a blurry close-up, so it stays closer to it. */
@@ -93,6 +97,10 @@ export interface EditParams {
   restylePrompt: string;
   /** prompt-bearing: Fix details' optional "What is it?" */
   fixPrompt: string;
+  /** prompt-bearing: Extend's optional "What's in the picture?" */
+  extendPrompt: string;
+  extendTo: ExtendTo;
+  extendSide: ExtendSide;
   /** "Stay close to original" 0…1; null = family default. */
   stayClose: number | null;
   change: ChangeAmount;
@@ -204,6 +212,9 @@ export const initialEdit = (): EditParams => ({
   instruction: "",
   restylePrompt: "",
   fixPrompt: "",
+  extendPrompt: "",
+  extendTo: "around",
+  extendSide: "both",
   stayClose: null,
   change: "medium",
   styleId: null,

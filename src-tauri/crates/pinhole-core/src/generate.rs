@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use pinhole_engine::detail::{DetailError, DetailPlan};
+use pinhole_engine::extend::{Canvas, ExtendError, ExtendPlan};
 use pinhole_engine::failure::{classify, memory_failure, Failure, Stage};
 use pinhole_engine::install::EngineKind;
 use pinhole_engine::logbuf::{LogBuffer, ProgressKind};
@@ -179,6 +180,21 @@ pub struct GenerateRequest {
     /// mask at the model's native size, then blend it back into the source.
     #[serde(default)]
     pub fix_details: bool,
+    /// Edit "Extend" (img2img): put the source on this bigger canvas and draw
+    /// the new space (plus a seam over the old edge), then paste the source back.
+    #[serde(default)]
+    pub extend: Option<ExtendCanvas>,
+}
+
+/// `ExtendCanvas`: the new canvas in source pixels; `left`/`top` = where the
+/// source's top-left corner goes.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtendCanvas {
+    pub width: u32,
+    pub height: u32,
+    pub left: u32,
+    pub top: u32,
 }
 
 impl GenerateRequest {
@@ -203,6 +219,7 @@ impl GenerateRequest {
             ref_image_ids: Vec::new(),
             mask_image_id: None,
             fix_details: false,
+            extend: None,
         }
     }
 }
@@ -1836,6 +1853,23 @@ async fn engine_died(core: &AppCore) -> Option<Option<i32>> {
 
 /// Size for img2img / edit: keep the source aspect ratio at about the dial's
 /// area, rounded to the family's size multiple (SD1.5/SDXL 64, others 16).
+/// A job that draws part of a picture and blends it back ("Fix details", "Extend").
+#[derive(Clone)]
+enum Redraw {
+    Detail(Arc<DetailPlan>),
+    Extend(Arc<ExtendPlan>),
+}
+
+impl Redraw {
+    /// The finished whole picture as PNG, or `None` when the redraw can't be read.
+    fn blend(&self, redraw: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Redraw::Detail(p) => p.blend(redraw).ok(),
+            Redraw::Extend(p) => p.blend(redraw).ok(),
+        }
+    }
+}
+
 fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u32) {
     let aspect = src_w.max(1) as f64 / src_h.max(1) as f64;
     let area = (target_area.max(256 * 256)) as f64;
@@ -1948,6 +1982,11 @@ async fn generate_inner(
             mask_src = Some(img);
         }
     }
+    if req.extend.is_some()
+        && (req.fix_details || req.mode != GenMode::Img2img || mask_src.is_some())
+    {
+        return Err(CoreError::invalid("Add an image to extend first."));
+    }
     let fix_source = if req.fix_details {
         match (req.mode, &source, mask_src) {
             (GenMode::Img2img, Some(src), Some(mask)) => Some((src, mask)),
@@ -2010,9 +2049,43 @@ async fn generate_inner(
             (width, height) = plan.work;
             init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
             mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
-            Some(Arc::new(plan))
+            Some(Redraw::Detail(Arc::new(plan)))
         }
         None => None,
+    };
+    // "Extend": the engine draws the whole bigger canvas at about the dial's area.
+    let fix = match (fix, req.extend, &source) {
+        (None, Some(c), Some(src)) => {
+            let area = u64::from(params.width) * u64::from(params.height);
+            let multiple = wiring::size_multiple(&prep.family);
+            let src_bytes = src.bytes.clone();
+            let canvas = Canvas {
+                width: c.width,
+                height: c.height,
+                left: c.left,
+                top: c.top,
+            };
+            let plan = tokio::task::spawn_blocking(move || {
+                ExtendPlan::new(&src_bytes, canvas, |w, h| size_like(w, h, area, multiple))
+            })
+            .await
+            .map_err(|_| CoreError::internal("Extending the picture stopped unexpectedly."))?
+            .map_err(|e| match e {
+                ExtendError::NothingToAdd => CoreError::invalid(
+                    "The picture is already this shape. Pick another shape to extend it.",
+                ),
+                ExtendError::TooBig => CoreError::invalid(format!(
+                    "The extended picture would be too big (over {} pixels on a side). Extend a smaller step, or pick a shape closer to this one.",
+                    pinhole_engine::extend::MAX_SIDE
+                )),
+                ExtendError::Image(e) => CoreError::invalid(e.to_string()),
+            })?;
+            (width, height) = plan.work;
+            init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
+            mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
+            Some(Redraw::Extend(Arc::new(plan)))
+        }
+        (fix, _, _) => fix,
     };
     let seed: i64 = match req.fine_tune.seed {
         Some(s) if s >= 0 => s,
@@ -2038,7 +2111,7 @@ async fn generate_inner(
             distilled_guidance: params.guidance,
         },
     };
-    // Hires fix would redraw the crop again; "Fix details" already works at the model's size.
+    // Hires fix would redraw the crop again; "Fix details" and "Extend" already work at the model's size.
     let hires = params.hires.as_ref().filter(|_| fix.is_none());
     body.hires = hires.map(|h| HiresRequest::image_space(h.scale, h.steps, h.denoising_strength));
     body.vae_tiling_params = if params.vae_tiling {
@@ -2054,6 +2127,10 @@ async fn generate_inner(
     body.mask_image = mask_image;
     if req.mode == GenMode::Img2img {
         body.strength = Some(req.strength.unwrap_or(0.55).clamp(0.05, 1.0));
+    }
+    // The new space starts from noise: only the mask decides what is kept.
+    if matches!(fix, Some(Redraw::Extend(_))) {
+        body.strength = Some(1.0);
     }
     // "Only change here": sd.cpp blends the denoise mask against the init latent,
     // so an edit with a mask also sends the source as init_image at full strength
@@ -2158,12 +2235,12 @@ async fn generate_inner(
             )
         })?;
         if let Some(plan) = &fix {
-            // Paste the redrawn box back into the whole image.
+            // Paste the redrawn box back into the whole image (or the source into the canvas).
             let plan = plan.clone();
             png = tokio::task::spawn_blocking(move || plan.blend(&png))
                 .await
                 .ok()
-                .and_then(Result::ok)
+                .flatten()
                 .ok_or_else(|| {
                     CoreError::new(
                         "engine_failed",
