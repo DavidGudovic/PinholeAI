@@ -27,7 +27,7 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
             <li>sexualizes minors, or anyone who appears to be under 18</li>
             <li>shows a real person in a sexual or intimate way without their consent, including edits of their photos</li>
             <li>impersonates, deceives, bullies or harasses real people</li>
-            <li>forges documents, IDs, receipts or evidence</li>
+            <li>forges documents, IDs, money, receipts or evidence, or is used for fraud</li>
             <li>is otherwise illegal</li>
           </ul>
         </section>

@@ -425,8 +425,11 @@ templates, posts and UI.
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
   anime prompts pass. Word lists are compiled in (not YAML), so a config edit can't turn it off.
-  It ignores zero-width characters and fullwidth letters but misses misspellings, look-alike
-  letters and made-up words, so it doesn't replace §3.2 rule 2. Required before any helper model
+  Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
+  accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
+  repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
+  On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
+  new. It still misses misspellings and made-up words, so it doesn't replace §3.2 rule 2. Required before any helper model
   without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or
