@@ -17,6 +17,7 @@ pub mod error;
 pub mod events;
 pub mod gallery;
 pub mod generate;
+pub mod imagecheck;
 pub mod library;
 pub mod linked;
 pub mod models;
@@ -80,6 +81,8 @@ pub struct AppCore {
     pub models: models::ModelsState,
     /// Other apps' models folders being looked through (RAM only).
     pub linked: linked::LinkedRuntime,
+    /// The local image check (RELEASE-SPEC §4).
+    pub check: imagecheck::CheckState,
 }
 
 impl AppCore {
@@ -110,6 +113,7 @@ impl AppCore {
         let http = HttpClient::new(offline.clone())?;
         let local = LocalClient::new()?;
         let downloads = DownloadManager::new(http.clone());
+        let check = imagecheck::CheckState::new(data.safety_check());
         Ok(Arc::new(Self {
             shipped,
             data,
@@ -127,6 +131,7 @@ impl AppCore {
             describe: describe::DescribeState::default(),
             models: models::ModelsState::default(),
             linked: linked::LinkedRuntime::default(),
+            check,
         }))
     }
 
@@ -139,6 +144,7 @@ impl AppCore {
         downloads::start_event_forwarding(self);
         describe::start_idle_watchdog(self);
         linked::start(self);
+        imagecheck::start_idle_unload(self);
     }
 
     /// Stop engines (app exit).

@@ -21,8 +21,47 @@ use crate::AppCore;
 
 /// Make `generate` talk to an already-running (mock) sd-server at `base_url`
 /// instead of installing/spawning the real engine.
+/// Also puts a stand-in image check that passes every picture in place (see
+/// [`use_check`]), so tests don't need the check's model files.
 pub fn use_external_engine(core: &AppCore, base_url: &str) {
     *core.gen.external.lock() = Some(base_url.trim_end_matches('/').to_string());
+    use_check(core, FakeCheck::default());
+}
+
+/// A stand-in for the image check with fixed readings (test builds only: release
+/// builds have no way to replace the check).
+#[derive(Debug, Clone, Default)]
+pub struct FakeCheck {
+    /// Labels of files to report as missing.
+    pub missing: Vec<&'static str>,
+    /// Readings for every result (default: an ordinary picture).
+    pub readings: pinhole_check::Readings,
+    /// Readings for every brought-in picture.
+    pub original: pinhole_check::Original,
+    /// How many results and originals were measured.
+    pub counts: std::sync::Arc<parking_lot::Mutex<(usize, usize)>>,
+}
+
+impl crate::imagecheck::Inspector for FakeCheck {
+    fn missing(&self) -> Vec<&'static str> {
+        self.missing.clone()
+    }
+    fn readings(&self, _png: &[u8]) -> Result<pinhole_check::Readings, pinhole_check::CheckError> {
+        if !self.missing.is_empty() {
+            return Err(pinhole_check::CheckError::Missing(self.missing[0]));
+        }
+        self.counts.lock().0 += 1;
+        Ok(self.readings.clone())
+    }
+    fn original(&self, _png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
+        self.counts.lock().1 += 1;
+        Ok(self.original)
+    }
+}
+
+/// Replace the image check with `fake`.
+pub fn use_check(core: &AppCore, fake: FakeCheck) {
+    *core.check.inspector.write() = std::sync::Arc::new(fake);
 }
 
 /// sd-server's output buffer (memory only, redacted), so a mock engine can
@@ -175,6 +214,7 @@ pub fn register_fake_lora(core: &AppCore, family_id: &str, trained_words: &[&str
             trained_words: trained_words.iter().map(|s| s.to_string()).collect(),
             license: None,
             creator_notes: None,
+            sfw_only: false,
         }),
         added_at: now(),
         last_used: None,
@@ -1900,6 +1940,249 @@ mod tests {
             .iter()
             .any(|e| matches!(e, CoreEvent::Generation(_))));
         assert_eq!(core.session.len(), 1, "only the source image");
+    }
+
+    /// Readings of an intimate photo of an adult (made-up scores).
+    fn intimate_adult() -> pinhole_check::Readings {
+        pinhole_check::Readings {
+            nudity: 0.95,
+            tags: Some(pinhole_check::Tags {
+                questionable: 0.6,
+                explicit: 0.3,
+                realistic: 0.8,
+                ..Default::default()
+            }),
+            faces: Some(vec![pinhole_check::Face {
+                score: 0.9,
+                side: 100.0,
+                under_ten: Some(0.02),
+            }]),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_check_files_stop_create_and_edit_before_the_engine() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["Safety check: face finder"],
+                ..Default::default()
+            },
+        );
+        let model = register_fake_model(&core, "sdxl");
+        let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "a boat"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::imagecheck::MISSING);
+        assert!(e.message.contains("Set up safety check"), "{}", e.message);
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(model, "at sunset");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(src.id);
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, crate::imagecheck::MISSING);
+        assert!(mock.requests().is_empty(), "nothing reaches the engine");
+        assert!(!crate::imagecheck::status(&core).ready);
+
+        // The real check with no files in Data/check is not ready either.
+        let (_tmp2, bare, _) = new_core();
+        let st = crate::imagecheck::status(&bare);
+        assert!(!st.ready);
+        assert_eq!(st.download_bytes, pinhole_check::files::total_bytes());
+        assert_eq!(
+            crate::imagecheck::ensure_ready(&bare).unwrap_err().code,
+            crate::imagecheck::MISSING
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_result_drops_the_whole_batch() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().child = 0.9;
+        let fake = FakeCheck {
+            readings,
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        let mut req = GenerateRequest::txt2img(model, "a boat");
+        req.dials.count = 2;
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(e.message, crate::text_check::BLOCKED_MESSAGE);
+        assert_eq!(core.session.len(), 0, "no picture of the batch is kept");
+        assert!(counts.lock().0 >= 1);
+        // Dev builds name the rule for tuning; the message never changes.
+        if cfg!(debug_assertions) {
+            assert!(e.details.unwrap().starts_with("looks_underage"));
+        }
+    }
+
+    #[tokio::test]
+    async fn adult_results_pass_unless_made_from_a_brought_in_photo_of_someone() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: false,
+            },
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        // Create: adult content of adults is allowed.
+        let made = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        assert_eq!(counts.lock().1, 0, "no originals to measure");
+
+        let restyle = |src: &str| {
+            let mut req = GenerateRequest::txt2img(model.clone(), "y");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.to_string());
+            req
+        };
+        // Restyling a Pinhole picture: fine.
+        generate::generate(&core, restyle(&made)).await.unwrap();
+        // A brought-in photo of a person made intimate: blocked.
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let e = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(counts.lock().1, 1);
+
+        // A chain with an ordinary step first, the original discarded, then intimate.
+        use_check(
+            &core,
+            FakeCheck {
+                original: pinhole_check::Original {
+                    has_face: true,
+                    intimate: false,
+                },
+                ..Default::default()
+            },
+        );
+        let step = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        session::discard(&core, &photo);
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: false,
+            },
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        let e = generate::generate(&core, restyle(&step)).await.unwrap_err();
+        assert_eq!(e.code, "blocked", "the chain still leads back to the photo");
+        assert_eq!(counts.lock().1, 0, "the original's readings were kept");
+
+        // Reset forgets the originals.
+        session::clear(&core).await;
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        // A photo that was already intimate when brought in: edits pass.
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: true,
+            },
+            ..Default::default()
+        };
+        use_check(&core, fake);
+        generate::generate(&core, restyle(&photo)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn safe_images_only_models_cant_make_intimate_pictures() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                ..Default::default()
+            },
+        );
+        let made = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        // Dev builds measure a picture on request for the readings view; release builds
+        // never show readings.
+        let readings = crate::imagecheck::readings_of(&core, &made).await.unwrap();
+        if cfg!(debug_assertions) {
+            let r = readings.unwrap();
+            assert!(r.starts_with("nudity 0.95"), "{r}");
+            assert!(r.contains("Made with AI watermark: no"), "{r}");
+        } else {
+            assert!(readings.is_none());
+        }
+        {
+            let mut idx = core.installed.lock();
+            let m = idx.get_mut(&model).unwrap();
+            let mut c = pinhole_store::installed::CivitaiRef {
+                model_id: 1,
+                version_id: 2,
+                model_name: None,
+                version_name: None,
+                base_model: None,
+                trained_words: vec![],
+                license: None,
+                creator_notes: None,
+                sfw_only: false,
+            };
+            c.sfw_only = true;
+            m.civitai = Some(c);
+        }
+        let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // Ordinary pictures from it are fine.
+        use_check(&core, FakeCheck::default());
+        generate::generate(&core, GenerateRequest::txt2img(model, "x"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

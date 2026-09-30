@@ -734,6 +734,8 @@ struct Prepared {
     /// User texts for log redaction (memory only).
     secrets: Vec<String>,
     loras: Vec<LoraRef>,
+    /// The model or a picked LoRA is marked "safe images only" on CivitAI.
+    safe_images_only: bool,
 }
 
 /// Read-only "Final prompt sent to the model" (combined in memory, never stored).
@@ -759,6 +761,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     // Every picked add-on's name and trigger words, for the word check below (whether or
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
+    let mut safe_images_only = model.civitai.as_ref().is_some_and(|c| c.sfw_only);
     {
         let idx = core.installed.lock();
         // Add-ons were picked for the chosen model; an edit that fell back to
@@ -803,6 +806,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                     1.0
                 },
             });
+            safe_images_only |= f.civitai.as_ref().is_some_and(|c| c.sfw_only);
             addon_words.push(f.friendly_name.clone());
             addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
             if req.add_trigger_words {
@@ -880,6 +884,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
         final_prompt,
         secrets,
         loras,
+        safe_images_only,
     })
 }
 
@@ -2002,6 +2007,8 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     // Early word check so a blocked prompt doesn't wait behind a running job; `prepare`
     // checks the combined prompt again.
     crate::text_check::check(&req.prompt)?;
+    // Without every image check file nothing is made (fail closed).
+    crate::imagecheck::ensure_ready(core)?;
     // Held for the whole run: the Models folder can't move under the engine.
     let _folder = crate::models::folder_read(core)?;
     let _run = core.gen.run_lock.lock().await;
@@ -2055,6 +2062,15 @@ async fn generate_inner(
     let mut source: Option<SessionImage> = None;
     // Origins of every picture the result is made from (not the mask: that is only a shape).
     let mut input_origins: Vec<Origin> = Vec::new();
+    // The brought-in pictures behind them, for the image check.
+    let mut sources: Vec<crate::session::Source> = Vec::new();
+    let mut add_sources = |img: &SessionImage| {
+        for s in img.sources() {
+            if !sources.iter().any(|k| k.id == s.id) {
+                sources.push(s);
+            }
+        }
+    };
     match req.mode {
         // Create's reference picture ("in the style of this picture"): sent like an edit's
         // image, but the size comes from the dials, not from the picture.
@@ -2067,6 +2083,7 @@ async fn generate_inner(
                 }
                 let (b64, img) = b64_image(core, id)?;
                 input_origins.push(img.origin);
+                add_sources(&img);
                 ref_images.push(b64);
             }
         }
@@ -2077,6 +2094,7 @@ async fn generate_inner(
                 .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
             let (b64, img) = b64_image(core, id)?;
             input_origins.push(img.origin);
+            add_sources(&img);
             init_image = Some(b64);
             source = Some(img);
         }
@@ -2092,6 +2110,7 @@ async fn generate_inner(
             for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
                 input_origins.push(img.origin);
+                add_sources(&img);
                 if source.is_none() {
                     source = Some(img);
                 }
@@ -2350,8 +2369,8 @@ async fn generate_inner(
         );
     }
     let parent_id = source.as_ref().map(|s| s.id.clone());
-    let mut out = Vec::new();
-    for (i, img) in images.into_iter().enumerate() {
+    let mut pngs = Vec::with_capacity(images.len());
+    for img in images {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(img.b64_json.as_bytes())
             .map_err(|_| {
@@ -2380,6 +2399,16 @@ async fn generate_inner(
                     )
                 })?;
         }
+        pngs.push(png);
+    }
+    // Result intake: every picture passes the image check first; if one is blocked,
+    // none is kept.
+    let (pngs, readings) =
+        crate::imagecheck::check_results(core, pngs, sources.clone(), prep.safe_images_only)
+            .await?;
+    let made_from: Arc<[crate::session::Source]> = Arc::from(sources);
+    let mut out = Vec::new();
+    for (i, png) in pngs.into_iter().enumerate() {
         let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),
@@ -2400,7 +2429,7 @@ async fn generate_inner(
         };
         if !core
             .session
-            .insert_generated_since(session_epoch, png, meta.clone())
+            .insert_generated_from(session_epoch, png, meta.clone(), made_from.clone())
         {
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
@@ -2853,10 +2882,13 @@ async fn upscale_inner(
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
+    // Not re-checked: an upscale has the same content as its (checked or brought-in)
+    // source. It keeps the source's brought-in pictures for later edits.
+    let made_from: Arc<[crate::session::Source]> = Arc::from(src.sources());
     if cancel.is_cancelled()
         || !core
             .session
-            .insert_generated_since(session_epoch, png, meta.clone())
+            .insert_generated_from(session_epoch, png, meta.clone(), made_from)
     {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }

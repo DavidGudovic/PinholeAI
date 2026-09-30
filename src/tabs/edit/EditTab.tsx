@@ -26,6 +26,7 @@ import {
   useFilePicker,
   useImagePaste,
 } from "../../components/ImageDrop";
+import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { LiveJobProgress } from "../../components/JobProgress";
@@ -1193,6 +1194,11 @@ export function EditTab() {
               <p className="-mt-3 shrink-0 pb-3 text-center text-xs text-neutral-500 tabular-nums">
                 {settingsSummary(node.meta)}
               </p>
+            )}
+            {import.meta.env.DEV && node && (
+              <div className="-mt-2 shrink-0 pb-2">
+                <CheckReadings id={node.imageId} />
+              </div>
             )}
 
             <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">

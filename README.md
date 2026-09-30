@@ -126,7 +126,7 @@ Uninstalling does not delete `Data/` — remove it yourself to free the disk spa
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.88), Node.js 22, and the
+Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.91), Node.js 22, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/):
 
 - **Windows:** Microsoft C++ Build Tools (MSVC) and WebView2 (preinstalled on Windows 11).

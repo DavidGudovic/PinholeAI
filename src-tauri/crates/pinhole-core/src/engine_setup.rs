@@ -250,6 +250,8 @@ pub(crate) fn emit_status(core: &AppCore) {
 /// Download + verify + unpack the image engine for the current backend.
 /// Resolves when done; progress arrives as `download-progress`.
 pub async fn install_engine(core: &Arc<AppCore>) -> CoreResult<EngineStatus> {
+    // Nothing is made without the image check, so set it up alongside.
+    crate::imagecheck::install_in_background(core);
     let result = install_kind(core, EngineKind::Sd).await;
     match result {
         Ok(_) => {

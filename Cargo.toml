@@ -8,6 +8,7 @@ members = [
   "src-tauri/crates/pinhole-hardware",
   "src-tauri/crates/pinhole-engine",
   "src-tauri/crates/pinhole-catalog",
+  "src-tauri/crates/pinhole-check",
   "src-tauri/crates/pinhole-core",
   "tests",
 ]
@@ -16,7 +17,7 @@ members = [
 version = "0.2.0"
 edition = "2021"
 license = "MIT"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
 # internal
@@ -26,6 +27,7 @@ pinhole-store = { path = "src-tauri/crates/pinhole-store" }
 pinhole-hardware = { path = "src-tauri/crates/pinhole-hardware" }
 pinhole-engine = { path = "src-tauri/crates/pinhole-engine" }
 pinhole-catalog = { path = "src-tauri/crates/pinhole-catalog" }
+pinhole-check = { path = "src-tauri/crates/pinhole-check" }
 pinhole-core = { path = "src-tauri/crates/pinhole-core" }
 
 # external (boring, well-maintained)

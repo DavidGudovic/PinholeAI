@@ -10,6 +10,7 @@ use pinhole_core::generate::{
     self as gen, FinalPromptPreview, GenerateRequest, GenerateResult, ImportedImage, ResultImage,
     SavedImage,
 };
+use pinhole_core::imagecheck::{self, SafetyCheckStatus};
 use pinhole_core::{engine_setup, session, AppCore, CoreError};
 use pinhole_registry::wiring::FamilyUi;
 use tauri::ipc::{InvokeBody, Request, Response};
@@ -35,6 +36,23 @@ pub async fn engine_output(core: Core<'_>) -> Result<String, CoreError> {
 #[tauri::command]
 pub async fn install_engine(core: Core<'_>) -> Result<EngineStatus, CoreError> {
     engine_setup::install_engine(core.inner()).await
+}
+
+#[tauri::command]
+pub async fn safety_check_status(core: Core<'_>) -> Result<SafetyCheckStatus, CoreError> {
+    Ok(imagecheck::status(&core))
+}
+
+/// Download the image check's files; resolves when they are in place.
+#[tauri::command]
+pub async fn install_safety_check(core: Core<'_>) -> Result<SafetyCheckStatus, CoreError> {
+    imagecheck::install(core.inner()).await
+}
+
+/// Dev builds: the image check's readings of a session picture. Release builds: `None`.
+#[tauri::command]
+pub async fn check_readings(core: Core<'_>, id: String) -> Result<Option<String>, CoreError> {
+    imagecheck::readings_of(core.inner(), &id).await
 }
 
 #[tauri::command]
@@ -186,6 +204,9 @@ super::area_commands![
     engine_status,
     engine_output,
     install_engine,
+    safety_check_status,
+    install_safety_check,
+    check_readings,
     family_ui,
     generate,
     cancel_generation,

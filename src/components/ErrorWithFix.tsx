@@ -1,5 +1,6 @@
 // ErrorNotice plus a one-click fix where there is one:
 //   engine_missing → "Set up engine" (installEngine, progress in Downloads) → "Try again".
+//   check_missing → "Set up safety check" (installSafetyCheck, progress in Downloads) → "Try again".
 //   not_found for a model, model_load (the model file couldn't be loaded), vram when the message
 //   suggests the smaller version of the model "in Models" → "Open Models".
 import { useState } from "react";
@@ -14,39 +15,44 @@ export function ErrorWithFix({ error, onDismiss, onRetry }: { error: CoreError; 
   const [state, setState] = useState<"idle" | "installing" | "ready">("idle");
   const [installError, setInstallError] = useState<CoreError | null>(null);
 
+  // One-click setup with a download behind it, then "Try again".
+  const setup = (label: string, readyText: string, install: () => Promise<void>) =>
+    state === "ready" ? (
+      onRetry ? (
+        <Button size="sm" variant="primary" onClick={onRetry}>
+          <RotateCcw className="h-3.5 w-3.5" /> Try again
+        </Button>
+      ) : (
+        <span className="text-xs font-medium">{readyText}</span>
+      )
+    ) : (
+      <Button
+        size="sm"
+        variant="primary"
+        disabled={state === "installing"}
+        onClick={async () => {
+          setState("installing");
+          setInstallError(null);
+          void actions.refreshDownloads().catch(() => undefined);
+          try {
+            await install();
+            setState("ready");
+          } catch (e) {
+            setInstallError(api.asCoreError(e));
+            setState("idle");
+          }
+        }}
+      >
+        {state === "installing" ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+        {state === "installing" ? "Setting up… (see Downloads)" : label}
+      </Button>
+    );
+
   let action = null;
   if (error.code === "engine_missing") {
-    action =
-      state === "ready" ? (
-        onRetry ? (
-          <Button size="sm" variant="primary" onClick={onRetry}>
-            <RotateCcw className="h-3.5 w-3.5" /> Try again
-          </Button>
-        ) : (
-          <span className="text-xs font-medium">Engine ready — try again.</span>
-        )
-      ) : (
-        <Button
-          size="sm"
-          variant="primary"
-          disabled={state === "installing"}
-          onClick={async () => {
-            setState("installing");
-            setInstallError(null);
-            void actions.refreshDownloads().catch(() => undefined);
-            try {
-              actions.onEngine(await api.installEngine());
-              setState("ready");
-            } catch (e) {
-              setInstallError(api.asCoreError(e));
-              setState("idle");
-            }
-          }}
-        >
-          {state === "installing" ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
-          {state === "installing" ? "Setting up… (see Downloads)" : "Set up engine"}
-        </Button>
-      );
+    action = setup("Set up engine", "Engine ready — try again.", async () => actions.onEngine(await api.installEngine()));
+  } else if (error.code === "check_missing") {
+    action = setup("Set up safety check", "Safety check ready — try again.", async () => void (await api.installSafetyCheck()));
   } else if (error.code === "model_load" || (error.code === "vram" && /in Models/.test(error.message)) || (error.code === "not_found" && /model/i.test(error.message))) {
     action = (
       <Button size="sm" onClick={() => actions.setTab("models")}>

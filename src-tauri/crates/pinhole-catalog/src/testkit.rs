@@ -72,6 +72,7 @@ pub fn with_civitai(mut f: InstalledFile, version_id: u64) -> InstalledFile {
         trained_words: vec![],
         license: None,
         creator_notes: None,
+        sfw_only: false,
     });
     f
 }

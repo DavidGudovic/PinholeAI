@@ -32,11 +32,35 @@ pub struct SessionImage {
     pub meta: Option<ResultImage>,
     /// Made in Pinhole or brought in (RELEASE-SPEC §3.1). Held in memory only.
     pub origin: Origin,
+    /// The brought-in pictures a generated image was made from, through every step
+    /// (the image check compares results with them). Empty for imported images: they
+    /// are their own source (see [`SessionImage::sources`]).
+    pub made_from: Arc<[Source]>,
+}
+
+/// A brought-in picture at the start of a chain of edits. Its bytes stay with every
+/// image made from it, so discarding the original doesn't lose it for the check.
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub id: String,
+    pub bytes: Arc<Vec<u8>>,
 }
 
 impl SessionImage {
     pub fn parent_id(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.parent_id.as_deref())
+    }
+
+    /// The brought-in pictures this image comes from: itself when it was brought in.
+    pub fn sources(&self) -> Vec<Source> {
+        if self.meta.is_none() && self.origin == Origin::Imported {
+            vec![Source {
+                id: self.id.clone(),
+                bytes: self.bytes.clone(),
+            }]
+        } else {
+            self.made_from.to_vec()
+        }
     }
 }
 
@@ -53,6 +77,17 @@ impl Session {
     /// only while no Reset happened since [`Session::epoch`] returned `epoch` (a job that finishes after
     /// Reset must not bring its images back). Returns whether it was stored.
     pub fn insert_generated_since(&self, epoch: u64, png: Vec<u8>, meta: ResultImage) -> bool {
+        self.insert_generated_from(epoch, png, meta, Arc::from(Vec::new()))
+    }
+
+    /// [`Session::insert_generated_since`] for an image made from `made_from`.
+    pub fn insert_generated_from(
+        &self,
+        epoch: u64,
+        png: Vec<u8>,
+        meta: ResultImage,
+        made_from: Arc<[Source]>,
+    ) -> bool {
         let mut images = self.images.write();
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
@@ -65,6 +100,7 @@ impl Session {
             height: meta.height,
             origin: meta.origin,
             meta: Some(meta),
+            made_from,
         };
         images.insert(img.id.clone(), img);
         true
@@ -138,6 +174,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         height,
         meta: None,
         origin: Origin::Imported,
+        made_from: Arc::from(Vec::new()),
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -158,6 +195,7 @@ pub fn discard(core: &AppCore, id: &str) {
 /// right after it.
 pub async fn clear(core: &AppCore) {
     core.session.clear();
+    core.check.forget();
     core.gen.logs.clear();
     core.describe.logs.clear();
     crate::generate::clear_engine_results(core).await;

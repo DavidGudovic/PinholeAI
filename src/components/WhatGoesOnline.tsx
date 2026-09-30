@@ -28,7 +28,7 @@ export const ONLINE_CALLS: Call[] = [
     sent: "Which model you opened.",
   },
   {
-    when: "You start a download: a model or add-on, the engine, a Describe or Improve helper, or the upscaler the first time you use Upscale",
+    when: "You start a download: a model or add-on, the engine and its safety check, a Describe or Improve helper, or the upscaler the first time you use Upscale",
     where: "civitai.com, huggingface.co or github.com, and their download servers",
     sent: "A request for that file. Nothing about your pictures or prompts.",
   },
