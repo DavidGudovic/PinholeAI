@@ -2,13 +2,13 @@
 // Create / Edit / Describe empty states (frontend A). Keep this export signature.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Camera, CircleCheck, Download, RotateCw, ScanText, Sparkles, WandSparkles } from "lucide-react";
-import { asCoreError, getRecommended, installRecommended, onHardwareReady, onModelsChanged } from "../lib/api";
+import { asCoreError, getRecommended, installRecommended, onModelsChanged } from "../lib/api";
 import type { CoreError, GroupStatus, RecommendedPick } from "../lib/types";
 import { formatBytes } from "../lib/format";
 import { Button, ErrorNotice, Spinner, VramBadge } from "../components/ui";
 import { GroupProgress, Skeleton } from "../tabs/models/controls";
 import { cancelGroup, getTagged, tagGroup, useDownloadsVersion, useTaggedGroup } from "../tabs/models/lib/downloads";
-import { useHardware, useTauriEvent } from "../tabs/models/lib/hooks";
+import { useHardware, useOnHardwareChange, useTauriEvent } from "../tabs/models/lib/hooks";
 import { isActive, machinePlain, quantPlain } from "../tabs/models/lib/words";
 
 const ROLE_ICON: Record<string, ReactNode> = {
@@ -60,7 +60,8 @@ export function RecommendedCards(props: {
     void load();
   }, [load]);
   useTauriEvent(onModelsChanged, () => void load());
-  useTauriEvent(onHardwareReady, () => void load());
+  // Picks and fit badges are sized against the hardware (detection, Settings overrides).
+  useOnHardwareChange(() => void load());
 
   const shown = !picks
     ? null

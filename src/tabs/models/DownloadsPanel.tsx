@@ -1,12 +1,14 @@
 // Active (and recently finished) download groups with Cancel.
 import { CircleCheck, CircleX, Download, X } from "lucide-react";
 import { GroupProgress } from "./controls";
-import { IconButton } from "../../components/ui";
-import { cancelGroup, hideFinished, hideGroup, useVisibleDownloads } from "./lib/downloads";
+import { IconButton, cx, focusRing } from "../../components/ui";
+import { useActions } from "../../lib/state/AppProvider";
+import { cancelGroup, clearFinishedEverywhere, hideGroup, useVisibleDownloads } from "./lib/downloads";
 import { isActive } from "./lib/words";
 
 export function DownloadsPanel() {
   const groups = useVisibleDownloads();
+  const actions = useActions();
   if (!groups.length) return null;
   const active = groups.filter(isActive);
   const finished = groups.length - active.length;
@@ -20,7 +22,11 @@ export function DownloadsPanel() {
           {active.length > 0 && <span className="text-neutral-500">· {active.length} active</span>}
         </span>
         {finished > 0 && (
-          <button type="button" onClick={hideFinished} className="text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100">
+          <button
+            type="button"
+            onClick={() => clearFinishedEverywhere(actions)}
+            className={cx("rounded text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100", focusRing)}
+          >
             Clear finished
           </button>
         )}

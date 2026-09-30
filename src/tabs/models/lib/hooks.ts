@@ -1,8 +1,8 @@
 // Small React hooks shared by Models, Settings and First run.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { asCoreError, engineStatus, getHardware, installEngine, onEngine, onHardwareReady } from "../../../lib/api";
-import type { CoreError, EngineStatus, GroupStatus, HardwareView } from "../../../lib/types";
+import { asCoreError, engineStatus, getHardware, getSettings, installEngine, onEngine, onHardwareReady } from "../../../lib/api";
+import type { CoreError, EngineStatus, GroupStatus, HardwareView, Settings } from "../../../lib/types";
 import { onSettingsChanged } from "../../../settings/events";
 import { getTagged, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
 
@@ -43,6 +43,41 @@ export function useHardware(): HardwareView | null {
   }, [load]);
   useTauriEvent(onHardwareReady, load);
   return hw;
+}
+
+/** The Settings fields that change the effective hardware (and so every fit badge). */
+export const hardwareKey = (s: Settings) => JSON.stringify([s.gpu, s.vramOverrideGb, s.engineBackend]);
+
+/**
+ * Calls `cb` when the effective hardware may have changed: detection finished, or a
+ * GPU / VRAM / backend override was saved in Settings. Use it to refetch anything sized
+ * against the hardware (fit badges, recommended picks).
+ */
+export function useOnHardwareChange(cb: () => void) {
+  const ref = useRef(cb);
+  ref.current = cb;
+  useEffect(() => {
+    // Seed with the saved values, so the first save after mount (a theme change, the
+    // trigger-words toggle) doesn't count as a hardware change.
+    let last: string | null = null;
+    let alive = true;
+    getSettings()
+      .then((s) => {
+        if (alive) last ??= hardwareKey(s);
+      })
+      .catch(() => undefined);
+    const off = onSettingsChanged((s) => {
+      const k = hardwareKey(s);
+      if (k === last) return;
+      last = k;
+      ref.current();
+    });
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
+  useTauriEvent(onHardwareReady, () => ref.current());
 }
 
 export function useDebounced<T>(value: T, ms: number): T {
