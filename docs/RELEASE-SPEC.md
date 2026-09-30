@@ -426,6 +426,8 @@ templates, posts and UI.
       `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").
       Today any web page open in the user's browser that finds the port can send it jobs or read
       recent images. Decided 2026-09-28: fix before any shared build.
+      Pinhole side done (per-launch key + bearer); left: pin the patched build and set
+      `ENGINE_LOCKDOWN = true` (SPEC §13).
 - [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign),
       and "Update and restart" refuses a file whose signature doesn't verify. Today it only checks
       `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").

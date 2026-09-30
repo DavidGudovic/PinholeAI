@@ -653,7 +653,8 @@ async fn describe_inner(
 const IMPROVE_MAX_CHARS: usize = 2000;
 
 /// The instruction for "Improve my prompt": tag or sentence style from the family's
-/// `style_template`, the Safe mode rule, and the add-on trigger words not to repeat.
+/// `style_template`, the Safe mode rule (`safe` while On, `adult` while Off), and the add-on
+/// trigger words not to repeat.
 fn improve_instruction(
     improve: &std::collections::BTreeMap<String, String>,
     template: &str,
@@ -666,10 +667,8 @@ fn improve_instruction(
         "natural"
     };
     let mut out = improve.get(key)?.trim().to_string();
-    if safe {
-        if let Some(rule) = improve.get("safe") {
-            out = format!("{out} {}", rule.trim());
-        }
+    if let Some(rule) = improve.get(if safe { "safe" } else { "adult" }) {
+        out = format!("{out} {}", rule.trim());
     }
     if !avoid.is_empty() {
         if let Some(rule) = improve.get("avoid") {
@@ -719,6 +718,43 @@ fn tidy_improved(text: &str, avoid: &[String]) -> String {
         .collect();
     let joined = parts.join(", ");
     joined.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The helper declined instead of rewriting ("I'm sorry, but I can't…"). Only the start of the
+/// answer counts, so a prompt that merely contains "cannot" is kept.
+fn is_refusal(text: &str) -> bool {
+    let t = text
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+        .replace('\u{2019}', "'");
+    [
+        "i'm sorry",
+        "i am sorry",
+        "sorry",
+        "my apologies",
+        "i apologize",
+        "i apologise",
+        "i can't",
+        "i cannot",
+        "i can not",
+        "i won't",
+        "i will not",
+        "i'm unable",
+        "i am unable",
+        "i'm not able",
+        "i am not able",
+        "i'm afraid",
+        "i must decline",
+        "i'm not comfortable",
+        "as an ai",
+        "unfortunately",
+    ]
+    .iter()
+    // Whole words only: "As an aircraft…" and "sorrowful…" are prompts.
+    .any(|p| {
+        t.strip_prefix(p)
+            .is_some_and(|rest| !rest.starts_with(char::is_alphanumeric))
+    })
 }
 
 /// `ImprovedPrompt` in src/lib/types.ts. `note` is set when the model's answer was unusable:
@@ -832,8 +868,15 @@ pub async fn improve_prompt(
     })?;
     let (text, degenerate) =
         collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
-    // Before the fallback: text that would be blocked never comes back, even when short.
+    // Before the fallbacks: text that would be blocked never comes back, even when short. A
+    // refusal that names what it declines is blocked too, on purpose: the check always runs.
     crate::text_check::check(&text)?;
+    if is_refusal(&text) {
+        return Ok(ImprovedPrompt {
+            text: idea.to_string(),
+            note: Some("The helper wouldn't rewrite this one, so your prompt is unchanged.".into()),
+        });
+    }
     if degenerate {
         return Ok(ImprovedPrompt {
             text: idea.to_string(),
@@ -845,8 +888,9 @@ pub async fn improve_prompt(
     Ok(ImprovedPrompt { text, note: None })
 }
 
-/// 32 random bytes as hex: llama-server's API key for one launch.
-fn new_api_key() -> String {
+/// 32 random bytes as hex: an engine's API key for one launch (llama-server
+/// and sd-server).
+pub(crate) fn new_api_key() -> String {
     rand::random::<[u8; 32]>()
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -1070,6 +1114,7 @@ mod tests {
             ("natural", "NAT"),
             ("tags", "TAGS"),
             ("safe", "SAFE."),
+            ("adult", "ADULT."),
             ("avoid", "Skip: {words}."),
         ]
         .into_iter()
@@ -1080,7 +1125,14 @@ mod tests {
     #[test]
     fn improve_instruction_follows_style_safe_mode_and_trigger_words() {
         let m = improve_map();
-        assert_eq!(improve_instruction(&m, "tags", false, &[]).unwrap(), "TAGS");
+        assert_eq!(
+            improve_instruction(&m, "tags", false, &[]).unwrap(),
+            "TAGS ADULT."
+        );
+        assert_eq!(
+            improve_instruction(&m, "tags", true, &[]).unwrap(),
+            "TAGS SAFE."
+        );
         assert_eq!(
             improve_instruction(&m, "natural", true, &["sks style".into(), "ink".into()]).unwrap(),
             "NAT SAFE. Skip: sks style, ink."
@@ -1090,6 +1142,26 @@ mod tests {
             .unwrap()
             .starts_with("NAT"));
         assert!(improve_instruction(&Default::default(), "tags", false, &[]).is_none());
+    }
+
+    #[test]
+    fn refusals_are_recognised_only_at_the_start() {
+        assert!(is_refusal("I'm sorry, but I can't help with that."));
+        assert!(is_refusal("\"I cannot create that content.\""));
+        assert!(is_refusal("I\u{2019}m unable to assist with this request."));
+        assert!(is_refusal("As an AI, I won't write that."));
+        assert!(!is_refusal(
+            "A knight who cannot sleep, pacing a moonlit hall."
+        ));
+        assert!(!is_refusal("sorrowful widow, rain, candlelight"));
+        assert!(!is_refusal("icy mountain, i can see for miles"));
+        assert!(is_refusal("Sorry but I can't do that."));
+        assert!(is_refusal("Unfortunately I cannot write this."));
+        assert!(is_refusal("I apologise, that isn't something I can do."));
+        assert!(is_refusal("I'm afraid I can't help with that."));
+        assert!(!is_refusal(
+            "As an aircraft banks over the bay, gulls scatter."
+        ));
     }
 
     #[test]

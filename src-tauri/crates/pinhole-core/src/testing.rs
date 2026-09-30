@@ -2022,6 +2022,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn improve_prompt_with_safe_mode_off_allows_adult_and_catches_refusals() {
+        let (_tmp, core, _rec) = new_core();
+        core.settings.write().content_mode = "all".into();
+        let llama = MockLlamaServer::start(
+            "I'm sorry, but I can't help with that request. Please ask something else.",
+            0,
+        )
+        .await;
+        use_external_captioner(&core, &llama.base_url());
+        let out = describe::improve_prompt(&core, "a nude figure study", None, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            out.text, "a nude figure study",
+            "a refusal never replaces the prompt"
+        );
+        assert!(out.note.is_some());
+        let system = llama.requests()[0]
+            .pointer("/messages/0/content")
+            .and_then(|t| t.as_str())
+            .unwrap()
+            .to_string();
+        assert!(system.contains("Adult content is allowed"), "{system}");
+        assert!(system.contains("anyone under 18"), "{system}");
+        assert!(!system.contains("safe for work"), "{system}");
+    }
+
+    #[tokio::test]
     async fn improve_prompt_falls_back_when_the_model_loops() {
         let (_tmp, core, _rec) = new_core();
         let looped = vec!["bedroom"; 60].join(", ");
@@ -2110,6 +2138,116 @@ mod tests {
         );
         assert!(
             args.windows(2).any(|w| w == ["--log-level", "info"]),
+            "{args:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_key_goes_in_the_bearer_header() {
+        use pinhole_engine::testutil::{MockOptions, MockSdServer};
+        let mock = MockSdServer::start_with(MockOptions {
+            api_key: Some("k3y".into()),
+            ..MockOptions::default()
+        })
+        .await;
+        let without = pinhole_engine::SdClient::new_plain_for_tests(mock.base_url());
+        assert!(!without.is_ready().await);
+        assert!(without.capabilities().await.is_err());
+        let wrong =
+            pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("nope");
+        assert!(!wrong.is_ready().await);
+        let with =
+            pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("k3y");
+        assert!(with.is_ready().await);
+        let id = with
+            .submit(&pinhole_engine::ImgGenRequest::new("a cat", 64, 64, 1))
+            .await
+            .unwrap();
+        assert!(with.job(&id).await.is_ok());
+        assert!(
+            !format!("{with:?}").contains("k3y"),
+            "Debug leaves out the key"
+        );
+    }
+
+    /// A Pinhole-started sd-server gets a fresh key in its environment, never
+    /// on its command line (a stand-in engine records both, then exits).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_engine_gets_its_api_key_in_the_environment() {
+        use pinhole_engine::install::{self, EngineKind, InstallMarker};
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, core, _) = new_core();
+        let (cfg, sel) = crate::engine_setup::selected_build(&core, EngineKind::Sd).unwrap();
+        let dir = install::install_dir(
+            &core.data.engine(),
+            EngineKind::Sd,
+            &cfg.stable_diffusion_cpp.version,
+            &sel.backend,
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = tmp.path().join("seen.txt");
+        let exe = dir.join("sd-server");
+        std::fs::write(
+            &exe,
+            format!(
+                "#!/bin/sh\necho \"key=$SD_API_KEY\" > '{0}'\necho \"args=$*\" >> '{0}'\nexit 1\n",
+                seen.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let marker = InstallMarker {
+            engine: EngineKind::Sd,
+            version: cfg.stable_diffusion_cpp.version.clone(),
+            backend: sel.backend.clone(),
+            build: sel.key.clone(),
+            binary: "sd-server".into(),
+            archives: vec![],
+            installed_at: 0,
+        };
+        std::fs::write(
+            dir.join(install::MARKER_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+        let model = register_fake_model(&core, "sd15");
+        assert!(
+            generate::generate(&core, GenerateRequest::txt2img(model, "a cat"))
+                .await
+                .is_err()
+        );
+        let text = std::fs::read_to_string(&seen).unwrap();
+        let key = text.lines().find_map(|l| l.strip_prefix("key=")).unwrap();
+        assert_eq!(key.len(), 64, "{text}");
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "{text}");
+        let args = text.lines().find_map(|l| l.strip_prefix("args=")).unwrap();
+        assert!(!args.contains(key) && !args.contains("--api-key"), "{args}");
+    }
+
+    #[tokio::test]
+    async fn sd_args_keep_the_api_key_off_the_command_line() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp
+            .launch_defaults
+            .extend(["--api-key", "from-yaml", "--reject-origin"].map(String::from));
+        let wiring: Vec<String> = ["--model", "/m.safetensors", "--api-key", "from-wiring"]
+            .map(String::from)
+            .to_vec();
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--api-key" || a.starts_with("from-")),
+            "{args:?}"
+        );
+        // The lock-down flag comes from the compiled-in switch only, once.
+        assert_eq!(
+            args.iter()
+                .filter(|a| *a == pinhole_engine::sdapi::REJECT_ORIGIN_FLAG)
+                .count(),
+            usize::from(crate::generate::ENGINE_LOCKDOWN),
             "{args:?}"
         );
     }
@@ -2365,6 +2503,7 @@ mod tests {
             args: vec![],
             model_id: Some("m".into()),
             results_cached,
+            api_key: None,
         };
     }
 
