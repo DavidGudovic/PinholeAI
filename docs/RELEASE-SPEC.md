@@ -260,7 +260,8 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 
 ## 7. Terms and notices
 
-- **Level 1:** an acceptable-use section in the README, linking to `SAFETY.md` (§9).
+- **Level 1:** an acceptable-use section in the README (added 2026-09-30: usage guidelines,
+  built-in local check, GitHub private reporting); add a link to `SAFETY.md` (§9) once it exists.
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
@@ -310,8 +311,8 @@ templates, posts and UI.
 
 - **Level 1: `SAFETY.md`** in the repo root: what Pinhole blocks and doesn't (§3.2), how (on the
   computer, nothing recorded), known limits (open-source code can be modified; classifiers miss
-  things), and how to report a problem (GitHub private vulnerability reporting, plus an email
-  address).
+  things), and how to report a problem (GitHub private vulnerability reporting only, no email
+  address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
   states plainly that Pinhole can't identify its users or see what they made.
@@ -404,7 +405,7 @@ templates, posts and UI.
 - [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
 - [x] §5 `sdxl_pony` removed from `recommended.anime`
 - [x] §5 Edit references: covered by origin tracking + the image check (replaces the one-reference cap)
-- [ ] §7 acceptable-use section in the README
+- [x] §7 acceptable-use section in the README (link to `SAFETY.md` still to add with it)
 - [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and
       PR text
