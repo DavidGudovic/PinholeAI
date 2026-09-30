@@ -420,6 +420,9 @@ fn join_pieces(words: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Longest word [`split_glued`] tries to split.
+const MAX_GLUED: usize = 30;
+
 /// A word that is two listed words glued together is split in two; other words stay.
 fn split_glued(words: Vec<String>) -> Vec<String> {
     let listed = |w: &str| {
@@ -432,7 +435,9 @@ fn split_glued(words: Vec<String>) -> Vec<String> {
     let mut out = Vec::with_capacity(words.len());
     for w in words {
         let chars: Vec<char> = w.chars().collect();
-        let split = (chars.len() >= 6 && !listed(&w))
+        // Two listed words are at most ~30 letters; longer words aren't split (keeps the check
+        // fast on long made-up words).
+        let split = ((6..=MAX_GLUED).contains(&chars.len()) && !listed(&w))
             .then(|| {
                 (3..=chars.len() - 3).find_map(|k| {
                     let (a, b): (String, String) =
@@ -466,7 +471,10 @@ fn squeeze(w: &str) -> String {
 /// The same word, or the word with its letters stretched ("teeen"; never shorter, so "ten"
 /// isn't "teen").
 fn same_word(token: &str, word: &str) -> bool {
-    token == word || (token.len() > word.len() && squeeze(token) == squeeze(word))
+    token == word
+        || (token.len() > word.len()
+            && token.chars().next() == word.chars().next()
+            && squeeze(token) == squeeze(word))
 }
 
 fn word_matches(token: &str, word: &str) -> bool {
@@ -673,6 +681,17 @@ mod tests {
         .filter(|t| pairs_minor_with_sexual(t))
         .collect::<Vec<_>>();
         assert!(wrong.is_empty(), "blocked: {wrong:?}");
+    }
+
+    #[test]
+    fn long_made_up_words_stay_fast() {
+        // Each of these took minutes before glued words were capped at MAX_GLUED letters.
+        let start = std::time::Instant::now();
+        assert!(!pairs_minor_with_sexual(&"xyzw".repeat(2500)));
+        assert!(!pairs_minor_with_sexual(
+            &vec!["ab".repeat(15); 500].join(" ")
+        ));
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
