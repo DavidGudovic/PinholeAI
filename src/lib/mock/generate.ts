@@ -214,6 +214,9 @@ async function checkCancel(started: number) {
 
 async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }> {
   if (running) throw err("invalid", "Pinhole is still working on the last image.");
+  // Stand-in for the Rust word check (text_check.rs), for trying the block screen in the mock.
+  if (/\bminor\b/i.test(req.prompt) && /\bexplicit\b/i.test(req.prompt))
+    throw err("blocked", "Pinhole can't help with this. See the usage guidelines.");
   running = true;
   cancelled = false;
   const started = Date.now();
@@ -383,6 +386,28 @@ const table: MockTable = {
     session.set(id, { bytes, width: bmp.width, height: bmp.height, seed: 0 });
     return { id, width: bmp.width, height: bmp.height } satisfies ImportedImage;
   },
+  read_picture_settings: async (a) => {
+    // Raw body. Reads the PNG "pinhole" text chunk like the Rust side (no range checks).
+    const b = a instanceof Uint8Array ? a : new Uint8Array(a as unknown as ArrayBuffer);
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    for (let pos = 8; pos + 12 <= b.length; ) {
+      const len = dv.getUint32(pos);
+      const kind = String.fromCharCode(...b.slice(pos + 4, pos + 8));
+      if (kind === "tEXt") {
+        const text = new TextDecoder("latin1").decode(b.slice(pos + 8, pos + 8 + len));
+        if (text.startsWith("pinhole\0")) {
+          try {
+            const v = JSON.parse(text.slice(8));
+            return v?.app === "Pinhole" ? v : null;
+          } catch {
+            return null;
+          }
+        }
+      }
+      pos += 12 + len;
+    }
+    return null;
+  },
   get_image: async (a) => {
     const im = mustGet(a.id);
     return im.bytes.slice().buffer;
@@ -396,6 +421,11 @@ const table: MockTable = {
     mustGet(a.id);
     await sleep(150);
     return { path: String(a.path) };
+  },
+  save_images_to: async (a) => {
+    const ids = a.ids as string[];
+    await sleep(150);
+    return { saved: ids.map((id) => ({ id, path: `${String(a.dir)}/pinhole_${stamp()}_${mustGet(id).seed}.png` })), failed: 0 };
   },
   copy_image: async (a) => {
     const im = mustGet(a.id);

@@ -173,6 +173,21 @@ one download group (model + missing components); on success registers every file
 `installed.json` and emits `models-changed`. 401/403 → `CoreError{code:"unauthorized"}` and the UI
 asks for an API key (keychain). LoRAs store `trainedWords`.
 
+### Models from another app (catalog agent)
+`add_linked_folder(path)` / `remove_linked_folder(id)` / `rescan_linked_folders()` /
+`list_linked_folders()` (`pinhole-core/src/linked.rs`). The pure part is
+`pinhole-catalog/src/linked.rs`: `walk` (every .safetensors/.gguf, links followed, tool and
+unusable-kind folders skipped), `read_note` (CivitAI data other apps saved next to a file),
+`recognise` (header → family via note / name hints / base family; LoRA family via note / kohya
+metadata / name hints; parts only by kind + size + SHA-256). Found files are ordinary
+`InstalledFile`s in `core.installed` whose `rel_path` is `linked/<folder id>/<path in folder>`:
+`InstalledIndex::abs_path` resolves them in the folder, `save_to` leaves them out of the shared
+index and `save_linked` writes them (with size/mtime stamps) to `Data/catalog/linked-folders.json`.
+Delete refuses them, orphan cleanup and the Models-folder move skip them. A linked add-on is
+hard-linked / symlinked / copied into `models/loras/.pinhole-linked/` when a picture uses it
+(`lora_path_for_engine`), emptied at start. `install_missing_parts(modelId)` downloads the
+registry parts a model lacks (models without a CivitAI version).
+
 ### Paste from CivitAI (frontend A + catalog agent)
 CivitAI's image page has a **Copy generation data** button producing A1111-style text:
 ```

@@ -94,6 +94,23 @@ fn target_dir(core: &AppCore, folder: Option<&str>) -> CoreResult<DataDir> {
             "Pick a folder outside Pinhole's Data folder, for example a new folder on your shared drive.",
         ));
     }
+    // Another app's folder Pinhole uses in place is never written to.
+    let linked: Vec<String> = core
+        .installed
+        .lock()
+        .linked
+        .folders
+        .iter()
+        .map(|f| f.path.clone())
+        .collect();
+    for other in linked {
+        let other = canon_or(Path::new(&other));
+        if canon.starts_with(&other) || other.starts_with(&canon) {
+            return Err(CoreError::invalid(
+                "That folder holds (or is inside) another app's models folder that Pinhole uses. Pick a folder of its own.",
+            ));
+        }
+    }
     Ok(default.with_models_home(Some(path)))
 }
 
@@ -157,7 +174,7 @@ pub fn preview(core: &AppCore, folder: Option<&str>) -> CoreResult<ModelsFolderP
     let to = target_dir(core, folder)?;
     check_target(core, &to)?;
     let to_index = check_versions(core, &to)?;
-    let from_index = core.installed.lock().clone();
+    let from_index = own_files(core);
     let plan = plan(&core.data, &from_index, &to, &to_index);
     Ok(ModelsFolderPreview {
         path: to.models_root().display().to_string(),
@@ -210,6 +227,14 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
         .await
         .map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))??;
     Ok(info(core))
+}
+
+/// The index without the files in the user's other models folders: those stay
+/// where they are (and in `linked-folders.json`).
+fn own_files(core: &AppCore) -> InstalledIndex {
+    let mut index = core.installed.lock().clone();
+    index.files.retain(|f| !f.is_linked());
+    index
 }
 
 fn load_target_index(to: &DataDir) -> CoreResult<InstalledIndex> {
@@ -421,7 +446,7 @@ fn move_all_with(core: &AppCore, to: DataDir, copy_needed: bool) -> CoreResult<(
     let from = &core.data;
     // `change` checked already; checked again here, where the move happens.
     check_versions(core, &to)?;
-    let from_index = core.installed.lock().clone();
+    let from_index = own_files(core);
     std::fs::create_dir_all(to.models_root())?;
     let to_index = load_target_index(&to)?;
     let steps = plan(from, &from_index, &to, &to_index);

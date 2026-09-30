@@ -257,7 +257,10 @@ pub fn list_models(core: &AppCore) -> CoreResult<Vec<InstalledModel>> {
 
 pub fn list_loras(core: &AppCore) -> CoreResult<Vec<InstalledLora>> {
     let index = snapshot(core);
-    let mut out: Vec<InstalledLora> = index.loras().map(inventory::installed_lora_view).collect();
+    let mut out: Vec<InstalledLora> = index
+        .loras()
+        .map(|f| inventory::installed_lora_view(&index, f))
+        .collect();
     out.sort_by_key(|l| l.friendly_name.to_lowercase());
     Ok(out)
 }
@@ -294,7 +297,8 @@ pub fn set_lora_trigger_words(
         .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
         .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
     file.trigger_words = Some(clean);
-    let view = inventory::installed_lora_view(file);
+    let file = file.clone();
+    let view = inventory::installed_lora_view(&index, &file);
     index.save(&core.data)?;
     Ok(view)
 }
@@ -331,7 +335,7 @@ fn helper_group(core: &AppCore, helper_id: &str) -> Option<Vec<String>> {
 /// Files of one helper that Pinhole downloaded as a helper (kind Captioner / Upscaler).
 /// A Describe model's files that arrived with another model (Qwen Image Edit's encoder)
 /// belong to that model and are not listed.
-fn helper_files<'a>(
+pub(crate) fn helper_files<'a>(
     core: &AppCore,
     index: &'a pinhole_store::InstalledIndex,
     helper_id: &str,
@@ -347,10 +351,28 @@ fn helper_files<'a>(
             [m, p]
         })
         .collect();
+    // A file shared with another helper whose model file is installed stays with that one
+    // (the 7B vision file serves both 7B helpers): not listed or deleted here.
+    let kept: Vec<String> = core
+        .registry()
+        .captioner()
+        .helpers
+        .iter()
+        .filter(|h| h.id != helper_id)
+        .filter_map(|h| {
+            let (m, p) = crate::describe::helper_components(h);
+            index.find_component(&m).is_some().then_some(p)
+        })
+        .collect();
     index
         .files
         .iter()
         .filter(|f| matches!(f.kind, ModelKind::Captioner | ModelKind::Upscaler))
+        .filter(|f| {
+            !f.component_id
+                .as_deref()
+                .is_some_and(|c| kept.iter().any(|x| x == c))
+        })
         .filter(|f| match &group {
             Some(g) => f
                 .component_id
@@ -374,9 +396,21 @@ pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
     let mut out = Vec::new();
     let mut listed: Vec<&str> = Vec::new();
     for h in core.registry().captioner().helpers.iter() {
-        let files = helper_files(core, &index, &h.id);
+        let mut files = helper_files(core, &index, &h.id);
         if files.is_empty() {
             continue;
+        }
+        // A vision file shared with another installed helper is kept on Remove, but its size
+        // still shows once, on the first row that uses it.
+        let (_, p) = crate::describe::helper_components(h);
+        if let Some(shared) = index
+            .files
+            .iter()
+            .find(|f| f.kind == ModelKind::Captioner && f.component_id.as_deref() == Some(&p))
+        {
+            if !listed.contains(&shared.id.as_str()) && !files.iter().any(|f| f.id == shared.id) {
+                files.push(shared);
+            }
         }
         listed.extend(files.iter().map(|f| f.id.as_str()));
         out.push(InstalledHelper {
@@ -433,10 +467,14 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
     let _folder = folder_read(core)?;
     {
         let index = core.installed.lock();
-        if helper_files(core, &index, helper_id).is_empty() {
+        let files = helper_files(core, &index, helper_id);
+        if files.is_empty() {
             return Err(CoreError::not_found(
                 "That helper isn't installed any more.",
             ));
+        }
+        if files.iter().any(|f| f.is_linked()) {
+            return Err(CoreError::invalid(LINKED_DELETE));
         }
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;
@@ -487,7 +525,7 @@ pub fn view_of(core: &AppCore, file: &InstalledFile) -> AddFileResult {
     if file.kind == ModelKind::Lora {
         AddFileResult {
             model: None,
-            lora: Some(inventory::installed_lora_view(file)),
+            lora: Some(inventory::installed_lora_view(&index, file)),
             needs_choice: None,
         }
     } else {
@@ -549,6 +587,39 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
         PickAction::Captioner => crate::describe::install_captioner(core, None).await,
         PickAction::Nothing => Err(CoreError::internal("Nothing to install.")),
     }
+}
+
+/// Download the parts (VAE, text encoders) an installed model still needs,
+/// from its family's registry list (models added from disk or another app's
+/// folder, which have no CivitAI version to install from).
+pub async fn install_missing_parts(
+    core: &Arc<AppCore>,
+    model_id: &str,
+) -> CoreResult<InstallStarted> {
+    let (label, files) = {
+        let registry = core.registry();
+        let hw = crate::app::hw_context(core);
+        let index = snapshot(core);
+        let model = index
+            .get(model_id)
+            .ok_or_else(|| CoreError::not_found("That model isn't installed any more."))?;
+        let family = model
+            .family
+            .as_deref()
+            .and_then(|f| registry.family(f))
+            .ok_or_else(|| {
+                CoreError::invalid("Pinhole doesn't know which parts this model needs.")
+            })?;
+        let files = recommend::parts_to_run(&registry, family, &hw, &index);
+        (model.friendly_name.clone(), files)
+    };
+    if files.is_empty() {
+        return Err(CoreError::invalid(
+            "This model already has every part it needs.",
+        ));
+    }
+    let items = files.into_iter().map(|f| (f, None)).collect();
+    start_install(core, format!("Parts for {label}"), items, None).await
 }
 
 // ------------------------------------------------------------------ download groups
@@ -1068,6 +1139,9 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
     Ok(())
 }
 
+/// Pinhole never deletes files in another app's models folder.
+pub(crate) const LINKED_DELETE: &str = "This model is in another app's models folder, so Pinhole doesn't delete it. Delete it in that app, or remove the folder from Pinhole's list.";
+
 /// Ids of the entries deleting `model_id` removes: the model and the
 /// components no other model needs (by id: two entries can share a path).
 fn delete_ids(
@@ -1075,8 +1149,11 @@ fn delete_ids(
     index: &pinhole_store::InstalledIndex,
     model_id: &str,
 ) -> CoreResult<Vec<String>> {
-    if index.get(model_id).is_none() {
+    let Some(target) = index.get(model_id) else {
         return Err(CoreError::not_found("That model isn't installed any more."));
+    };
+    if target.is_linked() {
+        return Err(CoreError::invalid(LINKED_DELETE));
     }
     let orphans = inventory::orphaned_components(registry, index, model_id);
     Ok(std::iter::once(model_id.to_string())
@@ -1104,7 +1181,8 @@ fn remove_entries(
             .iter()
             .any(|o| o.id != f.id && !ids.contains(&o.id) && same(&o.rel_path))
             || index.unknown_uses(&f.rel_path);
-        if inventory::is_safe_rel_path(&f.rel_path) && !shared {
+        // Never delete a file in the user's other models folders.
+        if inventory::is_safe_rel_path(&f.rel_path) && !shared && !f.is_linked() {
             let abs = index.abs_path(&core.data, &f);
             match std::fs::remove_file(&abs) {
                 Ok(()) => {}
@@ -1955,7 +2033,8 @@ mod tests {
         let models = crate::describe::list_helper_models(&core);
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
-            ["describe", "qwen25_vl_7b"]
+            ["describe", "qwen25_vl_7b"],
+            "the Safe-mode-Off helper is hidden while Safe mode is On"
         );
         assert!(models.iter().all(|m| !m.installed && m.download_bytes > 0));
         let seven = &models[1];
@@ -2004,6 +2083,103 @@ mod tests {
         assert!(
             s.source.is_none(),
             "falls back to automatic, which has nothing installed"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_safe_mode_off_helper_shares_the_7b_vision_file_and_is_automatic_while_off() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let mut st = core.settings.read().clone();
+        st.content_mode = "all".into();
+        crate::app::set_settings(&core, st).unwrap();
+        let ids: Vec<String> = crate::describe::list_helper_models(&core)
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            ids,
+            ["describe", "qwen25_vl_7b", "qwen25_vl_7b_abliterated"]
+        );
+
+        let dir = core.data.models(ModelKind::Captioner);
+        std::fs::create_dir_all(&dir).unwrap();
+        let add = |name: &str, comp: &str| {
+            std::fs::write(dir.join(name), b"1234").unwrap();
+            let file = DownloadedFile {
+                path: dir.join(name),
+                sha256: "cd".repeat(32),
+                size_bytes: 4,
+            };
+            let reg = Registration {
+                kind: ModelKind::Captioner,
+                friendly_name: "helper".into(),
+                family: None,
+                component_id: Some(comp.into()),
+                civitai: None,
+                dtype: None,
+            };
+            register_download(&core, &file, reg).unwrap();
+        };
+        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("p7.gguf", "qwen25_vl_7b_mmproj");
+        // Only the Safe-mode-Off helper is listed, with the shared vision file.
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["qwen25_vl_7b_abliterated"]
+        );
+        assert_eq!(rows[0].size_bytes, 8);
+        // Automatic uses it while Safe mode is Off.
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Improve);
+        assert_eq!(s.source.as_deref(), Some("reuse"));
+
+        // With the 7B installed too, each row is removable, the vision file is counted once,
+        // and removing one helper keeps it.
+        add("m7.gguf", "qwen25_vl_7b_q8");
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|r| (r.id.as_str(), r.size_bytes))
+                .collect::<Vec<_>>(),
+            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_abliterated", 4)]
+        );
+        assert!(crate::describe::list_helper_models(&core)
+            .iter()
+            .filter(|m| m.id != "describe")
+            .all(|m| m.installed && m.removable));
+        delete_helper(&core, "qwen25_vl_7b_abliterated")
+            .await
+            .unwrap();
+        assert!(!dir.join("ab.gguf").exists());
+        assert!(dir.join("p7.gguf").exists() && dir.join("m7.gguf").exists());
+        let rows = list_helpers(&core).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].id.as_str(), rows[0].size_bytes),
+            ("qwen25_vl_7b", 8)
+        );
+
+        // Safe mode On: the Safe-mode-Off helper is never picked, even when installed.
+        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        delete_helper(&core, "qwen25_vl_7b").await.unwrap();
+        assert!(
+            dir.join("p7.gguf").exists(),
+            "still used by the other helper"
+        );
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
+        assert_eq!(s.source.as_deref(), Some("reuse"));
+        let mut st = core.settings.read().clone();
+        st.content_mode = "safe".into();
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::describe::list_helper_models(&core)
+            .iter()
+            .all(|m| m.id != "qwen25_vl_7b_abliterated"));
+        let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
+        assert!(s.source.is_none(), "nothing else is installed");
+        // Installed helpers still lists it, so it can be removed.
+        assert_eq!(
+            list_helpers(&core).unwrap()[0].id,
+            "qwen25_vl_7b_abliterated"
         );
     }
 }

@@ -20,13 +20,15 @@ every route is covered. The key is never logged.
 ## Where the builds come from
 
 Pinhole downloads engines from GitHub releases pinned in `config/engine.yaml`. The patched
-builds come from a separate **public** repo (public repos get free Actions minutes, Windows
-included; this repo's minutes are limited):
+builds come from David's public fork of leejet/stable-diffusion.cpp (public repos get free
+Actions minutes, Windows included; this repo's minutes are limited). The fork holds exactly
+this patch and the build workflow; everything else stays upstream's code at the pinned commit.
 
-1. Create a public repo on David's account (a fork of leejet/stable-diffusion.cpp or an
-   empty repo both work).
-2. On a `pinhole` branch add `pinhole/0001-server-api-key-and-reject-origin.patch` (this file)
-   and `.github/workflows/pinhole-build.yml` (copy of `pinhole-build.yml` here).
+1. Fork leejet/stable-diffusion.cpp and enable Actions in the fork (forks start with it off).
+2. On the fork's default branch add `pinhole/0001-server-api-key-and-reject-origin.patch`
+   (this file) and `.github/workflows/pinhole-build.yml` (copy of `pinhole-build.yml` here).
+   GitHub only offers "Run workflow" for workflows on the default branch; the workflow
+   builds upstream's code at the tag you give it, not the fork's branch.
 3. Actions → Pinhole engine build → Run workflow. It builds Linux CPU / Vulkan / CUDA and
    Windows CPU / Vulkan / CUDA, then publishes a release with the zips and `SHA256SUMS.txt`.
    Linux CUDA is new (upstream has none) and is built only for RTX 30/40/50 cards to keep the

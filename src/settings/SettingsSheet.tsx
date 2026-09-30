@@ -16,6 +16,7 @@ import {
 } from "../lib/api";
 import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "../lib/types";
 import { formatGb } from "../lib/format";
+import { primeSound } from "../lib/state/platform";
 import { ShortcutsList } from "../components/ShortcutsList";
 import { useHelperModels } from "../lib/helpers";
 import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from "../components/ui";
@@ -23,6 +24,7 @@ import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/co
 import { cancelGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useTauriEvent } from "../tabs/models/lib/hooks";
 import { backendShort, isCpuOnly, tierPlain } from "../tabs/models/lib/words";
+import { WhatGoesOnlineLink } from "../components/WhatGoesOnline";
 import { emitSettingsChanged } from "./events";
 import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
@@ -219,12 +221,11 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           <p className="flex items-start gap-2">
             <ShieldCheck className="mt-px h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
             <span>
-              Pinhole never saves your prompts and sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates. Pictures stay in memory
-              until you click Save.
+              Pinhole sends no usage data. It only goes online when you browse CivitAI, start a download or check for updates.
             </span>
           </p>
           <p className="mt-2 pl-6">
-            Honest limitation: when memory runs low, your operating system may move parts of it to disk (swap or pagefile). Pinhole can't control that.
+            <WhatGoesOnlineLink offline={settings.offline} /> lists every site Pinhole can contact and what it sends.
           </p>
         </div>
       </Section>
@@ -397,9 +398,22 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           control={<Toggle checked={settings.showPaid} onChange={(v) => update({ showPaid: v })} label={<span className="sr-only">Show paid models</span>} />}
         />
         <Row
+          label="Show tips"
+          hint="One short tip about a feature you may have missed, under a picture. At most one per session."
+          control={<Toggle checked={settings.showTips ?? true} onChange={(v) => update({ showTips: v })} label={<span className="sr-only">Show tips</span>} />}
+        />
+        <Row
           label="Add trigger words automatically"
-          hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you, in memory only. Pick which ones on the add-on’s chip under the prompt."
+          hint="Style add-ons often need a word or two in the prompt to work. Pinhole adds them for you. Pick which ones on the add-on’s chip under the prompt."
           control={<Toggle checked={settings.addTriggerWords} onChange={(v) => update({ addTriggerWords: v })} label={<span className="sr-only">Add trigger words automatically</span>} />}
+        />
+        <Row
+          label="Play a soft sound when a picture is ready"
+          hint="Only when Pinhole is in the background. The taskbar icon flashes either way."
+          control={<Toggle checked={settings.soundOnDone} onChange={(v) => {
+            if (v) primeSound();
+            update({ soundOnDone: v });
+          }} label={<span className="sr-only">Play a soft sound when a picture is ready</span>} />}
         />
       </Section>
 

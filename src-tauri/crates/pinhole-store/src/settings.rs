@@ -24,6 +24,8 @@ pub struct Settings {
     pub theme: String,
     /// LoRA trigger words added automatically.
     pub add_trigger_words: bool,
+    /// Soft sound when pictures finish while Pinhole is in the background (off by default).
+    pub sound_on_done: bool,
     /// First-run flow finished or skipped.
     pub first_run_done: bool,
     /// Engine backend override: `auto` | `cuda` | `vulkan` | `cpu`
@@ -46,6 +48,8 @@ pub struct Settings {
     pub notice_accepted: u32,
     /// The one-time Edit notice (first photo from the computer opened in Edit) was shown.
     pub edit_notice_seen: bool,
+    /// Show the one quiet "Tip" line under a result (Settings → Show tips).
+    pub show_tips: bool,
 }
 
 impl Default for Settings {
@@ -60,6 +64,7 @@ impl Default for Settings {
             saved_metadata: "none".into(),
             theme: "system".into(),
             add_trigger_words: true,
+            sound_on_done: false,
             first_run_done: false,
             engine_backend: "auto".into(),
             text_encoder_on_cpu: "auto".into(),
@@ -68,6 +73,7 @@ impl Default for Settings {
             improve_model: "auto".into(),
             notice_accepted: 0,
             edit_notice_seen: false,
+            show_tips: true,
         }
     }
 }
@@ -218,6 +224,7 @@ mod tests {
             saved_metadata: "settings".into(),
             theme: "dark".into(),
             add_trigger_words: false,
+            sound_on_done: true,
             first_run_done: true,
             engine_backend: "vulkan".into(),
             text_encoder_on_cpu: "on".into(),
@@ -225,6 +232,7 @@ mod tests {
             improve_model: "qwen25_vl_7b".into(),
             notice_accepted: 1,
             edit_notice_seen: true,
+            show_tips: false,
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"
@@ -361,6 +369,7 @@ mod tests {
             "engineBackend",
             "noticeAccepted",
             "editNoticeSeen",
+            "showTips",
         ] {
             assert!(v.get(key).is_some(), "{key}");
         }

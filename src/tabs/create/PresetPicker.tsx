@@ -188,7 +188,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span className="mr-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
-            <Lock className="h-3.5 w-3.5" /> Your prompt is never saved in a preset.
+            <Lock className="h-3.5 w-3.5" /> Presets keep settings, not the prompt.
           </span>
           <Button variant="ghost" onClick={onClose}>
             Cancel

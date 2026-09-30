@@ -1,6 +1,7 @@
 //! `Data/catalog/installed.json` — index of installed files: path, sha256,
 //! family, CivitAI ids, observed VRAM. Never contains prompts.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -124,11 +125,127 @@ impl InstalledFile {
 pub struct InstalledIndex {
     /// Version of the file as loaded (a newer Pinhole may have written it).
     pub schema_version: u32,
+    /// Installed files, plus the files found in the user's other models folders
+    /// ([`LinkedState`]; their `rel_path` starts with `linked/<folder id>/`).
     pub files: Vec<InstalledFile>,
     /// Entries this version can't read (e.g. written by a newer Pinhole on the
     /// other OS sharing the Models folder). Kept as they are and saved back.
     #[serde(skip)]
     pub unknown: Vec<serde_json::Value>,
+    /// Models folders of other apps (ComfyUI, A1111, Forge) used in place.
+    /// Saved to `Data/catalog/linked-folders.json`, never to the shared index.
+    #[serde(skip)]
+    pub linked: LinkedState,
+}
+
+/// First part of the `rel_path` of a file in a linked folder:
+/// `linked/<folder id>/<path inside the folder>`.
+pub const LINKED_PREFIX: &str = "linked";
+
+/// Where the linked folders and what was found in them are kept (per install:
+/// the paths are this computer's).
+pub const LINKED_FILE: &str = "linked-folders.json";
+
+/// A models folder of another app, read in place: Pinhole never writes, moves
+/// or deletes anything in it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedFolder {
+    /// Short random id (the second part of its files' `rel_path`).
+    pub id: String,
+    /// Absolute path on this computer.
+    pub path: String,
+    /// Unix seconds.
+    #[serde(default)]
+    pub added_at: i64,
+}
+
+/// Size and modification time of a linked file when it was last looked at: an
+/// unchanged file keeps its entry without being read again.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStamp {
+    pub size: u64,
+    /// Unix seconds (0 when unknown).
+    pub mtime: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LinkedState {
+    pub folders: Vec<LinkedFolder>,
+    /// File id → stamp, for the entries in `InstalledIndex::files`.
+    pub stamps: HashMap<String, FileStamp>,
+    /// Entries of folders that aren't available right now (drive not connected):
+    /// left out of `files` and saved back as they are.
+    pub parked: Vec<LinkedEntry>,
+    /// Files found that Pinhole can't use, by `rel_path`: not read (or hashed)
+    /// again while unchanged.
+    pub not_used: BTreeMap<String, NotUsed>,
+}
+
+/// A file in a linked folder Pinhole doesn't use.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotUsed {
+    pub stamp: FileStamp,
+    /// A note says CivitAI marks it as showing a real person or someone under 18.
+    #[serde(default)]
+    pub flagged: bool,
+}
+
+impl LinkedState {
+    pub fn folder(&self, id: &str) -> Option<&LinkedFolder> {
+        self.folders.iter().find(|f| f.id == id)
+    }
+}
+
+/// One linked file as saved in [`LINKED_FILE`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkedEntry {
+    pub file: InstalledFile,
+    pub stamp: FileStamp,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct LinkedOnDisk {
+    #[serde(default)]
+    folders: Vec<LinkedFolder>,
+    #[serde(default)]
+    files: Vec<serde_json::Value>,
+    #[serde(default)]
+    not_used: BTreeMap<String, NotUsed>,
+}
+
+/// `rel_path` for `parts` (the path inside the folder) of linked folder `folder_id`.
+pub fn linked_rel_path(folder_id: &str, parts: &[String]) -> String {
+    let mut out = format!("{LINKED_PREFIX}/{folder_id}");
+    for p in parts {
+        out.push('/');
+        out.push_str(p);
+    }
+    out
+}
+
+/// A linked folder id: letters, digits and `-` only.
+pub fn is_folder_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// Id of the linked folder `rel_path` points into, if it does.
+pub fn linked_folder_id(rel_path: &str) -> Option<&str> {
+    let mut parts = rel_path.split(['/', '\\']).filter(|p| !p.is_empty());
+    (parts.next() == Some(LINKED_PREFIX))
+        .then(|| parts.next())
+        .flatten()
+}
+
+impl InstalledFile {
+    /// The file is in one of the user's other models folders (read-only for Pinhole).
+    pub fn is_linked(&self) -> bool {
+        linked_folder_id(&self.rel_path).is_some()
+    }
 }
 
 /// Borrowed view used for saving (always writes the current schema version).
@@ -152,6 +269,7 @@ impl InstalledIndex {
             schema_version: SCHEMA_VERSION,
             files: Vec::new(),
             unknown: Vec::new(),
+            linked: LinkedState::default(),
         }
     }
 
@@ -188,7 +306,118 @@ impl InstalledIndex {
     /// the app still starts (the model files themselves stay on disk and can be
     /// re-added with "Add a file I already have").
     pub fn load(dir: &DataDir) -> Result<Self, StoreError> {
-        Self::load_from(&dir.installed_file())
+        let mut index = Self::load_from(&dir.installed_file())?;
+        // Linked files only ever come from `linked-folders.json`.
+        index.files.retain(|f| !f.is_linked());
+        index.load_linked(&linked_file(dir));
+        Ok(index)
+    }
+
+    /// Add the linked folders and their files from `path`. Missing or damaged →
+    /// none (the folders' files are found again when the user adds them back).
+    fn load_linked(&mut self, path: &Path) {
+        let Some(disk) = std::fs::read(path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<LinkedOnDisk>(&b).ok())
+        else {
+            return;
+        };
+        let mut folders: Vec<LinkedFolder> = Vec::new();
+        for f in disk.folders {
+            let usable = is_folder_id(&f.id)
+                && Path::new(&f.path).is_absolute()
+                && !folders.iter().any(|o| o.id == f.id);
+            if usable {
+                folders.push(f);
+            }
+        }
+        let available: Vec<&str> = folders
+            .iter()
+            .filter(|f| Path::new(&f.path).is_dir())
+            .map(|f| f.id.as_str())
+            .collect();
+        let mut seen: HashSet<String> = HashSet::new();
+        for value in disk.files {
+            let Ok(entry) = serde_json::from_value::<LinkedEntry>(value) else {
+                continue;
+            };
+            let Some(id) = linked_folder_id(&entry.file.rel_path) else {
+                continue;
+            };
+            if !folders.iter().any(|f| f.id == id)
+                || self.get(&entry.file.id).is_some()
+                || !seen.insert(entry.file.id.clone())
+                || !seen.insert(format!("path:{}", normalize_rel(&entry.file.rel_path)))
+            {
+                continue;
+            }
+            if available.contains(&id) {
+                self.linked
+                    .stamps
+                    .insert(entry.file.id.clone(), entry.stamp);
+                self.files.push(entry.file);
+            } else {
+                self.linked.parked.push(entry);
+            }
+        }
+        self.linked.not_used = disk
+            .not_used
+            .into_iter()
+            .filter(|(rel, _)| {
+                linked_folder_id(rel).is_some_and(|id| folders.iter().any(|f| f.id == id))
+            })
+            .collect();
+        self.linked.folders = folders;
+    }
+
+    /// Put the parked entries of linked folder `id` back (its drive is connected
+    /// again), so a new look through it keeps their ids.
+    pub fn unpark(&mut self, id: &str) {
+        let (back, keep): (Vec<LinkedEntry>, Vec<LinkedEntry>) =
+            std::mem::take(&mut self.linked.parked)
+                .into_iter()
+                .partition(|e| linked_folder_id(&e.file.rel_path) == Some(id));
+        self.linked.parked = keep;
+        for e in back {
+            let taken = self.get(&e.file.id).is_some()
+                || self.files.iter().any(|f| f.rel_path == e.file.rel_path);
+            if !taken {
+                self.linked.stamps.insert(e.file.id.clone(), e.stamp);
+                self.files.push(e.file);
+            }
+        }
+    }
+
+    /// Save the linked folders and their files (`Data/catalog/linked-folders.json`).
+    pub fn save_linked(&self, dir: &DataDir) -> Result<(), StoreError> {
+        let path = linked_file(dir);
+        if self.linked.folders.is_empty() && !path.exists() {
+            return Ok(());
+        }
+        let files = self
+            .files
+            .iter()
+            .filter(|f| f.is_linked())
+            .map(|f| LinkedEntry {
+                file: f.clone(),
+                stamp: self.linked.stamps.get(&f.id).copied().unwrap_or_default(),
+            })
+            .chain(self.linked.parked.iter().cloned())
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect();
+        let out = LinkedOnDisk {
+            folders: self.linked.folders.clone(),
+            files,
+            not_used: self.linked.not_used.clone(),
+        };
+        let mut json = serde_json::to_vec_pretty(&out).map_err(|e| {
+            StoreError::Invalid(format!("could not encode the linked folders: {e}"))
+        })?;
+        json.push(b'\n');
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        write_atomic(&path, &json)
     }
 
     /// [`InstalledIndex::load`] from an explicit index file. A damaged file is
@@ -221,17 +450,21 @@ impl InstalledIndex {
     }
 
     /// Atomic, pretty-printed JSON at schema version 1.
+    /// Also saves the linked folders ([`InstalledIndex::save_linked`]).
     pub fn save(&self, dir: &DataDir) -> Result<(), StoreError> {
-        self.save_to(dir, &dir.installed_file())
+        self.save_to(dir, &dir.installed_file())?;
+        self.save_linked(dir)
     }
 
     /// Save to an explicit index file (moving the Models folder). Never creates
-    /// a missing user-picked Models folder (an unmounted drive).
+    /// a missing user-picked Models folder (an unmounted drive). Linked files
+    /// are left out: they are saved by [`InstalledIndex::save_linked`].
     pub fn save_to(&self, dir: &DataDir, path: &Path) -> Result<(), StoreError> {
         self.check_savable_to(dir, path)?;
         let files = self
             .files
             .iter()
+            .filter(|f| !f.is_linked())
             .map(FileOut::Known)
             .chain(self.unknown.iter().map(FileOut::Unknown))
             .collect();
@@ -292,7 +525,12 @@ impl InstalledIndex {
     pub fn get_mut(&mut self, id: &str) -> Option<&mut InstalledFile> {
         self.files.iter_mut().find(|f| f.id == id)
     }
+    /// Never matches an empty hash (linked files are hashed only when needed).
     pub fn find_by_sha(&self, sha256: &str) -> Option<&InstalledFile> {
+        let sha256 = sha256.trim();
+        if sha256.is_empty() {
+            return None;
+        }
         self.files
             .iter()
             .find(|f| f.sha256.eq_ignore_ascii_case(sha256))
@@ -311,13 +549,25 @@ impl InstalledIndex {
     }
     pub fn remove(&mut self, id: &str) -> Option<InstalledFile> {
         let pos = self.files.iter().position(|f| f.id == id)?;
+        self.linked.stamps.remove(id);
         Some(self.files.remove(pos))
     }
     /// Absolute path of `file` ([`DataDir::resolve_rel`]): `rel_path` is split
     /// on `/` (and `\`, for hand-edited files); empty, `.`, `..` and drive/root
     /// parts are dropped, so a damaged or hostile index can never point outside
     /// the Data folder or the Models folder.
+    ///
+    /// A linked file (`linked/<id>/...`) resolves inside that linked folder, the
+    /// same way.
     pub fn abs_path(&self, dir: &DataDir, file: &InstalledFile) -> PathBuf {
+        if let Some(folder) = linked_folder_id(&file.rel_path).and_then(|id| self.linked.folder(id))
+        {
+            let parts = crate::datadir::normalize_rel(&file.rel_path);
+            return parts
+                .split('/')
+                .skip(2)
+                .fold(PathBuf::from(&folder.path), |p, c| p.join(c));
+        }
         dir.resolve_rel(&file.rel_path)
     }
     /// Main models: checkpoints + diffusion files.
@@ -329,6 +579,11 @@ impl InstalledIndex {
     pub fn loras(&self) -> impl Iterator<Item = &InstalledFile> {
         self.files.iter().filter(|f| f.kind == ModelKind::Lora)
     }
+}
+
+/// `Data/catalog/linked-folders.json` (always in this install's Data folder).
+pub fn linked_file(dir: &DataDir) -> PathBuf {
+    dir.root.join("catalog").join(LINKED_FILE)
 }
 
 /// `relPath` of an entry this version can't read, if it has one.
@@ -360,6 +615,7 @@ fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
         schema_version: version.max(SCHEMA_VERSION),
         files,
         unknown,
+        linked: LinkedState::default(),
     })
 }
 
@@ -610,5 +866,81 @@ mod tests {
         let long = "é".repeat(MAX_NOTES_BYTES);
         let n = CreatorNotes::from_html(None, Some(&long), false).unwrap();
         assert!(n.version.unwrap().len() <= MAX_NOTES_BYTES);
+    }
+
+    #[test]
+    fn linked_files_are_kept_apart_and_resolve_in_their_folder() {
+        let (tmp, d) = data();
+        let other = tmp.path().join("ComfyUI");
+        std::fs::create_dir_all(&other).unwrap();
+        let mut idx = InstalledIndex::new();
+        idx.upsert(file("a", "models/checkpoints/a", ModelKind::Checkpoint));
+        idx.linked.folders.push(LinkedFolder {
+            id: "f1".into(),
+            path: other.display().to_string(),
+            added_at: 1,
+        });
+        let rel = linked_rel_path(
+            "f1",
+            &["models".into(), "loras".into(), "x.safetensors".into()],
+        );
+        assert_eq!(rel, "linked/f1/models/loras/x.safetensors");
+        let mut l = file("l", &rel, ModelKind::Lora);
+        l.sha256 = String::new();
+        assert!(l.is_linked() && !idx.get("a").unwrap().is_linked());
+        idx.upsert(l.clone());
+        idx.linked
+            .stamps
+            .insert("l".into(), FileStamp { size: 5, mtime: 7 });
+        assert_eq!(
+            idx.abs_path(&d, &l),
+            other.join("models").join("loras").join("x.safetensors")
+        );
+        // An unhashed file never matches an empty hash.
+        assert!(idx.find_by_sha("").is_none());
+        idx.save(&d).unwrap();
+
+        let shared = std::fs::read_to_string(d.installed_file()).unwrap();
+        assert!(!shared.contains("linked/"), "{shared}");
+        let back = InstalledIndex::load(&d).unwrap();
+        assert_eq!(back.files.len(), 2);
+        assert_eq!(back.get("l"), Some(&l));
+        assert_eq!(back.linked.stamps["l"], FileStamp { size: 5, mtime: 7 });
+        assert_eq!(back.linked.folders.len(), 1);
+
+        // A folder that isn't there (drive not connected): its files are parked, kept on save.
+        std::fs::remove_dir_all(&other).unwrap();
+        let parked = InstalledIndex::load(&d).unwrap();
+        assert_eq!(parked.files.len(), 1);
+        assert_eq!(parked.linked.parked.len(), 1);
+        parked.save(&d).unwrap();
+        // Put back when the drive is there again (same id, same stamp).
+        let mut again = parked.clone();
+        again.unpark("f1");
+        assert_eq!(again.get("l"), Some(&l));
+        assert!(again.linked.parked.is_empty());
+        assert_eq!(again.linked.stamps["l"], FileStamp { size: 5, mtime: 7 });
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(InstalledIndex::load(&d).unwrap().get("l"), Some(&l));
+
+        // A hand-edited installed.json can't claim linked paths, and bad folder ids are dropped.
+        let mut shared: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(d.installed_file()).unwrap()).unwrap();
+        shared["files"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(file("z", "linked/f1/evil", ModelKind::Lora)).unwrap());
+        std::fs::write(d.installed_file(), serde_json::to_vec(&shared).unwrap()).unwrap();
+        let mut linked: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(linked_file(&d)).unwrap()).unwrap();
+        linked["folders"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({"id": "..", "path": "/etc"}));
+        std::fs::write(linked_file(&d), serde_json::to_vec(&linked).unwrap()).unwrap();
+        let back = InstalledIndex::load(&d).unwrap();
+        assert!(back.get("z").is_none());
+        assert_eq!(back.linked.folders.len(), 1);
+        assert!(!is_folder_id("..") && !is_folder_id("a/b") && is_folder_id("ab12-c"));
     }
 }

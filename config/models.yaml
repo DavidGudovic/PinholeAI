@@ -238,6 +238,17 @@ components:
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
     size_mb: 853
+  # Qwen2.5-VL 7B variant that describes adult content of adults instead of refusing ("abliterated",
+  # huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated, Apache-2.0), GGUF by mradermacher. Offered only
+  # with Safe mode Off; the word check still runs on its output. Its vision file is not needed:
+  # all 519 tensors of this repo's mmproj-Q8_0 are byte-identical to qwen25_vl_7b_mmproj (only the
+  # GGUF name metadata differs, checked 2026-09-30), so it shares that one.
+  qwen25_vl_7b_abliterated_q4km:
+    kind: llm
+    file: Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
+    url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-abliterated-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
+    sha256: adc8b3a0478606fc1a5dd3b61bff9756f9f66ca9affd92e91ff4135e553621c9
+    size_mb: 4683
   sdxl_vae_fp16_fix:
     kind: vae
     file: sdxl_vae_fp16_fix.safetensors
@@ -296,6 +307,7 @@ families:
   # ---------------------------------------------------------------- SD 1.5
   sd15:
     label: "Stable Diffusion 1.5"
+    lora_metadata: ["sd_v1", "stable-diffusion-v1"]   # LoRAs in other apps' folders (kohya metadata)
     style_template: tags
     vram_gb: { min: 4, recommended: 6 }        # ESTIMATE — measure before release
     activation_gb: 1.0
@@ -346,6 +358,7 @@ families:
   sd15_fast:
     inherits: sd15
     label: "SD 1.5 · Hyper"
+    name_hints: [hyper]                        # files in other apps' folders (whole words)
     civitai_base_models: ["SD 1.5 Hyper"]
     detect: { same_as: sd15 }
     defaults:
@@ -360,6 +373,7 @@ families:
   # ---------------------------------------------------------------- SDXL (base + generic finetunes)
   sdxl:
     label: "SDXL"
+    lora_metadata: ["sdxl_base", "stable-diffusion-xl"]
     style_template: tags
     vram_gb: { min: 6, recommended: 10 }       # ESTIMATE (min uses VAE tiling)
     activation_gb: 2.0
@@ -396,6 +410,7 @@ families:
   sdxl_pony:
     inherits: sdxl
     label: "SDXL · Pony"
+    name_hints: [pony, pdxl]
     civitai_base_models: ["Pony"]              # NOT "Pony V7" (different architecture)
     detect: { same_as: sdxl }
     defaults:
@@ -411,6 +426,7 @@ families:
   sdxl_illustrious:
     inherits: sdxl
     label: "SDXL · Illustrious / NoobAI"
+    name_hints: [illustrious, noobai, noob, ilxl]
     civitai_base_models: ["Illustrious", "NoobAI"]
     detect: { same_as: sdxl }
     defaults:
@@ -429,6 +445,7 @@ families:
   sdxl_fast:
     inherits: sdxl
     label: "SDXL · Lightning / Hyper / Turbo"
+    name_hints: [lightning, hyper, turbo, dmd2]
     civitai_base_models: ["SDXL Lightning", "SDXL Hyper", "SDXL Turbo"]
     detect: { same_as: sdxl }
     defaults:
@@ -442,6 +459,7 @@ families:
   # ---------------------------------------------------------------- FLUX.1
   flux1_dev:
     label: "FLUX.1 dev"
+    lora_metadata: ["flux1", "flux-1"]
     style_template: natural
     activation_gb: 2.5                          # no download spec: VRAM estimated from file size (SPEC §6.2)
     license_note: "Non-commercial license"
@@ -488,6 +506,7 @@ families:
   flux1_schnell:
     inherits: flux1_dev
     label: "FLUX.1 schnell"
+    name_hints: [schnell]
     license_note: "Apache 2.0"
     civitai_base_models: ["Flux.1 S"]
     detect:
@@ -510,6 +529,7 @@ families:
   # ---------------------------------------------------------------- Z-Image
   z_image_turbo:
     label: "Z-Image Turbo"
+    name_hints: [turbo]
     style_template: natural
     activation_gb: 2.0
     license_note: "Apache 2.0"
@@ -552,6 +572,7 @@ families:
   z_image_base:
     inherits: z_image_turbo
     label: "Z-Image"
+    name_hints: [base]
     civitai_base_models: ["ZImageBase"]
     detect:
       ambiguous_with: [z_image_turbo]
@@ -681,6 +702,7 @@ families:
   flux2_klein_4b_base:
     inherits: flux2_klein_4b
     label: "FLUX.2 klein 4B Base"
+    name_hints: [base]
     civitai_base_models: ["Flux.2 Klein 4B-base"]
     detect: { same_as: flux2_klein_4b }
     uses_negative_prompt: true
@@ -718,6 +740,7 @@ families:
   flux2_klein_9b_base:
     inherits: flux2_klein_9b
     label: "FLUX.2 klein 9B Base"
+    name_hints: [base]
     civitai_base_models: ["Flux.2 Klein 9B-base"]
     detect: { same_as: flux2_klein_9b }
     uses_negative_prompt: true
@@ -767,6 +790,7 @@ families:
   # safetensors reader).
   krea2_turbo:
     label: "Krea 2 Turbo"
+    name_hints: [turbo]
     style_template: natural
     activation_gb: 3.0
     license_note: "Krea 2 Community License: commercial use only under $1M yearly revenue"
@@ -808,6 +832,7 @@ families:
   krea2_raw:
     inherits: krea2_turbo
     label: "Krea 2 Raw"
+    name_hints: [raw]
     detect: { same_as: krea2_turbo }
     uses_negative_prompt: true
     dials:
@@ -849,6 +874,7 @@ families:
   anima_turbo:
     inherits: anima
     label: "Anima Turbo"
+    name_hints: [turbo]
     detect: { same_as: anima }          # not in CivitAI's list: recognised by hash or picked
     uses_negative_prompt: false
     dials:
@@ -919,6 +945,7 @@ families:
   sd35_turbo:
     inherits: sd3
     label: "Stable Diffusion 3.5 Large Turbo"
+    name_hints: [turbo]
     civitai_base_models: ["SD 3.5 Large Turbo"]
     detect: { same_as: sd3 }
     uses_negative_prompt: false
@@ -957,6 +984,7 @@ families:
   hidream_o1_dev:
     inherits: hidream_o1
     label: "HiDream-O1 Dev"
+    name_hints: [dev]
     detect: { same_as: hidream_o1 }     # not in CivitAI's list: recognised by hash or picked
     uses_negative_prompt: false
     dials:
@@ -992,6 +1020,7 @@ families:
   ernie_image_turbo:
     inherits: ernie_image
     label: "ERNIE-Image Turbo"
+    name_hints: [turbo]
     detect: { same_as: ernie_image }    # not in CivitAI's list: recognised by hash or picked
     uses_negative_prompt: false
     dials:
@@ -1032,6 +1061,7 @@ families:
   mage_flow_turbo:
     inherits: mage_flow
     label: "Mage-Flow Turbo"
+    name_hints: [turbo]
     detect: { same_as: mage_flow }      # not in CivitAI's list: recognised by hash or picked
     uses_negative_prompt: false
     dials:
@@ -1041,6 +1071,7 @@ families:
   # ---------------------------------------------------------------- Edit models
   qwen_image_edit_2511:
     label: "Qwen Image Edit 2511"
+    name_hints: [edit]
     style_template: natural
     activation_gb: 3.0
     license_note: "Apache 2.0"
@@ -1086,6 +1117,7 @@ families:
 
   flux1_kontext:
     label: "FLUX.1 Kontext"
+    name_hints: [kontext]
     style_template: natural
     activation_gb: 2.5
     license_note: "Non-commercial license"
@@ -1164,7 +1196,8 @@ captioner:
   # Helper models offered on Models → Helpers and in the Describe / Improve pickers (text + vision,
   # run by llama-server). `default: true` = the files of `default` above; `components` = files of
   # the `components:` section (shared with the model that uses them, e.g. Qwen Image Edit).
-  # `needs_safe_off: true` (none yet) hides a helper while Safe mode is On.
+  # `needs_safe_off: true` hides a helper while Safe mode is On; while Off, Automatic prefers it
+  # once installed.
   helpers:
     - id: describe
       title: "Qwen2.5-VL 3B"
@@ -1174,6 +1207,11 @@ captioner:
       title: "Qwen2.5-VL 7B"
       note: "Writes fuller, more careful prompts and descriptions. Large download; shared with Qwen Image Edit."
       components: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]
+    - id: qwen25_vl_7b_abliterated
+      title: "Qwen2.5-VL 7B for Safe mode Off"
+      note: "Describes and writes adult content of adults plainly instead of refusing. Only while Safe mode is Off; the word check still applies."
+      components: [qwen25_vl_7b_abliterated_q4km, qwen25_vl_7b_mmproj]
+      needs_safe_off: true
   prompts:
     sentence: >
       Describe this image as a single detailed prompt for an image generator.

@@ -4,9 +4,26 @@
 //
 // PRIVACY: never console.log arguments or results of prompt-bearing calls.
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type * as T from "./types";
+import { showBlocked } from "./blocked";
+
+/** Commands run while typing or paging (prompt preview, Browse search): a "blocked" error is
+ *  shown in place, not with the usage guidelines, so the dialog never pops up mid-typing. */
+const QUIET_BLOCKS = new Set(["preview_final_prompt", "browse_catalog"]);
+
+/** Every command goes through here: when the safety check stops something (code "blocked"), the
+ *  usage guidelines open again with the block message; the caller still gets the error. */
+async function invoke<R>(cmd: string, args?: InvokeArgs): Promise<R> {
+  try {
+    return await tauriInvoke<R>(cmd, args);
+  } catch (e) {
+    const err = asCoreError(e);
+    if (err.code === "blocked" && !QUIET_BLOCKS.has(cmd)) showBlocked(err.message);
+    throw e;
+  }
+}
 
 // ---------------------------------------------------------------- app (store agent)
 export const appInfo = () => invoke<T.AppInfo>("app_info");
@@ -58,6 +75,14 @@ export const installRecommended = (role: string) => invoke<T.InstallStarted>("in
 export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_local_model", { path });
 export const confirmFamily = (token: string, familyId: string) =>
   invoke<T.AddFileResult>("confirm_family", { token, familyId });
+/** Download the parts (VAE, text encoders) an installed model still needs, from its family's list. */
+export const installMissingParts = (modelId: string) => invoke<T.InstallStarted>("install_missing_parts", { modelId });
+/** Other apps' models folders used in place (read-only: Pinhole never writes, moves or deletes there). */
+export const listLinkedFolders = () => invoke<T.LinkedFolder[]>("list_linked_folders");
+export const addLinkedFolder = (path: string) => invoke<T.LinkedFolder>("add_linked_folder", { path });
+export const removeLinkedFolder = (id: string) => invoke<void>("remove_linked_folder", { id });
+/** Look through the linked folders again for new or changed files (progress via models-changed). */
+export const rescanLinkedFolders = () => invoke<void>("rescan_linked_folders");
 export const previewDelete = (modelId: string) => invoke<T.DeletePreview>("preview_delete", { modelId });
 export const deleteModel = (modelId: string) => invoke<void>("delete_model", { modelId });
 /** Paste from CivitAI: match resources to installed files or installable CivitAI versions. No prompt text is sent. */
@@ -95,12 +120,16 @@ export const previewFinalPrompt = (req: T.GenerateRequest) =>
   invoke<T.FinalPromptPreview>("preview_final_prompt", { req });
 /** Put an image (PNG/JPEG/WebP bytes) into the in-memory session. Raw binary body. */
 export const importImage = (bytes: Uint8Array) => invoke<T.ImportedImage>("import_image", bytes);
+/** Settings inside a picture Pinhole saved (or null). Doesn't add the picture to the session. */
+export const readPictureSettings = (bytes: Uint8Array) => invoke<T.PictureSettings | null>("read_picture_settings", bytes);
 /** Bytes of a session image: PNG for generated/upscaled images; imported images keep their format (PNG/JPEG/WebP). */
 export const getImage = (id: string) => invoke<ArrayBuffer>("get_image", { id });
 /** Writes Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png. */
 export const saveImage = (id: string) => invoke<T.SavedImage>("save_image", { id });
 /** Save to a user-chosen path (from the dialog plugin). */
 export const saveImageAs = (id: string, path: string) => invoke<T.SavedImage>("save_image_as", { id, path });
+/** "Save all": every listed image into a folder the user picked. */
+export const saveImagesTo = (ids: string[], dir: string) => invoke<T.SavedBatch>("save_images_to", { ids, dir });
 export const copyImage = (id: string) => invoke<void>("copy_image", { id });
 export const discardImage = (id: string) => invoke<void>("discard_image", { id });
 /** Drops every in-memory image immediately. */

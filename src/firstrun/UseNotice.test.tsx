@@ -22,8 +22,11 @@ describe("Before you start", () => {
     const onAgreed = vi.fn();
     render(<UseNotice onAgreed={onAgreed} />);
     expect(screen.getByText(/can't be turned off/)).toBeTruthy();
-    expect(screen.getByText(/sexual images of anyone under 18/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /I agree/ }));
+    fireEvent.click(screen.getByRole("button", { name: "usage guidelines" }));
+    expect(screen.getByText(/sexualizes minors, or anyone/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
+    expect(screen.queryByText(/sexualizes minors, or anyone/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Agree and continue/ }));
     await waitFor(() => expect(onAgreed).toHaveBeenCalled());
     expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: "system", noticeAccepted: NOTICE_VERSION }));
   });
@@ -32,7 +35,7 @@ describe("Before you start", () => {
     api.getSettings.mockRejectedValueOnce({ code: "io", message: "x", details: null });
     const onAgreed = vi.fn();
     render(<UseNotice onAgreed={onAgreed} />);
-    fireEvent.click(screen.getByRole("button", { name: /I agree/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Agree and continue/ }));
     await waitFor(() => expect(onAgreed).toHaveBeenCalled());
   });
 

@@ -31,7 +31,8 @@ engine setting), **Paste from CivitAI** (reads "Copy generation data" text in me
 settings, matches or installs the checkpoint/LoRAs), Edit (instruction edit with Qwen Image Edit /
 Kontext, Restyle, Fix details, Extend (wider/taller canvas), "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
 Styles (the only user text ever stored), Presets (never the prompt), Models (CivitAI browser with
-plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big"),
+plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big",
+use a ComfyUI / A1111 / Forge models folder in place),
 first-run "Recommended for your GPU", Settings (Offline mode, GPU/VRAM overrides, backend, content
 mode, API key in the OS keychain, theme), portable mode (`Data/` next to the exe).
 
@@ -51,7 +52,7 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   Hugging Face / GitHub APIs (verify-pins workflow). Gated repos are never used for one-click downloads.
 - sd.cpp auto-fit places weights GPU → RAM (no `--offload-to-cpu`); no live TAESD preview (the server
   has no preview API); cancel during generation restarts the engine.
-- Privacy by construction: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
+- Local by design: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
 - Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,

@@ -19,6 +19,7 @@ pub mod families;
 pub mod filters;
 pub mod inventory;
 pub mod lenient;
+pub mod linked;
 pub mod local;
 pub mod paste;
 pub mod plan;

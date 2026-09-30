@@ -14,4 +14,4 @@
 
 ## Privacy checklist
 - [ ] No prompt / negative-prompt text reaches disk, logs, errors, file names, PNG metadata or the network
-- [ ] New network calls (if any) go through `pinhole_net::HttpClient` and respect Offline mode
+- [ ] New network calls (if any) go through `pinhole_net::HttpClient` and respect Offline mode, and are added to the "What goes online" list (`src/components/WhatGoesOnline.tsx`)

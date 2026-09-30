@@ -223,6 +223,17 @@ fn captioner_files(core: &AppCore, helper: Option<&str>) -> Option<(Source, Path
         };
         return Some((source, component_path(core, &m)?, component_path(core, &p)?));
     }
+    // Automatic while Safe mode is Off: an installed Safe-mode-Off helper first (offered_helpers
+    // drops them while Safe mode is On).
+    for spec in offered_helpers(core)
+        .into_iter()
+        .filter(|h| h.needs_safe_off)
+    {
+        let (m, p) = helper_components(&spec);
+        if let (Some(m), Some(p)) = (component_path(core, &m), component_path(core, &p)) {
+            return Some((Source::Reuse, m, p));
+        }
+    }
     let reg = core.registry();
     let reuse = &reg.captioner().prefer_reuse;
     if reuse.len() >= 2 {
@@ -512,11 +523,8 @@ pub fn list_helper_models(core: &AppCore) -> Vec<HelperModel> {
             } else {
                 estimate
             };
-            let removable = [&m, &p].iter().any(|c| {
-                index
-                    .find_component(c)
-                    .is_some_and(|f| f.kind == ModelKind::Captioner)
-            });
+            // The same rule as Remove itself (a vision file another helper still uses stays).
+            let removable = !crate::models::helper_files(core, &index, &h.id).is_empty();
             let download_bytes = if installed {
                 0
             } else {

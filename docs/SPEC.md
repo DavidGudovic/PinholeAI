@@ -8,7 +8,7 @@ every decision can be overridden.
 
 ## 1. Principles (in priority order)
 
-1. **Private by construction.** Prompts are never written anywhere. No telemetry, no analytics,
+1. **Local by design.** Prompts are kept in memory, not written to disk. No telemetry, no analytics,
    no crash reporting, no automatic update checks. The only network traffic is traffic the user
    starts (browsing CivitAI, downloading a model or engine, pressing "Check for updates").
 2. **Zero-knowledge default path.** A new user never has to know what a VAE, text encoder,
@@ -130,17 +130,59 @@ restarts Pinhole. It is refused while downloads or generation run. A picked fold
 error messages. The folder is not locked: two Pinhole installs running **at the same time** on one
 folder can overwrite each other's index (dual boot never does that).
 
+**Models from another app (optional).** Models → Installed → **Use models from another app** lets
+the user pick a ComfyUI, A1111, Forge or Stability Matrix models folder (or any folder of model
+files). Pinhole uses what it can run **in place**: nothing in that folder is ever written, moved,
+copied or deleted, and no index is written into it. There is no mapping screen; each file is
+recognised automatically:
+- Every `.safetensors` / `.gguf` below the folder is found (links followed; tool, output and
+  unusable-kind folders such as `custom_nodes`, `controlnet`, `upscale_models`, `embeddings` are
+  skipped). Only headers are read (§6 step 3).
+- **Main models:** the header's family candidates, narrowed by the notes other apps keep next to
+  their files (A1111/Forge Civitai Helper `.civitai.info`, ComfyUI LoRA Manager `.metadata.json`,
+  Stability Matrix `.cm-info.json`, A1111 `.json`: CivitAI `baseModel`, SHA-256, name, trigger
+  words), then by words in the file or folder name (`name_hints` in models.yaml: `pony`,
+  `illustrious`, `kontext`, `turbo`…), else the base family.
+- **Style add-ons (LoRAs):** family from a note, else the kohya training metadata inside the file
+  (`ss_base_model_version` / `modelspec.architecture`, `lora_metadata` in models.yaml), else a name
+  hint; unknown = usable with any model, as with "Add a file". They show under Style add-ons.
+- **Parts (VAE, text encoders):** used only when the file is byte-for-byte a part Pinhole knows:
+  same kind and size, then the same SHA-256 (the only full read of a file, and only for such size
+  matches). Main models and add-ons are not hashed.
+- Not used: anything else, and models a note says CivitAI marks as a real person or someone under
+  18 (RELEASE-SPEC §5: only data the other app already fetched; no lookups).
+What was found is kept per install in `Data/catalog/linked-folders.json` (never in the shared
+Models folder's index: paths differ per OS), with each file's size and time so unchanged files are
+not read again. The folder is looked through again at start, when Installed opens and on
+**Check again**. The files show in Installed with an "In <folder>" badge and no Delete; removing
+the folder from the list only forgets them. Fit badges and recommendations count them like
+installed files; a model that lacks parts gets **Get missing parts** (from the registry). sd-server
+loads add-ons only from one folder, so a linked add-on used in a picture is hard-linked (else
+symlinked, else copied) into `models/loras/.pinhole-linked/`, which is emptied at every start.
+Moving Pinhole's Models folder leaves linked files where they are, and it can't be moved into (or
+around) a linked folder. A file Pinhole already has (same SHA-256, from a note or a part match) is
+listed once. A folder whose drive isn't connected keeps its entries and shows "Not connected".
+
 ---
 
 ## 4. Privacy rules (hard requirements — tests must enforce them)
 
 1. No prompt text is ever written to disk, logs, crash dumps, presets, file names, or PNG metadata.
 2. Generated images live in RAM until the user clicks **Save**. Closing the app discards them.
-3. **Reset** button: drops all in-memory images and prompt fields immediately.
+   Closing the window or pressing Reset while some pictures were never saved asks first
+   (**Save all…** to a folder / close without saving / go back). Which pictures count as saved is
+   kept in memory only (paths, no prompt).
+3. **Reset** button: drops all in-memory images and prompt fields immediately (after the question
+   above when pictures are unsaved).
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
    component downloads — all started by the user.
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
    layer. The catalog shows "Offline" and only installed models.
+   A small **Offline / Online** badge in the top bar shows the state at all times; clicking it opens
+   **What goes online**, a plain list of every call the app can make (what you did, which site, what is
+   sent) and what never leaves the computer, with a button to switch Offline mode. Settings → Privacy links
+   to the same page. The list lives in `src/components/WhatGoesOnline.tsx`: **add to it in the same PR
+   whenever a new network call is added.**
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
@@ -151,6 +193,11 @@ folder can overwrite each other's index (dual boot never does that).
    `DigitalSourceType` only ("made with AI", no app name), always written to pictures Pinhole made (no
    setting turns it off; an untouched imported picture gets none). Optional setting "Include
    generation settings (no prompt)" also writes model name, seed, steps, dials into a PNG text chunk.
+   **Reuse settings**: dropping such a picture on Create's results area reads that chunk back (in Rust,
+   only the known fields, range-checked; the picture is not kept) and fills model (by id, else by name),
+   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler and size through the same mapping
+   as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
+   the chunk gets a short note saying how to have pictures carry it; other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
     file or log (see CLAUDE.md).
 11. **The one exception is Styles** (§7): text the user explicitly saves as a named Style is
@@ -212,17 +259,39 @@ which replace CivitAI's list in `installed.json` (add-on metadata, never prompt 
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
 
+**Named sizes** (Fine-tune, above Width and Height): **My screen** (the monitor's shape), **Phone**
+(9:16), **Instagram** (4:5) and **Thumbnail** (16:9). One click sets Width and Height to that shape at
+about the model's usual picture area (its Square size), in multiples of 64. "My screen" notes that
+Upscale reaches the monitor's own resolution.
+
+**Starter ideas**: while the prompt box is empty, a few plain example chips ("Cabin in the snow",
+"Watercolor fox"…) fill it on click, with a hint to try Improve. Examples stay fictional and safe for work.
+
+**Tip line**: one quiet "Tip" under a picture in Create about a feature that is easy to miss (Keep this
+look, Variations, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
+per app session; × closes it, **Don't show tips** (or Settings → Show tips) turns it off for good.
+
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
 or "the same character somewhere else". Shown only for models whose architecture takes reference
-images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev today); **Add a reference
-picture** opens a file, and a picture can also be dropped, pasted (Ctrl/Cmd+V) or picked from this
-session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
+file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
+(Ctrl/Cmd+V) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
 `ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
 result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
 it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
 picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
-recently used); Generate then says the same instead of quietly dropping it.
+recently used), or **Use it in Edit** when none is installed; Generate then says the same instead
+of quietly dropping it.
+
+**Same character** (result card): new pictures of the character or subject in that image, with one
+button and no new mode or setting. It uses the first of: the Create model, if it takes a reference
+picture; another installed one that does and can run now (ready, not "Too big"; switched to); else
+Edit → **Describe a change** with the image loaded (any image 2 cleared), which offers the one-click
+edit model when none is installed. An Imported result (made from a picture the user added) always
+goes to Edit, so the Edit notice about photos of people shows. A short note says to describe the
+new scene ("the same character on a beach"). The image keeps its id, so its origin
+(Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
 **Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
 model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
@@ -240,7 +309,16 @@ the one-time download, then improves. Not in Edit: instruction edits are short c
 sky a sunset") and a fuller rewrite would drift from what should change.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
+new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
+more than one picture is unsaved.
+
+**Prompt recall:** Up (at the start of the box) and Down step through the prompts sent earlier in
+this session, like a shell; Down past the newest restores what was typed. Kept in memory only (last
+50), gone on Reset or close.
+
+**Done alert:** when a picture (or the last job in the queue) finishes while the window is in the
+background, the taskbar icon flashes. Settings has a toggle for a soft chime (off by default,
+made in code, no sound file).
 
 **Paste from CivitAI**: CivitAI's "Copy generation data" button yields A1111-style text (prompt,
 `Negative prompt:`, `Steps: …, Sampler: …, CFG scale: …, Seed: …, Size: …, Clip skip: …, Civitai
@@ -336,10 +414,13 @@ list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, 
 Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
 **Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
 sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
-else the 3B. Only installed helpers can be picked; a removed one reads as Automatic. **Models →
+else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off (none yet). The word check runs on the output of every helper model.
+mode is Off, and while Off, Automatic uses it first once installed: Qwen2.5-VL 7B abliterated
+(Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
+another installed helper still uses). Installed models still lists it while Safe mode is On, so it
+can be removed. The word check runs on the output of every helper model.
 
 ### 5.3 Describe (img2text)
 
@@ -459,7 +540,7 @@ add-on row has **Use** (see Install step 6).
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
 after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
 Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file
-chooser → detected). Dropping files onto the window is not supported: the native drop handler
+chooser → detected), and **Use models from another app** (§3). Dropping files onto the window is not supported: the native drop handler
 is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
 ---
@@ -616,6 +697,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
+- Show tips (on by default)
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:

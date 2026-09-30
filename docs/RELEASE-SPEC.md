@@ -142,10 +142,10 @@ allowed.
    `minor` or `sfwOnly` flag (§5) → explicit or intimate results are blocked. This uses
    CivitAI's own labels, not a classifier guess about the model.
 
-Block messages (plain words, no engine output):
-- Rule 1: "Pinhole doesn't make intimate images of real people from photos."
-- Rule 2: "Pinhole doesn't make sexual images of anyone who looks under 18."
-- Rule 3: "This model is marked for safe images only, by its creator or by CivitAI."
+Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
+this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
+(§7). It never names the rule, the content or what triggered it, has no retry hint, and never reads
+as an accusation, since a false block can hit an ordinary user (David, 2026-09-30).
 
 ### 3.3 How it runs
 
@@ -262,14 +262,22 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 
 ## 7. Terms and notices
 
-- **Level 1:** an acceptable-use section in the README, linking to `SAFETY.md` (§9).
+- **Level 1:** an acceptable-use section in the README (added 2026-09-30: usage guidelines,
+  built-in local check, GitHub private reporting); add a link to `SAFETY.md` (§9) once it exists.
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
-  start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`; it also says a
-  local check looks at every picture, can't be turned off and records nothing). Prohibits: child sexual abuse
-  material; sexual or intimate images of real people without consent; deepfakes of real people
-  meant to deceive or harass; forged documents, receipts or evidence; harassment. The user is
-  responsible for what they make, for model licences and for local law. Store only
-  `aup_accepted: <version>`.
+  start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
+  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
+  box (local, can't be turned off) and "By continuing, you agree to the usage
+  guidelines and to each model's licence. You're responsible for what you make." The full rules
+  are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
+  involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
+  without consent; no pictures of real people made to deceive, embarrass or harass; no forged
+  documents, IDs, receipts or evidence; don't pass made pictures off as real photos; follow model
+  licences; what the check stops. The owner dropped "local law" wording (2026-09-30).
+- **Block screen:** whenever the check stops something (error code `blocked`), the usage guidelines
+  open again with the fixed block message on top (`src/components/BlockedNotice.tsx`, via the
+  command wrapper in `src/lib/api.ts`). Never says what triggered it, no retry hint. Calls made
+  while typing (prompt preview, Browse search) show the message in place instead.
 - **Level 2: Edit notice** (built 2026-09-30, `editNoticeSeen`), the first time an Imported image is opened in Edit: "Only edit photos of
   people who have agreed to it. Making sexual or humiliating images of real people without consent
   is a crime in many countries."
@@ -292,6 +300,9 @@ templates, posts and UI.
   computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
   "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
   behind".
+- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
+  disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save."
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
@@ -305,8 +316,8 @@ templates, posts and UI.
 
 - **Level 1: `SAFETY.md`** in the repo root: what Pinhole blocks and doesn't (§3.2), how (on the
   computer, nothing recorded), known limits (open-source code can be modified; classifiers miss
-  things), and how to report a problem (GitHub private vulnerability reporting, plus an email
-  address).
+  things), and how to report a problem (GitHub private vulnerability reporting only, no email
+  address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
   states plainly that Pinhole can't identify its users or see what they made.
@@ -399,7 +410,7 @@ templates, posts and UI.
 - [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
 - [x] §5 `sdxl_pony` removed from `recommended.anime`
 - [x] §5 Edit references: covered by origin tracking + the image check (replaces the one-reference cap)
-- [ ] §7 acceptable-use section in the README
+- [x] §7 acceptable-use section in the README (link to `SAFETY.md` still to add with it)
 - [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and
       PR text
