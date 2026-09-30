@@ -256,6 +256,16 @@ describe("requests", () => {
     expect(rs).toMatchObject({ mode: "img2img", prompt: "oil painting", initImageId: "src", strength: 0.75 });
   });
 
+  it("builds a Fix details request: whole image back, no output size, optional prompt", () => {
+    const e = { ...withModels().edit, fixPrompt: "  a smiling face ", seed: 7, change: "medium" as const };
+    const fx = buildEditRequest(e, { mode: "fix", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
+    expect(fx).toMatchObject({ mode: "img2img", prompt: "a smiling face", initImageId: "src", maskImageId: "mask", fixDetails: true, strength: 0.45 });
+    expect(fx.fineTune).toEqual({ seed: 7 });
+    expect(fx.dials.count).toBe(1);
+    const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
+    expect(rs.fixDetails).toBeUndefined();
+  });
+
   it("offers generators that can edit in both Create and Edit", () => {
     const klein = model("k", "flux2_klein_9b_base", { modes: ["txt2img", "img2img", "edit"] });
     const qwenEdit = model("q", "qwen_image_edit_2511", { modes: ["edit"], isEditModel: true });

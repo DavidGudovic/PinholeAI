@@ -220,7 +220,7 @@ export function makeActions(store: Store) {
   function queueEntry(kind: QueuedJob["kind"], prompt: string, model: InstalledModel | undefined, count: number, imageIds: string[] = []): Omit<QueuedJob, "id"> {
     const text = prompt.trim().replace(/\s+/g, " ");
     const images = kind === "edit" ? "" : ` · ${count} image${count === 1 ? "" : "s"}`;
-    return { kind, label: text || (kind === "edit" ? "Edit with a style" : "Picture"), detail: `${model?.friendlyName ?? "Model"}${images}`, imageIds };
+    return { kind, label: text || (kind === "edit" ? "Edit" : "Picture"), detail: `${model?.friendlyName ?? "Model"}${images}`, imageIds };
   }
 
   /** A Create batch: `makeRequest` runs once the job has started. */
@@ -422,8 +422,11 @@ export function makeActions(store: Store) {
     const node = s.edit.chain[at];
     const source = node ? s.images[node.imageId] : undefined;
     if (!node || !source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
-    const text = opts.mode === "instruction" ? s.edit.instruction : s.edit.restylePrompt;
-    if (!text.trim() && !s.edit.styleId) {
+    const text = opts.mode === "instruction" ? s.edit.instruction : opts.mode === "fix" ? s.edit.fixPrompt : s.edit.restylePrompt;
+    if (opts.mode === "fix" && !opts.mask) {
+      throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
+    }
+    if (opts.mode !== "fix" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
         message: opts.mode === "instruction" ? "Say what should change first." : "Describe how it should look (or pick a style) first.",
