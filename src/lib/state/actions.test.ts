@@ -473,6 +473,38 @@ describe("queue", () => {
     expect(store.getState().images.two).toBeUndefined();
   });
 
+  it("keeps Create's reference picture for Variations when the slot was cleared during the job", async () => {
+    const { store, actions } = setup();
+    const klein: InstalledModel = { ...model, modes: ["txt2img", "img2img", "edit"] };
+    store.dispatch({ type: "setModels", models: [klein] });
+    store.dispatch({ type: "createSetRef", ref: ref("pic") });
+    const run = actions.generateCreate();
+    await tick();
+    store.dispatch({ type: "createSetRef", ref: null });
+    expect(store.getState().images.pic).toBeDefined(); // the running job holds it
+    pending!({ images: [img("a")] } as GenerateResult);
+    await run;
+    await tick();
+    expect(store.getState().images.pic).toBeDefined(); // now the batch does
+    expect(discarded).not.toContain("pic");
+    const again = actions.variations("a");
+    await tick();
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].refImageIds).toEqual(["pic"]);
+    pending!({ images: [img("b")] } as GenerateResult);
+    await again;
+  });
+
+  it("drops a reference picture that finishes loading after Reset", async () => {
+    const { store, actions } = setup();
+    vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "late", width: 8, height: 8 } as never);
+    const load = actions.importCreateReference(new Blob([new Uint8Array(4)]));
+    await actions.clearSession();
+    await load;
+    await tick();
+    expect(store.getState().create.refImageId).toBeNull();
+    expect(discarded).toContain("late");
+  });
+
   it("ignores a Generate pressed while Reset is clearing the session", async () => {
     const { store, actions } = setup();
     const first = actions.generateCreate();

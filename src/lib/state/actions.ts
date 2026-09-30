@@ -232,17 +232,19 @@ export function makeActions(store: Store) {
   async function queueBatch(count: number, entry: Omit<QueuedJob, "id">, makeRequest: () => Promise<GenerateRequest>) {
     try {
       await enqueue(entry, async () => {
-        const { req, images, refs } = await withJob(
+        await withJob(
           "create",
           async () => {
             const nonce = get().sessionNonce;
             const req = await makeRequest();
-            return { req, ...(await generateNow(req, nonce)) };
+            const { images, refs } = await generateNow(req, nonce);
+            // Added while the job still holds its images: the batch keeps its reference picture
+            // (for Variations) even if the slot was cleared meanwhile.
+            if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
           },
           count,
           entry.imageIds,
         );
-        if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
         // The model's lastUsed changed; refresh quietly so the picker order stays right.
         void refreshModels().catch(() => undefined);
       });
@@ -397,9 +399,15 @@ export function makeActions(store: Store) {
 
   /** Create's optional reference picture. */
   async function importCreateReference(blob: Blob) {
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    // Reset pressed while it was being read: it belongs to the cleared session.
+    if (resetting || get().sessionNonce !== nonce) {
+      releaseRefs([ref], true);
+      return;
+    }
     dispatch({ type: "createSetRef", ref });
   }
 
