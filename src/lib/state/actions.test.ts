@@ -169,3 +169,39 @@ describe("Paste from CivitAI", () => {
     expect(store.getState().create.prompt).toBe("a castle in fog");
   });
 });
+
+describe("job details for the screen", () => {
+  it("drops an upscale cancelled while the upscaler was still downloading", async () => {
+    const { store, actions } = setup();
+    const run = actions.upscale("x", 2);
+    await tick();
+    // The engine has no job yet (the upscaler is downloading), so only the flag stops it.
+    await actions.cancel();
+    pendingUpscale!(img("u"));
+    await run;
+    expect(store.getState().results).toEqual([]);
+    expect(discarded).toContain("u");
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("counts the placeholders from the running batch, not the How many dial", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { count: 4 } });
+    const first = actions.generateCreate();
+    await tick();
+    expect(store.getState().job?.count).toBe(4);
+    pending!({ images: [img("a"), img("b"), img("c"), img("d")] } as GenerateResult);
+    await first;
+    store.dispatch({ type: "patchCreate", patch: { count: 1 } });
+    const again = actions.variations("a");
+    await tick();
+    expect(store.getState().job?.count).toBe(4);
+    pending!({ images: [img("e")] } as GenerateResult);
+    await again;
+    const up = actions.upscale("a", 2);
+    await tick();
+    expect(store.getState().job).toMatchObject({ kind: "upscale", count: 1 });
+    pendingUpscale!(img("u"));
+    await up;
+  });
+});

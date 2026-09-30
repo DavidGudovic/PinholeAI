@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ArrowRight, Brush, ChevronDown, Columns2, Copy, Eraser, ImagePlus, Redo2, Save, ScanText, SlidersHorizontal, Trash, Trash2, Undo2, WandSparkles } from "lucide-react";
 import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
-import { JobProgress } from "../../components/JobProgress";
+import { LiveJobProgress } from "../../components/JobProgress";
 import { ModelPicker } from "../../components/ModelPicker";
 import { StylePicker } from "../../components/StylePicker";
 import { AutoTextarea, Button, IconButton, Kbd, Segmented, Slider, Spinner, Toggle, cx, focusRing, inputClass } from "../../components/ui";
@@ -26,13 +26,17 @@ import { useFitBox } from "./useFitBox";
 
 type SizeChoice = EditSizeChoice;
 
+const EDIT_JOBS = ["edit"] as const;
+
 export function EditTab() {
   const tab = useAppState((s) => s.tab);
   const e = useAppState((s) => s.edit);
   const images = useAppState((s) => s.images);
   const models = useAppState((s) => s.models);
   const createModelId = useAppState((s) => s.create.modelId);
-  const job = useAppState((s) => s.job);
+  // Only the kind: the progress card subscribes to the job itself (LiveJobProgress).
+  const jobKind = useAppState((s) => s.job?.kind ?? null);
+  const job = !!jobKind;
   const dispatch = useDispatch();
   const store = useStore();
   const actions = useActions();
@@ -68,7 +72,7 @@ export function EditTab() {
   const prevNode = compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
   const outSize = current ? editOutputSize(current.width, current.height, size, sizeMultiple(model?.familyId)) : null;
-  const myJob = job?.kind === "edit" ? job : null;
+  const myJob = jobKind === "edit";
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
@@ -92,8 +96,12 @@ export function EditTab() {
     mask.current?.clear();
   }, [node?.imageId]);
 
+  // Set before the first await (the mask export), so a second click or Ctrl+Enter
+  // during the export doesn't get as far as the job and report "still working".
+  const running = useRef(false);
   const run = async () => {
-    if (store.getState().job || importing || !current || !model) return;
+    if (running.current || store.getState().job || importing || !current || !model) return;
+    running.current = true;
     setError(null);
     try {
       const m = maskOn && painted ? await mask.current?.exportPng() : null;
@@ -105,6 +113,8 @@ export function EditTab() {
       }
     } catch (err) {
       setError(api.asCoreError(err));
+    } finally {
+      running.current = false;
     }
   };
   usePrimaryAction("edit", () => void run());
@@ -323,8 +333,8 @@ export function EditTab() {
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 px-5 py-4 dark:border-neutral-800">
           {myJob ? (
-            <JobProgress
-              job={myJob}
+            <LiveJobProgress
+              kinds={EDIT_JOBS}
               cancelling={cancelling}
               onCancel={async () => {
                 setCancelling(true);
@@ -359,13 +369,13 @@ export function EditTab() {
         ) : (
           <>
             <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
-              <IconButton label="Undo" disabled={e.index === 0 || !!myJob} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
+              <IconButton label="Undo" disabled={e.index === 0 || myJob} onClick={() => dispatch({ type: "editGoto", index: e.index - 1 })}>
                 <Undo2 className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Redo" disabled={e.index >= e.chain.length - 1 || !!myJob} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
+              <IconButton label="Redo" disabled={e.index >= e.chain.length - 1 || myJob} onClick={() => dispatch({ type: "editGoto", index: e.index + 1 })}>
                 <Redo2 className="h-4 w-4" />
               </IconButton>
-              <IconButton label="Delete this edit" disabled={e.index === 0 || !!job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
+              <IconButton label="Delete this edit" disabled={e.index === 0 || job} onClick={() => dispatch({ type: "editDelete", index: e.index })}>
                 <Trash2 className="h-4 w-4" />
               </IconButton>
               <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
@@ -376,7 +386,7 @@ export function EditTab() {
                 <Segmented size="sm" ariaLabel="Compare with" value={compareWith} onChange={setCompareWith} options={[{ value: "previous", label: "Previous" }, { value: "original", label: "Original" }]} />
               )}
               <div className="ml-auto flex items-center gap-1.5">
-                <Button size="sm" variant="ghost" disabled={!!myJob} onClick={picker.open} title="Edit a different image" aria-label="New image">
+                <Button size="sm" variant="ghost" disabled={myJob} onClick={picker.open} title="Edit a different image" aria-label="New image">
                   <ImagePlus className="h-3.5 w-3.5" /> <span className="hidden xl:inline">New image</span>
                 </Button>
                 <Button size="sm" onClick={() => void actions.save(current.id).catch((err) => setError(api.asCoreError(err)))}>
@@ -414,7 +424,7 @@ export function EditTab() {
                       <button
                         type="button"
                         aria-current={i === e.index ? "step" : undefined}
-                        disabled={!!myJob && i !== e.index}
+                        disabled={myJob && i !== e.index}
                         onClick={() => dispatch({ type: "editGoto", index: i })}
                         className={cx("group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50", focusRing, i === e.index ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-neutral-100 dark:hover:bg-neutral-800")}
                       >

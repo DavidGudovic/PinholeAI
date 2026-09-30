@@ -14,11 +14,16 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
   const dispatch = useDispatch();
   const area = useRef<HTMLTextAreaElement>(null);
   // Generation data pasted into the box, waiting for "Apply these settings?".
-  const [pending, setPending] = useState<{ text: string; start: number; end: number } | null>(null);
+  // `base` is the prompt at paste time: the offsets only fit that text.
+  const [pending, setPending] = useState<{ text: string; start: number; end: number; base: string } | null>(null);
 
   const insertAsText = () => {
     if (!pending) return;
-    const next = prompt.slice(0, pending.start) + pending.text + prompt.slice(pending.end);
+    // Typed on since the paste: the old offsets would cut into the new text, so add it at the end.
+    const next =
+      prompt === pending.base
+        ? prompt.slice(0, pending.start) + pending.text + prompt.slice(pending.end)
+        : prompt + (prompt && !/\s$/.test(prompt) ? " " : "") + pending.text;
     dispatch({ type: "patchCreate", patch: { prompt: next } });
     setPending(null);
     requestAnimationFrame(() => area.current?.focus());
@@ -58,7 +63,7 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
             if (text && looksLikeGenerationData(text)) {
               e.preventDefault();
               const el = e.currentTarget;
-              setPending({ text, start: el.selectionStart ?? prompt.length, end: el.selectionEnd ?? prompt.length });
+              setPending({ text, start: el.selectionStart ?? prompt.length, end: el.selectionEnd ?? prompt.length, base: prompt });
             }
           }}
         />
