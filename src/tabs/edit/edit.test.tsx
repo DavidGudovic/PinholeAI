@@ -134,6 +134,37 @@ describe("Edit tab", () => {
     await waitFor(() => expect(api.importImage).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(/still working on the last image/)).toBeNull();
   });
+
+  it("with a second image, hides the brush and edits with a model that combines two images", async () => {
+    const kontext = { ...model, id: "kx", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" } as InstalledModel;
+    const klein = { ...model, id: "kl", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" } as InstalledModel;
+    vi.mocked(api.listModels).mockImplementation(async () => [model, kontext, klein]);
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(3));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { instruction: "put the bottle from image 2 on the shelf" } });
+    });
+    expect(await screen.findByRole("switch", { name: /Only change here/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Add another image/ })).toBeTruthy();
+
+    act(() => store.dispatch({ type: "editSetSecond", ref: ref("b") }));
+    expect(screen.queryByRole("switch", { name: /Only change here/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remove image 2" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Apply edit/ }));
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.generate).mock.calls[0][0]).toMatchObject({ modelId: "kl", mode: "edit", refImageIds: ["a", "b"], maskImageId: null });
+
+    act(() => store.dispatch({ type: "editSetSecond", ref: null }));
+    expect(store.getState().edit.secondImageId).toBeNull();
+    vi.mocked(api.listModels).mockImplementation(async () => [model]);
+  });
 });
 
 describe("Compare slider", () => {

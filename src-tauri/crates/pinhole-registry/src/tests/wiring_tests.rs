@@ -877,6 +877,16 @@ fn generators_that_edit_keep_create_dials_and_get_an_edit_default() {
     }
     assert!(can_edit(fam("qwen_image_edit_2511")) && is_edit_family(fam("flux1_kontext")));
     assert!(!can_edit(fam("sdxl")) && !can_edit(fam("qwen_image")));
+    // Second image: Qwen Image Edit and FLUX.2 (base versions inherit), not Kontext.
+    for id in [
+        "qwen_image_edit_2511",
+        "flux2_klein_4b",
+        "flux2_klein_9b_base",
+        "flux2_dev",
+    ] {
+        assert!(fam(id).multi_ref, "{id}");
+    }
+    assert!(!fam("flux1_kontext").multi_ref && !fam("sdxl").multi_ref);
 
     // klein distilled: fixed CFG, no guidance → no dial to show.
     assert!(!family_ui(reg, fam("flux2_klein_4b")).stay_close_shown);

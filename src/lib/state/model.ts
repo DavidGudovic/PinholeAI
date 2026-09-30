@@ -94,6 +94,8 @@ export interface EditParams {
   styleId: string | null;
   /** null = best installed edit model. */
   editModelId: string | null;
+  /** Optional second image for "Describe a change" (image 2); session RAM like the chain. */
+  secondImageId: string | null;
   /** null = the Create tab's model. */
   restyleModelId: string | null;
   quality: Quality;
@@ -175,6 +177,7 @@ export const initialEdit = (): EditParams => ({
   change: "medium",
   styleId: null,
   editModelId: null,
+  secondImageId: null,
   restyleModelId: null,
   quality: "balanced",
   seed: null,
@@ -242,6 +245,7 @@ export type Action =
   | { type: "editGoto"; index: number }
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
+  | { type: "editSetSecond"; ref: ImgRef | null }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
   | { type: "describeClear" }
@@ -258,8 +262,8 @@ export function createModels(models: InstalledModel[] | null): InstalledModel[] 
 }
 
 /** Installed instruction-edit models. */
-export function editModels(models: InstalledModel[] | null): InstalledModel[] {
-  return (models ?? []).filter((m) => m.isEditModel || m.modes.includes("edit"));
+export function editModels(models: InstalledModel[] | null, twoImages = false): InstalledModel[] {
+  return (models ?? []).filter((m) => (m.isEditModel || m.modes.includes("edit")) && (!twoImages || !!m.multiRef));
 }
 
 /** Most recently used ready model, else the first ready one, else the first one. */
@@ -310,6 +314,7 @@ export function referencedImageIds(s: Pick<AppState, "results" | "edit" | "descr
   const ids = new Set<string>();
   for (const r of s.results) ids.add(r.id);
   for (const n of s.edit.chain) ids.add(n.imageId);
+  if (s.edit.secondImageId) ids.add(s.edit.secondImageId);
   if (s.describe.imageId) ids.add(s.describe.imageId);
   return ids;
 }
@@ -529,6 +534,10 @@ function inner(s: AppState, a: Action): AppState {
     }
     case "editClear":
       return { ...s, edit: { ...s.edit, chain: [], index: 0 } };
+    case "editSetSecond":
+      return a.ref
+        ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id } }
+        : { ...s, edit: { ...s.edit, secondImageId: null } };
     case "patchEdit":
       return { ...s, edit: { ...s.edit, ...a.patch } };
     case "describeLoad":

@@ -269,6 +269,27 @@ describe("requests", () => {
     expect(req.dials.stick).toBe(0.7);
   });
 
+  it("sends a second image with the edit and keeps it in session memory until removed", () => {
+    let s = reducer(withModels(), { type: "editLoad", ref: ref("a") });
+    s = reducer(s, { type: "editSetSecond", ref: ref("b") });
+    expect(s.edit.secondImageId).toBe("b");
+    expect(referencedImageIds(s).has("b")).toBe(true);
+    const req = buildEditRequest(
+      { ...s.edit, instruction: "put the bottle from image 2 on the shelf" },
+      { mode: "instruction", source: ref("a"), model: model("k", "flux2_klein_4b", { multiRef: true }), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [1024, 1024] },
+    );
+    expect(req).toMatchObject({ refImageIds: ["a", "b"], maskImageId: null });
+    const restyle = buildEditRequest({ ...s.edit, restylePrompt: "oil" }, { mode: "restyle", source: ref("a"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: null, size: [512, 512] });
+    expect(restyle.refImageIds).toBeUndefined();
+    const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], multiRef: true });
+    const kontext = model("x", "flux1_kontext", { modes: ["edit"], isEditModel: true });
+    expect(editModels([k, kontext], true).map((m) => m.id)).toEqual(["k"]);
+    s = reducer(s, { type: "editSetSecond", ref: null });
+    expect(referencedImageIds(s).has("b")).toBe(false);
+    s = reducer(reducer(s, { type: "editSetSecond", ref: ref("c") }), { type: "clearSession" });
+    expect(s.edit.secondImageId).toBeNull();
+  });
+
   it("fits edit sizes to ~1 MP in multiples of 16", () => {
     expect(fitEditSize(1024, 1024)).toEqual([1024, 1024]);
     expect(fitEditSize(4000, 3000)).toEqual([1184, 880]);

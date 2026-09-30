@@ -56,12 +56,16 @@ export function EditTab() {
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
 
-  const edits = useMemo(() => editModels(models), [models]);
   const creates = useMemo(() => createModels(models), [models]);
   // `models` is the real dependency: autoEditModel() reads the current list from the store.
-  const autoEdit = useMemo(() => (models ? actions.autoEditModel() : null), [actions, models]);
-  const mode: EditMode = e.mode ?? (autoEdit ? "instruction" : "restyle");
-  const editModelId = e.editModelId ?? autoEdit?.id ?? null;
+  const autoEditOne = useMemo(() => (models ? actions.autoEditModel() : null), [actions, models]);
+  const mode: EditMode = e.mode ?? (autoEditOne ? "instruction" : "restyle");
+  // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
+  const second = e.secondImageId ? images[e.secondImageId] : undefined;
+  const twoImages = mode === "instruction" && !!second;
+  const edits = useMemo(() => editModels(models, twoImages), [models, twoImages]);
+  const autoEdit = useMemo(() => (twoImages ? (models ? actions.autoEditModel(true) : null) : autoEditOne), [actions, models, twoImages, autoEditOne]);
+  const editModelId = (e.editModelId && edits.some((m) => m.id === e.editModelId) ? e.editModelId : null) ?? autoEdit?.id ?? null;
   const editFit = edits.find((m) => m.id === editModelId)?.fit ?? null;
   const restyleModelId = e.restyleModelId ?? createModelId ?? creates[0]?.id ?? null;
   const model = useModel(mode === "instruction" ? editModelId : restyleModelId);
@@ -91,6 +95,17 @@ export function EditTab() {
   useImagePaste(tab === "edit", (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
 
+  const loadSecond = async (f: File) => {
+    if (store.getState().job?.kind === "edit") return;
+    setError(null);
+    try {
+      await actions.importSecondToEdit(f);
+    } catch (err) {
+      setError(api.asCoreError(err));
+    }
+  };
+  const secondPicker = useFilePicker((f) => void loadSecond(f));
+
   // A new current image means a new mask.
   useEffect(() => {
     mask.current?.clear();
@@ -104,7 +119,7 @@ export function EditTab() {
     running.current = true;
     setError(null);
     try {
-      const m = maskOn && painted ? await mask.current?.exportPng() : null;
+      const m = maskOn && painted && !twoImages ? await mask.current?.exportPng() : null;
       const startIndex = store.getState().edit.index;
       await actions.runEdit({ mode, model, mask: m ?? null, size: outSize! });
       if (store.getState().edit.index > startIndex) {
@@ -171,14 +186,18 @@ export function EditTab() {
             needsEditModel ? (
               <div className="space-y-3">
                 <div className="rounded-xl bg-neutral-50 p-3 text-sm dark:bg-neutral-800/50">
-                  <div className="font-medium">{noGpu ? "Describing a change needs a graphics card" : "Get the best edit model for your GPU"}</div>
+                  <div className="font-medium">
+                    {noGpu ? "Describing a change needs a graphics card" : twoImages ? "Combining two images needs another edit model" : "Get the best edit model for your GPU"}
+                  </div>
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {noGpu
                       ? "Pinhole didn't find one it can use, and edit models are too big for the processor. Switch to Restyle — it works with the model you already have."
-                      : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
+                      : twoImages
+                        ? "Qwen Image Edit and FLUX.2 models can use a second image. Or remove the second image to edit with the model you have."
+                        : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
-                <RecommendedCards roles={["edit", "edit_alt"]} compact />
+                <RecommendedCards roles={twoImages ? ["edit"] : ["edit", "edit_alt"]} compact />
               </div>
             ) : (
               <>
@@ -206,7 +225,11 @@ export function EditTab() {
                     minRows={3}
                     maxRows={10}
                     value={e.instruction}
-                    placeholder="e.g. make it evening with warm street lights, or replace the mug with a water bottle"
+                    placeholder={
+                      twoImages
+                        ? "e.g. put the bottle from image 2 on the shelf in the background, same label and colors"
+                        : "e.g. make it evening with warm street lights, or replace the mug with a water bottle"
+                    }
                     onChange={(ev) => dispatch({ type: "patchEdit", patch: { instruction: ev.target.value } })}
                   />
                 </div>
@@ -261,43 +284,66 @@ export function EditTab() {
             </>
           )}
 
+          {mode === "instruction" && current && (
+            <div>
+              {secondPicker.input}
+              {second ? (
+                <div className="flex items-center gap-3 rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
+                  <img src={second.url} alt="Image 2" className="h-12 w-12 shrink-0 rounded-md object-cover" draggable={false} />
+                  <p className="min-w-0 flex-1 text-xs text-neutral-500">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-300">Image 2.</span> Call the picture you're editing “image 1” and this one “image 2”.
+                  </p>
+                  <IconButton label="Remove image 2" size="sm" variant="ghost" disabled={myJob} onClick={() => dispatch({ type: "editSetSecond", ref: null })}>
+                    <Trash className="h-3.5 w-3.5" />
+                  </IconButton>
+                </div>
+              ) : (
+                <Button size="sm" variant="ghost" disabled={myJob} onClick={secondPicker.open} title="Use something from another picture, like an object or a logo">
+                  <ImagePlus className="h-3.5 w-3.5" /> Add another image
+                </Button>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-2">
             <StylePicker value={e.styleId} onChange={(id) => dispatch({ type: "patchEdit", patch: { styleId: id } })} familyId={model?.familyId} familyLabel={model?.familyLabel} />
             {e.styleId && mode === "instruction" && <span className="text-xs text-neutral-500">“make it look like: …”</span>}
           </div>
 
-          <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
-            <Toggle
-              checked={maskOn}
-              onChange={setMaskOn}
-              label={
-                <span className="inline-flex items-center gap-1.5 font-medium">
-                  <Brush className="h-3.5 w-3.5" /> Only change here
-                </span>
-              }
-              hint={maskOn ? "Paint over the part of the image that may change." : "Optional: paint the area to change."}
-            />
-            {maskOn && (
-              <div className="mt-3 space-y-2.5">
-                <div className="flex items-center gap-2">
-                  <Segmented
-                    size="sm"
-                    ariaLabel="Brush or eraser"
-                    value={erase ? "erase" : "paint"}
-                    onChange={(v) => setErase(v === "erase")}
-                    options={[
-                      { value: "paint", label: (<><Brush className="h-3 w-3" /> Paint</>) },
-                      { value: "erase", label: (<><Eraser className="h-3 w-3" /> Erase</>) },
-                    ]}
-                  />
-                  <Button size="sm" variant="ghost" onClick={() => mask.current?.clear()} disabled={!painted}>
-                    <Trash className="h-3.5 w-3.5" /> Clear
-                  </Button>
+          {!twoImages && (
+            <div className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800">
+              <Toggle
+                checked={maskOn}
+                onChange={setMaskOn}
+                label={
+                  <span className="inline-flex items-center gap-1.5 font-medium">
+                    <Brush className="h-3.5 w-3.5" /> Only change here
+                  </span>
+                }
+                hint={maskOn ? "Paint over the part of the image that may change." : "Optional: paint the area to change."}
+              />
+              {maskOn && (
+                <div className="mt-3 space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <Segmented
+                      size="sm"
+                      ariaLabel="Brush or eraser"
+                      value={erase ? "erase" : "paint"}
+                      onChange={(v) => setErase(v === "erase")}
+                      options={[
+                        { value: "paint", label: (<><Brush className="h-3 w-3" /> Paint</>) },
+                        { value: "erase", label: (<><Eraser className="h-3 w-3" /> Erase</>) },
+                      ]}
+                    />
+                    <Button size="sm" variant="ghost" onClick={() => mask.current?.clear()} disabled={!painted}>
+                      <Trash className="h-3.5 w-3.5" /> Clear
+                    </Button>
+                  </div>
+                  <Slider ariaLabel="Brush size" min={6} max={160} step={1} value={brush} onChange={setBrush} left="Brush" right={<span className="tabular-nums">{brush}px</span>} />
                 </div>
-                <Slider ariaLabel="Brush size" min={6} max={160} step={1} value={brush} onChange={setBrush} left="Brush" right={<span className="tabular-nums">{brush}px</span>} />
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           <section className="rounded-xl border border-neutral-200 dark:border-neutral-800">
             <button type="button" aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)} className={cx("flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium", focusRing)}>
@@ -410,7 +456,7 @@ export function EditTab() {
               before={compare ? before : undefined}
               beforeLabel={compareWith === "original" ? "Original" : (prevNode?.label ?? "Before")}
               afterLabel={node?.label ?? "After"}
-              maskOn={maskOn && !(compare && before)}
+              maskOn={maskOn && !twoImages && !(compare && before)}
               maskRef={mask}
               brush={brush}
               erase={erase}

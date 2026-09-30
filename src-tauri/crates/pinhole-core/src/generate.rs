@@ -810,11 +810,15 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
         .get(&req.model_id)
         .filter(|f| matches!(f.kind, ModelKind::Checkpoint | ModelKind::Diffusion))
         .cloned();
+    // Two images ("take the bottle from image 2") need a family that combines them.
+    let two_images = req.mode == GenMode::Edit && req.ref_image_ids.len() > 1;
     let is_edit = |f: &InstalledFile| {
         f.family
             .as_deref()
             .and_then(|id| reg.family(id))
-            .is_some_and(pinhole_registry::wiring::can_edit)
+            .is_some_and(|fam| {
+                pinhole_registry::wiring::can_edit(fam) && (!two_images || fam.multi_ref)
+            })
     };
 
     let model = if req.mode == GenMode::Edit {
@@ -832,9 +836,11 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
                 })
                 .cloned()
                 .ok_or_else(|| {
-                    CoreError::not_found(
-                        "No edit model is installed yet. Get one from the Edit tab.",
-                    )
+                    CoreError::not_found(if two_images {
+                        "None of your models can combine two images. Remove the second image, or get Qwen Image Edit or a FLUX.2 model."
+                    } else {
+                        "No edit model is installed yet. Get one from the Edit tab."
+                    })
                 })?,
         }
     } else {
@@ -1911,7 +1917,8 @@ async fn generate_inner(
             if ids.is_empty() {
                 return Err(CoreError::invalid("Add an image to edit first."));
             }
-            for id in ids.iter().take(4) {
+            // The Edit tab sends the image being edited plus at most one more.
+            for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
                 if source.is_none() {
                     source = Some(img);

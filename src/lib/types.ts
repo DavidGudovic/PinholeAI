@@ -144,6 +144,8 @@ export interface InstalledModel {
   /** txt2img | img2img | inpaint | edit */
   modes: string[];
   isEditModel: boolean;
+  /** Instruction edits can take a second image (registry `multi_ref`). */
+  multiRef?: boolean;
   sizeBytes: number;
   vram: VramNeed | null;
   fit: Fit | null;

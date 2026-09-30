@@ -88,6 +88,9 @@ pub struct Family {
     pub role: Option<String>,
     #[serde(default)]
     pub edit_priority: Option<u32>,
+    /// Edits can take a second reference image ("take the bottle from image 2").
+    #[serde(default)]
+    pub multi_ref: bool,
     /// Small enough to be worth running on the processor when there is no
     /// usable GPU, whatever the file size (SD 1.5). See [`crate::vram::fit_cpu`].
     #[serde(default)]
