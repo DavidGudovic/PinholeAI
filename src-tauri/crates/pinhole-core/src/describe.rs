@@ -380,7 +380,9 @@ pub async fn describe_image(
     };
 
     let _busy = BusyGuard::new(&core.describe);
-    describe_inner(core, &instruction, mime, &bytes, style).await
+    let text = describe_inner(core, &instruction, mime, &bytes, style).await?;
+    crate::text_check::check(&text)?;
+    Ok(text)
 }
 
 async fn describe_inner(
@@ -504,6 +506,7 @@ pub async fn improve_prompt(
             "That prompt is already long. Improve works on shorter ideas.",
         ));
     }
+    crate::text_check::check(idea)?;
     let _folder = crate::models::folder_read(core)?;
     let reg = core.registry();
     let template = family_id
@@ -533,6 +536,7 @@ pub async fn improve_prompt(
             "The helper model returned nothing. Try again.",
         ));
     }
+    crate::text_check::check(&text)?;
     Ok(text)
 }
 

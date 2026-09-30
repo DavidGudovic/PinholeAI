@@ -23,6 +23,7 @@ pub mod models_folder;
 pub mod session;
 #[cfg(feature = "test-util")]
 pub mod testing;
+pub mod text_check;
 pub mod update;
 
 use std::path::PathBuf;

@@ -1555,6 +1555,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn word_check_blocks_generate_before_the_engine() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        // The sexual half comes from a saved style: the combined prompt is what is checked.
+        let style = crate::library::save_style(
+            &core,
+            pinhole_store::styles::Style {
+                id: String::new(),
+                name: "Check".into(),
+                positive: "nude".into(),
+                negative: None,
+                families: vec![],
+                thumbnail: None,
+                builtin: false,
+            },
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(model.clone(), "a child");
+        req.style_id = Some(style.id.clone());
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(e.details.is_none());
+        assert!(mock.requests().is_empty(), "nothing reaches the engine");
+
+        // Under-18 terms in the negative prompt are how people keep them out.
+        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        req.fine_tune.negative_prompt = Some("child, loli".into());
+        generate::generate(&core, req).await.unwrap();
+        assert_eq!(mock.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn word_check_blocks_describe_and_improve() {
+        let (_tmp, core, _rec) = new_core();
+        let llama = MockLlamaServer::start("a child, naked", 0).await;
+        use_external_captioner(&core, &llama.base_url());
+        let img = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(32, 32, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let e = describe::describe_image(&core, &img.id, describe::DescribeStyle::Tags)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked", "the model's text isn't shown");
+        let e = describe::improve_prompt(&core, "a lighthouse", None, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked", "the improved text isn't shown");
+        let sent = llama.requests().len();
+        let e = describe::improve_prompt(&core, "loli, lewd", None, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(
+            llama.requests().len(),
+            sent,
+            "the idea isn't sent to the model"
+        );
+    }
+
+    #[tokio::test]
     async fn describe_through_mock_llama() {
         let (_tmp, core, _rec) = new_core();
         let llama = MockLlamaServer::start("Prompt: a lighthouse at dusk", 0).await;

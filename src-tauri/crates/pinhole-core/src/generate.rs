@@ -1895,6 +1895,9 @@ async fn generate_inner(
         return Err(CoreError::invalid("Type what you want to see first."));
     }
     let prep = prepare(core, req)?;
+    // The whole positive prompt (idea + style + trigger words); the negative prompt is
+    // where people list what to keep out, so it isn't checked.
+    crate::text_check::check(&prep.final_prompt.prompt)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
