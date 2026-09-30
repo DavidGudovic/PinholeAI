@@ -1958,7 +1958,7 @@ mod tests {
             faces: Some(vec![pinhole_check::Face {
                 score: 0.9,
                 side: 100.0,
-                under_ten: Some(0.02),
+                child_face: Some(0.02),
             }]),
         }
     }

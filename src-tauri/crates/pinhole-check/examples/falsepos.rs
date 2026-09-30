@@ -64,8 +64,8 @@ fn main() {
             }
             if pinhole_check::rules::is_photo_style(&t)
                 && faces.iter().any(|f| {
-                    f.under_ten
-                        .is_some_and(|u| u >= pinhole_check::rules::UNDER_TEN)
+                    f.child_face
+                        .is_some_and(|u| u >= pinhole_check::rules::CHILD_FACE)
                 })
             {
                 young_face += 1;
@@ -77,9 +77,9 @@ fn main() {
             }
         }
         println!(
-            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · minor tag ≥ {:.1}: {minor_tag} · photo-style face under-10 ≥ {:.1}: {young_face} · with a face: {adult_faces}",
+            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · minor tag ≥ {:.1}: {minor_tag} · photo-style child face ≥ {:.1}: {young_face} · with a face: {adult_faces}",
             pinhole_check::rules::MINOR_TAG,
-            pinhole_check::rules::UNDER_TEN,
+            pinhole_check::rules::CHILD_FACE,
         );
     }
 }

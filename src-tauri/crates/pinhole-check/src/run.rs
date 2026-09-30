@@ -103,7 +103,7 @@ impl Checker {
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
             let mut found = self.faces(&mut l, &img)?;
             for f in found.iter_mut().filter(|f| f.0.counts()) {
-                f.0.under_ten = Some(self.under_ten(&mut l, &img, f.1)?);
+                f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
             }
             Some(found.into_iter().map(|f| f.0).collect())
         } else {
@@ -126,7 +126,7 @@ impl Checker {
         let tags = Some(self.tags(&mut l, &img)?);
         let mut found = self.faces(&mut l, &img)?;
         for f in found.iter_mut().filter(|f| f.0.counts()) {
-            f.0.under_ten = Some(self.under_ten(&mut l, &img, f.1)?);
+            f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
         }
         Ok(Readings {
             nudity,
@@ -255,7 +255,8 @@ impl Checker {
         find_faces(&m, img, 0.5)
     }
 
-    fn under_ten(&self, l: &mut Loaded, img: &RgbImage, b: [f32; 4]) -> Result<f32, CheckError> {
+    /// Confidence that a face is a child's: the age estimate's 0–2 and 3–9 groups together.
+    fn child_face(&self, l: &mut Loaded, img: &RgbImage, b: [f32; 4]) -> Result<f32, CheckError> {
         if l.age.is_none() {
             l.age = Some(self.load(&files::AGE, &[1, 3, 224, 224])?);
         }
@@ -334,12 +335,13 @@ mod tag_ids {
     pub const MINOR: &[u32] = &[128, 2614, 12667];
     /// Photo style: realistic, photorealistic.
     pub const PHOTO_STYLE: [u32; 2] = [376102, 462982];
-    /// Nudity and sexual content (10 tags).
+    /// Nudity and sexual content (20 tags), including implied nudity (covered or censored).
     pub const NUDE: &[u32] = &[
-        2365, 822149, 3593, 4528, 8889, 533356, 510254, 4378, 4190, 2357,
+        2365, 822149, 3593, 4528, 8889, 533356, 510254, 4378, 4190, 2357, 390591, 12552, 2217,
+        488169, 390314, 522720, 7834, 484631, 421107, 409364,
     ];
-    /// Underwear, lingerie and see-through clothing (5 tags; swimwear isn't one of them).
-    pub const UNDERWEAR: &[u32] = &[464906, 391, 3796, 319, 451371];
+    /// Underwear, lingerie and see-through clothing (6 tags; swimwear isn't one of them).
+    pub const UNDERWEAR: &[u32] = &[464906, 391, 3796, 319, 451371, 547073];
 }
 
 /// Rows of `selected_tags.csv` (`tag_id,name,category,count`) in output order.
@@ -438,7 +440,7 @@ fn find_faces(m: &Model, img: &RgbImage, fill: f32) -> Result<Vec<(Face, [f32; 4
                 Face {
                     score,
                     side: b[2].min(b[3]),
-                    under_ten: None,
+                    child_face: None,
                 },
                 b,
             )
@@ -494,9 +496,11 @@ mod tests {
             (ix.general, ix.explicit, ix.minor.clone(), ix.photorealistic),
             (0, 3, vec![4, 5, 6], 8)
         );
-        assert_eq!(ix.nude, (10..20).collect::<Vec<_>>());
-        assert_eq!(ix.underwear, (20..25).collect::<Vec<_>>());
-        assert_eq!(ix.count, 25);
+        let nude_end = 10 + NUDE.len();
+        assert_eq!(ix.nude, (10..nude_end).collect::<Vec<_>>());
+        let end = nude_end + UNDERWEAR.len();
+        assert_eq!(ix.underwear, (nude_end..end).collect::<Vec<_>>());
+        assert_eq!(ix.count, end);
         // A list without the tags the rules need is rejected.
         assert!(tag_index(b"tag_id,name,category,count\n1,tag,0,1\n").is_none());
     }

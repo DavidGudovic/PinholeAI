@@ -364,8 +364,8 @@ pub fn describe(r: &Readings) -> String {
     if let Some(faces) = &r.faces {
         let f: Vec<String> = faces
             .iter()
-            .map(|f| match f.under_ten {
-                Some(u) => format!("{:.2} ({:.0}px) under-10 {:.2}", f.score, f.side, u),
+            .map(|f| match f.child_face {
+                Some(u) => format!("{:.2} ({:.0}px) child face {:.2}", f.score, f.side, u),
                 None => format!("{:.2} ({:.0}px)", f.score, f.side),
             })
             .collect();

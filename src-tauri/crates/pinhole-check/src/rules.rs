@@ -10,12 +10,17 @@
 
 /// Tagger `explicit` rating that counts as sexual on its own.
 pub const EXPLICIT: f32 = 0.35;
+/// Tagger `explicit` rating that counts as intimate even without a nudity or underwear tag
+/// (the tagger was trained on drawings and may not name what it sees on a photo).
+pub const EXPLICIT_INTIMATE: f32 = 0.6;
 /// `questionable + explicit` that counts as intimate (nude, underwear only, see-through).
 pub const INTIMATE_RATING: f32 = 0.5;
 /// Nudity score an intimate image must also reach.
 pub const INTIMATE_NUDITY: f32 = 0.8;
 /// Nudity score with which an intimate rating counts as sexual.
 pub const SEXUAL_NUDITY: f32 = 0.85;
+/// A nudity or underwear tag at least this counts.
+pub const INTIMATE_TAG: f32 = 0.5;
 /// Tagger tags for a drawn character tagged as a child (`Tags::minor`).
 pub const MINOR_TAG: f32 = 0.5;
 /// Photo style: `realistic` or `photorealistic` at least this. Real photos score
@@ -25,9 +30,10 @@ pub const PHOTO_STYLE: f32 = 0.1;
 /// Face finder score and smallest face side (pixels) that count as a face.
 pub const FACE_SCORE: f32 = 0.8;
 pub const FACE_MIN_SIDE: f32 = 40.0;
-/// Chance that a face is under 10 (age classes 0–2 plus 3–9) that blocks. Aimed at
-/// clear children: on photos, adults score at most ~0.05 here, young children ~0.77.
-pub const UNDER_TEN: f32 = 0.6;
+/// Age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups) that blocks.
+/// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
+/// the photo-face rule stops at clear children.
+pub const CHILD_FACE: f32 = 0.6;
 
 /// The tagger scores the rules use.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -48,17 +54,15 @@ pub struct Tags {
     pub underwear: f32,
 }
 
-/// A nudity or underwear tag at least this counts.
-pub const INTIMATE_TAG: f32 = 0.5;
-
 /// One face the face finder saw.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Face {
     pub score: f32,
     /// Shorter side of the face box, in image pixels.
     pub side: f32,
-    /// Chance the face is under 10, when the age estimate ran.
-    pub under_ten: Option<f32>,
+    /// Age estimate's confidence that this is a child's face (its 0–2 and 3–9 groups), when
+    /// it ran.
+    pub child_face: Option<f32>,
 }
 
 impl Face {
@@ -106,12 +110,13 @@ impl Rule {
 
 /// Nude, underwear only, see-through or sexual: the tagger sees nudity or underwear (so
 /// swimwear alone doesn't count), and the nudity model with the rating, or an explicit
-/// rating, agrees.
+/// rating, agrees. A strongly explicit rating counts on its own.
 pub fn is_intimate(nudity: f32, tags: Option<&Tags>) -> bool {
     tags.is_some_and(|t| {
-        (t.nude >= INTIMATE_TAG || t.underwear >= INTIMATE_TAG)
-            && ((nudity >= INTIMATE_NUDITY && t.questionable + t.explicit >= INTIMATE_RATING)
-                || t.explicit >= EXPLICIT)
+        t.explicit >= EXPLICIT_INTIMATE
+            || ((t.nude >= INTIMATE_TAG || t.underwear >= INTIMATE_TAG)
+                && ((nudity >= INTIMATE_NUDITY && t.questionable + t.explicit >= INTIMATE_RATING)
+                    || t.explicit >= EXPLICIT))
     })
 }
 
@@ -138,11 +143,16 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
     let tags = r.tags.as_ref();
     if is_sexual(r.nudity, tags) {
         let minor_tag = tags.is_some_and(|t| t.minor >= MINOR_TAG);
+        // Photos: the age estimate only sorts faces into wide groups (0–2, 3–9, 10–19, 20–29…)
+        // and is often off by several years, so it can't tell a teenager from a young adult
+        // without also blocking many adults. This rule therefore only acts on faces it is
+        // confident are children. Teenagers are covered by the word check, the brought-in
+        // photo rule (rule 1) and, for drawings, the tagger's tags.
         let child_face = tags.is_some_and(is_photo_style)
             && r.faces
                 .iter()
                 .flatten()
-                .any(|f| f.counts() && f.under_ten.is_some_and(|u| u >= UNDER_TEN));
+                .any(|f| f.counts() && f.child_face.is_some_and(|c| c >= CHILD_FACE));
         if minor_tag || child_face {
             return Some(Rule::LooksUnderage);
         }
@@ -179,11 +189,11 @@ mod tests {
         t.nude = 0.9;
         t
     }
-    fn face(under_ten: f32) -> Face {
+    fn face(child_face: f32) -> Face {
         Face {
             score: 0.9,
             side: 120.0,
-            under_ten: Some(under_ten),
+            child_face: Some(child_face),
         }
     }
     fn readings(nudity: f32, t: Option<Tags>, faces: Vec<Face>) -> Readings {
@@ -336,6 +346,15 @@ mod tests {
             decide(&explicit, &[], true),
             Some(Rule::SafeImagesOnlyModel)
         );
+        // A strongly explicit rating counts without a tag (the tagger may not name nudity on
+        // a photo); a milder one doesn't.
+        let photo_nude = readings(0.9, Some(photo(tags(0.2, 0.7))), vec![]);
+        assert_eq!(
+            decide(&photo_nude, &[PHOTO_ORIGINAL], false),
+            Some(Rule::PhotoMadeIntimate)
+        );
+        let mild = readings(0.9, Some(photo(tags(0.2, 0.5))), vec![]);
+        assert_eq!(decide(&mild, &[PHOTO_ORIGINAL], false), None);
         // Rule 2 is unchanged: swimwear that reads as sexual with a child face is still blocked.
         let child = readings(0.97, Some(photo(tags(0.55, 0.22))), vec![face(0.8)]);
         assert_eq!(decide(&child, &[], false), Some(Rule::LooksUnderage));
