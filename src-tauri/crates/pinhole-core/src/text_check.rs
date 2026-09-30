@@ -11,8 +11,9 @@
 
 use crate::{CoreError, CoreResult};
 
-/// Shown when text is blocked. No details: they would have to quote the text.
-pub const BLOCKED_MESSAGE: &str = "Pinhole doesn't make sexual images or text involving anyone under 18. Change the words and try again.";
+/// Shown when text is blocked. No details (they would have to quote the text) and no retry
+/// hint (David, 2026-09-30: it read like an invitation to reword around the check).
+pub const BLOCKED_MESSAGE: &str = "Pinhole doesn't make sexual images or text involving anyone under 18.";
 
 /// Terms that point at someone under 18. The last word of each also matches with a trailing
 /// `s`/`es` ("little girls").
