@@ -266,7 +266,7 @@ const FAKE_PICKS = [
 // ---------------------------------------------------------------- table
 const table: MockTable = {
   app_info: async (): Promise<AppInfo> => ({
-    version: "0.1.0",
+    version: "0.2.0",
     dataDir: "C:\\Users\\Alex\\AppData\\Local\\Pinhole\\Data",
     portable: false,
     os: "windows",
