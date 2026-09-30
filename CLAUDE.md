@@ -19,7 +19,7 @@ docs/RELEASE-SPEC.md  what must be done before any build is shared (marking, saf
 docs/ARCHITECTURE.md  crates, IPC contract, flows, where each area lives
 docs/PROJECT-BRIEF.md status, decisions, roadmap (start here)
 tests/            Rust integration tests + privacy tests; tests/e2e/ drives the real app (WebDriver)
-scripts/          check.sh (pre-merge check), privacy lint, pin verification, packaging (Node, no Python)
+scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin verification, packaging (Node, no Python)
 .claude/          session start hook for Claude Code on the web
 .github/          CI (manual), Bundle, Release, Verify pins, API probe; issue + PR templates
 ```
@@ -49,7 +49,10 @@ scripts/          check.sh (pre-merge check), privacy lint, pin verification, pa
   Run it on the branch (rebased/merged on current `main`) and merge only when it passes; say so in
   the PR. `scripts/check.sh --smoke` adds the CPU engine smoke + app e2e (needs internet for the
   engine and a tiny model, so not from the cloud container). A bug fix comes with a regression test.
-  Run `cargo fmt --all` before committing Rust changes.
+  Run `cargo fmt --all` before committing Rust changes. The dev profile keeps line tables only
+  (no full debug info) to save build time, memory and disk; set `debug = true` locally to step
+  through in a debugger. `check.sh` caps cargo's parallel jobs by free RAM (override with
+  `CARGO_BUILD_JOBS`); `scripts/prune-target.sh` frees `target/` space (`--all` = cargo clean).
 - **Flow:** work on your session branch → `scripts/check.sh` → PR to `main` (use
   `.github/pull_request_template.md`) → merge → the branch is deleted. One PR per issue or milestone.
 - **GitHub Actions are manual only.** Pushes and PRs run nothing (no minutes spent). Actions → CI →
