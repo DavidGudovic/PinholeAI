@@ -3,9 +3,8 @@
 // only the notice version is stored (settings.noticeAccepted).
 import { useState } from "react";
 import { ScanEye, ShieldCheck } from "lucide-react";
-import { asCoreError, getSettings, quitApp, setSettings } from "../lib/api";
-import type { CoreError } from "../lib/types";
-import { Button, ErrorNotice, Spinner } from "../components/ui";
+import { getSettings, quitApp, setSettings } from "../lib/api";
+import { Button, Spinner } from "../components/ui";
 import { Logo } from "../components/Logo";
 import { emitSettingsChanged } from "../settings/events";
 
@@ -14,19 +13,18 @@ export const NOTICE_VERSION = 1;
 
 export function UseNotice(props: { onAgreed: () => void }) {
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<CoreError | null>(null);
 
   const agree = async () => {
     setBusy(true);
-    setError(null);
     try {
       const current = await getSettings();
       const saved = await setSettings({ ...current, noticeAccepted: NOTICE_VERSION });
       emitSettingsChanged(saved);
       props.onAgreed();
-    } catch (e) {
-      setError(asCoreError(e));
-      setBusy(false);
+    } catch {
+      // Settings can't be read or saved (the app already runs on fallback settings then):
+      // continue for this session; the notice shows again next launch.
+      props.onAgreed();
     }
   };
 
@@ -68,12 +66,6 @@ export function UseNotice(props: { onAgreed: () => void }) {
             mistakes; when it stops a picture, your prompt and settings are kept.
           </p>
         </div>
-
-        {error && (
-          <div className="mt-4">
-            <ErrorNotice error={error} />
-          </div>
-        )}
 
         <div className="mt-8 flex justify-end gap-2">
           <Button variant="ghost" onClick={() => void quitApp().catch(() => undefined)} disabled={busy}>

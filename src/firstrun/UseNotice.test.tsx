@@ -28,6 +28,14 @@ describe("Before you start", () => {
     expect(api.setSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: "system", noticeAccepted: NOTICE_VERSION }));
   });
 
+  it("continues for this session when settings can't be saved", async () => {
+    api.getSettings.mockRejectedValueOnce({ code: "io", message: "x", details: null });
+    const onAgreed = vi.fn();
+    render(<UseNotice onAgreed={onAgreed} />);
+    fireEvent.click(screen.getByRole("button", { name: /I agree/ }));
+    await waitFor(() => expect(onAgreed).toHaveBeenCalled());
+  });
+
   it("Quit closes the app without agreeing", () => {
     const onAgreed = vi.fn();
     render(<UseNotice onAgreed={onAgreed} />);
