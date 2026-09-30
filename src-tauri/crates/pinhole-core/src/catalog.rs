@@ -11,7 +11,7 @@ use std::sync::Arc;
 use pinhole_catalog::api::CivitaiClient;
 use pinhole_catalog::browse::BrowseError;
 use pinhole_catalog::cache::{CachedSource, PageCache};
-use pinhole_catalog::cards::RegistryEnv;
+use pinhole_catalog::cards::{CatalogEnv, OnlyBaseModels, RegistryEnv};
 use pinhole_catalog::families::{self, FamilyResolution};
 use pinhole_catalog::plan::{self, PlanEnv};
 use pinhole_catalog::{browse as browse_mod, local, select, CatalogFilters};
@@ -153,7 +153,13 @@ pub fn clear_browse_cache(core: &AppCore) {
 
 /// One Browse page. Offline mode: no request, `offline: true`. A request that a
 /// newer Browse request replaced stops paging and answers `cancelled`.
-pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage> {
+/// `for_family` (style add-ons for one installed model): only LoRAs made for
+/// that model's architecture (SPEC §5.4 "For").
+pub async fn browse(
+    core: &AppCore,
+    mut query: BrowseQuery,
+    for_family: Option<String>,
+) -> CoreResult<BrowsePage> {
     let generation = core.models.browse_gen.fetch_add(1, Ordering::SeqCst) + 1;
     if core.offline.get() {
         return Ok(BrowsePage::offline(query.cursor));
@@ -170,14 +176,32 @@ pub async fn browse(core: &AppCore, query: BrowseQuery) -> CoreResult<BrowsePage
         inner: &client,
         cache: &cache,
     };
-    let base_models = registry.all_civitai_base_models();
+    let for_bases = for_family
+        .as_deref()
+        .map(|f| families::lora_base_models(&registry, f))
+        .filter(|b| !b.is_empty());
+    let base_models = match &for_bases {
+        Some(b) => {
+            query.compatible_only = true;
+            b.clone()
+        }
+        None => registry.all_civitai_base_models(),
+    };
+    if for_bases.is_some() && !filters.tags_fit_base_models(&query, &base_models) {
+        return Ok(BrowsePage::empty());
+    }
+    let narrowed = OnlyBaseModels {
+        inner: &env,
+        base_models: &base_models,
+    };
+    let env: &(dyn CatalogEnv + Sync) = if for_bases.is_some() { &narrowed } else { &env };
     let current = || core.models.browse_gen.load(Ordering::SeqCst) == generation;
     let out = browse_mod::browse(
         &source,
         &filters,
         &query,
         &base_models,
-        &env,
+        env,
         chrono::Utc::now(),
         current,
     )
@@ -476,7 +500,7 @@ mod tests {
         let opts = catalog_filters(&core).unwrap();
         assert_eq!(opts.looks.len(), 5);
         core.offline.set(true);
-        let page = browse(&core, BrowseQuery::default()).await.unwrap();
+        let page = browse(&core, BrowseQuery::default(), None).await.unwrap();
         assert!(page.offline && page.items.is_empty());
         assert_eq!(
             fetch_preview(&core, "https://evil.example/x.jpeg")

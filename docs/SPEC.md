@@ -194,7 +194,15 @@ active model family):
 
 **Fine-tune** drawer (collapsed by default): negative prompt (only for families that use it),
 sampler, scheduler, steps, CFG, seed, flow shift, clip skip, hires fix, LoRAs with weights,
-VAE tiling. Each field shows the registry default and a "reset" button.
+VAE tiling. Each field shows the registry default and a "reset" button. The LoRA list's **Add**
+menu lists installed style add-ons that work with the current model and ends with **Find add-ons
+for <model>…**, which opens Models → Browse on style add-ons for that model.
+
+**Style add-ons in use**: while at least one LoRA is added, a row of chips under the prompt shows
+each one with its strength ("Film look 0.8 ×"). Clicking a chip shows a Strength slider (0–1.5)
+and its trigger words; × removes it. An add-on made for another architecture stays in the list
+greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
+request. Nothing is shown when no add-on is in use.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Upscale 2×/4×** · **Copy to clipboard**.
@@ -254,6 +262,7 @@ Two sub-views: **Browse** and **Installed**.
 | Filter | Labels shown to the user | API mapping (`GET /api/v1/models`) |
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
+| For (style add-ons only) | Any model · For <installed model> (defaults to the model picked in Create) | `baseModels=` the CivitAI base models of every registry family with the same architecture as that model (`families::lora_base_models`: an SDXL model also gets Pony and Illustrious LoRAs); each card shows the newest version made for them; a tag that narrows `baseModels` (Edit) with nothing in common answers "none" without asking CivitAI. Not a filter "Clear filters" resets |
 | Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
 | Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
@@ -317,6 +326,9 @@ model in small text.
 4. If CivitAI answers 401/403, prompt for an API key (explain why; optional; stored in keychain).
 5. For LoRAs, save trigger words from the version's `trainedWords` into `installed.json`,
    and offer a toggle "Add trigger words automatically".
+6. An installed style add-on's card, its details page and its Installed row have a **Use**
+   button: it adds the add-on to Create at strength 0.8 (once), switches to Create and says so;
+   when the current model can't use it, the message says which models it is made for.
 
 #### Model details
 Clicking a card's preview or name opens the model's details page (Back or Esc returns to the
@@ -337,6 +349,8 @@ grid where it was):
   never navigates.
 
 #### Installed
+Each model row has **Find style add-ons** (opens Browse on add-ons for that model); each style
+add-on row has **Use** (see Install step 6).
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
 after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
 Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file

@@ -8,7 +8,8 @@ import { previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, InstalledModel } from "../../lib/types";
 import { useActions } from "../../lib/state/AppProvider";
 import { useDebounced } from "../../lib/state/hooks";
-import { loraCompatible } from "../../lib/state/model";
+import { DEFAULT_LORA_WEIGHT, loraCompatible } from "../../lib/state/model";
+import { requestAddonBrowse } from "../models/lib/session";
 import { buildCreateRequest } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
@@ -317,7 +318,7 @@ function LoraSection({ model }: { model: InstalledModel | null }) {
                 <MenuItem
                   key={l.id}
                   onClick={() => {
-                    setLoras([...c.loras, { loraId: l.id, weight: 0.8 }]);
+                    setLoras([...c.loras, { loraId: l.id, weight: DEFAULT_LORA_WEIGHT }]);
                     close();
                   }}
                   hint={l.trainedWords.length ? `Trigger: ${l.trainedWords.join(", ")}` : l.baseModel ?? undefined}
@@ -336,10 +337,11 @@ function LoraSection({ model }: { model: InstalledModel | null }) {
                 <MenuItem
                   onClick={() => {
                     close();
+                    if (model) requestAddonBrowse(model.id);
                     actions.setTab("models");
                   }}
                 >
-                  Find style add-ons…
+                  {model ? `Find add-ons for ${model.friendlyName}…` : "Find style add-ons…"}
                 </MenuItem>
               </div>
             </div>

@@ -150,7 +150,9 @@ sampler, scheduler, size — never prompt/negative/style text.
 - Result images carry `parentId` for the in-memory undo chain.
 
 ### Browse CivitAI (catalog)
-`browse_catalog(query)` → `core::catalog::browse` → `pinhole_catalog::browse::browse`: asks
+`browse_catalog(query, forFamily)` → `core::catalog::browse` → `pinhole_catalog::browse::browse`
+(`forFamily`, style add-ons for one installed model: `baseModels` narrowed to
+`families::lora_base_models` and cards to versions made for them via `cards::OnlyBaseModels`): asks
 `GET /api/v1/models` (`limit=50`, always `nsfw=true`, repeated `baseModels`/`types` keys, cursor
 paging; JSON requested gzip-compressed) through `cache::CachedSource` (RAM-only, 12 answers / 5 min,
 compacted), turns each model into a card or a hidden count (`filters::hidden_by` → `safe::SafeFilter`

@@ -27,6 +27,8 @@ import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
 import { useHardware, useOnHardwareChange, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
+import { requestAddonBrowse } from "./lib/session";
+import { UseAddonButton } from "./UseAddon";
 
 type NeedsChoice = NonNullable<AddFileResult["needsChoice"]>;
 
@@ -264,7 +266,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                 <Th>Size</Th>
                 <Th>{isCpuOnly(hw) ? "Memory" : "Graphics memory"}</Th>
                 <Th className="hidden md:table-cell">Last used</Th>
-                <Th className="w-20">
+                <Th className="w-28">
                   <span className="sr-only">Actions</span>
                 </Th>
               </tr>
@@ -305,6 +307,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   <Td className="hidden whitespace-nowrap text-neutral-600 md:table-cell dark:text-neutral-400">{lastUsedText(m.lastUsed)}</Td>
                   <Td>
                     <RowActions card={detailsCard(m, "Checkpoint", m.styleBadge)} onShow={showDetails}>
+                      {m.familyId && m.modes.includes("txt2img") && !m.isEditModel && (
+                        <IconButton size="sm" label={`Find style add-ons for ${m.friendlyName}`} onClick={() => requestAddonBrowse(m.id)}>
+                          <Puzzle className="h-4 w-4" />
+                        </IconButton>
+                      )}
                       <IconButton size="sm" label={`Delete ${m.friendlyName}`} onClick={() => setDeleteTarget({ id: m.id, name: m.friendlyName })}>
                         <Trash2 className="h-4 w-4" />
                       </IconButton>
@@ -326,7 +333,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                 <Th>Works with</Th>
                 <Th className="hidden md:table-cell">Trigger words</Th>
                 <Th>Size</Th>
-                <Th className="w-20">
+                <Th className="w-32">
                   <span className="sr-only">Actions</span>
                 </Th>
               </tr>
@@ -352,6 +359,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                   <Td className="whitespace-nowrap text-neutral-600 tabular-nums dark:text-neutral-400">{formatBytes(l.sizeBytes)}</Td>
                   <Td>
                     <RowActions card={detailsCard(l, "LORA", null)} onShow={showDetails}>
+                      <UseAddonButton loraId={l.id} name={l.friendlyName} />
                       <IconButton size="sm" label={`Delete ${l.friendlyName}`} onClick={() => setDeleteTarget({ id: l.id, name: l.friendlyName })}>
                         <Trash2 className="h-4 w-4" />
                       </IconButton>

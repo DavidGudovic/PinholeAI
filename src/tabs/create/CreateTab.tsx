@@ -15,6 +15,7 @@ import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import { createModels, isActiveDownload } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
+import { AddonChips } from "./AddonChips";
 import { Dials } from "./Dials";
 import { FineTuneDrawer } from "./FineTune";
 import { PasteDialog, PasteSummary } from "./PasteDialog";
@@ -144,6 +145,7 @@ function CreateWorkspace() {
           {presetNotice && <PresetNoticeCard notice={presetNotice} onDismiss={() => setPresetNotice(null)} />}
 
           <PromptBox ui={ui} onOpenPaste={() => setPasteOpen(true)} onApplyPasted={(t) => void applyPaste(t).catch((e) => setError(api.asCoreError(e)))} />
+          <AddonChips model={model} />
           {outcome && <PasteSummary outcome={outcome} onDismiss={() => setOutcome(null)} onOutcome={setOutcome} />}
 
           <Dials ui={ui} />

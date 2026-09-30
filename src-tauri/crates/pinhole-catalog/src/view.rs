@@ -107,6 +107,15 @@ pub struct BrowsePage {
 }
 
 impl BrowsePage {
+    /// Nothing can match: no request, no more pages.
+    pub fn empty() -> Self {
+        Self {
+            offline: false,
+            next_cursor: None,
+            ..Self::offline(None)
+        }
+    }
+
     /// Offline mode: no request; the cursor is handed back unchanged.
     pub fn offline(cursor: Option<String>) -> Self {
         Self {

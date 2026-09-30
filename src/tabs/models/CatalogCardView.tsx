@@ -9,6 +9,7 @@ import { cancelGroup, useTaggedGroup } from "./lib/downloads";
 import { usePreviewBlob, useVisibility } from "./lib/preview";
 import { isVideoFile, shouldBlurPreview } from "./lib/query";
 import { isActive, ratioPercent } from "./lib/words";
+import { UseAddonButton, useInstalledLoraId } from "./UseAddon";
 
 function Overlay({ tone = "dark", children }: { tone?: "dark" | "amber" | "green"; children: ReactNode }) {
   const tones = {
@@ -54,6 +55,7 @@ export const CatalogCardView = memo(function CatalogCardView({
   const downloading = !!group && isActive(group);
   const isLora = card.type.toUpperCase() === "LORA";
   const ratio = ratioPercent(card.thumbsUpRatio);
+  const loraId = useInstalledLoraId(isLora && installed ? card.versionId : null);
 
   let action: ReactNode;
   if (card.blockedReason)
@@ -66,8 +68,11 @@ export const CatalogCardView = memo(function CatalogCardView({
   else if (downloading && group) action = <GroupProgress group={group} compact onCancel={() => void cancelGroup(group.groupId)} />;
   else if (installed)
     action = (
-      <div className="flex h-8 items-center justify-center gap-1.5 rounded-lg bg-emerald-50 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
-        <Check className="h-3.5 w-3.5" /> Installed
+      <div className="flex items-center gap-1.5">
+        <div className="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-50 text-xs font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">
+          <Check className="h-3.5 w-3.5" /> Installed
+        </div>
+        {loraId && <UseAddonButton loraId={loraId} name={card.name} className="h-8" />}
       </div>
     );
   else if (group?.state === "failed")

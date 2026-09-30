@@ -10,6 +10,8 @@ import { asCoreError, browseCatalog, catalogFilters, listLoras, listModels, onMo
 import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
 import { Button, ErrorNotice, Segmented, Toggle, cx, focusRing, inputClass } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
+import { createModels } from "../../lib/state/model";
+import { useAppState } from "../../lib/state/store";
 import { CatalogCardView } from "./CatalogCardView";
 import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
@@ -26,6 +28,7 @@ import {
   changedFilterCount,
   defaultFilters,
   filtersKey,
+  forModelOf,
   FALLBACK_OPTIONS,
   isSafeModeOff,
   mergePage,
@@ -37,7 +40,7 @@ import {
   type BrowseFilters,
   type BrowseTotals,
 } from "./lib/query";
-import { confirmAdult, getLastFilters, isAdultConfirmed, rememberFilters } from "./lib/session";
+import { confirmAdult, getLastFilters, isAdultConfirmed, onAddonRequest, rememberFilters, takeAddonRequest } from "./lib/session";
 
 /** Filter clicks settle for this long before CivitAI is asked (search text waits longer). */
 const FILTER_DEBOUNCE_MS = 200;
@@ -57,7 +60,11 @@ function cardSettingsKey(s: Settings | null): string {
 
 export function BrowseView({ settings, onShowInstalled }: { settings: Settings | null; onShowInstalled: () => void }) {
   const [options, setOptions] = useState<CatalogFilterOptions>(FALLBACK_OPTIONS);
-  const [filters, setFilters] = useState<BrowseFilters>(() => getLastFilters() ?? defaultFilters(null, settings, isAdultConfirmed()));
+  const [filters, setFilters] = useState<BrowseFilters>(() => {
+    const f = getLastFilters() ?? defaultFilters(null, settings, isAdultConfirmed());
+    const forModel = takeAddonRequest();
+    return forModel ? addonsFor(f, forModel) : f;
+  });
   const [search, setSearch] = useState(filters.query);
   const debouncedSearch = useDebounced(search, SEARCH_DEBOUNCE_MS);
   const [pendingContent, setPendingContent] = useState<ContentMode | null>(() =>
@@ -78,6 +85,19 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
+  // Installed models: "For" choices, and the family sent for "add-ons for this model".
+  const models = useAppState((s) => s.models);
+  const createModelId = useAppState((s) => s.create.modelId);
+  const forChoices = createModels(models).filter((m) => m.familyId);
+  const modelsRef = useRef(models);
+  modelsRef.current = models;
+  const familyOf = useCallback((f: BrowseFilters) => {
+    const id = forModelOf(f);
+    return (id && modelsRef.current?.find((m) => m.id === id)?.familyId) || null;
+  }, []);
+  // The family actually sent is part of the key: pages asked before the models list loaded
+  // (or after the model was deleted) aren't narrowed, and mustn't be reused as if they were.
+  const keyOf = useCallback((f: BrowseFilters) => `${filtersKey(f)}|${familyOf(f) ?? ""}`, [familyOf]);
   const reqId = useRef(0);
   /** First visit this session, and the user hasn't touched a filter yet. */
   const pristine = useRef(!getLastFilters());
@@ -89,7 +109,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
       .then((o) => {
         setOptions(o);
         // First visit this session: open on the catalog's own defaults (catalog-filters.yaml).
-        if (pristine.current) setFilters((f) => ({ ...defaultFilters(o, settings, isAdultConfirmed()), kind: f.kind, query: f.query }));
+        if (pristine.current) setFilters((f) => ({ ...defaultFilters(o, settings, isAdultConfirmed()), kind: f.kind, forModel: f.forModel, query: f.query }));
       })
       .catch(() => undefined);
     // Once per mount; `settings` is only read for the opening defaults.
@@ -98,6 +118,18 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   useEffect(() => {
     rememberFilters(filters);
   }, [filters]);
+
+  // "Find style add-ons" from Create or Installed while this view is open.
+  useEffect(
+    () =>
+      onAddonRequest((id) => {
+        takeAddonRequest();
+        setDetailsFor(null);
+        setSearch("");
+        setFilters((f) => addonsFor(f, id));
+      }),
+    [],
+  );
 
   useEffect(() => {
     setFilters((f) => (f.query === debouncedSearch ? f : { ...f, query: debouncedSearch }));
@@ -154,14 +186,14 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const fetchPage = useCallback(
     async (cursor: string | null, retry = true) => {
       const f = filtersRef.current;
-      const key = filtersKey(f);
+      const key = keyOf(f);
       const id = ++reqId.current;
       if (!cursor) autoRounds.current = 0;
       setPhase(cursor ? "more" : "loading");
       setError(null);
       const started = performance.now();
       try {
-        const page = await pages.load(key, cursor, () => browseCatalog(toBrowseQuery(f, cursor)));
+        const page = await pages.load(key, cursor, () => browseCatalog(toBrowseQuery(f, cursor), familyOf(f)));
         measureSince(cursor ? "pinhole:browse-more" : "pinhole:browse-first", started);
         if (id !== reqId.current) return;
         if (!cursor) showPages(key, [page]);
@@ -185,11 +217,11 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         if (id === reqId.current) setPhase("idle");
       }
     },
-    [showPages],
+    [showPages, familyOf, keyOf],
   );
 
   // Filters changed: show the cached grid right away when there is one…
-  const liveKey = filtersKey(filters);
+  const liveKey = keyOf(filters);
   useEffect(() => {
     const chain = pages.chain(liveKey);
     if (!chain) return;
@@ -203,20 +235,20 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   // …otherwise ask CivitAI once the clicks settle.
   const key = useDebounced(liveKey, FILTER_DEBOUNCE_MS);
   useEffect(() => {
-    if (key !== filtersKey(filtersRef.current)) return; // still changing
+    if (key !== keyOf(filtersRef.current)) return; // still changing
     if (shownKey.current === key) return; // restored from the cache
     void fetchPage(null);
-  }, [key, reloadTick, fetchPage]);
+  }, [key, reloadTick, fetchPage, keyOf]);
 
   // Fetch the next page ahead, while the user looks at this one.
   useEffect(() => {
     if (phase !== "idle" || !nextCursor || partial || error || offline) return;
     const k = shownKey.current;
     const f = filtersRef.current;
-    if (!k || k !== filtersKey(f) || pages.has(k, nextCursor)) return;
-    const t = setTimeout(() => void pages.load(k, nextCursor, () => browseCatalog(toBrowseQuery(f, nextCursor))).catch(() => undefined), 250);
+    if (!k || k !== keyOf(f) || pages.has(k, nextCursor)) return;
+    const t = setTimeout(() => void pages.load(k, nextCursor, () => browseCatalog(toBrowseQuery(f, nextCursor), familyOf(f))).catch(() => undefined), 250);
     return () => clearTimeout(t);
-  }, [phase, nextCursor, partial, error, offline]);
+  }, [phase, nextCursor, partial, error, offline, familyOf, keyOf]);
 
   // Nothing matched in the pages checked so far: keep looking on our own.
   useEffect(() => {
@@ -255,8 +287,13 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const clearFilters = () => {
     pristine.current = false;
     setSearch("");
-    setFilters({ ...defaults, kind: filters.kind });
+    setFilters({ ...defaults, kind: filters.kind, forModel: filters.forModel });
   };
+  const setKind = (kind: BrowseFilters["kind"]) =>
+    // Style add-ons open on the model picked in Create (the user can pick "Any model").
+    update(kind === "styleAddons" && filters.forModel === null && createModelId ? { kind, forModel: createModelId } : { kind });
+  const forModel = forModelOf(filters);
+  const forValue = forModel && forChoices.some((m) => m.id === forModel) ? forModel : "";
   const reload = () => {
     pages.clear();
     shownKey.current = null;
@@ -292,7 +329,15 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               className={`${inputClass} h-9 py-1 pl-8`}
             />
           </div>
-          <Segmented ariaLabel="Kind" options={KIND_OPTIONS} value={filters.kind} onChange={(kind) => update({ kind })} />
+          <Segmented ariaLabel="Kind" options={KIND_OPTIONS} value={filters.kind} onChange={setKind} />
+          {filters.kind === "styleAddons" && forChoices.length > 0 && (
+            <Select
+              label="For"
+              value={forValue}
+              onChange={(v) => update({ forModel: v })}
+              options={[{ value: "", label: "Any model" }, ...forChoices.map((m) => ({ value: m.id, label: `For ${m.friendlyName}` }))]}
+            />
+          )}
           <Select label="Sort" value={filters.sort} onChange={(sort) => update({ sort })} options={options.sorts.map((s) => ({ value: s.api, label: s.label }))} />
           <Select label="Time" value={filters.period} onChange={(period) => update({ period })} options={options.periods.map((p) => ({ value: p.api, label: p.label }))} />
         </div>
@@ -491,4 +536,9 @@ function SkeletonCards({ count }: { count: number }) {
       ))}
     </>
   );
+}
+
+/** Browse style add-ons for one installed model (a fresh search). */
+function addonsFor(f: BrowseFilters, modelId: string): BrowseFilters {
+  return { ...f, kind: "styleAddons", forModel: modelId, query: "" };
 }

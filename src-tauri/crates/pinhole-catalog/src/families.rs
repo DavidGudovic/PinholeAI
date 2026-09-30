@@ -142,6 +142,23 @@ pub fn same_architecture(registry: &Registry, a: &str, b: &str) -> bool {
     a == b || arch_root(registry, a) == arch_root(registry, b)
 }
 
+/// CivitAI base models whose LoRAs work with `family_id`: those of every family
+/// with the same architecture (an SDXL model takes Pony and Illustrious LoRAs
+/// too). Sorted, no duplicates; empty for an unknown family.
+pub fn lora_base_models(registry: &Registry, family_id: &str) -> Vec<String> {
+    if registry.family(family_id).is_none() {
+        return Vec::new();
+    }
+    let set: BTreeSet<String> = registry
+        .families()
+        .filter(|f| same_architecture(registry, &f.id, family_id))
+        .flat_map(|f| f.civitai_base_models.iter())
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+        .collect();
+    set.into_iter().collect()
+}
+
 // ------------------------------------------------------------------ components
 
 /// Plain-language label for a component kind.
@@ -611,6 +628,22 @@ mod tests {
         assert_eq!(normalize_sha("TODO"), None);
         assert_eq!(normalize_sha(&"AB".repeat(32)), Some("ab".repeat(32)));
         assert_eq!(normalize_sha("abc"), None);
+    }
+
+    #[test]
+    fn lora_base_models_follow_the_architecture() {
+        let reg = crate::testkit::registry();
+        let sdxl = lora_base_models(&reg, "sdxl_illustrious");
+        for b in ["SDXL 1.0", "Pony", "Illustrious", "NoobAI"] {
+            assert!(sdxl.contains(&b.to_string()), "{b} in {sdxl:?}");
+        }
+        assert!(!sdxl
+            .iter()
+            .any(|b| b.starts_with("SD 1") || b.starts_with("Flux")));
+        let flux = lora_base_models(&reg, "flux1_kontext");
+        assert!(flux.contains(&"Flux.1 D".to_string()), "{flux:?}");
+        assert!(!flux.contains(&"SDXL 1.0".to_string()));
+        assert!(lora_base_models(&reg, "no_such_family").is_empty());
     }
 
     #[test]

@@ -16,6 +16,8 @@ export interface BrowseFilters {
   compatibleOnly: boolean;
   /** Hide models that are too big for this computer's graphics card (models only). */
   runsOnMyCard: boolean;
+  /** Style add-ons: only ones made for this installed model (its id), or any. */
+  forModel: string | null;
   query: string;
 }
 
@@ -105,6 +107,7 @@ export function defaultFilters(
     commercialOnly: false,
     compatibleOnly: true,
     runsOnMyCard: false,
+    forModel: null,
     query: "",
   };
 }
@@ -155,7 +158,12 @@ export function toBrowseQuery(f: BrowseFilters, cursor: string | null = null): B
 /** Stable key: a new key means "start over from the first page". */
 export function filtersKey(f: BrowseFilters): string {
   const q = toBrowseQuery(f, null);
-  return JSON.stringify([q.kind, q.look, q.tags, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.query]);
+  return JSON.stringify([q.kind, q.look, q.tags, q.content, q.price, q.sort, q.period, q.commercialOnly, q.compatibleOnly, q.runsOnMyCard, q.query, forModelOf(f)]);
+}
+
+/** The installed model style add-ons are narrowed to (only while browsing add-ons). */
+export function forModelOf(f: Pick<BrowseFilters, "kind" | "forModel">): string | null {
+  return f.kind === "styleAddons" ? f.forModel : null;
 }
 
 /** Filters that differ from the defaults (for a "Clear filters" button). */

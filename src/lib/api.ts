@@ -63,7 +63,8 @@ export const resolveCivitaiResources = (resources: T.PastedResource[]) =>
 
 // ---------------------------------------------------------------- catalog (catalog agent)
 export const catalogFilters = () => invoke<T.CatalogFilterOptions>("catalog_filters");
-export const browseCatalog = (query: T.BrowseQuery) => invoke<T.BrowsePage>("browse_catalog", { query });
+/** `forFamily`: style add-ons made for this model family's architecture only. */
+export const browseCatalog = (query: T.BrowseQuery, forFamily: string | null = null) => invoke<T.BrowsePage>("browse_catalog", { query, forFamily });
 /** Preview image bytes fetched by Rust (the WebView makes no network calls). */
 export const fetchPreview = (url: string) => invoke<ArrayBuffer>("fetch_preview", { url });
 /** Model details page: preview images + their generation data (kept in memory only). */
