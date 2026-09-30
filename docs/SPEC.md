@@ -264,6 +264,13 @@ and VRAM need.
 history strip to work from it; **Delete this edit** removes the shown edit (never the original) and
 frees its image from memory; remaining edits are renumbered.
 
+Actions on the shown image: **Save** (with **Save as…** in the desktop app) · **Copy** ·
+**Describe** · **Upscale 2×/4×** (the upscaled image becomes the next step) · **Try again**
+(redoes the shown edit from the step before it with a new seed and the current settings, the same
+brush area included, and replaces it and any later steps; not for the original or an upscale step). Fine-tune shows the
+read-only "Final prompt sent to the model" like Create, since the style and trigger words are added
+at request time.
+
 ### 5.3 Describe (img2text)
 
 - Drop an image → **Describe**.

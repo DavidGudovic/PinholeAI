@@ -6,7 +6,7 @@ import { Button, ProgressBar, Spinner } from "./ui";
 /** Plain-words status for a running job. */
 export function jobStatusText(job: Job, elapsed: number): string {
   const p = job.progress;
-  const verb = job.kind === "upscale" ? "Upscaling" : job.kind === "edit" ? "Editing" : "Creating";
+  const verb = job.kind === "upscale" || job.kind === "editUpscale" ? "Upscaling" : job.kind === "edit" ? "Editing" : "Creating";
   if (!p) return `${verb}…`;
   switch (p.phase) {
     case "loadingModel":
