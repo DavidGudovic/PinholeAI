@@ -34,7 +34,8 @@ pub struct SessionImage {
     pub origin: Origin,
     /// The brought-in pictures a generated image was made from, through every step
     /// (the image check compares results with them). Empty for imported images: they
-    /// are their own source (see [`SessionImage::sources`]).
+    /// are their own source (see [`SessionImage::sources`]), unless the file is one
+    /// Pinhole saved earlier in this session: then it keeps that picture's sources.
     pub made_from: Arc<[Source]>,
 }
 
@@ -51,9 +52,10 @@ impl SessionImage {
         self.meta.as_ref().and_then(|m| m.parent_id.as_deref())
     }
 
-    /// The brought-in pictures this image comes from: itself when it was brought in.
+    /// The brought-in pictures this image comes from: itself when it was brought in
+    /// (a saved picture opened again: what that picture came from).
     pub fn sources(&self) -> Vec<Source> {
-        if self.meta.is_none() && self.origin == Origin::Imported {
+        if self.meta.is_none() && self.origin == Origin::Imported && self.made_from.is_empty() {
             vec![Source {
                 id: self.id.clone(),
                 bytes: self.bytes.clone(),
@@ -152,6 +154,10 @@ impl Session {
 /// orientation applied) and re-encoded, which drops EXIF / XMP (GPS, camera).
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
+    let made_from = core
+        .check
+        .exported_from(&bytes)
+        .unwrap_or_else(|| Arc::from(Vec::new()));
     let (bytes, width, height) = if info.kind == Kind::Png {
         (
             pinhole_engine::png::scrub(&bytes)
@@ -174,7 +180,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         height,
         meta: None,
         origin: Origin::Imported,
-        made_from: Arc::from(Vec::new()),
+        made_from,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -364,6 +370,12 @@ fn marked_pixels(im: &SessionImage) -> CoreResult<(Vec<u8>, u32, u32)> {
 /// "settings (no prompt)" chunk. A picture the user added and didn't change
 /// leaves as it came in (already scrubbed at import).
 pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
+    let bytes = export_bytes(core, im)?;
+    core.check.note_export(&bytes, im.sources());
+    Ok(bytes)
+}
+
+fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let Some(m) = &im.meta else {
         return Ok(im.bytes.as_ref().clone());
     };

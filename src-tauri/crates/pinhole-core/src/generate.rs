@@ -2007,10 +2007,10 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     // Early word check so a blocked prompt doesn't wait behind a running job; `prepare`
     // checks the combined prompt again.
     crate::text_check::check(&req.prompt)?;
-    // Without every image check file nothing is made (fail closed).
-    crate::imagecheck::ensure_ready(core)?;
     // Held for the whole run: the Models folder can't move under the engine.
     let _folder = crate::models::folder_read(core)?;
+    // Without every image check file nothing is made (fail closed).
+    crate::imagecheck::ensure_ready(core)?;
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
@@ -2032,7 +2032,14 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
         Err(e) if e.code == "cancelled" => {
             emit_progress(core, GenPhase::Cancelled, &label, None, None, t0)
         }
-        Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
+        Err(e) => {
+            if e.code == "blocked" || e.code.starts_with("check_") {
+                // The engine keeps finished jobs readable on its port: a picture the check
+                // dropped must go with it.
+                core.gen.clear_pending.store(true, Ordering::SeqCst);
+            }
+            emit_progress(core, GenPhase::Failed, &label, None, None, t0)
+        }
     }
     after_job(core, epoch).await;
     result
@@ -2403,9 +2410,8 @@ async fn generate_inner(
     }
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept.
-    let (pngs, readings) =
-        crate::imagecheck::check_results(core, pngs, sources.clone(), prep.safe_images_only)
-            .await?;
+    let pngs = crate::imagecheck::check_results(core, pngs, sources.clone(), prep.safe_images_only)
+        .await?;
     let made_from: Arc<[crate::session::Source]> = Arc::from(sources);
     let mut out = Vec::new();
     for (i, png) in pngs.into_iter().enumerate() {

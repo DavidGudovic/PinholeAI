@@ -121,7 +121,9 @@ Every image in the session carries its origin, inherited by everything made from
 
 Each session image also keeps the brought-in pictures it was made from (`SessionImage::made_from`,
 memory only), so rule 1 below still sees the original after it is discarded, through any number
-of steps.
+of steps. A picture saved in this session and opened again keeps them too (SHA-256 of the saved
+file → its sources, memory only, cleared by Reset); a file changed outside Pinhole starts a new
+chain as a brought-in picture.
 
 ### 3.2 What is blocked
 
@@ -148,7 +150,9 @@ rating ≥ 0.5 (nude, underwear only, see-through); swimwear rates "sensitive" a
    years, so teenagers are left to the word check and the child tags (SAFETY.md says so).
 3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
-   Models flagged `poi` or `minor` can't be installed at all (§5).
+   Models flagged `poi` or `minor` can't be installed at all (§5). Known limits: the flag is set
+   only by installs from Browse / paste with the model's data (a file matched by hash gets none),
+   and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
@@ -159,10 +163,11 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
 
 ### 3.3 How it runs
 
-- **In order, cheapest first:** the nudity classifier runs on every result. The tagger runs only
-  when that score is ≥ 0.2; the face finder and age estimate only on sexual photo-style results.
-  Brought-in pictures are measured once (face finder, then nudity + tagger if there is a face), only
-  when a result made from them is intimate. Most results pay for one classifier (~1 s on 4 cores).
+- **In order:** the nudity classifier and the tagger run on every result (the tagger always, so an
+  explicit picture the nudity model scores low still reaches the child tags); the face finder and
+  age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
+  finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
+  About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
 - **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
   before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the
   UI. Upscale is not re-checked: it has the same content as its (checked or brought-in) source.
@@ -171,10 +176,12 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   while any file is absent or has the wrong size; every file is SHA-256 checked as it loads, and a
   damaged one stops the result the same way. A check that fails to run (`check_failed`) drops the
   result. The files download with the engine (Settings → Engine, first run) or from that button.
+- **Blocked pictures don't linger:** after a block the engine is stopped once the job ends, since
+  it keeps finished jobs readable on its local port.
 - **Nothing to switch off:** the files' URLs (pinned commits), sizes and SHA-256 values and every
   threshold are constants in `pinhole-check`, not config. Only the core's `test-util` build (tests)
   can put a stand-in check in place.
-- **Resources:** ~1.1 GB download; ~1 s per result on CPU; the models take up to ~1.2 GB RAM while
+- **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
   loaded, 0 VRAM.
 
 ### 3.4 Models (verified by download, 2026-09-30)

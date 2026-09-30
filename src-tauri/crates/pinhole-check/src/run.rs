@@ -67,7 +67,9 @@ impl Checker {
     /// Load the model every result needs, so the first check doesn't wait for it.
     pub fn preload(&self) -> Result<(), CheckError> {
         let mut l = self.loaded.lock();
-        self.nudity_model(&mut l).map(|_| ())
+        *self.last_used.lock() = Some(Instant::now());
+        self.nudity_model(&mut l)?;
+        self.tagger(&mut l).map(|_| ())
     }
 
     /// Drop the models when unused for `idle`. Returns whether anything was dropped.
@@ -95,11 +97,9 @@ impl Checker {
         let mut l = self.loaded.lock();
         *self.last_used.lock() = Some(Instant::now());
         let nudity = self.nudity(&mut l, &img)?;
-        let tags = if rules::needs_tags(nudity) {
-            Some(self.tags(&mut l, &img)?)
-        } else {
-            None
-        };
+        // Always: an explicit picture the nudity classifier scores low must still reach
+        // the child tags.
+        let tags = Some(self.tags(&mut l, &img)?);
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
             let mut found = self.faces(&mut l, &img)?;
             for f in found.iter_mut().filter(|f| f.0.counts()) {
@@ -145,11 +145,7 @@ impl Checker {
             return Ok(Original::default());
         }
         let nudity = self.nudity(&mut l, &img)?;
-        let tags = if rules::needs_tags(nudity) {
-            Some(self.tags(&mut l, &img)?)
-        } else {
-            None
-        };
+        let tags = Some(self.tags(&mut l, &img)?);
         Ok(Original {
             has_face,
             intimate: rules::is_intimate(nudity, tags.as_ref()),
@@ -159,6 +155,16 @@ impl Checker {
     // ------------------------------------------------------------ models
 
     fn load(&self, f: &CheckFile, shape: &[usize]) -> Result<Model, CheckError> {
+        self.load_checked(f, shape, &[])
+    }
+
+    /// Load, and when `outputs` is given, require the graph's outputs in that order.
+    fn load_checked(
+        &self,
+        f: &CheckFile,
+        shape: &[usize],
+        outputs: &[&str],
+    ) -> Result<Model, CheckError> {
         init_threads();
         let bytes = files::read_verified(&self.dir, f)?;
         let model = tract_onnx::onnx()
@@ -166,9 +172,19 @@ impl Checker {
             .with_ignore_value_info(true)
             .model_for_read(&mut bytes.as_slice())?
             .with_input_fact(0, f32::fact(shape).into())?
-            .into_optimized()?
-            .into_runnable()?;
-        Ok(model)
+            .into_optimized()?;
+        if !outputs.is_empty() {
+            let names: Vec<Option<&str>> = model
+                .output_outlets()?
+                .iter()
+                .map(|o| model.outlet_label(*o))
+                .collect();
+            let want: Vec<Option<&str>> = outputs.iter().map(|n| Some(*n)).collect();
+            if names != want {
+                return Err(CheckError::Damaged(f.label));
+            }
+        }
+        Ok(model.into_runnable()?)
     }
 
     fn nudity_model(&self, l: &mut Loaded) -> Result<Model, CheckError> {
@@ -185,14 +201,18 @@ impl Checker {
         Ok(softmax(&flat(&out[0])?).get(1).copied().unwrap_or(1.0))
     }
 
-    fn tags(&self, l: &mut Loaded, img: &RgbImage) -> Result<Tags, CheckError> {
+    fn tagger(&self, l: &mut Loaded) -> Result<(Model, TagIndex), CheckError> {
         if l.tagger.is_none() {
             let csv = files::read_verified(&self.dir, &files::TAGGER_TAGS)?;
             let index = tag_index(&csv).ok_or(CheckError::Damaged(files::TAGGER_TAGS.label))?;
             let model = self.load(&files::TAGGER, &[1, 448, 448, 3])?;
             l.tagger = Some((model, index));
         }
-        let (m, ix) = l.tagger.clone().expect("loaded");
+        Ok(l.tagger.clone().expect("loaded"))
+    }
+
+    fn tags(&self, l: &mut Loaded, img: &RgbImage) -> Result<Tags, CheckError> {
+        let (m, ix) = self.tagger(l)?;
         let out = m.run(tvec!(tagger_input(img).into()))?;
         // Already probabilities (sigmoid inside the model).
         let v = flat(&out[0])?;
@@ -215,7 +235,14 @@ impl Checker {
     /// Faces with their box (x, y, w, h) in image pixels.
     fn faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
         if l.faces.is_none() {
-            l.faces = Some(self.load(&files::FACES, &[1, 3, 640, 640])?);
+            l.faces = Some(self.load_checked(
+                &files::FACES,
+                &[1, 3, 640, 640],
+                &[
+                    "cls_8", "cls_16", "cls_32", "obj_8", "obj_16", "obj_32", "bbox_8", "bbox_16",
+                    "bbox_32", "kps_8", "kps_16", "kps_32",
+                ],
+            )?);
         }
         let m = l.faces.clone().expect("loaded");
         let found = find_faces(&m, img, 1.0)?;

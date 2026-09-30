@@ -8,8 +8,6 @@
 //!
 //! The thresholds are constants on purpose: nothing outside the code can change them.
 
-/// Nudity score from which the tagger runs too (below it nothing can be blocked).
-pub const TAGGER_FROM: f32 = 0.2;
 /// Tagger `explicit` rating that counts as sexual on its own.
 pub const EXPLICIT: f32 = 0.35;
 /// `questionable + explicit` that counts as intimate (nude, underwear only, see-through).
@@ -61,8 +59,9 @@ impl Face {
     }
 }
 
-/// What the check measured on one result. Later steps only run when needed, so
-/// `tags` and `faces` can be `None`.
+/// What the check measured on one result. The nudity classifier and the tagger always
+/// run; the face finder and age estimate only on sexual photo-style results, so
+/// `faces` can be `None` (and `tags` too, in tests).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Readings {
     /// Nudity classifier, 0..1 (it also calls revealing clothes "nsfw").
@@ -95,13 +94,6 @@ impl Rule {
             Rule::SafeImagesOnlyModel => "safe_images_only_model",
         }
     }
-}
-
-// Skipping the tagger below TAGGER_FROM must never skip a block.
-const _: () = assert!(TAGGER_FROM < INTIMATE_NUDITY && TAGGER_FROM < SEXUAL_NUDITY);
-
-pub fn needs_tags(nudity: f32) -> bool {
-    nudity >= TAGGER_FROM
 }
 
 /// Nude, underwear only, see-through or sexual.
@@ -313,13 +305,19 @@ mod tests {
 
     #[test]
     fn later_steps_run_only_when_needed() {
-        assert!(!needs_tags(0.1));
-        assert!(needs_tags(0.25));
         assert!(!needs_faces(0.95, None));
         assert!(!needs_faces(0.95, Some(&tags(0.1, 0.8))), "drawn");
         assert!(needs_faces(0.95, Some(&photo(tags(0.1, 0.8)))));
         assert!(!needs_faces(0.5, Some(&photo(tags(0.1, 0.0)))));
-        // Without tags nothing is sexual or intimate, so skipping them can't hide a block.
+        // An explicit drawing the nudity classifier misses is still sexual (the tagger
+        // always runs, so rule 2's child tags are always read).
+        assert!(is_sexual(0.05, Some(&tags(0.0, 0.8))));
+        let mut t = tags(0.0, 0.8);
+        t.loli = 0.7;
+        assert_eq!(
+            decide(&readings(0.05, Some(t), vec![]), &[], false),
+            Some(Rule::LooksUnderage)
+        );
         assert!(!is_sexual(1.0, None));
         assert!(!is_intimate(1.0, None));
     }

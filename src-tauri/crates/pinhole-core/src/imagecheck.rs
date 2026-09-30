@@ -64,12 +64,57 @@ impl Inspector for Checker {
     }
 }
 
+/// A stand-in for the image check with fixed readings (test builds only: release
+/// builds have no way to replace the check).
+#[cfg(any(test, feature = "test-util"))]
+#[derive(Debug, Clone, Default)]
+pub struct FakeCheck {
+    /// Labels of files to report as missing.
+    pub missing: Vec<&'static str>,
+    /// Readings for every result (default: an ordinary picture).
+    pub readings: pinhole_check::Readings,
+    /// Readings for every brought-in picture.
+    pub original: pinhole_check::Original,
+    /// How many results and originals were measured.
+    pub counts: std::sync::Arc<parking_lot::Mutex<(usize, usize)>>,
+}
+
+#[cfg(any(test, feature = "test-util"))]
+impl Inspector for FakeCheck {
+    fn missing(&self) -> Vec<&'static str> {
+        self.missing.clone()
+    }
+    fn readings(&self, _png: &[u8]) -> Result<pinhole_check::Readings, pinhole_check::CheckError> {
+        if !self.missing.is_empty() {
+            return Err(pinhole_check::CheckError::Missing(self.missing[0]));
+        }
+        self.counts.lock().0 += 1;
+        Ok(self.readings.clone())
+    }
+    fn original(&self, _png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
+        self.counts.lock().1 += 1;
+        Ok(self.original)
+    }
+}
+
+/// Put `fake` in place of the check (test builds only).
+#[cfg(any(test, feature = "test-util"))]
+pub fn use_fake(core: &AppCore, fake: FakeCheck) {
+    *core.check.inspector.write() = Arc::new(fake);
+}
+
 pub struct CheckState {
-    pub(crate) inspector: RwLock<Arc<dyn Inspector>>,
+    inspector: RwLock<Arc<dyn Inspector>>,
     /// Readings of brought-in pictures, by session image id (memory only).
     originals: Mutex<HashMap<String, Original>>,
     /// The running "Safety check" download, if any.
     install_group: Mutex<Option<String>>,
+    /// Held while deciding what to download and queueing it, so two setups at once
+    /// (engine setup + the button) can't queue the same files twice.
+    install_start: tokio::sync::Mutex<()>,
+    /// SHA-256 of each exported (saved) picture → the brought-in pictures it was made
+    /// from, so opening a saved picture again keeps its chain (memory only, until Reset).
+    exported: Mutex<HashMap<String, Arc<[Source]>>>,
 }
 
 impl CheckState {
@@ -78,6 +123,8 @@ impl CheckState {
             inspector: RwLock::new(Arc::new(Checker::new(dir))),
             originals: Mutex::new(HashMap::new()),
             install_group: Mutex::new(None),
+            install_start: tokio::sync::Mutex::new(()),
+            exported: Mutex::new(HashMap::new()),
         }
     }
 
@@ -88,6 +135,25 @@ impl CheckState {
     /// Reset: forget everything measured.
     pub fn forget(&self) {
         self.originals.lock().clear();
+        self.exported.lock().clear();
+    }
+
+    /// Save/Copy: remember what an exported picture was made from.
+    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>) {
+        if made_from.is_empty() {
+            return;
+        }
+        let key = hex_sha256(bytes);
+        self.exported.lock().insert(key, Arc::from(made_from));
+    }
+
+    /// Import: a picture Pinhole exported earlier in this session keeps its chain.
+    pub fn exported_from(&self, bytes: &[u8]) -> Option<Arc<[Source]>> {
+        let map = self.exported.lock();
+        if map.is_empty() {
+            return None;
+        }
+        map.get(&hex_sha256(bytes)).cloned()
     }
 }
 
@@ -100,6 +166,11 @@ pub struct SafetyCheckStatus {
     pub downloading: bool,
     /// Bytes still to download.
     pub download_bytes: u64,
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(bytes))
 }
 
 fn downloading(core: &AppCore) -> bool {
@@ -196,7 +267,7 @@ pub async fn check_results(
             pinhole_check::rules::decide(r, &originals, safe_images_only)
                 .map(|rule| (rule, r.clone()))
         });
-        Ok::<_, CheckError>((pngs, all, blocked))
+        Ok::<_, CheckError>((pngs, blocked))
     })
     .await
     .map_err(|e| {
@@ -206,7 +277,7 @@ pub async fn check_results(
         )
         .with_details(e.to_string())
     })?;
-    let (pngs, all, blocked) = res.map_err(|e| check_error(core, e))?;
+    let (pngs, blocked) = res.map_err(|e| check_error(core, e))?;
     if let Some((rule, r)) = blocked {
         return Err(blocked_error(rule, &r));
     }
@@ -313,12 +384,10 @@ fn yes(b: bool) -> &'static str {
 /// Queue the missing (or damaged) check files and resolve when they are in place.
 /// A download already running is joined instead of queued twice.
 pub async fn install(core: &Arc<AppCore>) -> CoreResult<SafetyCheckStatus> {
-    let running = core
-        .check
-        .install_group
-        .lock()
-        .clone()
-        .filter(|_| downloading(core));
+    let start = core.check.install_start.lock().await;
+    // Clone first: `downloading` locks `install_group` again.
+    let current = core.check.install_group.lock().clone();
+    let running = current.filter(|_| downloading(core));
     let gid = match running {
         Some(gid) => gid,
         None => {
@@ -367,6 +436,7 @@ pub async fn install(core: &Arc<AppCore>) -> CoreResult<SafetyCheckStatus> {
             gid
         }
     };
+    drop(start);
     crate::downloads::wait(core, &gid).await?;
     // New files: load them fresh.
     core.check.inspector().unload_if_idle(Duration::ZERO);

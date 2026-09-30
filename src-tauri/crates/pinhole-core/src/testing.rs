@@ -28,40 +28,11 @@ pub fn use_external_engine(core: &AppCore, base_url: &str) {
     use_check(core, FakeCheck::default());
 }
 
-/// A stand-in for the image check with fixed readings (test builds only: release
-/// builds have no way to replace the check).
-#[derive(Debug, Clone, Default)]
-pub struct FakeCheck {
-    /// Labels of files to report as missing.
-    pub missing: Vec<&'static str>,
-    /// Readings for every result (default: an ordinary picture).
-    pub readings: pinhole_check::Readings,
-    /// Readings for every brought-in picture.
-    pub original: pinhole_check::Original,
-    /// How many results and originals were measured.
-    pub counts: std::sync::Arc<parking_lot::Mutex<(usize, usize)>>,
-}
-
-impl crate::imagecheck::Inspector for FakeCheck {
-    fn missing(&self) -> Vec<&'static str> {
-        self.missing.clone()
-    }
-    fn readings(&self, _png: &[u8]) -> Result<pinhole_check::Readings, pinhole_check::CheckError> {
-        if !self.missing.is_empty() {
-            return Err(pinhole_check::CheckError::Missing(self.missing[0]));
-        }
-        self.counts.lock().0 += 1;
-        Ok(self.readings.clone())
-    }
-    fn original(&self, _png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
-        self.counts.lock().1 += 1;
-        Ok(self.original)
-    }
-}
+pub use crate::imagecheck::FakeCheck;
 
 /// Replace the image check with `fake`.
 pub fn use_check(core: &AppCore, fake: FakeCheck) {
-    *core.check.inspector.write() = std::sync::Arc::new(fake);
+    crate::imagecheck::use_fake(core, fake);
 }
 
 /// sd-server's output buffer (memory only, redacted), so a mock engine can
@@ -271,6 +242,8 @@ mod tests {
             rec.clone(),
         )
         .expect("AppCore::new");
+        // No check model files in tests: a stand-in that passes everything.
+        use_check(&core, FakeCheck::default());
         (tmp, core, rec)
     }
 
@@ -1992,7 +1965,15 @@ mod tests {
         assert!(!crate::imagecheck::status(&core).ready);
 
         // The real check with no files in Data/check is not ready either.
-        let (_tmp2, bare, _) = new_core();
+        let tmp2 = tempfile::tempdir().unwrap();
+        let bare = AppCore::new(
+            ShippedPaths {
+                config_dir: config_dir(),
+            },
+            DataDir::at(tmp2.path().join("Data"), false),
+            Arc::new(crate::NullSink),
+        )
+        .unwrap();
         let st = crate::imagecheck::status(&bare);
         assert!(!st.ready);
         assert_eq!(st.download_bytes, pinhole_check::files::total_bytes());
@@ -2126,6 +2107,73 @@ mod tests {
         };
         use_check(&core, fake);
         generate::generate(&core, restyle(&photo)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reopened_save_keeps_the_photo_it_was_made_from() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let face = pinhole_check::Original {
+            has_face: true,
+            intimate: false,
+        };
+        use_check(
+            &core,
+            FakeCheck {
+                original: face,
+                ..Default::default()
+            },
+        );
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut req = GenerateRequest::txt2img(model.clone(), "y");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(photo.clone());
+        let step = generate::generate(&core, req.clone()).await.unwrap().images[0]
+            .id
+            .clone();
+        let saved = session::save_image(&core, &step).unwrap();
+        let file = std::fs::read(&saved.path).unwrap();
+        session::discard(&core, &photo);
+        session::discard(&core, &step);
+        let reopened = session::import_image(&core, file).unwrap().id;
+        let sources = core.session.get(&reopened).unwrap().sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].id, photo, "the chain leads back to the photo");
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                original: face,
+                ..Default::default()
+            },
+        );
+        req.init_image_id = Some(reopened);
+        assert_eq!(
+            generate::generate(&core, req).await.unwrap_err().code,
+            "blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn setting_up_the_check_twice_does_not_hang() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // the download fails at once, nothing leaves the machine
+        for _ in 0..3 {
+            let r =
+                tokio::time::timeout(Duration::from_secs(20), crate::imagecheck::install(&core))
+                    .await
+                    .expect("install must not hang");
+            assert_eq!(r.unwrap_err().code, "offline");
+        }
+        let st = crate::imagecheck::status(&core);
+        assert!(!st.downloading);
     }
 
     #[tokio::test]

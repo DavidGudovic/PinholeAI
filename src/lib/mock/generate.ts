@@ -222,8 +222,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
   cancelled = false;
   const started = Date.now();
   try {
-    const engine = await invoke<EngineStatus>("engine_status").catch(() => null);
-    if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Set up engine”.");
+    // Like Rust: the check's files first (ensure_ready), then the engine.
     const check = await invoke<SafetyCheckStatus>("safety_check_status").catch(() => null);
     if (check && !check.ready)
       throw err(
@@ -232,6 +231,8 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
           ? "Pinhole's safety check is still downloading (see Downloads). Try again when it's done."
           : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
       );
+    const engine = await invoke<EngineStatus>("engine_status").catch(() => null);
+    if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Set up engine”.");
     const models = await invoke<InstalledModel[]>("list_models");
     const model = models.find((m) => m.id === req.modelId);
     if (!model) throw err("not_found", "That model isn't installed any more. Pick another one.");

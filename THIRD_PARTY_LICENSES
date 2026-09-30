@@ -177,3 +177,14 @@ implementations (sha1, sha256, xxhash — public domain / BSD-2-Clause).
     Apache-2.0 licensed.
 
     Pinhole bundles no fonts (system fonts only) and loads nothing from CDNs.
+
+5.3 Image check models (downloaded at runtime into Data/check/, pinned to a
+    commit and SHA-256 verified in src-tauri/crates/pinhole-check/src/files.rs;
+    not bundled):
+      AdamCodd/vit-base-nsfw-detector (ONNX) ......... Apache-2.0
+      SmilingWolf/wd-vit-tagger-v3 (+ selected_tags.csv)  Apache-2.0
+      opencv/face_detection_yunet (2023mar) ........... MIT
+      onnx-community/fairface_age_image_detection-ONNX  Apache-2.0
+        (converted from dima806/fairface_age_image_detection, Apache-2.0)
+    Runtime compiled into Pinhole: tract-onnx, tract-linalg and their tract-*
+    crates (Sonos) ................................... MIT OR Apache-2.0
