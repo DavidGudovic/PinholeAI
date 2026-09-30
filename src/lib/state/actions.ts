@@ -11,6 +11,7 @@ import {
   editModels,
   isActiveDownload,
   loraCompatible,
+  referenceModel,
   takesReference,
   willQueue,
   type EditMode,
@@ -390,6 +391,41 @@ export function makeActions(store: Store) {
     setTab("edit");
   }
 
+  /**
+   * "Same character": new pictures of the subject in this image, using what's installed. Create
+   * with it as the reference picture when the Create model (or another installed one) can take
+   * one, else "Describe a change" in Edit, which offers a one-click edit model when none is
+   * installed. The image keeps its id, so its origin follows every result made from it.
+   */
+  function sameCharacter(id: string) {
+    const s = get();
+    const ref = s.images[id];
+    if (!ref) return;
+    const current = (s.models ?? []).find((m) => m.id === s.create.modelId) ?? null;
+    const able = takesReference(current) ? current : referenceModel(s.models);
+    if (able) {
+      if (able !== current) dispatch({ type: "selectModel", modelId: able.id });
+      dispatch({ type: "createSetRef", ref });
+      setTab("create");
+      toast(
+        able === current
+          ? "Set as the reference picture. Now describe the new scene, like “the same character on a beach”."
+          : `Switched to ${able.friendlyName}, which can use a reference picture. Now describe the new scene, like “the same character on a beach”.`,
+        { ms: 7000 },
+      );
+      return;
+    }
+    if (editBusy(s)) {
+      toast("Wait for the edits in progress to finish first.");
+      return;
+    }
+    dispatch({ type: "editLoad", ref });
+    dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    if (s.create.refImageId === id) dispatch({ type: "createSetRef", ref: null });
+    setTab("edit");
+    toast("Describe the new scene, like “the same character on a beach”.", { ms: 7000 });
+  }
+
   function sendToDescribe(id: string) {
     const ref = get().images[id];
     if (!ref) return;
@@ -627,6 +663,7 @@ export function makeActions(store: Store) {
     setLoraTriggerWords,
     sendToEdit,
     sendToEditSecond,
+    sameCharacter,
     sendToDescribe,
     useAsPrompt,
     removeResult,

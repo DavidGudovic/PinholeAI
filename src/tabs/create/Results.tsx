@@ -9,6 +9,7 @@ import {
   ScanText,
   Shuffle,
   Trash,
+  UserRound,
   WandSparkles,
 } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
@@ -176,6 +177,9 @@ function Preview({
           onClick={() => void run(() => actions.variations(result.id))}
         >
           <Shuffle className="h-4 w-4" /> Variations
+        </Button>
+        <Button title="New pictures with the same character or subject in a different scene" onClick={() => actions.sameCharacter(result.id)}>
+          <UserRound className="h-4 w-4" /> Same character
         </Button>
         <UpscaleMenu
           width={result.width}
