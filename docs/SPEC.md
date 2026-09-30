@@ -780,10 +780,10 @@ build is shared.
   per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
   Pinhole's side is in place: every launch gets a random key in `SD_API_KEY` and every request
   sends it as `Authorization: Bearer` (upstream ignores both). The patch (`--api-key` / env
-  `SD_API_KEY`, `--reject-origin`) is kept in a public fork until upstream takes it. When
-  `engine.yaml` pins that build, set `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` to `true`:
-  it is compiled in (not a setting), adds `--reject-origin`, and an unpatched engine then can't
-  start.
+  `SD_API_KEY`, `--reject-origin`) lives in `engine/sd-cpp/` and is built by a workflow in a
+  separate public repo (`engine/sd-cpp/README.md`). When `engine.yaml` pins that build, set
+  `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` to `true`: it is compiled in (not a
+  setting), adds `--reject-origin`, and an unpatched engine then can't start.
 
 ## 14. Open questions
 

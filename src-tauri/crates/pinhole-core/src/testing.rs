@@ -2142,6 +2142,61 @@ mod tests {
         );
     }
 
+    /// A Pinhole-started sd-server gets a fresh key in its environment, never
+    /// on its command line (a stand-in engine records both, then exits).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn managed_engine_gets_its_api_key_in_the_environment() {
+        use pinhole_engine::install::{self, EngineKind, InstallMarker};
+        use std::os::unix::fs::PermissionsExt;
+        let (tmp, core, _) = new_core();
+        let (cfg, sel) = crate::engine_setup::selected_build(&core, EngineKind::Sd).unwrap();
+        let dir = install::install_dir(
+            &core.data.engine(),
+            EngineKind::Sd,
+            &cfg.stable_diffusion_cpp.version,
+            &sel.backend,
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let seen = tmp.path().join("seen.txt");
+        let exe = dir.join("sd-server");
+        std::fs::write(
+            &exe,
+            format!(
+                "#!/bin/sh\necho \"key=$SD_API_KEY\" > '{0}'\necho \"args=$*\" >> '{0}'\nexit 1\n",
+                seen.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let marker = InstallMarker {
+            engine: EngineKind::Sd,
+            version: cfg.stable_diffusion_cpp.version.clone(),
+            backend: sel.backend.clone(),
+            build: sel.key.clone(),
+            binary: "sd-server".into(),
+            archives: vec![],
+            installed_at: 0,
+        };
+        std::fs::write(
+            dir.join(install::MARKER_FILE),
+            serde_json::to_string(&marker).unwrap(),
+        )
+        .unwrap();
+        let model = register_fake_model(&core, "sd15");
+        assert!(
+            generate::generate(&core, GenerateRequest::txt2img(model, "a cat"))
+                .await
+                .is_err()
+        );
+        let text = std::fs::read_to_string(&seen).unwrap();
+        let key = text.lines().find_map(|l| l.strip_prefix("key=")).unwrap();
+        assert_eq!(key.len(), 64, "{text}");
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "{text}");
+        let args = text.lines().find_map(|l| l.strip_prefix("args=")).unwrap();
+        assert!(!args.contains(key) && !args.contains("--api-key"), "{args}");
+    }
+
     #[tokio::test]
     async fn sd_args_keep_the_api_key_off_the_command_line() {
         let (_tmp, core, _) = new_core();

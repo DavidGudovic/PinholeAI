@@ -1,0 +1,152 @@
+diff --git a/examples/server/README.md b/examples/server/README.md
+index c59fc8a..d298700 100644
+--- a/examples/server/README.md
++++ b/examples/server/README.md
+@@ -33,6 +33,18 @@ If you want to use a different host or port, pass:
+ --listen-ip <ip> --listen-port <port>
+ ```
+ 
++## Access control
++
++By default any program on the machine, and any web page open in a browser on it, can send
++requests to the server. To restrict that:
++
++* `--api-key <key>` (or the `SD_API_KEY` environment variable, which keeps the key out of the
++  process list) makes every request need `Authorization: Bearer <key>`; others get `401`.
++  CORS preflight (`OPTIONS`) requests still get their `204`.
++* `--reject-origin` refuses every request that carries an `Origin` header with `403` and sends no
++  CORS headers, so web pages can't use the server at all. API clients (curl, Python, other apps)
++  don't send `Origin` and are unaffected. The built-in web UI doesn't work in this mode.
++
+ # Frontend
+ 
+ ## Build with Frontend
+diff --git a/examples/server/main.cpp b/examples/server/main.cpp
+index 42c84df..dd9ce1c 100644
+--- a/examples/server/main.cpp
++++ b/examples/server/main.cpp
+@@ -63,6 +63,19 @@ static void parse_args(int argc,
+     }
+ }
+ 
++// Compares "Bearer <key>" without stopping at the first differing byte.
++static bool api_key_matches(const std::string& authorization, const std::string& key) {
++    const std::string expected = "Bearer " + key;
++    if (authorization.size() != expected.size()) {
++        return false;
++    }
++    unsigned char diff = 0;
++    for (size_t i = 0; i < expected.size(); i++) {
++        diff |= static_cast<unsigned char>(authorization[i] ^ expected[i]);
++    }
++    return diff == 0;
++}
++
+ void sd_log_cb(enum sd_log_level_t level, const char* log, void* data) {
+     SDSvrParams* svr_params = (SDSvrParams*)data;
+     log_print(level, log, svr_params->log_level, svr_params->color);
+@@ -118,18 +131,34 @@ int main(int argc, const char** argv) {
+ 
+     httplib::Server svr;
+ 
+-    svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
++    svr.set_pre_routing_handler([&svr_params](const httplib::Request& req, httplib::Response& res) {
+         std::string origin = req.get_header_value("Origin");
+-        if (origin.empty()) {
+-            origin = "*";
++        if (svr_params.reject_origin) {
++            if (req.has_header("Origin")) {
++                res.status = 403;
++                res.set_header("Connection", "close");  // an unread request body must not be parsed as the next request
++                res.set_content(R"({"error":"requests from web pages are not allowed"})", "application/json");
++                return httplib::Server::HandlerResponse::Handled;
++            }
++        } else {
++            if (origin.empty()) {
++                origin = "*";
++            }
++            res.set_header("Access-Control-Allow-Origin", origin);
++            res.set_header("Access-Control-Allow-Credentials", "true");
++            res.set_header("Access-Control-Allow-Methods", "*");
++            res.set_header("Access-Control-Allow-Headers", "*");
++
++            if (req.method == "OPTIONS") {
++                res.status = 204;
++                return httplib::Server::HandlerResponse::Handled;
++            }
+         }
+-        res.set_header("Access-Control-Allow-Origin", origin);
+-        res.set_header("Access-Control-Allow-Credentials", "true");
+-        res.set_header("Access-Control-Allow-Methods", "*");
+-        res.set_header("Access-Control-Allow-Headers", "*");
+-
+-        if (req.method == "OPTIONS") {
+-            res.status = 204;
++        if (!svr_params.api_key.empty() &&
++            !api_key_matches(req.get_header_value("Authorization"), svr_params.api_key)) {
++            res.status = 401;
++            res.set_header("Connection", "close");  // an unread request body must not be parsed as the next request
++            res.set_content(R"({"error":"invalid or missing API key"})", "application/json");
+             return httplib::Server::HandlerResponse::Handled;
+         }
+         return httplib::Server::HandlerResponse::Unhandled;
+diff --git a/examples/server/runtime.cpp b/examples/server/runtime.cpp
+index 3a20931..3639054 100644
+--- a/examples/server/runtime.cpp
++++ b/examples/server/runtime.cpp
+@@ -192,6 +192,7 @@ ArgOptions SDSvrParams::get_options() {
+     options.string_options = {
+         {"-l", "--listen-ip", "server listen ip (default: 127.0.0.1)", 0, &listen_ip},
+         {"", "--serve-html-path", "path to HTML file to serve at root (optional)", 0, &serve_html_path},
++        {"", "--api-key", "require 'Authorization: Bearer <key>' on every request (default: env SD_API_KEY, unset = no key)", 0, &api_key},
+     };
+ 
+     options.int_options = {
+@@ -200,6 +201,7 @@ ArgOptions SDSvrParams::get_options() {
+ 
+     options.bool_options = {
+         {"", "--color", "colors the logging tags according to level", true, &color},
++        {"", "--reject-origin", "refuse requests that carry an Origin header (browser pages) and send no CORS headers; the web UI won't work", true, &reject_origin},
+     };
+ 
+     auto on_help_arg = [&](int, const char**, int, bool& valid) {
+@@ -234,6 +236,12 @@ bool SDSvrParams::validate() {
+ }
+ 
+ bool SDSvrParams::resolve_and_validate() {
++    if (api_key.empty()) {
++        const char* env_key = std::getenv("SD_API_KEY");
++        if (env_key != nullptr) {
++            api_key = env_key;
++        }
++    }
+     if (!validate()) {
+         return false;
+     }
+@@ -247,6 +255,8 @@ std::string SDSvrParams::to_string() const {
+         << "  listen_ip: " << listen_ip << ",\n"
+         << "  listen_port: \"" << listen_port << "\",\n"
+         << "  serve_html_path: \"" << serve_html_path << "\",\n"
++        << "  api_key: " << (api_key.empty() ? "unset" : "set") << ",\n"
++        << "  reject_origin: " << (reject_origin ? "true" : "false") << ",\n"
+         << "}";
+     return oss.str();
+ }
+diff --git a/examples/server/runtime.h b/examples/server/runtime.h
+index b4560f1..f7bbbeb 100644
+--- a/examples/server/runtime.h
++++ b/examples/server/runtime.h
+@@ -22,9 +22,11 @@ struct SDSvrParams {
+     std::string listen_ip = "127.0.0.1";
+     int listen_port       = 1234;
+     std::string serve_html_path;
+-    bool normal_exit = false;
++    std::string api_key;
++    bool reject_origin       = false;
++    bool normal_exit         = false;
+     sd_log_level_t log_level = SD_LOG_INFO;
+-    bool color       = false;
++    bool color               = false;
+ 
+     ArgOptions get_options();
+     bool validate();
