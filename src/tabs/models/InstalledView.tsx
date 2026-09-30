@@ -291,7 +291,10 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                       <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-amber-800 dark:text-amber-300">
                         <span className="inline-flex items-start gap-1">
                           <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
-                          Missing parts: {m.missingComponents.join(", ")}. It won't run until they're downloaded.
+                          Missing parts: {m.missingComponents.join(", ")}.{" "}
+                          {m.missingComponents.every((c) => c.startsWith("Vision encoder"))
+                            ? "Needed for Describe a change in Edit; creating works without it."
+                            : "It won't run until they're downloaded."}
                         </span>
                         {m.civitaiVersionId != null && (
                           <Button size="sm" onClick={() => setMissingFor(m)}>

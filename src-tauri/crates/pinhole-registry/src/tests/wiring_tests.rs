@@ -871,7 +871,12 @@ fn stick_default_round_trips_for_every_family() {
 #[test]
 fn generators_that_edit_keep_create_dials_and_get_an_edit_default() {
     let reg = shipped();
-    for id in ["flux2_klein_4b", "flux2_klein_9b_base", "flux2_dev"] {
+    for id in [
+        "flux2_klein_4b",
+        "flux2_klein_9b_base",
+        "flux2_dev",
+        "qwen_image_21",
+    ] {
         let f = fam(id);
         assert!(can_edit(f) && !is_edit_family(f), "{id}");
     }
@@ -1096,7 +1101,7 @@ fn launch_args_flux2_klein_and_dev() {
 
 #[test]
 fn launch_args_other_new_families() {
-    // Qwen-Image 2.1: its own VAE, Qwen3-VL 8B, --fa (docs).
+    // Qwen-Image 2.1: its own VAE, Qwen3-VL 8B + its vision tower (edits), --fa (docs).
     assert_eq!(
         wired("qwen_image_21", "/m/qwen_image_2.1-Q4_K.gguf", 16.0),
         vec![
@@ -1106,6 +1111,8 @@ fn launch_args_other_new_families() {
             "/c/qwen_image_21_vae",
             "--llm",
             "/c/qwen3vl_8b_q4km",
+            "--llm_vision",
+            "/c/qwen3vl_8b_mmproj",
             "--fa",
         ]
     );
