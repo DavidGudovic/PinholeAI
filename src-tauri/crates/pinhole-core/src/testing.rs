@@ -300,7 +300,7 @@ mod tests {
             );
         }
 
-        // Save (default: no metadata), then with "settings (no prompt)".
+        // Save (default: only the AI marker), then with "settings (no prompt)".
         let saved = session::save_image(&core, &res.images[0].id).unwrap();
         let name = std::path::Path::new(&saved.path)
             .file_name()
@@ -311,14 +311,19 @@ mod tests {
             name.starts_with("pinhole_") && name.ends_with("_1000.png"),
             "{name}"
         );
-        assert!(pinhole_engine::png::text_chunks(&std::fs::read(&saved.path).unwrap()).is_empty());
+        let is_marker =
+            |c: &(String, Vec<u8>)| c.0 == "iTXt" && c.1.starts_with(b"XML:com.adobe.xmp\0");
+        let chunks = pinhole_engine::png::text_chunks(&std::fs::read(&saved.path).unwrap());
+        assert_eq!(chunks.len(), 1);
+        assert!(is_marker(&chunks[0]));
         core.settings.write().saved_metadata = "settings".into();
         let saved2 = session::save_image(&core, &res.images[0].id).unwrap();
         assert_ne!(saved.path, saved2.path, "unique name on collision");
         let chunks = pinhole_engine::png::text_chunks(&std::fs::read(&saved2.path).unwrap());
-        assert_eq!(chunks.len(), 1);
-        assert!(chunks[0].1.starts_with(b"pinhole\0"));
-        assert!(has(&chunks[0].1, "\"seed\":1000"));
+        assert_eq!(chunks.len(), 2);
+        assert!(is_marker(&chunks[0]));
+        assert!(chunks[1].1.starts_with(b"pinhole\0"));
+        assert!(has(&chunks[1].1, "\"seed\":1000"));
 
         // Nothing under Data/ contains the prompt; last_used was updated (a number).
         assert!(scan_for(&tmp.path().join("Data"), SENTINEL.as_bytes()).is_empty());
