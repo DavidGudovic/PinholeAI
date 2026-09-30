@@ -2596,10 +2596,7 @@ mod tests {
                 m.contains("digitalsourcetype/trainedAlgorithmicMedia"),
                 "{m}"
             );
-            assert!(
-                m.contains(concat!("Pinhole ", env!("CARGO_PKG_VERSION"))),
-                "{m}"
-            );
+            assert!(!m.contains("Pinhole"), "no app name (David): {m}");
             assert!(!m.contains("a boat"));
             let path = tmp.path().join(format!("as_{with_settings}.png"));
             let saved = std::fs::read(

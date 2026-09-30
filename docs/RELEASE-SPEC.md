@@ -68,12 +68,12 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
   - IPTC/XMP `DigitalSourceType`:
     `http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia` for Create,
     `.../compositeWithTrainedAlgorithmicMedia` for Edit / Restyle.
-  - A C2PA manifest (`c2pa` Rust crate): claim generator `Pinhole <version>`, action
+  - A C2PA manifest (`c2pa` Rust crate): claim generator (C2PA requires one; C2PA is on hold, and if it is added the claim generator must not name Pinhole), action
     `c2pa.created` or `c2pa.edited` with the digital source type. Decide on signing (a
     self-signed certificate shows as "unknown signer" in validators).
 - **Invisible pixel watermark** that survives JPEG re-encode, resizing and clipboard copy
   (candidates: Adobe TrustMark — verify licence and ONNX export — or a DWT-DCT watermark ported to Rust).
-- **Contents:** "made with AI" and the app name/version only. **No prompt, negative prompt, style
+- **Contents:** "made with AI" only (David, 2026-09-30: no app name or version either). **No prompt, negative prompt, style
   text, seed, user name or machine identifier.** This keeps the privacy rules intact.
 - **Always on.** Not a setting, and no switch to turn it off. The existing "Include generation
   settings (no prompt)" setting stays separate and optional.

@@ -202,12 +202,17 @@ const SOURCE_GENERATED: &str =
 const SOURCE_COMPOSITE: &str =
     "http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia";
 
-/// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with the
-/// IPTC digital source type and the app name + version. Nothing else: no prompt,
-/// seed, model, user or machine.
-pub fn ai_marker_xmp(origin: Origin) -> String {
+/// ... and for a picture the user brought in that was only upscaled.
+const SOURCE_ENHANCED: &str =
+    "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced";
+
+/// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with only
+/// the IPTC digital source type ("made with AI"). No app name (David, 2026-09-30),
+/// prompt, seed, model, user or machine.
+pub fn ai_marker_xmp(origin: Origin, upscaled_import: bool) -> String {
     let source = match origin {
         Origin::Generated => SOURCE_GENERATED,
+        Origin::Imported if upscaled_import => SOURCE_ENHANCED,
         Origin::Imported => SOURCE_COMPOSITE,
     };
     format!(
@@ -216,14 +221,16 @@ pub fn ai_marker_xmp(origin: Origin) -> String {
             r#"<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">"#,
             r#"<rdf:Description rdf:about="""#,
             r#" xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/""#,
-            r#" xmlns:xmp="http://ns.adobe.com/xap/1.0/""#,
-            r#" Iptc4xmpExt:DigitalSourceType="{source}""#,
-            r#" xmp:CreatorTool="Pinhole {version}"/>"#,
+            r#" Iptc4xmpExt:DigitalSourceType="{source}"/>"#,
             r#"</rdf:RDF></x:xmpmeta>"#
         ),
         source = source,
-        version = env!("CARGO_PKG_VERSION"),
     )
+}
+
+/// An upscale (of an upscale…) of a picture the user brought in: no model ever ran on it.
+fn upscaled_import(m: &ResultImage) -> bool {
+    m.kind == crate::generate::ResultKind::Upscaled && m.model_id.is_empty()
 }
 
 /// Export (RELEASE-SPEC §1 item 4): the one function behind Save, Save as and
@@ -237,9 +244,12 @@ pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     };
     let damaged = |_| CoreError::internal("The image in memory is damaged.");
     let clean = pinhole_engine::png::scrub(&im.bytes).map_err(damaged)?;
-    let marked =
-        pinhole_engine::png::add_itxt_chunk(&clean, "XML:com.adobe.xmp", &ai_marker_xmp(im.origin))
-            .map_err(damaged)?;
+    let marked = pinhole_engine::png::add_itxt_chunk(
+        &clean,
+        "XML:com.adobe.xmp",
+        &ai_marker_xmp(im.origin, upscaled_import(m)),
+    )
+    .map_err(damaged)?;
     if core.settings.read().saved_metadata == "settings" {
         pinhole_engine::png::add_text_chunk(&marked, "pinhole", &settings_text(m))
             .map_err(|_| CoreError::internal("Couldn't add the settings to the image."))
@@ -422,5 +432,25 @@ mod tests {
             assert!(v.get(k).is_none(), "{k}");
         }
         assert_eq!(v["seed"], 1234);
+    }
+
+    #[test]
+    fn ai_marker_says_made_with_ai_and_nothing_else() {
+        let gen = ai_marker_xmp(Origin::Generated, false);
+        assert!(
+            gen.contains("digitalsourcetype/trainedAlgorithmicMedia\""),
+            "{gen}"
+        );
+        assert!(!gen.contains("Pinhole") && !gen.contains(env!("CARGO_PKG_VERSION")));
+        assert!(
+            ai_marker_xmp(Origin::Imported, false).contains("compositeWithTrainedAlgorithmicMedia")
+        );
+        assert!(ai_marker_xmp(Origin::Imported, true).contains("algorithmicallyEnhanced"));
+        let mut m = meta("a");
+        assert!(!upscaled_import(&m));
+        m.kind = crate::generate::ResultKind::Upscaled;
+        assert!(!upscaled_import(&m), "upscale of a generated picture");
+        m.model_id.clear();
+        assert!(upscaled_import(&m));
     }
 }
