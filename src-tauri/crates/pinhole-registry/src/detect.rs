@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{DetectRules, Family, Layout, Registry};
 
-/// Hard cap for a safetensors JSON header (CLAUDE.md: defensive parsing).
+/// Hard cap for a safetensors JSON header.
 /// Also caps the number of bytes read for a GGUF header (metadata + tensor infos).
 pub const MAX_HEADER_BYTES: u64 = 100 * 1024 * 1024;
 

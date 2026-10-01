@@ -888,8 +888,8 @@ pub async fn improve_prompt(
     })?;
     let (text, degenerate) =
         collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
-    // Before the fallbacks: text that would be blocked never comes back, even when short. A
-    // refusal that names what it declines is blocked too, on purpose: the check always runs.
+    // Before the fallbacks: the word check runs on every answer, including short ones and
+    // refusals.
     crate::text_check::check(&text)?;
     if is_refusal(&text) {
         return Ok(ImprovedPrompt {
