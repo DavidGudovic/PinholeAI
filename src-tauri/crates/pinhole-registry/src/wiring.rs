@@ -173,6 +173,52 @@ pub fn is_known_flag(flag: &str) -> bool {
     BOOL_FLAGS.contains(&flag) || VALUE_FLAGS.contains(&flag)
 }
 
+/// Flags that load weights or other content, or change where the server listens or what it
+/// logs. Pinhole sets these itself; the free-form `flags` lists in models.yaml (and
+/// Data/config/overrides.yaml) and engine.yaml's launch defaults may not, so an edited file
+/// can't load content past the checks (for example embeddings named by harmless words).
+const CONTENT_FLAGS: &[&str] = &[
+    "--embd-dir",
+    "--lora-model-dir",
+    "--hires-upscalers-dir",
+    "--upscale-model",
+    "--rpc-servers",
+    "--tokenizer",
+    "--embeddings-connectors",
+    "--tensor-type-rules",
+    "--listen-ip",
+    "--listen-port",
+    "--serve-html-path",
+    "--log-level",
+    "--verbose",
+];
+
+/// `true` for a flag the free-form flag lists may carry: a known tuning flag that loads
+/// nothing ([`CONTENT_FLAGS`], [`WEIGHT_FILE_FLAGS`]). Short forms, `--flag=value` forms and
+/// unknown flags are never allowed.
+pub fn is_tuning_flag(flag: &str) -> bool {
+    is_known_flag(flag) && !CONTENT_FLAGS.contains(&flag) && !WEIGHT_FILE_FLAGS.contains(&flag)
+}
+
+/// `flags` with everything but [tuning flags](is_tuning_flag) (and the names in `also`)
+/// dropped, each with its value.
+pub fn keep_tuning_flags(flags: &[String], also: &[&str]) -> Vec<String> {
+    let mut out = Vec::with_capacity(flags.len());
+    let mut i = 0;
+    while i < flags.len() {
+        let flag = flags[i].as_str();
+        let takes_value = !BOOL_FLAGS.contains(&flag)
+            && flag.starts_with('-')
+            && flags.get(i + 1).is_some_and(|next| !next.starts_with("--"));
+        let n = if takes_value { 2 } else { 1 };
+        if is_tuning_flag(flag) || also.contains(&flag) {
+            out.extend(flags[i..i + n].iter().cloned());
+        }
+        i += n;
+    }
+    out
+}
+
 /// Options whose value is a weight file sd-server loads (main model,
 /// components, add-ons), e.g. to estimate how much memory the weights need.
 pub const WEIGHT_FILE_FLAGS: &[&str] = &[
@@ -470,8 +516,10 @@ impl ArgList {
         self.units.retain(|(f, _)| f != flag);
     }
 
-    /// Add raw registry flags (`["--model-args", "a=b", "--diffusion-fa"]`).
+    /// Add raw registry flags (`["--model-args", "a=b", "--diffusion-fa"]`); only
+    /// [tuning flags](is_tuning_flag) are kept.
     fn extend_raw(&mut self, flags: &[String]) {
+        let flags = &keep_tuning_flags(flags, &[])[..];
         let mut i = 0;
         while i < flags.len() {
             let flag = flags[i].as_str();
@@ -679,6 +727,9 @@ pub fn size_multiple(family: &Family) -> u32 {
 }
 
 /// Round `v` to the nearest multiple of `m` (at least `m`, at most 4096).
+/// Smallest width or height Fine-tune can ask for.
+pub const MIN_SIDE: u32 = 256;
+
 pub fn round_to_multiple(v: u32, m: u32) -> u32 {
     let m = m.max(1);
     let r = (v.saturating_add(m / 2) / m) * m;
@@ -756,8 +807,16 @@ pub fn resolve_params(
     let d = &family.dials;
     let multiple = size_multiple(family);
     let [sw, sh] = shape_size(family, dials.shape);
-    let width = round_to_multiple(fine.width.filter(|w| *w > 0).unwrap_or(sw), multiple);
-    let height = round_to_multiple(fine.height.filter(|h| *h > 0).unwrap_or(sh), multiple);
+    // Fine-tune sizes start at MIN_SIDE: in a tinier picture faces are too small for the
+    // image check to judge.
+    let side = |v: Option<u32>, shape: u32| {
+        round_to_multiple(
+            v.filter(|v| *v > 0).map_or(shape, |v| v.max(MIN_SIDE)),
+            multiple,
+        )
+    };
+    let width = side(fine.width, sw);
+    let height = side(fine.height, sh);
 
     let quality_steps = d.quality.as_ref().map(|q| match dials.quality {
         Quality::Fast => q.fast,
@@ -780,13 +839,17 @@ pub fn resolve_params(
     let t = if edit { 1.0 - stick } else { stick };
     let target = stick_target(family, edit);
 
-    let cfg = fine.cfg.filter(|c| c.is_finite()).unwrap_or_else(|| {
-        match (d.cfg_fixed, target, d.cfg_range) {
+    // Never below 1: lower values steer towards the negative prompt (the engine request
+    // enforces this too; clamping here keeps what Fine-tune shows honest).
+    let cfg = fine
+        .cfg
+        .filter(|c| c.is_finite())
+        .unwrap_or_else(|| match (d.cfg_fixed, target, d.cfg_range) {
             (Some(fixed), _, _) => fixed,
             (None, "cfg", Some(range)) => lerp(range, t),
             _ => d.cfg_default.unwrap_or(DEFAULT_CFG),
-        }
-    });
+        })
+        .max(1.0);
     let guidance = fine
         .guidance
         .filter(|g| g.is_finite())

@@ -18,12 +18,43 @@ use crate::words::CheckedPrompt;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Guidance {
+    /// Sent as at least 1 ([`MIN_CFG`]). Below 1, sd.cpp leans towards the negative prompt
+    /// (at 0 it follows only the negative), and the negative prompt isn't word-checked.
+    #[serde(serialize_with = "ser_cfg")]
     pub txt_cfg: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_cfg"
+    )]
     pub img_cfg: Option<f32>,
     /// Flux-style distilled guidance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distilled_guidance: Option<f32>,
+}
+
+/// The lowest CFG the engine is ever sent. At CFG 1 sd.cpp ignores the negative prompt; above
+/// 1 it steers away from it. Enforced where the request is serialized, so no setting, pasted
+/// value or IPC call can send less.
+pub const MIN_CFG: f32 = 1.0;
+
+/// `cfg` raised to [`MIN_CFG`]; a non-finite value becomes [`MIN_CFG`].
+pub fn safe_cfg(cfg: f32) -> f32 {
+    if cfg.is_finite() {
+        cfg.max(MIN_CFG)
+    } else {
+        MIN_CFG
+    }
+}
+
+fn ser_cfg<S: serde::Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f32(safe_cfg(*v))
+}
+
+fn ser_opt_cfg<S: serde::Serializer>(v: &Option<f32>, s: S) -> Result<S::Ok, S::Error> {
+    match v {
+        Some(v) => s.serialize_some(&safe_cfg(*v)),
+        None => s.serialize_none(),
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -633,6 +664,34 @@ mod tests {
                 && v.get("hires").is_none()
         );
         assert!(!req.embeds_metadata());
+    }
+
+    /// Regression: below CFG 1 the engine follows the negative prompt, which isn't
+    /// word-checked, so the body never carries less than 1, whatever the caller set.
+    #[test]
+    fn cfg_below_one_is_sent_as_one() {
+        for cfg in [0.0, 0.5, -3.0, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+            let mut req = ImgGenRequest::new(
+                crate::words::CheckedPrompt::check("a cat").unwrap(),
+                512,
+                512,
+                1,
+            );
+            req.sample_params.guidance.txt_cfg = cfg;
+            req.sample_params.guidance.img_cfg = Some(cfg);
+            let v = serde_json::to_value(&req).unwrap();
+            assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+            assert_eq!(v["sample_params"]["guidance"]["img_cfg"], 1.0, "{cfg}");
+        }
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            512,
+            512,
+            1,
+        );
+        req.sample_params.guidance.txt_cfg = 6.5;
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 6.5);
     }
 
     /// Regression: with no `upscaler`, sd-server upscales in latent space, which

@@ -614,10 +614,19 @@ mod tests {
             req
         };
 
+        let fake = FakeCheck::default();
+        let sizes = fake.sizes.clone();
+        use_check(&core, fake);
         let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
             .await
             .unwrap();
         assert_eq!(res.images.len(), 1);
+        // Regression: the redrawn box is checked on its own too, not only as a small part of
+        // the whole picture.
+        let sizes = sizes.lock().clone();
+        assert_eq!(sizes.len(), 2, "{sizes:?}");
+        assert_eq!(sizes[0], (1200, 900));
+        assert!(sizes[1].0 < 1200 && sizes[1].1 < 900, "{sizes:?}");
         let out = &res.images[0];
         assert_eq!(
             (out.width, out.height),
@@ -2371,15 +2380,31 @@ mod tests {
             words: None,
         }];
         req.add_trigger_words = false;
+        let e = generate::generate(&core, req.clone()).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
+        // of the check; the add-on still steers the picture.
+        crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
         // Under-18 terms in the negative prompt are how people keep them out.
-        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
         req.fine_tune.negative_prompt = Some("child, loli".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
+
+        // Regression: below CFG 1 the engine follows the negative prompt, so the request
+        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        for cfg in [0.0, 0.5, -3.0] {
+            let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
+            req.fine_tune.cfg = Some(cfg);
+            generate::generate(&core, req).await.unwrap();
+            let body = mock.requests().pop().unwrap();
+            assert_eq!(body["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+        }
     }
 
     #[tokio::test]
@@ -2512,6 +2537,40 @@ mod tests {
         let body = &llama.requests()[0];
         assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
+    }
+
+    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
+    /// content past the checks.
+    #[tokio::test]
+    async fn sd_args_keep_only_tuning_launch_defaults() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp.launch_defaults = [
+            "--embd-dir",
+            "/e",
+            "--photo-maker",
+            "/p",
+            "-n",
+            "words",
+            "--mmap",
+            "--log-level",
+            "warn",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let wiring = vec!["--model".to_string(), "/m.safetensors".to_string()];
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        for bad in ["--embd-dir", "/e", "--photo-maker", "/p", "-n", "words"] {
+            assert!(!args.iter().any(|a| a == bad), "{bad}: {args:?}");
+        }
+        assert!(args.iter().any(|a| a == "--mmap"), "{args:?}");
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--log-level" && w[1] == "warn"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--model" && w[1] == "/m.safetensors"));
     }
 
     #[tokio::test]

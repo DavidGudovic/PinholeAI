@@ -426,16 +426,18 @@ impl Registry {
                 ));
             }
             for flag in &f.flags {
-                if flag.starts_with("--") && !wiring::is_known_flag(flag) {
-                    problems.push(format!("family `{id}`: unknown sd-server flag `{flag}`"));
+                if flag.starts_with('-') && !wiring::is_tuning_flag(flag) {
+                    problems.push(format!(
+                        "family `{id}`: sd-server flag `{flag}` isn't allowed here (unknown, or it loads content)"
+                    ));
                 }
             }
         }
         for p in &self.file.hardware_profiles {
             for flag in &p.flags {
-                if flag.starts_with("--") && !wiring::is_known_flag(flag) {
+                if flag.starts_with('-') && !wiring::is_tuning_flag(flag) {
                     problems.push(format!(
-                        "hardware profile `{}`: unknown sd-server flag `{flag}`",
+                        "hardware profile `{}`: sd-server flag `{flag}` isn't allowed here (unknown, or it loads content)",
                         p.name
                     ));
                 }
