@@ -88,6 +88,12 @@ jobs:
           }
           Get-ChildItem src-tauri/vcrt | Format-Table Name, Length
 
+      # Linux only: the check covers every target (--target all), and a bash script checked out
+      # on Windows gets CRLF line endings.
+      - name: No test-only code in the app build
+        if: runner.os == 'Linux'
+        run: scripts/check-release-features.sh
+
       - name: Build app and installers (tauri build --bundles ${{ matrix.bundles }})
         run: npx tauri build --bundles ${{ matrix.bundles }}
         env:
