@@ -23,6 +23,7 @@ const APPS_ARGS: &[&str] = &[
     "--query-compute-apps=pid,process_name,used_memory",
     "--format=csv,noheader,nounits",
 ];
+const CAP_ARGS: &[&str] = &["--query-gpu=compute_cap", "--format=csv,noheader"];
 const TIMEOUT: Duration = Duration::from_secs(5);
 /// Output cap (a line per GPU; anything near this is not nvidia-smi).
 const MAX_OUTPUT: u64 = 64 * 1024;
@@ -67,6 +68,23 @@ pub(crate) fn query() -> Vec<GpuInfo> {
     run_smi(QUERY_ARGS)
         .map(|out| parse_nvidia_smi(&out))
         .unwrap_or_default()
+}
+
+/// Lowest compute capability over all NVIDIA GPUs (`None` if nvidia-smi is
+/// missing, too old for `compute_cap`, or prints anything unexpected).
+pub(crate) fn min_compute_cap() -> Option<f32> {
+    run_smi(CAP_ARGS).and_then(|out| parse_min_compute_cap(&out))
+}
+
+/// `8.6\n12.0\n` → 8.6. Any line that isn't a number → `None`.
+pub fn parse_min_compute_cap(output: &str) -> Option<f32> {
+    let caps: Option<Vec<f32>> = output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| l.parse::<f32>().ok().filter(|c| c.is_finite() && *c > 0.0))
+        .collect();
+    caps?.into_iter().reduce(f32::min)
 }
 
 /// `nvidia-smi <args>` with the first candidate that exists; `None` on any failure.
@@ -338,6 +356,18 @@ pub(crate) fn run_with_timeout(mut cmd: Command, timeout: Duration) -> RunResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn min_compute_cap_parses_or_gives_up() {
+        assert_eq!(parse_min_compute_cap("12.0\n8.6\n"), Some(8.6));
+        assert_eq!(parse_min_compute_cap("7.5"), Some(7.5));
+        assert_eq!(parse_min_compute_cap(""), None);
+        assert_eq!(
+            parse_min_compute_cap("Field \"compute_cap\" is not a valid field"),
+            None
+        );
+        assert_eq!(parse_min_compute_cap("8.6\n[N/A]"), None);
+    }
 
     #[test]
     fn parses_single_and_multi_gpu() {

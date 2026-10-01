@@ -192,19 +192,28 @@ pub async fn launch(
     if !args.iter().any(|a| a == "--listen-ip") {
         args.extend(["--listen-ip".to_string(), "127.0.0.1".to_string()]);
     }
+    // Launched like the app does: key in the environment, browser requests refused.
     args.extend([
         "--listen-port".to_string(),
         port.to_string(),
         "-m".to_string(),
         model.display().to_string(),
+        pinhole_engine::sdapi::REJECT_ORIGIN_FLAG.to_string(),
     ]);
-    // ADAPT: EngineProcess::spawn(exe, args, port, logs)
-    let mut process = EngineProcess::spawn(exe, &args, port, logs.clone())
-        .map_err(|e| format!("spawn {}: {e}", exe.display()))?;
+    let key = uuid::Uuid::new_v4().simple().to_string();
+    let mut process = EngineProcess::spawn_with_env(
+        exe,
+        &args,
+        &[(pinhole_engine::sdapi::API_KEY_ENV, key.as_str())],
+        port,
+        logs.clone(),
+    )
+    .map_err(|e| format!("spawn {}: {e}", exe.display()))?;
     let client = SdClient::new(
         LocalClient::new().map_err(|e| e.to_string())?,
         process.base_url(),
-    );
+    )
+    .with_api_key(key.clone());
     let cancel = CancellationToken::new();
     let probe_client = client.clone();
     let started = Instant::now();
@@ -237,11 +246,53 @@ pub async fn launch(
         process.base_url(),
         started.elapsed().as_secs_f32()
     );
+    let refused = [
+        ("no key", raw_status(port, None, None)),
+        ("wrong key", raw_status(port, Some("wrong"), None)),
+        (
+            "browser page",
+            raw_status(port, Some(&key), Some("https://example.com")),
+        ),
+        ("sandboxed page", raw_status(port, Some(&key), Some("null"))),
+    ];
+    let expected = [401, 401, 403, 403];
+    if refused.iter().map(|(_, s)| *s).ne(expected) || raw_status(port, Some(&key), None) != 200 {
+        process.kill().await;
+        return Err(format!("engine lock-down not in effect: {refused:?}"));
+    }
     Ok(RunningEngine {
         process,
         client,
         logs,
     })
+}
+
+/// HTTP status of `GET /sdcpp/v1/capabilities` sent by hand (with or without the key and an
+/// `Origin` header), to check the engine's lock-down from outside Pinhole's client.
+fn raw_status(port: u16, key: Option<&str>, origin: Option<&str>) -> u16 {
+    use std::io::{Read, Write};
+    let Ok(mut s) = std::net::TcpStream::connect(("127.0.0.1", port)) else {
+        return 0;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
+    let mut req = format!(
+        "GET /sdcpp/v1/capabilities HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n"
+    );
+    if let Some(k) = key {
+        req.push_str(&format!("Authorization: Bearer {k}\r\n"));
+    }
+    if let Some(o) = origin {
+        req.push_str(&format!("Origin: {o}\r\n"));
+    }
+    req.push_str("\r\n");
+    let mut head = [0u8; 12];
+    if s.write_all(req.as_bytes()).is_err() || s.read_exact(&mut head).is_err() {
+        return 0;
+    }
+    std::str::from_utf8(&head[9..12])
+        .ok()
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0)
 }
 
 /// One txt2img job through the native async API. Returns PNG bytes per image.

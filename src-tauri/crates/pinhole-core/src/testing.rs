@@ -2812,6 +2812,14 @@ mod tests {
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()), "{text}");
         let args = text.lines().find_map(|l| l.strip_prefix("args=")).unwrap();
         assert!(!args.contains(key) && !args.contains("--api-key"), "{args}");
+        // The launched engine also gets the lock-down flag and keeps the pinned tuning flags.
+        let argv: Vec<&str> = args.split_whitespace().collect();
+        assert_eq!(
+            argv.contains(&pinhole_engine::sdapi::REJECT_ORIGIN_FLAG),
+            crate::generate::ENGINE_LOCKDOWN,
+            "{args}"
+        );
+        assert!(argv.contains(&"--disable-image-metadata"), "{args}");
     }
 
     #[tokio::test]
@@ -2842,7 +2850,7 @@ mod tests {
     }
 
     /// Drives the REAL sd-server (Linux) through `generate` when
-    /// `PINHOLE_SD_ARCHIVE` points at the pinned `…-bin-Linux-Ubuntu-24.04-x86_64.zip`:
+    /// `PINHOLE_SD_ARCHIVE` points at the pinned `…-bin-Linux-Ubuntu-24.04-x86_64-cpu.zip`:
     /// install from the archive, launch with a bogus model file, expect the
     /// plain-language "couldn't be loaded" error with the engine output in details.
     #[tokio::test]

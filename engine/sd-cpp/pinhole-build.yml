@@ -10,7 +10,7 @@
 # SHA256SUMS.txt. The web UI is left out (the lock-down flag disables it anyway).
 #
 # Build flags follow upstream's .github/workflows/build.yml at master-929-3f8527a.
-# Not run yet: first run needs checking against upstream's own job logs.
+# First published release: master-929-3f8527a-pinhole1 (2026-10-01), pinned in config/engine.yaml.
 
 name: Pinhole engine build
 
@@ -81,7 +81,14 @@ jobs:
             -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH='$ORIGIN'
           cmake --build build --config Release -j "$(nproc)"
       - name: Check the patch is in
-        run: src/build/bin/sd-server --help | grep -- --reject-origin > /dev/null
+        # The CUDA build links libcuda.so.1, which only comes with an NVIDIA driver (not on
+        # the runner), so it can't start here: look for the option text in the binary instead.
+        run: |
+          if [ "${{ matrix.build }}" = cuda12 ]; then
+            grep -a -- --reject-origin src/build/bin/sd-server > /dev/null
+          else
+            src/build/bin/sd-server --help | grep -- --reject-origin > /dev/null
+          fi
       - name: Pack
         run: |
           cp src/ggml/LICENSE src/build/bin/ggml.txt
@@ -150,8 +157,15 @@ jobs:
           cmake -B build -DCMAKE_CXX_FLAGS='/bigobj' -G Ninja -DCMAKE_C_COMPILER=cl.exe -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release ${{ env.COMMON_FLAGS }} ${{ matrix.flags }}
           cmake --build build
       - name: Check the patch is in
+        # The CUDA build needs nvcuda.dll from an NVIDIA driver (not on the runner) to start,
+        # so look for the option text in the binary instead.
         shell: bash
-        run: src/build/bin/sd-server.exe --help | grep -- --reject-origin > /dev/null
+        run: |
+          if [ "${{ matrix.build }}" = cuda12 ]; then
+            grep -a -- --reject-origin src/build/bin/sd-server.exe > /dev/null
+          else
+            src/build/bin/sd-server.exe --help | grep -- --reject-origin > /dev/null
+          fi
       - name: Pack
         run: |
           Copy-Item src/ggml/LICENSE src/build/bin/ggml.txt

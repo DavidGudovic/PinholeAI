@@ -33,9 +33,11 @@ this patch and the build workflow; everything else stays upstream's code at the 
    Windows CPU / Vulkan / CUDA, then publishes a release with the zips and `SHA256SUMS.txt`.
    Linux CUDA is new (upstream has none) and is built only for RTX 30/40/50 cards to keep the
    download small; Windows CUDA keeps upstream's architecture list.
-4. In Pinhole: point `config/engine.yaml` at that release (sizes and SHA-256 checked with the
-   verify-pins workflow), add a `linux_cuda` build (+ its cudart zip as `extra`), set
-   `ENGINE_LOCKDOWN = true` in `pinhole-core/src/generate.rs`, run the engine smoke test.
+4. In Pinhole: point `config/engine.yaml` at that release (sizes and SHA-256 from the release's
+   `SHA256SUMS.txt`, cross-checked with the verify-pins workflow) and run the engine smoke test.
+   `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` is on, so an unpatched engine won't start.
+
+Current pin: `master-929-3f8527a-pinhole1` from DavidGudovic/stable-diffusion.cpp.
 
 Updating the engine: rerun the workflow with the new upstream tag. If the patch no longer
 applies, refresh it against the new tag and copy it here too.

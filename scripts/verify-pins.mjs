@@ -45,6 +45,17 @@ const ENGINE_ASSETS = {
     linux_cpu: /^sd-.*-bin-Linux-Ubuntu-[\d.]+-x86_64\.zip$/,
     linux_vulkan: /^sd-.*-bin-Linux-Ubuntu-[\d.]+-x86_64-vulkan\.zip$/,
   },
+  // Pinhole's fork: upstream code + the sd-server lock-down patch (engine/sd-cpp/).
+  "DavidGudovic/stable-diffusion.cpp": {
+    windows_cpu: /^sd-.*-bin-win-cpu-x64\.zip$/,
+    windows_cuda: /^sd-.*-bin-win-cuda12-x64\.zip$/,
+    windows_cudart: /^cudart-sd-bin-win-cu12-x64\.zip$/,
+    windows_vulkan: /^sd-.*-bin-win-vulkan-x64\.zip$/,
+    linux_cpu: /^sd-.*-bin-Linux-Ubuntu-[\d.]+-x86_64-cpu\.zip$/,
+    linux_cuda: /^sd-.*-bin-Linux-Ubuntu-[\d.]+-x86_64-cuda12\.zip$/,
+    linux_cudart: /^cudart-sd-bin-Linux-Ubuntu-[\d.]+-x86_64-cu12\.zip$/,
+    linux_vulkan: /^sd-.*-bin-Linux-Ubuntu-[\d.]+-x86_64-vulkan\.zip$/,
+  },
   "ggml-org/llama.cpp": {
     windows_cpu: /^llama-.*-bin-win-cpu-x64\.zip$/,
     windows_cuda: /^llama-.*-bin-win-cuda-?12[\d.]*-x64\.zip$/,

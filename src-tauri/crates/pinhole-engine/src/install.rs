@@ -1012,7 +1012,8 @@ mod tests {
             .dest
             .to_string_lossy()
             .ends_with("cudart-sd-bin-win-cu12-x64.zip"));
-        assert_eq!(specs[0].size_bytes, Some(337915440));
+        assert_eq!(specs[0].size_bytes, sel.build.size_bytes);
+        assert!(specs[0].size_bytes.unwrap_or(0) > 100_000_000);
     }
 
     /// Full download → SHA-256 verify → unpack of the pinned CPU build through the
