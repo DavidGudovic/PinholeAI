@@ -10,6 +10,8 @@ const hold = <T,>() => {
   return { promise, resolve };
 };
 let maskExport = hold<Blob | null>();
+// Whether the mask counts as painted as soon as it is switched on.
+let paintOnShow = true;
 let captioner: CaptionerStatus = { available: false } as CaptionerStatus;
 
 const model = {
@@ -48,7 +50,7 @@ vi.mock("./MaskCanvas", () => ({
   MaskCanvas: ({ ref, active, onPaintedChange }: { ref?: Ref<unknown>; active: boolean; onPaintedChange: (b: boolean) => void }) => {
     useImperativeHandle(ref, () => ({ clear: () => undefined, exportPng: () => maskExport.promise }));
     useEffect(() => {
-      if (active) onPaintedChange(true);
+      if (active && paintOnShow) onPaintedChange(true);
     }, [active, onPaintedChange]);
     return null;
   },
@@ -67,6 +69,7 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   maskExport = hold();
+  paintOnShow = true;
   captioner = { available: false } as CaptionerStatus;
   globalThis.URL.createObjectURL = vi.fn(() => "blob:x") as typeof URL.createObjectURL;
   globalThis.URL.revokeObjectURL = vi.fn();
@@ -161,6 +164,30 @@ describe("Edit tab", () => {
     await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
     const req = vi.mocked(api.generate).mock.calls[0][0];
     expect(req).toMatchObject({ mode: "img2img", fixDetails: true, maskImageId: "mask", initImageId: "a", prompt: "" });
+  });
+
+  it("Fix details with nothing painted adds detail to the whole picture, without a mask", async () => {
+    paintOnShow = false;
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+    });
+    fireEvent.click(await screen.findByRole("radio", { name: "Fix details" }));
+    await flush();
+    const run = screen.getByRole("button", { name: /^Add detail/ });
+    expect((run as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(run);
+    await flush();
+    await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
+    const req = vi.mocked(api.generate).mock.calls[0][0];
+    expect(req).toMatchObject({ mode: "img2img", fixDetails: true, maskImageId: null, initImageId: "a" });
   });
 
   it("Extend picks a new shape and side, has no brush and sends the canvas", async () => {

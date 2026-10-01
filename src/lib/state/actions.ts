@@ -602,9 +602,6 @@ export function makeActions(store: Store) {
     if (!node || !source) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
     const text =
       opts.mode === "instruction" ? s.edit.instruction : opts.mode === "fix" ? s.edit.fixPrompt : opts.mode === "extend" ? s.edit.extendPrompt : s.edit.restylePrompt;
-    if (opts.mode === "fix" && !opts.mask) {
-      throw { code: "invalid", message: "Paint over the spot to fix first.", details: null } as CoreError;
-    }
     if (opts.mode !== "fix" && opts.mode !== "extend" && !text.trim() && !s.edit.styleId) {
       throw {
         code: "invalid",
