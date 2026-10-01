@@ -36,6 +36,10 @@ pub const AGE_MIN_SIDE: f32 = 16.0;
 /// Smallest face side (pixels) that counts on a brought-in picture. Much lower than on a result:
 /// Edit and Upscale make a small face large again, so a small face still means a person.
 pub const ORIGINAL_FACE_MIN_SIDE: f32 = 12.0;
+/// Face finder score that counts on a brought-in picture. Lower than on a result: a wrong
+/// find only means an intimate edit of that picture is refused, a miss means a real person's
+/// photo can be made intimate.
+pub const ORIGINAL_FACE_SCORE: f32 = 0.6;
 /// Age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups) that blocks.
 /// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
 /// the photo-face rule stops at clear children.
@@ -88,7 +92,7 @@ impl Face {
 
     /// A face on a brought-in picture (see [`ORIGINAL_FACE_MIN_SIDE`]).
     pub fn counts_in_original(&self) -> bool {
-        self.score >= FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
+        self.score >= ORIGINAL_FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
     }
 }
 
@@ -101,6 +105,18 @@ pub struct Readings {
     pub nudity: f32,
     pub tags: Option<Tags>,
     pub faces: Option<Vec<Face>>,
+}
+
+/// Most people on one brought-in picture measured on their own; with more, the picture
+/// doesn't count as already intimate.
+pub const MAX_PEOPLE_MEASURED: usize = 8;
+
+/// Whether a brought-in picture that reads as intimate as a whole counts as already intimate:
+/// only when every person in it (`people` faces, `each` = their own region intimate) is. A
+/// collage of an ordinary photo of someone next to an intimate picture is not. People found
+/// only with the picture turned, or too many to measure, fail closed.
+pub fn already_intimate(people: usize, each: &[bool]) -> bool {
+    people > 0 && people <= MAX_PEOPLE_MEASURED && each.len() == people && each.iter().all(|&i| i)
 }
 
 /// What the check measured once on a brought-in picture (the start of a chain).
@@ -432,5 +448,34 @@ mod tests {
         );
         assert!(!is_sexual(1.0, None));
         assert!(!is_intimate(1.0, None));
+    }
+
+    /// Regression: an intimate part elsewhere in a brought-in picture (a collage) used to
+    /// exempt an ordinary photo of someone in it from the real-photo rule.
+    #[test]
+    fn already_intimate_is_per_person() {
+        assert!(already_intimate(1, &[true]));
+        assert!(already_intimate(2, &[true, true]));
+        assert!(!already_intimate(2, &[true, false]), "a collage");
+        assert!(!already_intimate(1, &[false]));
+        assert!(!already_intimate(0, &[]), "found only turned: fail closed");
+        assert!(!already_intimate(
+            MAX_PEOPLE_MEASURED + 1,
+            &[true; MAX_PEOPLE_MEASURED]
+        ));
+        let o = Original {
+            has_face: true,
+            intimate: already_intimate(2, &[true, false]),
+        };
+        let r = Readings {
+            nudity: 1.0,
+            tags: Some(Tags {
+                explicit: 1.0,
+                nude: 1.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert_eq!(decide(&r, &[o], false), Some(Rule::PhotoMadeIntimate));
     }
 }

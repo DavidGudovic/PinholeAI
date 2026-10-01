@@ -178,6 +178,14 @@ pub fn is_known_flag(flag: &str) -> bool {
 /// Data/config/overrides.yaml) and engine.yaml's launch defaults may not, so an edited file
 /// can't load content past the checks (for example embeddings named by harmless words).
 const CONTENT_FLAGS: &[&str] = &[
+    // Server-wide request defaults: a guidance schedule can undo the CFG floor, and Pinhole
+    // never sets these.
+    "--extra-sample-args",
+    "--extra-tiling-args",
+    "--ref-image-args",
+    "--image-preprocess",
+    "--linear-scale",
+    "--attn-scale",
     "--embd-dir",
     "--lora-model-dir",
     "--hires-upscalers-dir",
@@ -732,7 +740,14 @@ pub fn size_multiple(family: &Family) -> u32 {
 /// engine steers towards the negative prompt, which isn't word-checked.
 pub const MIN_CFG: f32 = 1.0;
 
-/// Smallest width or height Fine-tune can ask for.
+/// Longest side over shortest side of a made picture.
+pub const MAX_ASPECT: u32 = 3;
+
+/// Largest hires scale (sd.cpp takes any).
+pub const MAX_HIRES_SCALE: f32 = 4.0;
+
+/// Smallest width or height of a made picture (Fine-tune, or a shape in an edited
+/// overrides.yaml).
 pub const MIN_SIDE: u32 = 256;
 
 /// Round `v` to the nearest multiple of `m` (at least `m`, at most 4096).
@@ -817,12 +832,17 @@ pub fn resolve_params(
     // image check to judge.
     let side = |v: Option<u32>, shape: u32| {
         round_to_multiple(
-            v.filter(|v| *v > 0).map_or(shape, |v| v.max(MIN_SIDE)),
+            v.filter(|v| *v > 0).unwrap_or(shape).max(MIN_SIDE),
             multiple,
         )
     };
-    let width = side(fine.width, sw);
-    let height = side(fine.height, sh);
+    let (mut width, mut height) = (side(fine.width, sw), side(fine.height, sh));
+    // At most MAX_ASPECT: a very long strip is shrunk a lot when the image check measures it.
+    if width > height * MAX_ASPECT {
+        width = height * MAX_ASPECT;
+    } else if height > width * MAX_ASPECT {
+        height = width * MAX_ASPECT;
+    }
 
     let quality_steps = d.quality.as_ref().map(|q| match dials.quality {
         Quality::Fast => q.fast,
@@ -873,7 +893,9 @@ pub fn resolve_params(
                 .hires_scale
                 .filter(|s| s.is_finite() && *s > 1.0)
                 .or(cfg_h.and_then(|h| h.scale))
-                .unwrap_or(DEFAULT_HIRES_SCALE),
+                .filter(|s| s.is_finite() && *s > 1.0)
+                .unwrap_or(DEFAULT_HIRES_SCALE)
+                .min(MAX_HIRES_SCALE),
             denoising_strength: fine
                 .hires_denoise
                 .filter(|s| s.is_finite())

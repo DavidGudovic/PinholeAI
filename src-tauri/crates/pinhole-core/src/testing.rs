@@ -2076,6 +2076,60 @@ mod tests {
         }
     }
 
+    /// Regression: a face the brought-in picture didn't show clearly (too small, blurred,
+    /// turned) but a later step does used to stay unseen for the whole chain.
+    #[tokio::test]
+    async fn a_face_that_shows_up_later_in_a_brought_in_chain_counts() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let restyle = |src: &str| {
+            let mut req = GenerateRequest::txt2img(model.clone(), "y");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.to_string());
+            req
+        };
+        // No face on the brought-in picture; an ordinary first step.
+        use_check(&core, FakeCheck::default());
+        let step = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap()
+            .images[0]
+            .clone();
+        // The step shows a face; an intimate edit of it is blocked.
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original_by_size: vec![(
+                (step.width, step.height),
+                pinhole_check::Original {
+                    has_face: true,
+                    intimate: false,
+                },
+            )],
+            ..Default::default()
+        };
+        use_check(&core, fake);
+        let e = generate::generate(&core, restyle(&step.id))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // Without a brought-in picture behind it, a made picture's face doesn't matter.
+        let made = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        generate::generate(&core, restyle(&made)).await.unwrap();
+    }
+
     #[tokio::test]
     async fn adult_results_pass_unless_made_from_a_brought_in_photo_of_someone() {
         let (_tmp, core, _rec) = new_core();
@@ -2152,7 +2206,11 @@ mod tests {
         use_check(&core, fake);
         let e = generate::generate(&core, restyle(&step)).await.unwrap_err();
         assert_eq!(e.code, "blocked", "the chain still leads back to the photo");
-        assert_eq!(counts.lock().1, 0, "the original's readings were kept");
+        assert_eq!(
+            counts.lock().1,
+            1,
+            "the original's readings were kept; only the fed-in step is measured"
+        );
 
         // Reset forgets the originals.
         session::clear(&core).await;

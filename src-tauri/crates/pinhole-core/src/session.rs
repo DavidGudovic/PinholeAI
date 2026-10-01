@@ -65,6 +65,18 @@ impl SessionImage {
             self.made_from.to_vec()
         }
     }
+
+    /// This image as a fed-in picture for the image check, when it was made from a
+    /// brought-in chain: a face can show up in it (enlarged, straightened, sharpened) that
+    /// the brought-in picture didn't show clearly. `None` for brought-in pictures and
+    /// pictures made from scratch.
+    pub fn fed_in_source(&self) -> Option<Source> {
+        let from = self.sources();
+        (!from.is_empty() && !from.iter().any(|s| s.id == self.id)).then(|| Source {
+            id: self.id.clone(),
+            bytes: self.bytes.clone(),
+        })
+    }
 }
 
 /// The session store. Cheap clones of image bytes via `Arc`.

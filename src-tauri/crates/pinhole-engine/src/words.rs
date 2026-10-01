@@ -80,6 +80,11 @@ const UNDER_18: &[&str] = &[
     "kindergartener",
 ];
 
+/// Tens words: a number right after one is part of an adult age ("twenty five").
+const TENS: &[&str] = &[
+    "twenty", "thirty", "forty", "fourty", "fifty", "sixty", "seventy", "eighty", "ninety",
+];
+
 /// Clearly sexual terms, same plural rule. Words with common harmless meanings ("cock",
 /// "tit", "thong") are left out.
 const SEXUAL: &[&str] = &[
@@ -235,11 +240,101 @@ impl std::fmt::Debug for CheckedPrompt {
 /// accents, spaced-out letters, repeated letters and glued words don't get around them.
 pub fn pairs_minor_with_sexual(text: &str) -> bool {
     let views = views(text);
-    let any = |list: &[&str]| views.iter().any(|w| list.iter().any(|p| has_phrase(w, p)));
+    let lists = lists();
+    let any = |list: &List| {
+        views.iter().any(|v| {
+            v.words.iter().any(|w| list.has_word(w))
+                || list.phrases.iter().any(|p| has_phrase(&v.words, p))
+                || v.joined.iter().any(|w| list.is_listed(w))
+        })
+    };
     // Ages are read from the plain spellings only: numbers-for-letters would turn "18" into
     // something else.
-    let minor = any(UNDER_18) || AGE_VIEWS.iter().any(|&i| has_young_age(&views[i]));
-    minor && any(SEXUAL)
+    let minor = any(&lists.under_18) || AGE_VIEWS.iter().any(|&i| has_young_age(&views[i].words));
+    minor && any(&lists.sexual)
+}
+
+/// A word list split for speed: single words by their first and by their last letter, and the
+/// multi-word phrases. Every form a single word matches in starts with its first letter or,
+/// glued after another word, ends with its last letter (before a plural ending), so each word
+/// of the text is only compared with the few listed words that share that letter. This keeps
+/// long text fast.
+struct List {
+    first: Vec<Vec<&'static str>>,
+    last: Vec<Vec<&'static str>>,
+    phrases: Vec<&'static str>,
+}
+
+impl List {
+    fn new(words: &[&'static str]) -> Self {
+        let mut list = List {
+            first: vec![Vec::new(); 256],
+            last: vec![Vec::new(); 256],
+            phrases: Vec::new(),
+        };
+        for &w in words {
+            if w.contains(' ') {
+                list.phrases.push(w);
+            } else if let (Some(&f), Some(&l)) = (w.as_bytes().first(), w.as_bytes().last()) {
+                list.first[usize::from(f)].push(w);
+                list.last[usize::from(l)].push(w);
+            }
+        }
+        list
+    }
+
+    fn starting_like(&self, token: &str) -> &[&'static str] {
+        token
+            .as_bytes()
+            .first()
+            .map_or(&[], |&b| &self.first[usize::from(b)])
+    }
+
+    /// The token is a listed single word, stretched or plural ([`word_matches`]).
+    fn is_listed(&self, token: &str) -> bool {
+        self.starting_like(token)
+            .iter()
+            .any(|p| word_matches(token, p))
+    }
+
+    /// The token is a listed single word, with a common ending or glued to another word.
+    fn has_word(&self, token: &str) -> bool {
+        let glued_after = || {
+            [
+                Some(token),
+                token.strip_suffix('s'),
+                token.strip_suffix("es"),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t.as_bytes().last())
+            .any(|&b| {
+                self.last[usize::from(b)]
+                    .iter()
+                    .any(|p| glued_to_filler(token, p))
+            })
+        };
+        self.starting_like(token)
+            .iter()
+            .any(|p| word_matches(token, p) || word_form(token, p) || glued_to_filler(token, p))
+            || glued_after()
+    }
+}
+
+/// The word lists, split once.
+struct Lists {
+    under_18: List,
+    sexual: List,
+    both: List,
+}
+
+fn lists() -> &'static Lists {
+    static LISTS: std::sync::OnceLock<Lists> = std::sync::OnceLock::new();
+    LISTS.get_or_init(|| Lists {
+        under_18: List::new(UNDER_18),
+        sexual: List::new(SEXUAL),
+        both: List::new(&[UNDER_18, SEXUAL].concat()),
+    })
 }
 
 /// The text as several lists of lowercase words, all checked:
@@ -254,7 +349,8 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
 ///
 /// In every list, spaced-out letters are joined ("l o l i", "l.o.l.i") and a word made of two
 /// listed words glued together is split in two; a listed phrase also matches glued into one word.
-fn views(text: &str) -> Vec<Vec<String>> {
+/// Each view also keeps punctuated chunks joined whole ([`View::joined`]).
+fn views(text: &str) -> Vec<View> {
     // Compatibility forms (fullwidth, superscript, squared, letterlike, ligatures…) become
     // plain letters; accents come apart from their letters and are dropped. Apostrophes are
     // dropped so "Kim's ex" reads "kims ex", not "s ex". Fractions stay whole ("18½" isn't
@@ -264,6 +360,7 @@ fn views(text: &str) -> Vec<Vec<String>> {
         .chars()
         .flat_map(|c| -> Vec<char> {
             match c {
+                _ if c.is_ascii() => vec![c],
                 '\u{00BC}'..='\u{00BE}' | '\u{2044}' | '\u{2150}'..='\u{215F}' | '\u{2189}' => {
                     vec![c]
                 }
@@ -282,7 +379,7 @@ fn views(text: &str) -> Vec<Vec<String>> {
                 }
             }
         })
-        .filter(|c| !is_invisible(*c) && !is_accent(*c) && !is_apostrophe(*c))
+        .filter(|c| !is_invisible(*c) && !is_combining_mark(*c) && !is_apostrophe(*c))
         .collect();
     let clean = plain.to_lowercase();
     // Capital look-alikes are read before lowercasing: a Greek capital Eta looks like "H", its
@@ -295,15 +392,28 @@ fn views(text: &str) -> Vec<Vec<String>> {
         })
         .collect();
     // Words are split on spaces and punctuation. A chunk with punctuation inside it
-    // ("lo-li", "l.o.l.i") is also kept joined, right after its pieces.
-    let words = |text: &str, keep: &dyn Fn(char) -> bool| -> Vec<String> {
+    // ("lo-li", "l.o.l.i") is also kept joined, right after its pieces. Every such chunk of up
+    // to MAX_GLUED letters, and every two neighbouring pieces, are also kept joined in `joined`,
+    // whatever the pieces' lengths, and only matched whole against single listed words.
+    let words = |text: &str, keep: &dyn Fn(char) -> bool| -> View {
         let mut out = Vec::new();
+        let mut joined = Vec::new();
         for chunk in text.split(char::is_whitespace) {
             let pieces: Vec<&str> = chunk
                 .split(|c: char| !keep(c))
                 .filter(|w| !w.is_empty())
                 .collect();
             out.extend(pieces.iter().map(|w| w.to_string()));
+            let letters = |ps: &[&str]| ps.iter().map(|p| p.chars().count()).sum::<usize>();
+            if pieces.len() > 2 && letters(&pieces) <= MAX_GLUED {
+                joined.push(pieces.concat());
+            }
+            // Two neighbouring pieces too ("lovely-te-en").
+            for pair in pieces.windows(2) {
+                if letters(pair) <= MAX_GLUED {
+                    joined.push(pair.concat());
+                }
+            }
             // Only short pieces ("lo-li", "chi.ld"): longer ones are words of their own, and
             // joining them would glue neighbouring tags ("nude,eighteen"). Single letters
             // ("y/o", "l.o.l.i") are left to `join_pieces`.
@@ -315,21 +425,37 @@ fn views(text: &str) -> Vec<Vec<String>> {
                 out.push(pieces.concat());
             }
         }
-        out
+        View { words: out, joined }
     };
     let alnum = |c: char| c.is_alphanumeric();
     let leet_chars = |c: char| c.is_alphanumeric() || matches!(c, '@' | '$' | '!' | '|');
     let leet_words = words(&folded, &leet_chars);
+    let leet_view = |one: char| View {
+        words: leet_words.words.iter().map(|w| leet(w, one)).collect(),
+        joined: leet_words.joined.iter().map(|w| leet(w, one)).collect(),
+    };
     let raw = [
         words(&clean, &alnum),
         words(&folded, &alnum),
-        leet_words.iter().map(|w| leet(w, 'i')).collect(),
-        leet_words.iter().map(|w| leet(w, 'l')).collect(),
+        leet_view('i'),
+        leet_view('l'),
         words(&split_case(&plain), &alnum),
     ];
     raw.into_iter()
-        .map(|w| split_glued(join_pieces(without_naked_eye(w))))
+        .map(|v| View {
+            words: split_glued(join_pieces(without_naked_eye(v.words))),
+            joined: v.joined,
+        })
         .collect()
+}
+
+/// One spelling of the text (see [`views`]).
+struct View {
+    /// The words, matched against every list entry, ending and glued form.
+    words: Vec<String>,
+    /// Punctuated chunks, and neighbouring pieces in them, joined ("nake-d"), matched only as
+    /// single listed words: joining whole tags ("adult,nsfw,canteen") must not make glued words.
+    joined: Vec<String>,
 }
 
 /// Views ages are read from: as written, folded, and split at case and digit changes (not the
@@ -360,21 +486,23 @@ fn split_case(plain: &str) -> String {
 }
 
 /// Characters that show nothing: soft hyphen, zero-width and joiner characters, direction
-/// marks, variation selectors, Hangul fillers, blank Braille, format controls, tag characters.
+/// marks, variation selectors, Hangul fillers, blank Braille, tag characters and every other
+/// format character (General_Category Cf).
 fn is_invisible(c: char) -> bool {
     matches!(c,
-        '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
+        '\u{00AD}' | '\u{034F}' | '\u{0600}'..='\u{0605}' | '\u{061C}' | '\u{06DD}' | '\u{070F}'
+        | '\u{0890}'..='\u{0891}' | '\u{08E2}' | '\u{115F}' | '\u{1160}' | '\u{17B4}' | '\u{17B5}'
         | '\u{180B}'..='\u{180F}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
         | '\u{2060}'..='\u{206F}' | '\u{2800}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}'
         | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{13430}'..='\u{1343F}'
-        | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E007F}'
+        | '\u{110BD}' | '\u{110CD}' | '\u{1BCA0}'..='\u{1BCA3}' | '\u{1D173}'..='\u{1D17A}' | '\u{E0000}'..='\u{E007F}'
         | '\u{E0100}'..='\u{E01EF}')
 }
 
-/// Combining accents (left over once letters are taken apart) and enclosing marks.
-fn is_accent(c: char) -> bool {
-    matches!(c, '\u{0300}'..='\u{036F}' | '\u{0488}'..='\u{0489}' | '\u{1AB0}'..='\u{1AFF}' | '\u{1DC0}'..='\u{1DFF}'
-        | '\u{20D0}'..='\u{20FF}' | '\u{FE20}'..='\u{FE2F}')
+/// Every combining mark (General_Category M: accents left over once letters are taken apart,
+/// enclosing marks, vowel signs and other marks of any script).
+fn is_combining_mark(c: char) -> bool {
+    unicode_normalization::char::is_combining_mark(c)
 }
 
 fn is_apostrophe(c: char) -> bool {
@@ -407,6 +535,9 @@ fn fold_capital(c: char) -> Option<char> {
         ("ҮΥ", 'y'),
         ("Ζ", 'z'),
     ];
+    if c.is_ascii() {
+        return None;
+    }
     CAPITALS
         .iter()
         .find(|(from, _)| from.contains(c))
@@ -486,6 +617,8 @@ fn fold(c: char) -> Vec<char> {
         ("ᴢ", 'z'),
     ];
     match c {
+        // No table has an ASCII character.
+        _ if c.is_ascii() => return vec![c],
         // Combining accents (text typed as letter + accent).
         '\u{0300}'..='\u{036F}' => return Vec::new(),
         'ß' => return vec!['s', 's'],
@@ -581,24 +714,18 @@ const MAX_GLUED: usize = 30;
 
 /// A word that is two listed words glued together is split in two; other words stay.
 fn split_glued(words: Vec<String>) -> Vec<String> {
-    let listed = |w: &str| {
-        UNDER_18
-            .iter()
-            .chain(SEXUAL)
-            .filter(|p| !p.contains(' '))
-            .any(|p| word_matches(w, p))
-    };
+    let listed = |w: &str| lists().both.is_listed(w);
     let mut out = Vec::with_capacity(words.len());
     for w in words {
-        let chars: Vec<char> = w.chars().collect();
+        let cuts: Vec<usize> = w.char_indices().map(|(i, _)| i).collect();
+        let n = cuts.len();
         // Two listed words are at most ~30 letters; longer words aren't split (keeps the check
         // fast on long made-up words).
-        let split = ((6..=MAX_GLUED).contains(&chars.len()) && !listed(&w))
+        let split = ((6..=MAX_GLUED).contains(&n) && !listed(&w))
             .then(|| {
-                (3..=chars.len() - 3).find_map(|k| {
-                    let (a, b): (String, String) =
-                        (chars[..k].iter().collect(), chars[k..].iter().collect());
-                    (listed(&a) && listed(&b)).then_some((a, b))
+                (3..=n - 3).find_map(|k| {
+                    let (a, b) = w.split_at(cuts[k]);
+                    (listed(a) && listed(b)).then(|| (a.to_string(), b.to_string()))
                 })
             })
             .flatten();
@@ -613,15 +740,10 @@ fn split_glued(words: Vec<String>) -> Vec<String> {
     out
 }
 
-/// Repeated letters as one ("looli" → "loli").
-fn squeeze(w: &str) -> String {
-    let mut out = String::with_capacity(w.len());
-    for c in w.chars() {
-        if !out.ends_with(c) {
-            out.push(c);
-        }
-    }
-    out
+/// The letters with repeats as one ("looli" → "loli").
+fn squeezed(w: &str) -> impl Iterator<Item = char> + '_ {
+    let mut prev = None;
+    w.chars().filter(move |&c| prev.replace(c) != Some(c))
 }
 
 /// The same word, or the word with its letters stretched ("teeen"; never shorter, so "ten"
@@ -630,13 +752,22 @@ fn same_word(token: &str, word: &str) -> bool {
     token == word
         || (token.len() > word.len()
             && token.chars().next() == word.chars().next()
-            && squeeze(token) == squeeze(word))
+            && squeezed(token).eq(squeezed(word)))
 }
 
 /// The word, stretched or not, with or without a plural "s"/"es". A stretched plural needs a
 /// letter three times ("kiiids"), so ordinary double letters ("annals") stay apart.
 fn word_matches(token: &str, word: &str) -> bool {
+    // Every form below starts with the word's first letter; most tokens stop here.
+    if token.as_bytes().first() != word.as_bytes().first() {
+        return false;
+    }
+    let ies = || {
+        word.strip_suffix('y')
+            .is_some_and(|stem| token.strip_suffix("ies") == Some(stem))
+    };
     same_word(token, word)
+        || ies()
         || ["s", "es"].iter().any(|end| {
             token.strip_suffix(end).is_some_and(|stem| {
                 stem == word || (has_triple_letter(stem) && same_word(stem, word))
@@ -645,8 +776,15 @@ fn word_matches(token: &str, word: &str) -> bool {
 }
 
 fn has_triple_letter(w: &str) -> bool {
-    let c: Vec<char> = w.chars().collect();
-    c.windows(3).any(|t| t[0] == t[1] && t[1] == t[2])
+    let (mut prev, mut run) = (None, 0);
+    w.chars().any(|c| {
+        run = if prev.replace(c) == Some(c) {
+            run + 1
+        } else {
+            1
+        };
+        run >= 3
+    })
 }
 
 /// Ordinary words that start or end with a listed word ([`glued_to_filler`] skips them).
@@ -670,6 +808,7 @@ const ORDINARY: &[&str] = &[
     "childbearing",
     "childminder",
     "infantry",
+    "infantile",
     "infantryman",
     "analysis",
     "analyses",
@@ -716,8 +855,19 @@ const ORDINARY: &[&str] = &[
 /// of 4+ letters count; sexual words only from 5 letters, since the short ones start or end
 /// many ordinary words and names.
 fn glued_to_filler(token: &str, word: &str) -> bool {
-    let min = if UNDER_18.contains(&word) { 4 } else { 5 };
+    // Cheapest tests first: this runs for every word against every listed word.
+    let ends = |cut: usize| {
+        token
+            .len()
+            .checked_sub(cut)
+            .and_then(|n| token.get(..n))
+            .is_some_and(|t| t.ends_with(word))
+    };
+    if token.len() < word.len() + 3 || !(token.starts_with(word) || ends(0) || ends(1) || ends(2)) {
+        return false;
+    }
     let w = word.chars().count();
+    let min = if UNDER_18.contains(&word) { 4 } else { 5 };
     if w < min
         || ORDINARY
             .iter()
@@ -738,38 +888,31 @@ fn glued_to_filler(token: &str, word: &str) -> bool {
     })
 }
 
-/// The word with a common ending ("sexier", "sexiest", "nudeness"); only for
-/// words of 4+ letters, so short words don't catch ordinary ones ("kidding").
+/// The word with a common ending ("sexier", "sexiest", "nudeness", "lewdly"); only for
+/// words of 4+ letters, so short words don't catch ordinary ones ("kidding"). "explicitly"
+/// stays harmless ("explicitly labelled").
 fn word_form(token: &str, word: &str) -> bool {
-    if word.chars().count() < 4 {
+    let Some(last) = word.chars().last() else {
+        return false;
+    };
+    // Every stem (the word, "y" → "i", without a silent "e") starts with all but the word's
+    // last letter, so most words are ruled out here without building anything.
+    let Some(rest) = token.strip_prefix(&word[..word.len() - last.len_utf8()]) else {
+        return false;
+    };
+    if word.chars().count() < 4 || token == "explicitly" {
         return false;
     }
-    let mut stems = vec![word.to_string()];
-    if let Some(s) = word.strip_suffix('y') {
-        stems.push(format!("{s}i"));
-    }
-    if let Some(s) = word.strip_suffix('e') {
-        stems.push(s.to_string());
-    }
-    stems.iter().any(|stem| {
-        token
-            .strip_prefix(stem.as_str())
-            .is_some_and(|end| matches!(end, "er" | "est" | "ness" | "ed" | "d"))
-    })
+    let ending = |end: &str| matches!(end, "er" | "est" | "ness" | "ed" | "d" | "ly" | "ily");
+    rest.strip_prefix(last).is_some_and(ending)
+        || (last == 'y' && rest.strip_prefix('i').is_some_and(ending))
+        || (last == 'e' && ending(rest))
 }
 
-/// The phrase word by word, or glued into one word ("littlegirls"). A single word also
-/// matches with a common ending, or glued to another word.
+/// A multi-word phrase word by word, or glued into one word ("littlegirls").
 fn has_phrase(words: &[String], phrase: &str) -> bool {
-    if phrase.contains(' ') {
-        let glued = phrase.replace(' ', "");
-        if words.iter().any(|w| word_matches(w, &glued)) {
-            return true;
-        }
-    } else if words
-        .iter()
-        .any(|w| word_form(w, phrase) || glued_to_filler(w, phrase))
-    {
+    let glued = phrase.replace(' ', "");
+    if words.iter().any(|w| word_matches(w, &glued)) {
         return true;
     }
     let parts: Vec<&str> = phrase.split(' ').collect();
@@ -785,31 +928,47 @@ fn has_phrase(words: &[String], phrase: &str) -> bool {
     })
 }
 
-/// "yearold", "yearsold", "yrsold", "yold" written as one word after a number.
+/// "yearold", "yearsold", "yrsold", "yold", "yearsofage" written as one word after a number.
 fn glued_old(rest: &str) -> bool {
     rest.strip_suffix("olds")
         .or_else(|| rest.strip_suffix("old"))
+        .or_else(|| rest.strip_suffix("ofage"))
         .is_some_and(|y| matches!(y, "y" | "yr" | "yrs" | "year" | "years"))
 }
 
 /// An age from 1 to 17: "12", "twelve" or "12yo" followed by "yo", "y o", "year old",
 /// "years old", "year olds", "yr old", "yrs old" or "years of age"; or "aged 12", "age of 12".
-/// A bare "age 12" doesn't count ("Bronze Age, 3 statues").
+/// A bare "age 12" doesn't count ("Bronze Age, 3 statues"). "year", "years", "yr", "yrs" or "y"
+/// may also be glued to "old", "olds" or "ofage" ("12 yearsold"). A number right after a tens
+/// word is part of an adult age ("twenty-five years old") and doesn't count; any other word after
+/// a tens word ("twenty 12 yo", "thirty twelve yo") still does.
 fn has_young_age(words: &[String]) -> bool {
     let young =
         |w: &str| w.parse::<u32>().is_ok_and(|n| (1..18).contains(&n)) || NUMBER_WORDS.contains(&w);
     let at = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+    let old_after = |i: usize| {
+        matches!(at(i), "old" | "olds" | "o" | "ofage") || (at(i) == "of" && at(i + 1) == "age")
+    };
     for (i, w) in words.iter().enumerate() {
+        // Only a spelled unit after a tens word ("twenty five") is part of an adult age.
+        const UNITS: [&str; 9] = [
+            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        ];
+        if i > 0
+            && TENS.contains(&at(i - 1))
+            && UNITS
+                .iter()
+                .any(|u| w.strip_prefix(u).is_some_and(|r| !r.starts_with("teen")))
+        {
+            continue;
+        }
         // A number word glued to "yo" or "years": "twelveyo", "twelveyears old".
         for n in NUMBER_WORDS {
             if let Some(rest) = w.strip_prefix(n) {
                 if matches!(rest, "yo" | "yos") || glued_old(rest) {
                     return true;
                 }
-                if matches!(rest, "y" | "yr" | "yrs" | "year" | "years")
-                    && (matches!(at(i + 1), "old" | "olds" | "o")
-                        || (at(i + 1) == "of" && at(i + 2) == "age"))
-                {
+                if matches!(rest, "y" | "yr" | "yrs" | "year" | "years") && old_after(i + 1) {
                     return true;
                 }
             }
@@ -821,19 +980,16 @@ fn has_young_age(words: &[String]) -> bool {
             if rest == "yo" || rest == "yos" || glued_old(rest) {
                 return true;
             }
-            if matches!(rest, "y" | "yr" | "yrs") && (at(i + 1) == "old" || at(i + 1) == "o") {
+            if matches!(rest, "y" | "yr" | "yrs" | "year" | "years") && old_after(i + 1) {
                 return true;
             }
         }
         if young(w) {
             let next = at(i + 1);
-            if next == "yo" || next == "yos" || (next == "y" && at(i + 1 + 1) == "o") {
+            if next == "yo" || next == "yos" || glued_old(next) {
                 return true;
             }
-            if matches!(next, "year" | "years" | "yr" | "yrs")
-                && (matches!(at(i + 2), "old" | "olds")
-                    || (at(i + 2) == "of" && at(i + 3) == "age"))
-            {
+            if matches!(next, "year" | "years" | "yr" | "yrs" | "y") && old_after(i + 2) {
                 return true;
             }
         }
@@ -1046,6 +1202,96 @@ mod tests {
         .filter(|t| pairs_minor_with_sexual(t))
         .collect::<Vec<_>>();
         assert!(wrong.is_empty(), "blocked: {wrong:?}");
+    }
+
+    #[test]
+    fn blocks_more_marks_splits_ages_and_word_forms() {
+        let missed = [
+            // Combining marks of any script, and format characters, inside a word.
+            "te\u{064B}en, nude",
+            "l\u{0F7A}o\u{0F7A}l\u{0F7A}i, nude",
+            "lo\u{10A0D}li, nude",
+            "lo\u{0483}li, nude",
+            "te\u{0591}en, nu\u{0951}de",
+            "ki\u{0E48}d, na\u{302A}ked",
+            "te\u{1D167}en, nude",
+            "lo\u{0600}li, nu\u{110BD}de",
+            "te\u{06DD}en, nude",
+            // Punctuated chunks with a long piece.
+            "teenage-r, nude",
+            "kid, nake-d",
+            "toddle.r, nude",
+            "teen, lingeri_e",
+            "lovely-te-en, nude",
+            "kinder-garte-n, nude",
+            "teen\u{2027}ager, nude",
+            "teen\u{00B7}ager, nude",
+            // Ages with "year" glued to "old".
+            "12 yearsold, nude",
+            "12 yearold, nude",
+            "12 yrsold, nude",
+            "twelve yearold, nude",
+            "twelve yearsold, nude",
+            "12 yearolds, nude",
+            "12 y old, nude",
+            "12 yold, nude",
+            "12 years ofage, nude",
+            "12yearsofage, nude",
+            "12 YearsOld, nude",
+            // -ly, -ily and -ies forms.
+            "teen, lewdly",
+            "kid, nakedly",
+            "teen, sexily",
+            "child, seductively",
+            "teen, sensually",
+            "teen, hornies",
+            // A tens word only excuses a spelled unit right after it.
+            "twenty 12 yo, nude",
+            "thirty twelve years old, nude",
+            "forty seventeen yo, nude",
+        ]
+        .into_iter()
+        .filter(|t| !pairs_minor_with_sexual(t))
+        .collect::<Vec<_>>();
+        assert!(missed.is_empty(), "not blocked: {missed:?}");
+    }
+
+    #[test]
+    fn adult_ages_and_ordinary_words_stay_harmless() {
+        let wrong = [
+            "infantile humor, nude colors",
+            "twenty-five years old woman, nude portrait",
+            "twenty five year old woman, nude, oil painting",
+            "thirty-one year old woman, art nude",
+            "forty-two yo woman, nude marble",
+            "sixty five yearsold, nude lipstick",
+            "seventy-two years of age, naked flame",
+            "ninety-nine yearold oak tree, nude colors",
+            "kids, an explicitly marked exit",
+            "children explicitly labelled diagram of the water cycle",
+            "1girl,nude,eighteen",
+            "adult,nsfw,canteen",
+            "woman,nude,in-between,adult-only",
+            "the canteen-analysis of a minority-report, nude colors",
+            "nude-colored heels, sex-ed leaflet for adults",
+        ]
+        .into_iter()
+        .filter(|t| pairs_minor_with_sexual(t))
+        .collect::<Vec<_>>();
+        assert!(wrong.is_empty(), "blocked: {wrong:?}");
+    }
+
+    #[test]
+    fn long_prompts_stay_fast() {
+        let text = "a quiet-harbour at.dusk, soft_light, lo\u{064B}ng shadows, "
+            .repeat(400)
+            .chars()
+            .take(20_000)
+            .collect::<String>();
+        let start = std::time::Instant::now();
+        assert!(!pairs_minor_with_sexual(&text));
+        // Generous for debug builds; a release build takes about 15 ms (keep it well under 50).
+        assert!(start.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]

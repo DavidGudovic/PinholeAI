@@ -425,7 +425,7 @@ fn launch_args_other_families_and_overrides() {
     // Regression: flag lists from an edited overrides.yaml can't load content or redirect
     // the server; only tuning flags survive.
     let over = with_overrides(
-        "hardware_profiles:\n  - { name: all, max_vram_gb: 999, flags: [\"--embd-dir\", \"/e\", \"--vae\", \"/x\", \"-p\", \"words\", \"--lora-model-dir=/l\", \"--upscale-model\", \"/u\", \"--listen-ip\", \"0.0.0.0\", \"--clip-on-cpu\"] }\n",
+        "hardware_profiles:\n  - { name: all, max_vram_gb: 999, flags: [\"--extra-sample-args\", \"guidance_schedule=0x200\", \"--embd-dir\", \"/e\", \"--vae\", \"/x\", \"-p\", \"words\", \"--lora-model-dir=/l\", \"--upscale-model\", \"/u\", \"--listen-ip\", \"0.0.0.0\", \"--clip-on-cpu\"] }\n",
     );
     assert!(
         !over.validate().is_empty(),
@@ -811,7 +811,7 @@ fn resolve_params_fine_tune_overrides() {
     );
     // Regression: a tiny size makes faces too small for the image check, so Fine-tune
     // sizes start at MIN_SIDE.
-    assert_eq!((t.width, t.height), (MIN_SIDE, 4096));
+    assert_eq!((t.width, t.height), (MIN_SIDE, MIN_SIDE * MAX_ASPECT));
     let cfg0 = FineTune {
         cfg: Some(0.0),
         ..Default::default()
@@ -825,6 +825,39 @@ fn resolve_params_fine_tune_overrides() {
         &hw(8.0),
     );
     assert!(approx(c.cfg, 1.0), "CFG never below 1: {}", c.cfg);
+    // Regression: a tiny shape or hires scale from an edited overrides.yaml, or a long
+    // strip, can't make faces too small for the image check.
+    let over = with_overrides(
+        "families:\n  sd15:\n    dials:\n      shape:\n        square: [64, 64]\n      hires_at_best: { enabled: true, scale: 0.25 }\n",
+    );
+    let p = resolve_params(
+        &over,
+        over.family("sd15").unwrap(),
+        &dials(Shape::Square, Quality::Best, 0.5, 1),
+        &FineTune::default(),
+        GenMode::Txt2img,
+        &hw(8.0),
+    );
+    assert_eq!((p.width, p.height), (MIN_SIDE, MIN_SIDE));
+    assert!(
+        p.hires.as_ref().is_none_or(|h| h.scale > 1.0),
+        "{:?}",
+        p.hires
+    );
+    let strip = FineTune {
+        width: Some(4096),
+        height: Some(256),
+        ..Default::default()
+    };
+    let p = resolve_params(
+        reg,
+        fam("sd15"),
+        &dials(Shape::Square, Quality::Fast, 0.5, 1),
+        &strip,
+        GenMode::Txt2img,
+        &hw(8.0),
+    );
+    assert_eq!((p.width, p.height), (768, 256));
     assert_eq!(round_to_multiple(512, 64), 512);
     assert_eq!(round_to_multiple(543, 64), 512);
     assert_eq!(round_to_multiple(544, 64), 576);

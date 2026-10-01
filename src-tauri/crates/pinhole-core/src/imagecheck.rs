@@ -79,6 +79,8 @@ pub struct FakeCheck {
     pub counts: std::sync::Arc<parking_lot::Mutex<(usize, usize)>>,
     /// Width and height of every result measured, in order.
     pub sizes: std::sync::Arc<parking_lot::Mutex<Vec<(u32, u32)>>>,
+    /// Readings for brought-in (or fed-in) pictures of one size, in place of `original`.
+    pub original_by_size: Vec<((u32, u32), pinhole_check::Original)>,
 }
 
 #[cfg(any(test, feature = "test-util"))]
@@ -96,9 +98,14 @@ impl Inspector for FakeCheck {
             .push(pinhole_engine::png::dimensions(png).unwrap_or_default());
         Ok(self.readings.clone())
     }
-    fn original(&self, _png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
+    fn original(&self, png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
         self.counts.lock().1 += 1;
-        Ok(self.original)
+        let size = pinhole_engine::png::dimensions(png).unwrap_or_default();
+        Ok(self
+            .original_by_size
+            .iter()
+            .find(|(s, _)| *s == size)
+            .map_or(self.original, |(_, o)| *o))
     }
 }
 
@@ -246,13 +253,16 @@ pub fn ensure_ready(core: &AppCore) -> CoreResult<()> {
 /// when none is blocked; otherwise the whole batch is dropped.
 /// `also_check`: parts of the results measured on their own and judged the same way (a
 /// Fix details box, which is too small to judge in a large whole picture); never kept.
-/// `sources`: the brought-in pictures the batch was made from. `safe_images_only`: the
-/// model or a LoRA in use is marked "safe images only" on CivitAI.
+/// `sources`: the brought-in pictures the batch was made from. `inputs`: made pictures from
+/// those chains fed into this step; a person found in one counts like one in a brought-in
+/// picture. `safe_images_only`: the model or a LoRA in use is marked "safe images only" on
+/// CivitAI.
 pub async fn check_results(
     core: &Arc<AppCore>,
     pngs: Vec<Vec<u8>>,
     also_check: Vec<Vec<u8>>,
     sources: Vec<Source>,
+    inputs: Vec<Source>,
     safe_images_only: bool,
 ) -> CoreResult<Vec<CheckedPng>> {
     let made_from: Arc<[Source]> = Arc::from(sources.clone());
@@ -268,7 +278,20 @@ pub async fn check_results(
             .iter()
             .any(|r| pinhole_check::rules::is_intimate(r.nudity, r.tags.as_ref()))
         {
-            originals(&c, inspector.as_ref(), &sources)?
+            let mut found = originals(&c, inspector.as_ref(), &sources)?;
+            // A face the brought-in picture didn't show clearly but a later step does (made
+            // larger, straightened, sharpened) counts too. It's exempt as already intimate
+            // only when every brought-in picture was.
+            let exempt = !found.is_empty() && found.iter().all(|o| o.has_face && o.intimate);
+            for o in originals(&c, inspector.as_ref(), &inputs)? {
+                if o.has_face {
+                    found.push(Original {
+                        has_face: true,
+                        intimate: exempt && o.intimate,
+                    });
+                }
+            }
+            found
         } else {
             Vec::new()
         };
