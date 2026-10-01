@@ -595,3 +595,52 @@ families:
     );
     assert_eq!(reg.family("sdxl").unwrap().license_accept, None);
 }
+
+/// Every model file the v1.0.0 release offered or knew stays one of Pinhole's own files, so
+/// copies people already downloaded don't turn "safe images only" after an update.
+#[test]
+fn hashes_shipped_in_v1_0_0_stay_trusted() {
+    let reg = shipped();
+    let list = include_str!("shipped-v1.0.0.txt");
+    let hashes: Vec<&str> = list
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+        .collect();
+    assert!(hashes.len() >= 50, "{}", hashes.len());
+    for h in hashes {
+        assert!(reg.is_shipped_file(h), "{h} is no longer shipped");
+        assert!(reg.is_shipped_file(&h.to_ascii_uppercase()));
+    }
+}
+
+/// Regression (Codex audit): a hash added through the user's overrides (a family download,
+/// another quant, a known file or a test model) used to count as one of Pinhole's own files.
+#[test]
+fn hashes_from_overrides_are_not_shipped() {
+    let a = "a1".repeat(32);
+    let b = "b2".repeat(32);
+    let c = "c3".repeat(32);
+    let d = "d4".repeat(32);
+    let reg = with_overrides(&format!(
+        "families:\n  my_sdxl:\n    inherits: sdxl\n    label: Mine\n    download: {{ file: mine.safetensors, url: \"https://huggingface.co/x/y/resolve/main/mine.safetensors\", sha256: {a}, size_mb: 1, alt_quants: {{ q8_0: {{ url: \"https://huggingface.co/x/y/resolve/main/q8.gguf\", sha256: {b}, size_mb: 1 }} }} }}\n\
+         known_files:\n  - {{ sha256: {c}, family: sdxl }}\n\
+         test_models:\n  tiny: {{ file: t.gguf, url: \"https://huggingface.co/x/y/resolve/main/t.gguf\", sha256: {d}, size_mb: 1 }}\n"
+    ));
+    // The overrides did load (the known file is used for detection) …
+    assert_eq!(reg.known_file(&c).unwrap().family, "sdxl");
+    assert!(reg.family("my_sdxl").is_some());
+    // … but none of them is trusted as shipped.
+    for h in [&a, &b, &c, &d] {
+        assert!(!reg.is_shipped_file(h), "{h}");
+    }
+    // Shipped hashes stay trusted with overrides on top, also when an override changes the
+    // family's download.
+    let z = shipped().known_files()[0].sha256.clone();
+    let reg = with_overrides(&format!(
+        "known_files: []\nfamilies:\n  z_image_turbo:\n    download: {{ sha256: {a} }}\n"
+    ));
+    assert!(reg.is_shipped_file(&z));
+    assert!(!reg.is_shipped_file(&a));
+    assert!(!reg.is_shipped_file("TODO"));
+    assert!(!reg.is_shipped_file(""));
+}

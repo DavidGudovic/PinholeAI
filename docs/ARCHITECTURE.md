@@ -200,8 +200,9 @@ The result is `InstalledFile::lookup` (`notYet` / `noMatch` / `found` / `refused
 check's rule 3 in `generate::prepare`, which also refuses a `refused` file. Lookups run only on a
 user action: Add a file, adding a folder, `rescan_linked_folders(lookUp: true)` ("Check again"),
 and once when `set_settings` turns Offline mode off (`went_online` → `look_up_pending`). Files
-Pinhole offers itself (`Registry::is_shipped_file`) never count as unchecked; `mark_unchecked`
-marks older entries at start.
+Pinhole offers itself (`Registry::is_shipped_file`: SHA-256 from the shipped `models.yaml` only,
+read before `Data/config/overrides.yaml` is merged) never count as unchecked; `mark_unchecked`
+marks older entries at start by hash only (never by file name or family).
 
 ### Paste from CivitAI (frontend A + catalog agent)
 CivitAI's image page has a **Copy generation data** button producing A1111-style text:
