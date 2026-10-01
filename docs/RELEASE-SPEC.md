@@ -108,8 +108,7 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
 Built 2026-09-30 (crate `pinhole-check`, wired in `pinhole-core/src/imagecheck.rs`). All local
 and offline: small ONNX classifiers run on the processor through `tract` (pure Rust, no native
 library to download or ship) → **zero VRAM**. Loaded on first use, dropped after 5 minutes idle.
-Scores and verdicts are held in memory only and are **never logged or written anywhere** — same
-rules as prompts. Safe mode doesn't change any of it.
+Scores and verdicts are handled like prompts (CLAUDE.md privacy rules). Safe mode doesn't change any of it.
 
 ### 3.1 Where each image came from
 
@@ -279,11 +278,9 @@ prints them for a folder of test pictures.
   rule, §3.4).
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
-- **Nothing is recorded:** no counters, strikes, lockouts or logs. Each block stands alone.
 - **No details for users:** release builds show only the neutral message (David, 2026-09-30: never
   say what triggered). Dev builds show the rule and scores for tuning (§3.4). A user can still
-  report a false positive in a GitHub issue by hand, describing what they tried. Nothing is ever
-  sent automatically.
+  report a false positive in a GitHub issue, describing what they tried.
 
 ---
 
@@ -372,8 +369,8 @@ prints them for a folder of test pictures.
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
   ("Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-  this with AI running entirely on your own computer, so your work never leaves your device.",
-  David's pick 2026-09-30) and "Do not use Pinhole for anything illegal, harmful or
+  this with AI running entirely on your own computer.", David's pick 2026-09-30, trimmed
+  2026-10-01 so no privacy line sits next to the safeguards, §8) and "Do not use Pinhole for anything illegal, harmful or
   non-consensual. By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
@@ -410,6 +407,9 @@ templates, posts and UI.
 - Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
   disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
   saved until you press Save."
+- Never say that nothing is reported, recorded or sent about what people make, and keep privacy and
+  no-telemetry facts out of safeguard text (SAFETY.md, usage guidelines, notices, block message);
+  no hints at consequences or monitoring either.
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
@@ -422,12 +422,11 @@ templates, posts and UI.
 ## 9. Paper trail and reporting
 
 - **`SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
-  doesn't (§3.2), how (on the computer, nothing recorded), a "Limitations" section in plain words
+  doesn't (§3.2), how it works, a "Limitations" section in plain words
   (no workaround detail; 2026-10-01), and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Before marketing (§12): a monitored abuse contact with a written process:** what a report can lead to (a rule
-  fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
-  states plainly that Pinhole can't identify its users or see what they made.
+  fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast.
 - **Git history is kept** (§11). Dated commits showing when each safeguard was decided and built
   are part of the record of reasonable steps.
 - Keep this file's "Last reviewed" date current.
@@ -453,7 +452,7 @@ templates, posts and UI.
 - **Remote prompt classification — rejected** (e.g. sending prompts to a server running the Jev
   API). Prompts would leave the machine (Jev is API-only; standard data retention for
   non-enterprise accounts), it breaks Offline mode, it doesn't fit Pinhole's local design, and it creates data-protection obligations for the developer.
-- **Telemetry / prompt logging for abuse detection — rejected.** More liability than it removes.
+- **Telemetry / prompt logging — rejected** (privacy rules, CLAUDE.md).
 - **Safety classifiers on GPU — rejected.** VRAM cost; CPU is fast enough.
 - **Local prompt guard LLM — dropped for v1** (2026-09-29; was planned as Qwen3Guard / Llama Guard
   on `llama-server`). Small guard models are trained on chat, not tag-style image prompts, and

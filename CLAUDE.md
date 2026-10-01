@@ -138,6 +138,11 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
 - Privacy copy states facts (what stays on the computer, what is saved and when, what goes online).
   Don't frame it as hiding what someone made ("forgets everything", "wipes your tracks", "nobody
   will see"). The top-bar control is **Reset**. No one-click adult-content shortcuts in the UI.
+- Never write that nothing is reported, recorded or sent about what people make, and never put
+  privacy or no-telemetry facts next to the safeguards (SAFETY.md, usage guidelines, notices,
+  block message): next to the checks they read as an invitation to misuse. No-telemetry facts go
+  only in privacy wording ("no telemetry or analytics", What goes online). Don't hint at
+  consequences or monitoring either.
 - Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
   disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
   saved until you press Save." The privacy rules above still apply to the code.

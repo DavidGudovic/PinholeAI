@@ -7,9 +7,8 @@ and how to report a problem. The rules for users are the
 
 ## What Pinhole does
 
-Everything below runs on your computer and sends nothing anywhere, except the model lookups
-described under "Models and add-ons". It is built into Pinhole and always on. Safe mode (a Models
-setting) doesn't change it.
+Everything below is built into Pinhole and always on. Safe mode (a Models setting) doesn't
+change it.
 
 - **Usage guidelines and model licences.** Pinhole shows its usage guidelines before first use,
   and each model's licence before it downloads. Models with a non-commercial or other special
@@ -41,8 +40,6 @@ setting) doesn't change it.
   copied, and a "made with AI" label in their file details when they are saved. Neither contains the
   prompt or anything about you. A picture you bring in loses its other file details, but keeps a
   "made with AI" label if its file had one.
-- **Nothing is reported.** Pinhole never sends anything about what you make to anyone. A stopped
-  picture is dropped from memory; your prompt and settings stay so you can change them.
 
 Like any automatic check, these can sometimes make mistakes.
 [docs/SAFETY-MATRIX.md](docs/SAFETY-MATRIX.md) lists each thing the usage guidelines don't allow,
