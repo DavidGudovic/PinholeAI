@@ -79,11 +79,16 @@ pub fn initial(registry: &Registry, kind: ModelKind, sha256: &str) -> Option<Loo
 /// keeps its trust because the old hash moves to `known_files` in `models.yaml`). Linked
 /// models and add-ons (also those of a folder whose drive isn't connected) lose the hash they
 /// had, which may have come from another app's note, so the next look hashes the file itself.
+/// A file marked `Shipped` whose hash `models.yaml` no longer offers is treated the same way.
 /// Returns whether anything changed.
 pub fn mark_unchecked(registry: &Registry, index: &mut InstalledIndex) -> bool {
     let mut changed = false;
     let parked = index.linked.parked.iter_mut().map(|e| &mut e.file);
     for f in index.files.iter_mut().chain(parked) {
+        if f.lookup == Some(Lookup::Shipped) && !registry.is_shipped_file(&f.sha256) {
+            f.lookup = None;
+            changed = true;
+        }
         if f.lookup.is_some() || f.component_id.is_some() || !looked_up_kind(f.kind) {
             continue;
         }
@@ -587,6 +592,23 @@ mod tests {
         assert!(!mark_unchecked(&registry, &mut index), "next start");
         assert_eq!(index.files[0].sha256, shipped);
         assert!(!index.files[0].safe_images_only());
+
+        // A hash models.yaml no longer offers loses that trust at the next start.
+        let mut hand = index.files[0].clone();
+        hand.id = "hand".into();
+        hand.rel_path = "models/diffusion_models/z.safetensors".into();
+        index.files.push(hand);
+        for f in &mut index.files {
+            f.sha256 = "ab".repeat(32);
+        }
+        assert!(mark_unchecked(&registry, &mut index));
+        let linked = &index.files[0];
+        assert_eq!(
+            (linked.sha256.as_str(), linked.lookup),
+            ("", Some(Lookup::NotYet))
+        );
+        assert_eq!(index.files[1].lookup, Some(Lookup::NotYet));
+        assert!(index.files.iter().all(InstalledFile::safe_images_only));
     }
 
     #[test]
