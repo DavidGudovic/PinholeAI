@@ -194,6 +194,20 @@ pub fn register_download(
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
+        // A part downloaded again replaces an entry whose file was deleted by hand (it may
+        // have had another name), so the part is found by its new file.
+        if let Some(cid) = entry.component_id.as_deref() {
+            let data = &core.data;
+            let stale: Vec<String> = index
+                .files
+                .iter()
+                .filter(|f| f.id != entry.id && !f.is_linked())
+                .filter(|f| f.component_id.as_deref() == Some(cid))
+                .filter(|f| !index.abs_path(data, f).is_file())
+                .map(|f| f.id.clone())
+                .collect();
+            index.files.retain(|f| !stale.contains(&f.id));
+        }
         // An unreadable entry at this path described the file that was there.
         let replaced = index.remove_unknown_at(&entry.rel_path);
         if let Err(e) = index.save(&core.data) {
@@ -245,7 +259,7 @@ fn snapshot(core: &AppCore) -> pinhole_store::InstalledIndex {
 /// The index without parts (VAE, encoders…) whose file is gone from Pinhole's folders, so a
 /// part deleted by hand shows as missing and "Get missing parts" downloads it again (as
 /// Generate already reports it). Main models and add-ons stay listed so they can be deleted.
-fn snapshot_present(core: &AppCore) -> pinhole_store::InstalledIndex {
+pub(crate) fn snapshot_present(core: &AppCore) -> pinhole_store::InstalledIndex {
     let mut index = snapshot(core);
     let data = &core.data;
     let gone: Vec<String> = index

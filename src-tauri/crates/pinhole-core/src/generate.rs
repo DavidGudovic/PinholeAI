@@ -2449,7 +2449,8 @@ async fn generate_inner(
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
             origin: Origin::of_result(&input_origins),
-            base_size: Some((width, height)),
+            // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
+            base_size: fix.is_none().then_some((width, height)),
         };
         if !core
             .session

@@ -2221,10 +2221,10 @@ mod tests {
         let id = register_fake_model(&core, "flux1_dev");
         let model = |core: &AppCore| crate::models::list_models(core).unwrap().remove(0);
         assert!(model(&core).missing_components.is_empty());
-        let part = {
+        let (part, comp, kind) = {
             let idx = core.installed.lock();
             let f = idx.files.iter().find(|f| f.component_id.is_some()).unwrap();
-            idx.abs_path(&core.data, f)
+            (idx.abs_path(&core.data, f), f.component_id.clone(), f.kind)
         };
         std::fs::remove_file(&part).unwrap();
         assert_eq!(model(&core).missing_components.len(), 1);
@@ -2233,6 +2233,33 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+
+        // Downloaded again under another name: it replaces the stale entry.
+        let again = part.with_file_name("again.safetensors");
+        std::fs::write(&again, b"1234").unwrap();
+        let file = pinhole_net::download::DownloadedFile {
+            path: again,
+            sha256: "ab".repeat(32),
+            size_bytes: 4,
+        };
+        let reg = crate::models::Registration {
+            kind,
+            friendly_name: "part".into(),
+            family: None,
+            component_id: comp.clone(),
+            civitai: None,
+            dtype: None,
+        };
+        crate::models::register_download(&core, &file, reg).unwrap();
+        let entries = core
+            .installed
+            .lock()
+            .files
+            .iter()
+            .filter(|f| f.component_id == comp)
+            .count();
+        assert_eq!(entries, 1);
+        assert!(model(&core).missing_components.is_empty());
     }
 
     #[tokio::test]

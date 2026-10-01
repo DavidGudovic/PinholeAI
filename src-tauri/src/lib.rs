@@ -76,16 +76,14 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
 }
 
 /// Pages the main window may show: the app itself (`tauri://localhost`, or
-/// `http(s)://tauri.localhost` on Windows) and, in debug builds, the Vite dev server.
+/// `http(s)://tauri.localhost` on Windows) and, under `tauri dev`, the Vite dev server.
 fn app_url_allowed(url: &tauri::Url) -> bool {
     match url.scheme() {
         "tauri" => true,
         "about" => url.as_str() == "about:blank",
         "http" | "https" => match url.host_str() {
             Some("tauri.localhost") => true,
-            Some("127.0.0.1") | Some("localhost") => {
-                cfg!(debug_assertions) && url.port() == Some(1420)
-            }
+            Some("127.0.0.1") | Some("localhost") => tauri::is_dev() && url.port() == Some(1420),
             _ => false,
         },
         _ => false,
@@ -161,7 +159,7 @@ mod tests {
         assert!(ok("http://tauri.localhost/"));
         assert!(ok("https://tauri.localhost/"));
         assert!(ok("about:blank"));
-        assert_eq!(ok("http://127.0.0.1:1420/"), cfg!(debug_assertions));
+        assert_eq!(ok("http://127.0.0.1:1420/"), tauri::is_dev());
         assert!(!ok("http://127.0.0.1:8080/"));
         assert!(!ok("https://civitai.com/models/1"));
         assert!(!ok("file:///home/u/picture.png"));
