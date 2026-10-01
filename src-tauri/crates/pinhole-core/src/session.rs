@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use pinhole_engine::image::{self as img, Kind};
+use pinhole_engine::provenance::{self, AiLabel};
 
 use crate::generate::{ImportedImage, Origin, ResultImage, SavedBatch, SavedEntry, SavedImage};
 use crate::imagecheck::CheckedPng;
@@ -38,6 +39,10 @@ pub struct SessionImage {
     /// are their own source (see [`SessionImage::sources`]), unless the file is one
     /// Pinhole saved earlier in this session: then it keeps that picture's sources.
     pub made_from: Arc<[Source]>,
+    /// A brought-in picture whose file said it was made with AI (IPTC digital source type in
+    /// XMP or a C2PA manifest), read before its metadata was dropped. Written back on export;
+    /// never used by the image check (anyone can write such a label onto a real photo).
+    pub ai_label: Option<AiLabel>,
 }
 
 /// A brought-in picture at the start of a chain of edits. Its bytes stay with every
@@ -46,6 +51,8 @@ pub struct SessionImage {
 pub struct Source {
     pub id: String,
     pub bytes: Arc<Vec<u8>>,
+    /// See [`SessionImage::ai_label`].
+    pub ai_label: Option<AiLabel>,
 }
 
 impl SessionImage {
@@ -60,6 +67,7 @@ impl SessionImage {
             vec![Source {
                 id: self.id.clone(),
                 bytes: self.bytes.clone(),
+                ai_label: self.ai_label,
             }]
         } else {
             self.made_from.to_vec()
@@ -75,6 +83,7 @@ impl SessionImage {
         (!from.is_empty() && !from.iter().any(|s| s.id == self.id)).then(|| Source {
             id: self.id.clone(),
             bytes: self.bytes.clone(),
+            ai_label: None,
         })
     }
 }
@@ -108,6 +117,7 @@ impl Session {
             origin: meta.origin,
             meta: Some(meta),
             made_from,
+            ai_label: None,
         };
         images.insert(img.id.clone(), img);
         true
@@ -159,9 +169,11 @@ impl Session {
 /// files over 64 MB or 50 megapixels (from the header, before decoding). Every
 /// session image is a PNG without metadata: PNG text/eXIf chunks are dropped
 /// (they may hold someone's prompt or location), JPEG/WebP are decoded (EXIF
-/// orientation applied) and re-encoded, which drops EXIF / XMP (GPS, camera).
+/// orientation applied) and re-encoded, which drops EXIF / XMP (GPS, camera). Only an AI-origin
+/// label the file carries is kept (see [`SessionImage::ai_label`]).
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
+    let ai_label = provenance::ai_label(&bytes);
     let made_from = core
         .check
         .exported_from(&bytes)
@@ -189,6 +201,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         meta: None,
         origin: Origin::Imported,
         made_from,
+        ai_label,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -334,15 +347,41 @@ const SOURCE_COMPOSITE: &str =
 const SOURCE_ENHANCED: &str =
     "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced";
 
+fn label_source(l: AiLabel) -> &'static str {
+    match l {
+        AiLabel::Generated => SOURCE_GENERATED,
+        AiLabel::Composite => SOURCE_COMPOSITE,
+    }
+}
+
+/// The IPTC digital source type a picture leaves with, or `None` for a brought-in picture that
+/// didn't say it was made with AI. A label read from a brought-in file is carried forward: on the
+/// unchanged picture as it was, and on anything made only from pictures labelled as made entirely
+/// with AI as "made with AI" (not "edited photo" or "enhanced photo", which would claim a real
+/// capture behind it).
+pub fn source_type(im: &SessionImage) -> Option<&'static str> {
+    let Some(m) = &im.meta else {
+        return im.ai_label.map(label_source);
+    };
+    if im.origin == Origin::Generated {
+        return Some(SOURCE_GENERATED);
+    }
+    let labels: Vec<Option<AiLabel>> = im.sources().iter().map(|s| s.ai_label).collect();
+    let all =
+        |want: fn(Option<AiLabel>) -> bool| !labels.is_empty() && labels.iter().all(|l| want(*l));
+    Some(if all(|l| l == Some(AiLabel::Generated)) {
+        SOURCE_GENERATED
+    } else if upscaled_import(m) && !all(|l| l.is_some()) {
+        SOURCE_ENHANCED
+    } else {
+        SOURCE_COMPOSITE
+    })
+}
+
 /// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with only
 /// the IPTC digital source type ("made with AI"). No app name (David, 2026-09-30),
 /// prompt, seed, model, user or machine.
-pub fn ai_marker_xmp(origin: Origin, upscaled_import: bool) -> String {
-    let source = match origin {
-        Origin::Generated => SOURCE_GENERATED,
-        Origin::Imported if upscaled_import => SOURCE_ENHANCED,
-        Origin::Imported => SOURCE_COMPOSITE,
-    };
+pub fn ai_marker_xmp(source: &str) -> String {
     format!(
         concat!(
             r#"<x:xmpmeta xmlns:x="adobe:ns:meta/">"#,
@@ -385,7 +424,17 @@ pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
 
 fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let Some(m) = &im.meta else {
-        return Ok(im.bytes.as_ref().clone());
+        // A brought-in picture, unchanged: as it came in (already scrubbed), plus the AI label
+        // its file carried.
+        return match source_type(im) {
+            Some(source) => pinhole_engine::png::add_itxt_chunk(
+                &im.bytes,
+                "XML:com.adobe.xmp",
+                &ai_marker_xmp(source),
+            )
+            .map_err(|_| CoreError::internal("The image in memory is damaged.")),
+            None => Ok(im.bytes.as_ref().clone()),
+        };
     };
     let damaged = |_| CoreError::internal("The image in memory is damaged.");
     // Layer 1: the invisible pixel watermark (survives screenshots and re-saving). The PNG
@@ -398,7 +447,7 @@ fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let marked = pinhole_engine::png::add_itxt_chunk(
         &clean,
         "XML:com.adobe.xmp",
-        &ai_marker_xmp(im.origin, upscaled_import(m)),
+        &ai_marker_xmp(source_type(im).unwrap_or(SOURCE_GENERATED)),
     )
     .map_err(damaged)?;
     if core.settings.read().saved_metadata == "settings" {
@@ -776,21 +825,152 @@ mod tests {
 
     #[test]
     fn ai_marker_says_made_with_ai_and_nothing_else() {
-        let gen = ai_marker_xmp(Origin::Generated, false);
+        let gen = ai_marker_xmp(SOURCE_GENERATED);
         assert!(
             gen.contains("digitalsourcetype/trainedAlgorithmicMedia\""),
             "{gen}"
         );
         assert!(!gen.contains("Pinhole") && !gen.contains(env!("CARGO_PKG_VERSION")));
-        assert!(
-            ai_marker_xmp(Origin::Imported, false).contains("compositeWithTrainedAlgorithmicMedia")
-        );
-        assert!(ai_marker_xmp(Origin::Imported, true).contains("algorithmicallyEnhanced"));
         let mut m = meta("a");
         assert!(!upscaled_import(&m));
         m.kind = crate::generate::ResultKind::Upscaled;
         assert!(!upscaled_import(&m), "upscale of a generated picture");
         m.model_id.clear();
         assert!(upscaled_import(&m));
+    }
+
+    fn source(id: &str, ai_label: Option<AiLabel>) -> Source {
+        Source {
+            id: id.into(),
+            bytes: Arc::new(Vec::new()),
+            ai_label,
+        }
+    }
+
+    fn image(meta: Option<ResultImage>, origin: Origin, from: Vec<Source>) -> SessionImage {
+        SessionImage {
+            id: "x".into(),
+            bytes: Arc::new(Vec::new()),
+            kind: Kind::Png,
+            width: 4,
+            height: 4,
+            meta,
+            origin,
+            made_from: Arc::from(from),
+            ai_label: None,
+        }
+    }
+
+    #[test]
+    fn source_type_of_made_pictures() {
+        let edit = || Some(meta("e"));
+        let upscale = || {
+            let mut m = meta("u");
+            m.kind = crate::generate::ResultKind::Upscaled;
+            m.model_id.clear();
+            Some(m)
+        };
+        let photo = || source("p", None);
+        let ai = || source("a", Some(AiLabel::Generated));
+        let mixed = || source("c", Some(AiLabel::Composite));
+        let t = |m, from| source_type(&image(m, Origin::Imported, from));
+        assert_eq!(
+            source_type(&image(edit(), Origin::Generated, vec![])),
+            Some(SOURCE_GENERATED)
+        );
+        // From a photo, as before.
+        assert_eq!(t(edit(), vec![photo()]), Some(SOURCE_COMPOSITE));
+        assert_eq!(t(upscale(), vec![photo()]), Some(SOURCE_ENHANCED));
+        // From pictures that said they were made with AI: made with AI, not an edited photo.
+        assert_eq!(t(edit(), vec![ai()]), Some(SOURCE_GENERATED));
+        assert_eq!(t(upscale(), vec![ai(), ai()]), Some(SOURCE_GENERATED));
+        // Never weaker than the input said.
+        assert_eq!(t(upscale(), vec![mixed()]), Some(SOURCE_COMPOSITE));
+        assert_eq!(t(upscale(), vec![ai(), mixed()]), Some(SOURCE_COMPOSITE));
+        // A photo in the mix: it is a composite with a real capture.
+        assert_eq!(t(edit(), vec![ai(), photo()]), Some(SOURCE_COMPOSITE));
+        assert_eq!(t(upscale(), vec![ai(), photo()]), Some(SOURCE_ENHANCED));
+    }
+
+    #[test]
+    fn source_type_of_unchanged_brought_in_pictures() {
+        let mut im = image(None, Origin::Imported, vec![]);
+        assert_eq!(source_type(&im), None, "a photo stays as it came in");
+        im.ai_label = Some(AiLabel::Generated);
+        assert_eq!(source_type(&im), Some(SOURCE_GENERATED));
+        assert_eq!(im.sources()[0].ai_label, Some(AiLabel::Generated));
+        im.ai_label = Some(AiLabel::Composite);
+        assert_eq!(source_type(&im), Some(SOURCE_COMPOSITE));
+    }
+
+    /// A PNG another tool marked as made with AI, with private data next to the label.
+    fn labelled_png(code: &str) -> Vec<u8> {
+        let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
+        let xmp = format!(
+            r#"<x:xmpmeta><rdf:Description Iptc4xmpExt:DigitalSourceType="http://cv.iptc.org/newscodes/digitalsourcetype/{code}" exif:GPSLatitude="42,26.1N"/></x:xmpmeta>"#
+        );
+        let png = pinhole_engine::png::add_itxt_chunk(&png, "XML:com.adobe.xmp", &xmp).unwrap();
+        pinhole_engine::png::add_text_chunk(&png, "parameters", "PINHOLE_SENTINEL_7f3a").unwrap()
+    }
+
+    fn exported_xmp(bytes: &[u8]) -> Vec<String> {
+        pinhole_engine::png::text_chunks(bytes)
+            .into_iter()
+            .map(|(k, v)| format!("{k}:{}", String::from_utf8_lossy(&v)))
+            .collect()
+    }
+
+    #[test]
+    fn an_ai_label_on_a_brought_in_picture_is_kept_and_nothing_else() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let id = import_image(&core, labelled_png("trainedAlgorithmicMedia"))
+            .unwrap()
+            .id;
+        let im = core.session.get(&id).unwrap();
+        assert_eq!(im.ai_label, Some(AiLabel::Generated));
+        let chunks = exported_xmp(&export_png(&core, &im).unwrap());
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert!(chunks[0].contains("digitalsourcetype/trainedAlgorithmicMedia\""));
+        assert!(!chunks[0].contains("GPS") && !chunks[0].contains("SENTINEL"));
+        // The label is the same one Pinhole writes, so it survives being opened again.
+        let again = export_png(&core, &im).unwrap();
+        let id2 = import_image(&core, again).unwrap().id;
+        assert_eq!(
+            core.session.get(&id2).unwrap().ai_label,
+            Some(AiLabel::Generated)
+        );
+    }
+
+    #[test]
+    fn a_picture_without_an_ai_label_leaves_as_it_came_in() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        for code in ["digitalCapture", "algorithmicallyEnhanced"] {
+            let id = import_image(&core, labelled_png(code)).unwrap().id;
+            let im = core.session.get(&id).unwrap();
+            assert_eq!(im.ai_label, None, "{code}");
+            assert!(exported_xmp(&export_png(&core, &im).unwrap()).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_jpeg_ai_label_is_kept() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        // A phone-style JPEG (EXIF with private text) that also says it was edited with AI.
+        let mut jpeg = img::jpeg_with_exif(8, 8, "PINHOLE_SENTINEL_7f3a");
+        let xmp = b"http://ns.adobe.com/xap/1.0/\0<x:xmpmeta Iptc4xmpExt:DigitalSourceType=\"http://cv.iptc.org/newscodes/digitalsourcetype/compositeWithTrainedAlgorithmicMedia\"/>";
+        let mut app1 = vec![0xff, 0xe1];
+        app1.extend_from_slice(&((xmp.len() + 2) as u16).to_be_bytes());
+        app1.extend_from_slice(xmp);
+        jpeg.splice(2..2, app1);
+        let id = import_image(&core, jpeg).unwrap().id;
+        let im = core.session.get(&id).unwrap();
+        assert_eq!(im.ai_label, Some(AiLabel::Composite));
+        let chunks = exported_xmp(&export_png(&core, &im).unwrap());
+        assert_eq!(chunks.len(), 1, "{chunks:?}");
+        assert!(chunks[0].contains("compositeWithTrainedAlgorithmicMedia"));
+        assert!(!chunks[0].contains("SENTINEL"));
     }
 }

@@ -31,6 +31,7 @@ zip = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+pinhole-engine = { workspace = true, features = ["test-util"] }
 pinhole-net = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 tokio = { workspace = true }

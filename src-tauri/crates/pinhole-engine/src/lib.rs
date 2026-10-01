@@ -24,6 +24,7 @@ pub mod orphans;
 pub mod pins;
 pub mod png;
 pub mod process;
+pub mod provenance;
 pub mod sdapi;
 #[cfg(feature = "test-util")]
 pub mod testutil;
