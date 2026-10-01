@@ -211,7 +211,9 @@ pub fn keep_tuning_flags(flags: &[String], also: &[&str]) -> Vec<String> {
             && flag.starts_with('-')
             && flags.get(i + 1).is_some_and(|next| !next.starts_with("--"));
         let n = if takes_value { 2 } else { 1 };
-        if is_tuning_flag(flag) || also.contains(&flag) {
+        // A value option without its value would take the next argument as its value.
+        let complete = takes_value || !VALUE_FLAGS.contains(&flag);
+        if complete && (is_tuning_flag(flag) || also.contains(&flag)) {
             out.extend(flags[i..i + n].iter().cloned());
         }
         i += n;
@@ -726,10 +728,14 @@ pub fn size_multiple(family: &Family) -> u32 {
     family.dials.size_multiple.filter(|m| *m > 0).unwrap_or(64)
 }
 
-/// Round `v` to the nearest multiple of `m` (at least `m`, at most 4096).
+/// Lowest CFG resolved (and sent: `pinhole_engine::sdapi::MIN_CFG` matches it). Below 1 the
+/// engine steers towards the negative prompt, which isn't word-checked.
+pub const MIN_CFG: f32 = 1.0;
+
 /// Smallest width or height Fine-tune can ask for.
 pub const MIN_SIDE: u32 = 256;
 
+/// Round `v` to the nearest multiple of `m` (at least `m`, at most 4096).
 pub fn round_to_multiple(v: u32, m: u32) -> u32 {
     let m = m.max(1);
     let r = (v.saturating_add(m / 2) / m) * m;
@@ -849,7 +855,7 @@ pub fn resolve_params(
             (None, "cfg", Some(range)) => lerp(range, t),
             _ => d.cfg_default.unwrap_or(DEFAULT_CFG),
         })
-        .max(1.0);
+        .max(MIN_CFG);
     let guidance = fine
         .guidance
         .filter(|g| g.is_finite())

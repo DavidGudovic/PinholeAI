@@ -113,13 +113,6 @@ impl DetailPlan {
     /// Scale the engine's redraw of the crop back down and paste it over the
     /// source with the feathered mask. Returns the whole image as PNG.
     pub fn blend(&self, redraw: &[u8]) -> Result<Vec<u8>, DetailError> {
-        self.blend_with_area(redraw).map(|(whole, _)| whole)
-    }
-
-    /// [`Self::blend`], plus the redrawn box cut from the result (PNG, crop size), so the
-    /// image check can measure the new pixels at their own scale: on a large picture they
-    /// are too small to judge in the whole.
-    pub fn blend_with_area(&self, redraw: &[u8]) -> Result<(Vec<u8>, Vec<u8>), DetailError> {
         let (px, w, h) = decode_rgba(redraw)?;
         let redraw: RgbaImage =
             ImageBuffer::from_raw(w, h, px).ok_or(ImageError::Corrupt("pixels".into()))?;
@@ -137,11 +130,8 @@ impl DetailPlan {
                 *dst = ((u32::from(src) * a + u32::from(*dst) * (255 - a) + 127) / 255) as u8;
             }
         }
-        let area =
-            imageops::crop_imm(&out, self.crop.x, self.crop.y, self.crop.w, self.crop.h).to_image();
-        let area = encode_png_rgba(area.as_raw(), self.crop.w, self.crop.h)?;
         let (w, h) = out.dimensions();
-        Ok((encode_png_rgba(out.as_raw(), w, h)?, area))
+        Ok(encode_png_rgba(out.as_raw(), w, h)?)
     }
 }
 

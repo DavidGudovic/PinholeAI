@@ -1989,15 +1989,11 @@ enum Redraw {
 }
 
 impl Redraw {
-    /// The finished whole picture as PNG, plus (Fix details) the redrawn box on its own for
-    /// the image check, or `None` when the redraw can't be read.
-    fn blend(&self, redraw: &[u8]) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
+    /// The finished whole picture as PNG, or `None` when the redraw can't be read.
+    fn blend(&self, redraw: &[u8]) -> Option<Vec<u8>> {
         match self {
-            Redraw::Detail(p) => p
-                .blend_with_area(redraw)
-                .ok()
-                .map(|(whole, area)| (whole, Some(area))),
-            Redraw::Extend(p) => p.blend(redraw).ok().map(|whole| (whole, None)),
+            Redraw::Detail(p) => p.blend(redraw).ok(),
+            Redraw::Extend(p) => p.blend(redraw).ok(),
         }
     }
 }
@@ -2419,8 +2415,13 @@ async fn generate_inner(
         })?;
         if let Some(plan) = &fix {
             // Paste the redrawn box back into the whole image (or the source into the canvas).
+            // Fix details: the redraw is also checked on its own, at the size the engine drew
+            // it. Shrunk into a large picture it's too small to judge.
+            if matches!(plan, Redraw::Detail(_)) {
+                also_check.push(png.clone());
+            }
             let plan = plan.clone();
-            let (whole, area) = tokio::task::spawn_blocking(move || plan.blend(&png))
+            png = tokio::task::spawn_blocking(move || plan.blend(&png))
                 .await
                 .ok()
                 .flatten()
@@ -2430,8 +2431,6 @@ async fn generate_inner(
                         "The engine returned a damaged image. Try again.",
                     )
                 })?;
-            png = whole;
-            also_check.extend(area);
         }
         pngs.push(png);
     }

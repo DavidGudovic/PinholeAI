@@ -626,7 +626,6 @@ mod tests {
         let sizes = sizes.lock().clone();
         assert_eq!(sizes.len(), 2, "{sizes:?}");
         assert_eq!(sizes[0], (1200, 900));
-        assert!(sizes[1].0 < 1200 && sizes[1].1 < 900, "{sizes:?}");
         let out = &res.images[0];
         assert_eq!(
             (out.width, out.height),
@@ -638,6 +637,11 @@ mod tests {
         let (w, h) = (
             body["width"].as_u64().unwrap(),
             body["height"].as_u64().unwrap(),
+        );
+        assert_eq!(
+            (u64::from(sizes[1].0), u64::from(sizes[1].1)),
+            (w, h),
+            "the redraw is checked at the size it was drawn"
         );
         // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
         assert!(

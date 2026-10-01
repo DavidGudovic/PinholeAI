@@ -34,7 +34,8 @@ pub struct Guidance {
 
 /// The lowest CFG the engine is ever sent. At CFG 1 sd.cpp ignores the negative prompt; above
 /// 1 it steers away from it. Enforced where the request is serialized, so no setting, pasted
-/// value or IPC call can send less.
+/// value or IPC call can send less. Matches `pinhole_registry::wiring::MIN_CFG`, which keeps
+/// what Fine-tune shows honest (the crates don't depend on each other).
 pub const MIN_CFG: f32 = 1.0;
 
 /// `cfg` raised to [`MIN_CFG`]; a non-finite value becomes [`MIN_CFG`].

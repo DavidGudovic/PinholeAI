@@ -996,7 +996,31 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
     })?;
     // `launch_args` sets the host and port (loopback only).
     let mut args = cfg.llama_cpp.launch_defaults.clone();
-    crate::generate::strip_flag(&mut args, &["--host", "--port"]);
+    // engine.yaml is editable in some installs: nothing that writes text to disk, prints
+    // prompts or loads extra weights.
+    crate::generate::strip_flag(
+        &mut args,
+        &[
+            "--host",
+            "--port",
+            "--log-file",
+            "--lora",
+            "--lora-scaled",
+            "--control-vector",
+            "--control-vector-scaled",
+            "--slot-save-path",
+            "--model",
+            "-m",
+            "--mmproj",
+            "--path",
+        ],
+    );
+    args.retain(|a| {
+        !matches!(
+            a.as_str(),
+            "-v" | "--verbose" | "--log-verbose" | "--verbose-prompt" | "--log-prompts"
+        )
+    });
     args.extend(llama::launch_args(
         &model,
         &mmproj,

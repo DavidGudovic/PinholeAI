@@ -239,7 +239,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     let w = req.fineTune.width ?? sw;
     let h = req.fineTune.height ?? sh;
     const stickVal = ui.stickRange[0] + Math.min(1, Math.max(0, req.dials.stick)) * (ui.stickRange[1] - ui.stickRange[0]);
-    const cfg = req.fineTune.cfg ?? (ui.stickMapsTo === "cfg" && ui.showStick ? stickVal : ui.defaultCfg);
+    const cfg = Math.max(1, req.fineTune.cfg ?? (ui.stickMapsTo === "cfg" && ui.showStick ? stickVal : ui.defaultCfg));
     const guidance = req.fineTune.guidance ?? (ui.stickMapsTo === "guidance" ? stickVal : ui.defaultGuidance);
     const count = req.mode === "txt2img" ? req.dials.count : 1;
     const baseSeed = req.fineTune.seed ?? Math.floor(Math.random() * 2 ** 31);
