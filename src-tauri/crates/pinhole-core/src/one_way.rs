@@ -132,6 +132,22 @@ fn the_image_engine_is_asked_for_pictures_only_by_generate() {
     );
 }
 
+/// The image check works out every rule input itself from how a result was made
+/// (`imagecheck::MadeBy`): no feature passes or picks one.
+#[test]
+fn rule_inputs_are_worked_out_only_by_the_image_check() {
+    assert_eq!(files_with("rules::decide("), ["imagecheck.rs"]);
+    // The "safe images only" flag of files and pictures is read for the check only there
+    // (the session keeps it with a saved picture; the model lists show it as a badge).
+    assert_eq!(
+        files_with(".safe_images_only"),
+        ["imagecheck.rs", "inventory.rs", "session.rs"]
+    );
+    assert!(files_with("safe_images_only")
+        .iter()
+        .all(|f| f != "generate.rs"));
+}
+
 #[test]
 fn the_app_never_turns_on_test_only_constructors() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

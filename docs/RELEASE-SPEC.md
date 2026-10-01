@@ -191,7 +191,10 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    (rule 1) and, for drawings, the child tags.
    Any check model output that isn't a finite number is an error, so the picture is dropped.
 3. **Model marked "safe images only".** The model or a LoRA in the request is "safe images only"
-   (`InstalledFile::safe_images_only`) → intimate results are blocked. That is: it carries
+   (`InstalledFile::safe_images_only`), or one was used for a picture this result is made from
+   (Edit, Restyle, Fix details, Extend, a Create reference picture, Upscale) → intimate results
+   are blocked. The image check works this out itself from how the result was made
+   (`imagecheck::MadeBy`); a model that isn't installed any more counts as marked. That is: it carries
    CivitAI's `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`; when the model's data
    can't be fetched, it counts as set), or it was added by hand or found in a linked folder and
    no CivitAI by-hash lookup has cleared it yet (`InstalledFile::lookup`: not looked up yet, or

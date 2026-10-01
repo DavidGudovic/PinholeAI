@@ -741,8 +741,8 @@ struct Prepared {
     /// User texts for log redaction (memory only).
     secrets: Vec<String>,
     loras: Vec<LoraRef>,
-    /// The model or a picked LoRA is marked "safe images only" on CivitAI.
-    safe_images_only: bool,
+    /// Installed file ids of the picked add-ons (for the image check).
+    addon_ids: Vec<String>,
 }
 
 /// Read-only "Final prompt sent to the model" (combined in memory, never stored).
@@ -771,7 +771,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
     crate::lookup::refuse_if_flagged(&model)?;
-    let mut safe_images_only = model.safe_images_only();
+    let mut addon_ids = Vec::new();
     {
         let idx = core.installed.lock();
         // Add-ons were picked for the chosen model; an edit that fell back to
@@ -821,7 +821,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
                 },
             });
             crate::lookup::refuse_if_flagged(f)?;
-            safe_images_only |= f.safe_images_only();
+            addon_ids.push(f.id.clone());
             addon_words.push(f.friendly_name.clone());
             addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
             // CivitAI's own name and trained words too: editing the trigger words changes
@@ -906,7 +906,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
         prompt,
         secrets,
         loras,
-        safe_images_only,
+        addon_ids,
     })
 }
 
@@ -2098,21 +2098,8 @@ async fn generate_inner(
     let mut ref_images = Vec::new();
     let mut mask_image = None;
     let mut source: Option<SessionImage> = None;
-    // Origins of every picture the result is made from (not the mask: that is only a shape).
-    let mut input_origins: Vec<Origin> = Vec::new();
-    // The brought-in pictures behind them, for the image check.
-    let mut sources: Vec<crate::session::Source> = Vec::new();
-    // Made pictures fed in from a brought-in chain: a face can show up in them (enlarged,
-    // straightened, sharpened) that the brought-in picture didn't show clearly.
-    let mut inputs: Vec<crate::session::Source> = Vec::new();
-    let mut add_sources = |img: &SessionImage| {
-        inputs.extend(img.fed_in_source());
-        for s in img.sources() {
-            if !sources.iter().any(|k| k.id == s.id) {
-                sources.push(s);
-            }
-        }
-    };
+    // Every picture the result is made from (not the mask: that is only a shape).
+    let mut inputs: Vec<SessionImage> = Vec::new();
     match req.mode {
         // Create's reference picture ("in the style of this picture"): sent like an edit's
         // image, but the size comes from the dials, not from the picture.
@@ -2124,8 +2111,7 @@ async fn generate_inner(
                     ));
                 }
                 let (b64, img) = b64_image(core, id)?;
-                input_origins.push(img.origin);
-                add_sources(&img);
+                inputs.push(img.clone());
                 ref_images.push(b64);
             }
         }
@@ -2135,8 +2121,7 @@ async fn generate_inner(
                 .as_deref()
                 .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
             let (b64, img) = b64_image(core, id)?;
-            input_origins.push(img.origin);
-            add_sources(&img);
+            inputs.push(img.clone());
             init_image = Some(b64);
             source = Some(img);
         }
@@ -2151,8 +2136,7 @@ async fn generate_inner(
             // The Edit tab sends the image being edited plus at most one more.
             for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
-                input_origins.push(img.origin);
-                add_sources(&img);
+                inputs.push(img.clone());
                 if source.is_none() {
                     source = Some(img);
                 }
@@ -2456,9 +2440,11 @@ async fn generate_inner(
         core,
         pngs,
         also_check,
-        sources,
-        inputs,
-        prep.safe_images_only,
+        crate::imagecheck::MadeBy::Model {
+            model_id: &prep.model.id,
+            addon_ids: &prep.addon_ids,
+            inputs: &inputs,
+        },
     )
     .await?;
     // Cancel pressed during the check: nothing is kept (as for an upscale).
@@ -2483,7 +2469,7 @@ async fn generate_inner(
             sampler: params.sampler.clone(),
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
-            origin: Origin::of_result(&input_origins),
+            origin: Origin::of_result(inputs.iter().map(|i| &i.origin)),
             // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
             base_size: fix.is_none().then_some((width, height)),
         };
@@ -2946,16 +2932,12 @@ async fn upscale_inner(
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
     // Checked like every made picture (one way in), and it keeps the source's brought-in
-    // pictures for later edits. A picture from a "safe images only" model stays under rule 3.
-    let from = src.sources();
-    let input = src.fed_in_source().into_iter().collect();
+    // pictures for later edits.
     let checked = crate::imagecheck::check_results(
         core,
         vec![png],
         Vec::new(),
-        from,
-        input,
-        src.safe_images_only,
+        crate::imagecheck::MadeBy::Upscale(src),
     )
     .await?
     .pop()
