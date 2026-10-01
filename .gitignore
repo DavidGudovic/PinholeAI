@@ -23,3 +23,6 @@ portable/
 pins-report.json
 src-tauri/vcrt/*.dll
 *.tsbuildinfo
+
+# Editors
+.idea/

@@ -39,6 +39,7 @@ fn main() {
         let (mut intimate, mut sexual) = (0, 0);
         let (mut minor_tag, mut young_face, mut with_face, mut small_face) = (0, 0, 0, 0);
         let (mut diag_n, mut diag_errors) = (0, 0);
+        let (mut photo_n, mut by_groups, mut by_years, mut by_setting) = (0, 0, 0, 0);
         for p in &files {
             let Some(png) = load(p, scale) else {
                 unreadable += 1;
@@ -98,6 +99,25 @@ fn main() {
                 small_face += (photo && faces.iter().any(|f| f.too_small_to_judge())) as u32;
                 with_face += faces.iter().any(|f| f.judged()) as u32;
                 young_face += (photo && faces.iter().any(|f| f.looks_underage())) as u32;
+                photo_n += photo as u32;
+                // Each half of the age rule on its own (photo style only, as in the app).
+                use pinhole_check::rules::{
+                    CHILD_FACE, UNDER_20_FACE, UNDER_AGE, YOUNG_CONTEXT_TAG,
+                };
+                by_groups += (photo
+                    && faces.iter().any(|f| {
+                        f.judged()
+                            && (f.child_face.is_some_and(|c| c >= CHILD_FACE)
+                                || f.under_20_face.is_some_and(|u| u >= UNDER_20_FACE))
+                    })) as u32;
+                by_years += (photo
+                    && faces
+                        .iter()
+                        .any(|f| f.judged() && f.age.is_some_and(|a| a < UNDER_AGE)))
+                    as u32;
+                by_setting += (photo
+                    && t.young_context >= YOUNG_CONTEXT_TAG
+                    && faces.iter().any(|f| f.borderline())) as u32;
             }
         }
         let pct = |k: u32| 100.0 * k as f32 / n.max(1) as f32;
@@ -115,6 +135,9 @@ fn main() {
             println!(
                 "  diagnostics (every step on every picture, not the app's decision; {diag_n} measured, {diag_errors} check errors): minor tag ≥ {:.1}: {minor_tag} · photo-style face the age rule acts on: {young_face} · with a judged face: {with_face} · photo-style face too small to judge: {small_face}",
                 pinhole_check::rules::MINOR_TAG,
+            );
+            println!(
+                "  photo style: {photo_n} · of those, age groups: {by_groups} · age in years: {by_years} · borderline face with setting: {by_setting}"
             );
         }
     }
