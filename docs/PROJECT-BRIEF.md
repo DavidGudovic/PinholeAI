@@ -14,8 +14,7 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
 
 ## Status (v1.0.1)
 - Milestones M0–M5 implemented on `main`. v1.0.0 is the first GitHub release (2026-10-01). v1.0.1
-  (safety and model-trust fixes, `RELEASE-SPEC.md` top) is built as a draft release that the
-  maintainer publishes. `RELEASE-SPEC.md` §12 lists what was
+  (same day: safety and model-trust fixes, `RELEASE-SPEC.md` top; Pinhole Licence 1.0). `RELEASE-SPEC.md` §12 lists what was
   done for it and what is still open. In-app updates open the release page until release files
   are signed (`update::SELF_UPDATE`).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
