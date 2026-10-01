@@ -777,4 +777,29 @@ mod tests {
         assert!(!p.exists());
         assert!(abs.is_file());
     }
+
+    #[test]
+    fn the_prompt_preview_does_not_link_add_ons() {
+        let tmp = tempfile::tempdir().unwrap();
+        let comfy = tmp.path().join("Comfy");
+        fixtures::sdxl(&comfy.join("checkpoints/m.safetensors"));
+        fixtures::sdxl_lora(&comfy.join("loras/w.safetensors"));
+        let core = new_core(&tmp.path().join("Data"));
+        add(&core, &comfy.display().to_string()).unwrap();
+        wait_scans(&core);
+        let model = crate::models::list_models(&core).unwrap()[0].id.clone();
+        let lora = core.installed.lock().loras().next().unwrap().id.clone();
+        let mut req = crate::generate::GenerateRequest::txt2img(model, "a red boat");
+        req.loras = vec![crate::generate::LoraUse {
+            lora_id: lora,
+            weight: 1.0,
+            words: None,
+        }];
+        crate::generate::preview_final_prompt(&core, &req).unwrap();
+        assert!(!core
+            .data
+            .models(ModelKind::Lora)
+            .join(LORA_LINKS_DIR)
+            .exists());
+    }
 }

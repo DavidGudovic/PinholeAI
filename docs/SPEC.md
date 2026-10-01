@@ -8,7 +8,7 @@ every decision can be overridden.
 
 ## 1. Principles (in priority order)
 
-1. **Private by construction.** Prompts are never written anywhere. No telemetry, no analytics,
+1. **Local by design.** Prompts are kept in memory, not written to disk. No telemetry, no analytics,
    no crash reporting, no automatic update checks. The only network traffic is traffic the user
    starts (browsing CivitAI, downloading a model or engine, pressing "Check for updates").
 2. **Zero-knowledge default path.** A new user never has to know what a VAE, text encoder,
@@ -186,8 +186,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
 6. No telemetry SDKs, no automatic update checks, no remote fonts/CDNs in the UI (bundle everything).
    Updates are checked only when the user presses **Check for updates** (Settings → Updates): one
    request to the GitHub releases API through the same Rust client (Offline mode, allow-list).
-7. The CivitAI API key (optional) and the GitHub token (optional, Settings → Updates) are stored in
-   the OS keychain (`keyring` crate), never in `Data/`.
+7. The CivitAI API key (optional) is stored in the OS keychain (`keyring` crate), never in `Data/`.
 8. Saved file names: `pinhole_YYYYMMDD_HHMMSS_<seed>.png`. Never derived from the prompt.
 9. Saved-image metadata: only the **AI-generated marker** by default (RELEASE-SPEC §2): XMP
    `DigitalSourceType` only ("made with AI", no app name), always written to pictures Pinhole made (no
@@ -205,8 +204,8 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
     ("Saved styles are stored on this computer"). The main prompt is never stored, and
     nothing is ever saved as a style automatically.
 
-Honest limitation to put in the README: the OS may page RAM to swap/pagefile; Pinhole cannot
-control that.
+Known limit (not for the README, which keeps no limitations section): the OS may page RAM to
+swap/pagefile; Pinhole cannot control that.
 
 ---
 
@@ -298,8 +297,8 @@ model (text only, `captioner.improve` in `models.yaml`). Tags for families whose
 is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
 and **Undo** puts back what was typed (shown while the box still holds the improved text; the
 answer is dropped if the prompt was edited meanwhile). The instruction says to keep the user's
-subject, stay safe for work while Safe mode is On (while Off: adult content, adults only, is allowed and
-written plainly, nothing sexual is added that the user didn't ask for, and anyone under 18 stays
+subject, stay safe for work while Safe mode is On (while Off: adult themes between adults are kept and
+described clearly, nothing of that kind is added that the user didn't ask for, and anyone under 18 stays
 non-sexual and clothed; the word check runs on the idea and the answer either way), and not to
 write the trigger words of add-ons in use (taken out whole-word if it does anyway, since they are
 added at request time). An answer that is a refusal ("I'm sorry, but I can't…") or a repetition
@@ -348,17 +347,18 @@ Four modes; Describe a change or Restyle is picked automatically:
 
 1. **Instruction edit** (default when an edit model is installed): the user types what to change:
    "make it evening with warm street lights" or "replace the mug with a water bottle". Uses the
-   edit family (Qwen Image Edit 2511 preferred, Flux.1 Kontext as the lower-VRAM option) with
-   the image passed as `ref_images[0]`. Installed generators whose architecture can also edit
-   from a reference image are offered too (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein
-   and dev, Qwen-Image 2.1); they rank after the dedicated edit models and stay in Create.
+   recommended edit model, Qwen-Image 2.1 (it also creates, so one download serves both tabs),
+   with the image passed as `ref_images[0]`. Installed dedicated edit models (Qwen Image Edit
+   2511, Flux.1 Kontext) and other generators that can edit from a reference image
+   (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev) are offered too; the automatic
+   pick ranks Qwen-Image 2.1, then the dedicated edit models, then the other generators.
    Qwen-Image 2.1 needs Qwen3-VL-8B's vision weights for edits, installed as one of its parts.
    - Dial: **Stay close to original** (maps to the family's guidance setting; hidden when the
      family has a fixed CFG and no guidance, e.g. distilled FLUX.2 klein).
    - Optional **"Only change here"** brush: paint a mask → `mask_image`.
    - Optional **"Add another image"**: a second picture (image 2) for edits like "put the
      bottle from image 2 on the shelf". Sent as `ref_images[1]`; only models with
-     `multi_ref: true` (Qwen Image Edit, FLUX.2) are offered then, and one that Fits wins the
+     `multi_ref: true` (Qwen-Image 2.1, Qwen Image Edit, FLUX.2) are offered then, and one that Fits wins the
      automatic pick. The brush is hidden while image 2 is there. Image 2 stays in memory like
      the edit chain until it is removed or Reset.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
@@ -416,8 +416,8 @@ sits by the Describe button and the Improve button. **Automatic** uses the 7B wh
 else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off, and while Off, Automatic uses it first once installed: Qwen2.5-VL 7B abliterated
-(Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
+mode is Off, and while Off, Automatic uses it first once installed: a less restrictive Qwen2.5-VL 7B
+fine-tune (Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
 another installed helper still uses). Installed models still lists it while Safe mode is On, so it
 can be removed. The word check runs on the output of every helper model.
 
@@ -566,9 +566,10 @@ request parameters.
 
 **Hardware-aware flags** (`config/models.yaml → hardware_profiles`): VRAM tiers choose
 offload/tiling flags and, where the registry lists several quants, the recommended quant to
-download. The 5070 Ti (16 GB) tier runs Z-Image Turbo **Q8_0** with the Q8_0 GGUF Qwen3-4B text
-encoder (bf16 model + bf16 encoder ran out of VRAM on a real 16 GB card) and Qwen Image Edit 2511
-Q4_K_M; bf16 Z-Image and its bf16 encoder are picked from 20–21 GB. Text encoders with a VRAM
+download. The 5070 Ti (16 GB) tier gets Qwen-Image 2.1 **Q8_0** (Create and Edit) with the
+Q4_K_M Qwen3-VL-8B text encoder, and Z-Image Turbo **Q8_0** with the Q8_0 GGUF Qwen3-4B text
+encoder as the fast card (bf16 model + bf16 encoder ran out of VRAM on a real 16 GB card);
+bf16 models and encoders are picked from 20–21 GB. Text encoders with a VRAM
 choice in `models.yaml` (e.g. `{ vram_gte_20: bf16, vram_gte_10: q8, else: q4 }`) follow the same rule.
 
 **Updating model knowledge**: edit `config/models.yaml` (shipped with the app) or add entries in
@@ -581,12 +582,15 @@ finetune of a known family.
 
 - `config/models.yaml → recommended` holds a ranked list per **role**: Realistic, Anime,
   Edit, Describe. Each candidate has a download spec and its VRAM needs.
-- **Optional second cards** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_detail` offers
-  Krea 2 Turbo ("more detail, slower") next to Z-Image Turbo on 12 GB+ cards (Q5_K_S below
-  20 GB, Q8_0 from 20 GB). When nothing in an optional role fits, the card is left out.
-- `edit_alt` offers FLUX.1 Kontext ("lighter, faster edits") next to Qwen Image Edit, so a
-  16 GB card has two edit models to choose from; it is left out when it would be the same
-  family as the Edit pick.
+- **Qwen-Image 2.1 heads Realistic and Edit** (7B, the newest model the engine runs; one
+  download does both). For Create it has `min_quant: q6_k`: it is picked only when its Q6_K or
+  better Fits (12 GB+); smaller cards get Z-Image Turbo, which is also several times faster.
+  Edit takes it at any quant (Q4_K on 6–10 GB), since it is smaller than the older edit models
+  (Qwen Image Edit 2511 is 20B, FLUX.1 Kontext 12B), which stay supported but are no longer
+  one-click picks. The per-card table is in `models.yaml → recommended` (test `picks_by_card`).
+- **Optional second card** (`OPTIONAL_ROLES` in `recommend.rs`): `realistic_fast` offers
+  Z-Image Turbo ("several times faster") next to Qwen-Image 2.1. It is left out when it would
+  be the same model as the Realistic pick, and when it doesn't fit.
 - For each role Pinhole picks the **first (best) candidate whose `vram_gb.min` fits this GPU**,
   choosing the best quant that **Fits** (bf16 → Q8 → Q6 → Q4 → Q3); only when none Fits, the
   Tight quant with the lowest need. "Recommended for your card" must be OK to run: a Tight
@@ -786,13 +790,11 @@ build is shared.
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
   AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
-  the next start. While the repository is private, GitHub answers the unauthenticated check with 404:
-  the app says the releases can't be seen yet and offers the release page, or a GitHub token field
-  (fine-grained, Contents: read-only on this repository; OS keychain only). With a token the check
-  and the downloads use the API (`/releases`, `/releases/assets/{id}` with `Accept:
-  application/octet-stream`), and the token is sent only in `Authorization` to `api.github.com`
-  (reqwest drops it on the redirect to the release CDN). The checksum list protects against broken or swapped downloads, not against a
-  compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
+  the next start. The check and the downloads are unauthenticated (public release API and
+  download URLs). If GitHub answers 404 (releases can't be seen), the app says so and offers the
+  release page. Earlier builds could store a GitHub token in the keychain; the first start after
+  the update deletes it (marker `Data/.github-token-cleared`). The checksum list protects against
+  broken or swapped downloads, not against a compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
 - **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
   Prompts are never sent to a server for moderation. Already in: a word check
   (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,

@@ -22,19 +22,19 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
         </p>
         <section>
           <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">Not allowed</h3>
-          <p className="mt-1.5">Don't use Pinhole to create or share content that:</p>
+          <p className="mt-1.5">Do not use Pinhole to create or share content that:</p>
           <ul className="mt-1.5 list-disc space-y-1 pl-5">
             <li>sexualizes minors, or anyone who appears to be under 18</li>
             <li>shows a real person in a sexual or intimate way without their consent, including edits of their photos</li>
             <li>impersonates, deceives, bullies or harasses real people</li>
-            <li>forges documents, IDs, receipts or evidence</li>
+            <li>forges documents, IDs, money, receipts or evidence, or is used for fraud</li>
             <li>is otherwise illegal</li>
           </ul>
         </section>
         <section>
           <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">Sharing</h3>
           <p className="mt-1.5">
-            Saved pictures are marked as made with AI, in the file details and with an invisible watermark. Don't
+            Saved pictures are marked as made with AI, in the file details and with an invisible watermark. Do not
             present a made or edited picture as a real photo in a way that could mislead people.
           </p>
         </section>
@@ -50,7 +50,7 @@ export function UsageGuidelines({ open, onClose, notice }: { open: boolean; onCl
           <p className="mt-1.5">
             Pinhole checks prompts and pictures on your computer against these guidelines, for example content that
             sexualizes minors or intimate edits of photos of real people. It also keeps models marked for safe images
-            only to safe images. The check works offline, can't be turned off and keeps no record. Like any automatic
+            only to safe images. The check runs on your computer. Like any automatic
             check, it can sometimes stop something harmless.
           </p>
         </section>

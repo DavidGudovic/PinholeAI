@@ -405,6 +405,7 @@ mod tests {
                 trained_words: vec![],
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             }),
             added_at: 0,
             last_used: None,

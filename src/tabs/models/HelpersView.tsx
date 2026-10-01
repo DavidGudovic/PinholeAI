@@ -71,7 +71,7 @@ export function HelpersView() {
                     </span>
                     {m.removable ? (
                       <Button size="sm" variant="ghost" onClick={() => setRemoving(m)}>
-                        <Trash2 className="h-3.5 w-3.5" /> Remove
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
                       </Button>
                     ) : (
                       <span className="text-xs text-neutral-500">Came with another model</span>
@@ -112,14 +112,14 @@ function RemoveDialog({ target, onClose }: { target: HelperModel | null; onClose
     <Dialog
       open={!!target}
       onClose={onClose}
-      title={`Remove “${target?.title ?? ""}”?`}
+      title={`Delete “${target?.title ?? ""}”?`}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button variant="danger" onClick={() => void confirm()} disabled={busy}>
-            {busy ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-4 w-4" />} Remove{target ? ` · frees ${formatBytes(target.sizeBytes)}` : ""}
+            {busy ? <Spinner className="h-3.5 w-3.5" /> : <Trash2 className="h-4 w-4" />} Delete{target ? ` · frees ${formatBytes(target.sizeBytes)}` : ""}
           </Button>
         </>
       }

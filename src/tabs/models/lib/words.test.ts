@@ -59,7 +59,7 @@ describe("plain words", () => {
   it("describes quants", () => {
     expect(quantPlain("bf16")).toBe("Full quality version");
     expect(quantPlain("q8_0")).toBe("High-quality compact version");
-    expect(quantPlain("q4_k")).toBe("Smaller version for your GPU");
+    expect(quantPlain("q4_k")).toBe("Smaller version for your graphics card");
     expect(quantPlain(null)).toBeNull();
   });
   it("formats ratios and formats", () => {

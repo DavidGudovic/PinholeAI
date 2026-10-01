@@ -12,16 +12,50 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::words::CheckedPrompt;
+
 // ---------------------------------------------------------------- request
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Guidance {
+    /// Sent as at least 1 ([`MIN_CFG`]). Below 1, sd.cpp leans towards the negative prompt
+    /// (at 0 it follows only the negative), and the negative prompt isn't word-checked.
+    #[serde(serialize_with = "ser_cfg")]
     pub txt_cfg: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_cfg"
+    )]
     pub img_cfg: Option<f32>,
     /// Flux-style distilled guidance.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub distilled_guidance: Option<f32>,
+}
+
+/// The lowest CFG the engine is ever sent. At CFG 1 sd.cpp ignores the negative prompt; above
+/// 1 it steers away from it. Enforced where the request is serialized, so no setting, pasted
+/// value or IPC call can send less. Matches `pinhole_registry::wiring::MIN_CFG`, which keeps
+/// what Fine-tune shows honest (the crates don't depend on each other).
+pub const MIN_CFG: f32 = 1.0;
+
+/// `cfg` raised to [`MIN_CFG`]; a non-finite value becomes [`MIN_CFG`].
+pub fn safe_cfg(cfg: f32) -> f32 {
+    if cfg.is_finite() {
+        cfg.max(MIN_CFG)
+    } else {
+        MIN_CFG
+    }
+}
+
+fn ser_cfg<S: serde::Serializer>(v: &f32, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_f32(safe_cfg(*v))
+}
+
+fn ser_opt_cfg<S: serde::Serializer>(v: &Option<f32>, s: S) -> Result<S::Ok, S::Error> {
+    match v {
+        Some(v) => s.serialize_some(&safe_cfg(*v)),
+        None => s.serialize_none(),
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -84,7 +118,8 @@ pub struct VaeTilingRequest {
 /// Body of `POST /sdcpp/v1/img_gen`. Build with [`ImgGenRequest::new`].
 #[derive(Clone, Serialize)]
 pub struct ImgGenRequest {
-    pub prompt: String,
+    /// Private: set only by [`ImgGenRequest::new`] from a word-checked prompt.
+    prompt: String,
     pub negative_prompt: String,
     /// -1 = model default.
     pub clip_skip: i32,
@@ -116,9 +151,10 @@ pub struct ImgGenRequest {
 
 impl ImgGenRequest {
     /// New request: PNG output, metadata embedding OFF, one image, 20 steps.
-    pub fn new(prompt: impl Into<String>, width: u32, height: u32, seed: i64) -> Self {
+    /// The prompt must have passed the word check ([`CheckedPrompt`]).
+    pub fn new(prompt: CheckedPrompt, width: u32, height: u32, seed: i64) -> Self {
         Self {
-            prompt: prompt.into(),
+            prompt: prompt.into_string(),
             negative_prompt: String::new(),
             clip_skip: -1,
             width,
@@ -144,6 +180,10 @@ impl ImgGenRequest {
             output_format: "png",
             output_compression: 100,
         }
+    }
+
+    pub fn prompt(&self) -> &str {
+        &self.prompt
     }
 
     pub fn embeds_metadata(&self) -> bool {
@@ -586,7 +626,12 @@ mod tests {
 
     #[test]
     fn img_gen_body_never_embeds_metadata() {
-        let mut req = ImgGenRequest::new("a cat", 512, 768, 42);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            512,
+            768,
+            42,
+        );
         req.negative_prompt = "blurry".into();
         req.lora.push(LoraRef {
             path: "styles/film.safetensors".into(),
@@ -622,11 +667,44 @@ mod tests {
         assert!(!req.embeds_metadata());
     }
 
+    /// Regression: below CFG 1 the engine follows the negative prompt, which isn't
+    /// word-checked, so the body never carries less than 1, whatever the caller set.
+    #[test]
+    fn cfg_below_one_is_sent_as_one() {
+        for cfg in [0.0, 0.5, -3.0, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {
+            let mut req = ImgGenRequest::new(
+                crate::words::CheckedPrompt::check("a cat").unwrap(),
+                512,
+                512,
+                1,
+            );
+            req.sample_params.guidance.txt_cfg = cfg;
+            req.sample_params.guidance.img_cfg = Some(cfg);
+            let v = serde_json::to_value(&req).unwrap();
+            assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+            assert_eq!(v["sample_params"]["guidance"]["img_cfg"], 1.0, "{cfg}");
+        }
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            512,
+            512,
+            1,
+        );
+        req.sample_params.guidance.txt_cfg = 6.5;
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["sample_params"]["guidance"]["txt_cfg"], 6.5);
+    }
+
     /// Regression: with no `upscaler`, sd-server upscales in latent space, which
     /// garbled copied CivitAI settings (hires ×2 at strength 0.35).
     #[test]
     fn hires_uses_an_image_space_upscaler() {
-        let mut req = ImgGenRequest::new("a cat", 1024, 1024, 1);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("a cat").unwrap(),
+            1024,
+            1024,
+            1,
+        );
         req.hires = Some(HiresRequest::image_space(2.0, 0, 0.35));
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["hires"]["enabled"], true);
@@ -638,7 +716,12 @@ mod tests {
 
     #[test]
     fn debug_never_prints_prompt() {
-        let mut req = ImgGenRequest::new("PINHOLE_SENTINEL_7f3a", 64, 64, 1);
+        let mut req = ImgGenRequest::new(
+            crate::words::CheckedPrompt::check("PINHOLE_SENTINEL_7f3a").unwrap(),
+            64,
+            64,
+            1,
+        );
         req.negative_prompt = "NEG_SENTINEL".into();
         req.init_image = Some("aGVsbG8=".into());
         let dbg = format!("{req:?}");

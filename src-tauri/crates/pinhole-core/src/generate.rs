@@ -44,6 +44,7 @@ use pinhole_engine::sdapi::{
     self, ApiError, CancelOutcome, Guidance, HiresRequest, ImgGenRequest, Job, JobStatus, LoraRef,
     SampleParams, SdClient, UpscaleRequest, VaeTilingRequest,
 };
+use pinhole_engine::words::CheckedPrompt;
 use pinhole_hardware::OtherGpuUse;
 use pinhole_registry::style::FinalPrompt;
 use pinhole_registry::wiring::{
@@ -294,6 +295,10 @@ pub struct ResultImage {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub origin: Origin,
+    /// The size the picture was made at, before hires fix or an upscale enlarged it: what
+    /// "settings (no prompt)" records, so reusing them makes the same picture again.
+    #[serde(skip)]
+    pub base_size: Option<(u32, u32)>,
 }
 
 /// `GenerateResult`
@@ -731,9 +736,13 @@ struct Prepared {
     model: InstalledFile,
     family: Family,
     final_prompt: FinalPrompt,
+    /// `final_prompt.prompt` after the word check: the only prompt the engine request takes.
+    prompt: CheckedPrompt,
     /// User texts for log redaction (memory only).
     secrets: Vec<String>,
     loras: Vec<LoraRef>,
+    /// The model or a picked LoRA is marked "safe images only" on CivitAI.
+    safe_images_only: bool,
 }
 
 /// Read-only "Final prompt sent to the model" (combined in memory, never stored).
@@ -741,14 +750,16 @@ pub fn preview_final_prompt(
     core: &AppCore,
     req: &GenerateRequest,
 ) -> CoreResult<FinalPromptPreview> {
-    let p = prepare(core, req)?;
+    let p = prepare(core, req, false)?;
     Ok(FinalPromptPreview {
         prompt: p.final_prompt.prompt,
         negative: p.final_prompt.negative,
     })
 }
 
-fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
+/// `materialize`: make linked add-ons readable by the engine (a link or copy into Pinhole's
+/// add-on folder). Off for the read-only prompt preview, which writes nothing.
+fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResult<Prepared> {
     let (model, family) = resolve_model(core, req)?;
     let reg = core.registry();
 
@@ -759,6 +770,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
     // Every picked add-on's name and trigger words, for the word check below (whether or
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
+    let mut safe_images_only = model.civitai.as_ref().is_some_and(|c| c.sfw_only);
     {
         let idx = core.installed.lock();
         // Add-ons were picked for the chosen model; an edit that fell back to
@@ -781,7 +793,11 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                     )));
                 }
                 // sd-server only loads add-ons from Pinhole's add-on folder.
-                abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+                if materialize {
+                    abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+                } else {
+                    abs = lora_dir.join(f.id.as_str());
+                }
             }
             let rel = abs
                 .strip_prefix(&lora_dir)
@@ -789,7 +805,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                 .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/"))
                 .filter(|r| !r.is_empty())
                 .ok_or_else(|| CoreError::invalid("A style add-on (LoRA) is stored outside Data/models/loras. Reinstall it from Models."))?;
-            if !abs.is_file() {
+            if (materialize || !f.is_linked()) && !abs.is_file() {
                 return Err(CoreError::not_found(format!(
                     "The add-on “{}” is missing from the Data folder. Reinstall it from Models.",
                     f.friendly_name
@@ -803,8 +819,16 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
                     1.0
                 },
             });
+            safe_images_only |= f.civitai.as_ref().is_some_and(|c| c.sfw_only);
             addon_words.push(f.friendly_name.clone());
             addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
+            // CivitAI's own name and trained words too: editing the trigger words changes
+            // what goes into the prompt, not what the add-on was trained on.
+            if let Some(c) = &f.civitai {
+                addon_words.extend(c.model_name.iter().cloned());
+                addon_words.extend(c.version_name.iter().cloned());
+                addon_words.extend(c.trained_words.iter().cloned());
+            }
             if req.add_trigger_words {
                 for w in f.trigger_words() {
                     let w = w.trim();
@@ -861,8 +885,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
 
     // The whole positive prompt (idea + style + trigger words) and the add-ons; the negative
     // prompt is where people list what to keep out, so it isn't checked.
-    addon_words.insert(0, final_prompt.prompt.clone());
-    crate::text_check::check(&addon_words.join(", "))?;
+    let prompt = crate::text_check::checked_with(final_prompt.prompt.clone(), &addon_words)?;
 
     let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
     if let Some(n) = &final_prompt.negative {
@@ -878,8 +901,10 @@ fn prepare(core: &AppCore, req: &GenerateRequest) -> CoreResult<Prepared> {
         model,
         family,
         final_prompt,
+        prompt,
         secrets,
         loras,
+        safe_images_only,
     })
 }
 
@@ -932,7 +957,7 @@ fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(Installed
                 .cloned()
                 .ok_or_else(|| {
                     CoreError::not_found(if two_images {
-                        "None of your models can combine two images. Remove the second image, or get Qwen Image Edit or a FLUX.2 model."
+                        "None of your models can combine two images. Remove the second image, or get Qwen-Image 2.1 from the Edit tab."
                     } else {
                         "No edit model is installed yet. Get one from the Edit tab."
                     })
@@ -1591,7 +1616,17 @@ pub(crate) fn full_sd_args(
         ],
     );
     args.retain(|a| a != sdapi::REJECT_ORIGIN_FLAG);
-    let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
+    // Only tuning flags from engine.yaml (an editable file in some installs): nothing that
+    // loads content past the checks.
+    let mut defaults = pinhole_registry::wiring::keep_tuning_flags(
+        &cfg.stable_diffusion_cpp.launch_defaults,
+        &[
+            "--listen-ip",
+            "-l",
+            "--log-level",
+            sdapi::REJECT_ORIGIN_FLAG,
+        ],
+    );
     // The key only travels in the environment (a command line is visible to
     // other programs); the lock-down flag only follows `ENGINE_LOCKDOWN`.
     strip_flag(
@@ -1749,7 +1784,7 @@ async fn ensure_engine(
     engine_setup::emit_status(core);
 
     let installed = installed.ok_or_else(|| {
-        CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
+        CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Get the engine” (Settings → Engine) to download it, then try again.")
     })?;
 
     engine_setup::ensure_runtime(core, &installed)?;
@@ -1996,13 +2031,15 @@ fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
 /// Run one generation. See module docs.
 pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<GenerateResult> {
     // Read before waiting for another job: results of a job that outlives a
-    // Reset are dropped (see `Session::insert_generated_since`).
+    // Reset are dropped (see `Session::insert_generated`).
     let session_epoch = core.session.epoch();
     // Early word check so a blocked prompt doesn't wait behind a running job; `prepare`
     // checks the combined prompt again.
     crate::text_check::check(&req.prompt)?;
     // Held for the whole run: the Models folder can't move under the engine.
     let _folder = crate::models::folder_read(core)?;
+    // Without every image check file nothing is made (fail closed).
+    crate::imagecheck::ensure_ready(core)?;
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
@@ -2024,7 +2061,14 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
         Err(e) if e.code == "cancelled" => {
             emit_progress(core, GenPhase::Cancelled, &label, None, None, t0)
         }
-        Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
+        Err(e) => {
+            if e.code == "blocked" || e.code.starts_with("check_") {
+                // The engine keeps finished jobs readable on its port: a picture the check
+                // dropped must go with it.
+                core.gen.clear_pending.store(true, Ordering::SeqCst);
+            }
+            emit_progress(core, GenPhase::Failed, &label, None, None, t0)
+        }
     }
     after_job(core, epoch).await;
     result
@@ -2041,7 +2085,7 @@ async fn generate_inner(
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
-    let prep = prepare(core, req)?;
+    let prep = prepare(core, req, true)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
@@ -2054,6 +2098,15 @@ async fn generate_inner(
     let mut source: Option<SessionImage> = None;
     // Origins of every picture the result is made from (not the mask: that is only a shape).
     let mut input_origins: Vec<Origin> = Vec::new();
+    // The brought-in pictures behind them, for the image check.
+    let mut sources: Vec<crate::session::Source> = Vec::new();
+    let mut add_sources = |img: &SessionImage| {
+        for s in img.sources() {
+            if !sources.iter().any(|k| k.id == s.id) {
+                sources.push(s);
+            }
+        }
+    };
     match req.mode {
         // Create's reference picture ("in the style of this picture"): sent like an edit's
         // image, but the size comes from the dials, not from the picture.
@@ -2066,6 +2119,7 @@ async fn generate_inner(
                 }
                 let (b64, img) = b64_image(core, id)?;
                 input_origins.push(img.origin);
+                add_sources(&img);
                 ref_images.push(b64);
             }
         }
@@ -2076,6 +2130,7 @@ async fn generate_inner(
                 .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
             let (b64, img) = b64_image(core, id)?;
             input_origins.push(img.origin);
+            add_sources(&img);
             init_image = Some(b64);
             source = Some(img);
         }
@@ -2091,6 +2146,7 @@ async fn generate_inner(
             for id in ids.iter().take(2) {
                 let (b64, img) = b64_image(core, id)?;
                 input_origins.push(img.origin);
+                add_sources(&img);
                 if source.is_none() {
                     source = Some(img);
                 }
@@ -2122,12 +2178,13 @@ async fn generate_inner(
         None
     };
 
+    // A Create reference picture is read like an edit's image: it needs the vision encoder.
     let files = model_files(
         core,
         &prep.model,
         &prep.family,
         &hw,
-        req.mode == GenMode::Edit,
+        req.mode == GenMode::Edit || !ref_images.is_empty(),
     )?;
     let extras = LaunchExtras {
         lora_dir: Some(core.data.models(ModelKind::Lora)),
@@ -2224,7 +2281,7 @@ async fn generate_inner(
         _ => i64::from(rand::random::<u32>() >> 1),
     };
 
-    let mut body = ImgGenRequest::new(prep.final_prompt.prompt.clone(), width, height, seed);
+    let mut body = ImgGenRequest::new(prep.prompt.clone(), width, height, seed);
     body.negative_prompt = prep.final_prompt.negative.clone().unwrap_or_default();
     body.clip_skip = params.clip_skip.unwrap_or(-1);
     body.batch_count = if fix.is_some() {
@@ -2349,8 +2406,9 @@ async fn generate_inner(
         );
     }
     let parent_id = source.as_ref().map(|s| s.id.clone());
-    let mut out = Vec::new();
-    for (i, img) in images.into_iter().enumerate() {
+    let mut pngs = Vec::with_capacity(images.len());
+    let mut also_check = Vec::new();
+    for img in images {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(img.b64_json.as_bytes())
             .map_err(|_| {
@@ -2367,6 +2425,11 @@ async fn generate_inner(
         })?;
         if let Some(plan) = &fix {
             // Paste the redrawn box back into the whole image (or the source into the canvas).
+            // Fix details: the redraw is also checked on its own, at the size the engine drew
+            // it. Shrunk into a large picture it's too small to judge.
+            if matches!(plan, Redraw::Detail(_)) {
+                also_check.push(png.clone());
+            }
             let plan = plan.clone();
             png = tokio::task::spawn_blocking(move || plan.blend(&png))
                 .await
@@ -2379,7 +2442,20 @@ async fn generate_inner(
                     )
                 })?;
         }
-        let (w, h) = pinhole_engine::png::dimensions(&png).unwrap_or((width, height));
+        pngs.push(png);
+    }
+    // Result intake: every picture passes the image check first; if one is blocked,
+    // none is kept. A redrawn box is also checked on its own.
+    let checked =
+        crate::imagecheck::check_results(core, pngs, also_check, sources, prep.safe_images_only)
+            .await?;
+    // Cancel pressed during the check: nothing is kept (as for an upscale).
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
+    let mut out = Vec::new();
+    for (i, png) in checked.into_iter().enumerate() {
+        let (w, h) = pinhole_engine::png::dimensions(png.png()).unwrap_or((width, height));
         let meta = ResultImage {
             id: uuid::Uuid::new_v4().to_string(),
             kind: ResultKind::Generated,
@@ -2396,10 +2472,12 @@ async fn generate_inner(
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
             origin: Origin::of_result(&input_origins),
+            // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
+            base_size: fix.is_none().then_some((width, height)),
         };
         if !core
             .session
-            .insert_generated_since(session_epoch, png, meta.clone())
+            .insert_generated(session_epoch, png, meta.clone())
         {
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
@@ -2643,7 +2721,8 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     if factor != 2 && factor != 4 {
         return Err(CoreError::invalid("Upscale works at 2× or 4×."));
     }
-    // The result is dropped when Reset happens meanwhile (see `Session::insert_generated_since`).
+    crate::imagecheck::ensure_ready(core)?;
+    // The result is dropped when Reset happens meanwhile (see `Session::insert_generated`).
     let session_epoch = core.session.epoch();
     let src = core
         .session
@@ -2845,17 +2924,26 @@ async fn upscale_inner(
         scheduler: None,
         parent_id: None,
         origin: src.origin,
+        base_size: None,
     });
+    meta.base_size = meta.base_size.or(Some((src.width, src.height)));
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
     meta.origin = src.origin;
     meta.width = w;
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
+    // Checked like every made picture (one way in), and it keeps the source's brought-in
+    // pictures for later edits.
+    let checked =
+        crate::imagecheck::check_results(core, vec![png], Vec::new(), src.sources(), false)
+            .await?
+            .pop()
+            .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
     if cancel.is_cancelled()
         || !core
             .session
-            .insert_generated_since(session_epoch, png, meta.clone())
+            .insert_generated(session_epoch, checked, meta.clone())
     {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
@@ -3633,6 +3721,7 @@ mod tests {
             scheduler: None,
             parent_id: None,
             origin: Origin::Generated,
+            base_size: Some((1, 2)),
         };
         let v = serde_json::to_value(&r).unwrap();
         for k in [

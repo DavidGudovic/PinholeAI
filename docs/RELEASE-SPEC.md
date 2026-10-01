@@ -57,6 +57,26 @@ instead of a refactor:
    they are ever turned on, passes through one function before the UI sees it. → image check (§3).
 4. **Export** — Save and Copy to clipboard both go through one function. → AI marker (§2).
 
+**Enforced by type (done).** The two checks can't be skipped by a new code path:
+- Text: `pinhole_engine::sdapi::ImgGenRequest::new` takes only a `CheckedPrompt`, which only the
+  word check makes (`pinhole_engine::words`, wrapped by `pinhole_core::text_check`). `prepare`
+  in generate.rs checks the final prompt (idea + style + prefix + trigger words) with the
+  add-on names; the request's prompt field is private.
+- Pictures: `Session::insert_generated` takes only a `CheckedPng`, which only
+  `imagecheck::check_results` makes. Every made picture (Create, Edit in every mode, batches,
+  Upscale) reaches the UI through it; imported pictures go in through `import_image` only.
+- `pinhole-core/src/one_way.rs` fails if a session picture or a checked value is built
+  anywhere else, if the engine's `submit`/`upscale`/`job` is called outside generate.rs, if
+  anything but `sdapi.rs` names the engine's picture endpoints, or if the app's Cargo.toml
+  turns on the test-only constructors (`test-util`). Release builds build the app package
+  alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
+  `test-util` in through `tests/`, so never ship a workspace build.
+- Upscale now needs the check's files and can be blocked like any made picture (so an
+  upscale of a brought-in photo can hit a false block on a borderline picture).
+- Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
+  output are checked with `text_check::check` in describe.rs; that text only reaches the
+  image engine through Create, where the type applies.
+
 ---
 
 ## 2. AI-generated marking (EU AI Act Art. 50) — Level 2
@@ -96,9 +116,11 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
 
 ## 3. Local image check — Level 2
 
-All local and offline. CPU only via ONNX Runtime (`ort` crate) → **zero VRAM**. Loaded on demand,
-unloaded when idle (like the captioner). Scores and verdicts are held in memory only and are
-**never logged or written anywhere** — same rules as prompts.
+Built 2026-09-30 (crate `pinhole-check`, wired in `pinhole-core/src/imagecheck.rs`). All local
+and offline: small ONNX classifiers run on the processor through `tract` (pure Rust, no native
+library to download or ship) → **zero VRAM**. Loaded on first use, dropped after 5 minutes idle.
+Scores and verdicts are held in memory only and are **never logged or written anywhere** — same
+rules as prompts. Safe mode doesn't change any of it.
 
 ### 3.1 Where each image came from
 
@@ -117,30 +139,54 @@ Every image in the session carries its origin, inherited by everything made from
 - Markers inside a file (C2PA, including Pinhole's own) are **never** trusted to mark an import as
   Generated: anyone can write one onto a real photo.
 
+Each session image also keeps the brought-in pictures it was made from (`SessionImage::made_from`,
+memory only), so rule 1 below still sees the original after it is discarded, through any number
+of steps. A picture saved in this session and opened again keeps them too (SHA-256 of the saved
+file → its sources, memory only, cleared by Reset); a file changed outside Pinhole starts a new
+chain as a brought-in picture.
+
 ### 3.2 What is blocked
 
-Three rules. Nothing else is blocked: adult images of fictional adults (Safe mode is a catalog
-setting, not a generation filter), swimwear, art nudes and every SFW edit of a real photo stay
-allowed.
+Three rules (`pinhole_check::rules`). Nothing else is blocked: adult images of adults (Safe mode is
+a catalog setting, not a generation filter), swimwear, art nudes and every ordinary edit of a real
+photo stay allowed. "Intimate" (rules 1 and 3) = an explicit rating ≥ 0.6, or one of the
+tagger's nudity tags (including implied nudity: covered or censored) or underwear / lingerie /
+see-through tags ≥ 0.5 **and** either nudity score ≥ 0.8 with the tagger's questionable +
+explicit rating ≥ 0.5, or an explicit rating ≥ 0.35. The explicit-only path is there because the
+tagger was trained on drawings and may not name nudity on a photo. The tags are needed because
+the nudity model and the questionable rating also fire on swimwear (2026-09-30 measurement:
+about 1 in 5 anime swimwear pictures counted before; ruling: adults-only change, rule 2 stays
+as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids`).
 
-1. **Real photo made intimate.** The result is Imported, a face is found in one of its Imported
-   inputs (image 1, image 2 or a Create reference picture), **and** the result
-   is clearly less clothed than the input: its intimate score crosses the threshold **and** is
-   higher than the input's by a set margin. "Intimate" means nudity, underwear only, see-through
-   clothing or sexual activity — confirm where the UK definition starts (§10) and set the
-   threshold there. Comparing with the input is what keeps a beach photo edited to "make it
-   sunset" from being blocked. Applies to every mode whose result is Imported (Edit, Restyle, Extend, Create with a reference picture).
-2. **Anyone who looks under 18, sexual.** Every mode, every source. The result is explicit
-   **and** either:
-   - photo style: the age model says under 18 with high confidence, or
-   - drawn / anime style: the tagger returns an explicit child tag above its threshold.
+1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
+   brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
+   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 40 px) and was **not** intimate when
+   brought in. Comparing with the original import (not the direct input) means a photo can't be
+   walked towards intimate in small steps. An intimate picture brought in that way can be edited:
+   it existed before Pinhole saw it.
+2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
+   (explicit ≥ 0.35, or nudity ≥ 0.85 with questionable + explicit ≥ 0.5; no tags needed, so
+   swimwear can count here) **and** either:
+   - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
+   - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
+     whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6. On 100
+     FairFace photos, adults scored at most
+     0.05 and ages 3–9 0.77 on average.
 
-   Drawn images never use the age model (it is trained on photos, and adult characters are often
-   drawn young). How an image is sorted into photo or drawn style is decided during
-   implementation and measured with the rest (§4).
-3. **Model flagged for safe images only.** Any resource in the request carries CivitAI's `poi`,
-   `minor` or `sfwOnly` flag (§5) → explicit or intimate results are blocked. This uses
-   CivitAI's own labels, not a classifier guess about the model.
+   Drawn images never use the age estimate (it is trained on photos, and adult characters are
+   often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
+   10–19, 20–29…) and it is off by several years, so it can't separate teenagers from young
+   adults without blocking many adults. Teenagers are left to the word check, the brought-in
+   photo rule (rule 1) and, for drawings, the child tags.
+3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
+   `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
+   Models flagged `poi` or `minor` can't be installed at all (§5). The flag comes from the
+   model's data at a Browse / paste install and from "Add a file"'s by-hash lookup; when the
+   model's data can't be fetched, the file counts as "safe images only" (fail closed). Known
+   limits: files added offline, linked from another app's folder or unknown to CivitAI get no
+   flag, and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
+
+If one picture of a batch is blocked, the whole batch is dropped.
 
 Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
 this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
@@ -149,38 +195,48 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
 
 ### 3.3 How it runs
 
-- **In order, cheapest first:** the explicit / intimate classifier runs on every result. The face
-  detector runs only on Imported inputs, once, at intake (which also scores the input's intimate
-  level for rule 1). The age model or tagger runs only on results already found explicit. Most
-  images pay for one small classifier.
-- **Coverage:** Create, Variations, Upscale, Restyle, Edit, and live previews if they are ever
-  turned on (`engine_features.taesd_preview`).
-- **Hide each result until it has been checked** (a few hundred ms). Check image N while image
-  N+1 generates.
-- **Fail closed:** if a safety model file is missing or its SHA-256 doesn't match, results can't be
-  shown and Edit on Imported images is off, with a plain message and a one-click re-download.
-- **Budget:** ≤ 1 s per image on CPU, ≤ 500 MB RAM while loaded, 0 VRAM.
-- **Config:** thresholds, margins, model URLs and hashes in `config/safety.yaml` (data, not code).
-  Code clamps every threshold to a safe range, so the YAML can tune the rules but can't turn one
-  off (like Safe mode).
+- **In order:** the nudity classifier and the tagger run on every result (the tagger always, so an
+  explicit picture the nudity model scores low still reaches the child tags); the face finder and
+  age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
+  finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
+  About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
+- **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
+  before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the
+  UI. Upscale results are checked too (one way in for every made picture).
+  There are no live previews; if they are ever turned on they must pass the check too.
+- **Fail closed:** Create and Edit stop with `check_missing` ("Set up safety check", one click)
+  while any file is absent or has the wrong size; every file is SHA-256 checked as it loads, and a
+  damaged one stops the result the same way. A check that fails to run (`check_failed`) drops the
+  result. The files download with the engine (Settings → Engine, first run) or from that button.
+- **Blocked pictures don't linger:** after a block the engine is stopped once the job ends, since
+  it keeps finished jobs readable on its local port.
+- **Nothing to switch off:** the files' URLs (pinned commits), sizes and SHA-256 values and every
+  threshold are constants in `pinhole-check`, not config. Only the core's `test-util` build (tests)
+  can put a stand-in check in place.
+- **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
+  loaded, 0 VRAM.
 
-### 3.4 Candidate models
+### 3.4 Models (verified by download, 2026-09-30)
 
-Sizes approximate — **verify each licence before bundling**.
-
-| Job | Candidate | Licence | Size |
+| Job | Model (pinned commit on Hugging Face) | Licence | Size |
 |---|---|---|---|
-| Face in an Imported input | YuNet (OpenCV Zoo) | MIT | ~0.2 MB |
-| Explicit **and** intimate (underwear, see-through), photos | needs classes beyond "explicit"; ViT-base NSFW classifiers (e.g. Falconsai) are explicit-only — verify candidates | Apache 2.0 | ~90–350 MB |
-| Apparent age, photos only | pick one whose licence allows redistribution | — | ~1–100 MB |
-| Explicit rating + child tags, drawn / anime | WD14-style tagger | Apache 2.0 | ~300–450 MB |
+| Nudity (restrictive: revealing clothes score high too) | `AdamCodd/vit-base-nsfw-detector` ONNX (ViT-base 384) | Apache 2.0 | 345 MB |
+| Rating + child tags + photo style | `SmilingWolf/wd-vit-tagger-v3` + `selected_tags.csv` | Apache 2.0 | 379 MB |
+| Face finder | `opencv/face_detection_yunet` 2023mar | MIT | 0.2 MB |
+| Age estimate (photos only) | `onnx-community/fairface_age_image_detection-ONNX` | Apache 2.0 | 343 MB |
 
-Avoid: InsightFace models (non-commercial research only), NudeNet (AGPL via YOLOv8) unless that
-licence is acceptable, the original SD "safety checker" (~1.2 GB, CLIP-L, no better). Don't run
-classifiers on the GPU — a second CUDA context alone costs several hundred MB of VRAM.
+Rejected: `Freepik/nsfw_image_detector` (no ONNX), `AdamCodd/vit-nsfw-stable-diffusion` (CC BY-NC-ND,
+gated), InsightFace (non-commercial), NudeNet (AGPL), the SD safety checker (~1.2 GB, no better).
+The nudity model is weaker on generated pictures (86 % accuracy on its author's test) — one more
+reason §4's measurement comes before Level 2.
 
-**Testing rule:** never collect, generate or store prohibited images as test fixtures. Test the
-blocking logic with mocked classifier scores; measure false positives on harmless images only (§4).
+**Testing rule:** never collect, generate or store prohibited images as test fixtures. The rules
+are unit-tested with made-up scores (`pinhole-check` and the core's `testing` tests); false
+positives are measured on harmless images only (§4). Dev builds (`npm run tauri dev`) show every
+reading of the shown picture under it (all steps, the watermark, whether it would count as a face
+in a brought-in photo) and the rule plus scores in a block's Details; release builds show and keep
+none. `cargo run --release -p pinhole-check --example measure -- <check dir> <image>…`
+prints them for a folder of test pictures.
 
 ---
 
@@ -197,8 +253,10 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
 - **Nothing is recorded:** no counters, strikes, lockouts or logs. Each block stands alone.
-- **Details toggle:** shows which rule fired and the scores (held in memory), so a user can report
-  a false positive in a GitHub issue by hand, without the image. Nothing is ever sent automatically.
+- **No details for users:** release builds show only the neutral message (David, 2026-09-30: never
+  say what triggered). Dev builds show the rule and scores for tuning (§3.4). A user can still
+  report a false positive in a GitHub issue by hand, describing what they tried. Nothing is ever
+  sent automatically.
 
 ---
 
@@ -217,15 +275,17 @@ blocking logic with mocked classifier scores; measure false positives on harmles
     Paste from CivitAI, Use these settings). `sfwOnly` models show a "Safe images only" badge.
   - **Level 2:** flagged models are shown and installable again. The flags are stored in
     `installed.json` at install time (model metadata, not prompts). Files added by hand get flags
-    only from the by-hash lookup "Add a file" already does when it can't tell the type; no
+    only from the by-hash lookup "Add a file" already does when it can't tell the type (a
+    `poi`/`minor` match is refused there too); no
     background or folder-wide lookups (privacy, 2026-09-30). While any flagged resource is loaded, §3.2 rule 3 applies.
     This mirrors CivitAI's own rule and keeps the legitimate SFW uses (satire of public figures,
     historical figures, an avatar model of yourself, child characters in SFW art).
 - **Recommended models:**
   - Level 1: remove `sdxl_pony` from `recommended.anime` (Pony stays a supported family; people
     install it themselves).
-  - `recommended.realistic_detail` (Krea 2) and `recommended.edit` / `edit_alt` (FLUX.1 Kontext):
-    one-click only once §3 ships and §6 licence acceptance is in place.
+  - `recommended.realistic` / `edit` (Qwen-Image 2.1, Qwen Research License, non-commercial):
+    one-click only once §3 ships and §6 licence acceptance is in place. (Krea 2 and FLUX.1
+    Kontext are no longer one-click picks since 2026-09-30.)
 - **Edit references** (David, 2026-09-30): two-image "Describe a change" and Create's reference
   picture stay, with any picture as input. Every Imported input (image 1, image 2, a Create
   reference picture) makes the result Imported (§3.1), and rule 1's face check looks at all of
@@ -238,21 +298,26 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 
 - Add a `license` field (name + link) to **every** family, component and captioner in
   `config/models.yaml`, and show it on every download — not only on model cards.
-- **Require explicit acceptance** before downloading non-commercial or gated models:
-  - FLUX.1 Kontext [dev] and FLUX.1 [dev] — non-commercial; requires filters or manual review.
-    The configured Kontext URL is a third-party re-upload that skips Black Forest Labs' gate.
-  - Qwen2.5-VL-3B (default captioner) — reportedly the Qwen Research (non-commercial) licence;
-    verify, or switch to an Apache-2.0 captioner.
-  - Krea 2 (one-click `recommended.realistic_detail`, GGUF mirror realrebelai/KREA-2_GGUFs) —
-    Krea 2 Community License v1 (LICENSE.pdf in krea-ai/krea-2 and Comfy-Org/Krea-2): allows
-    use, copying, redistribution and derivatives, but §4.2 requires content filters for any
-    deployment and §2.3 limits commercial use to < $1M yearly revenue. Show the licence
-    (link to the PDF) and require acceptance; the mirror's own LICENSE file is empty, so
-    Pinhole must show it. §3 is the content filter.
-  - Other non-commercial families now in the registry: FLUX.2 dev / klein 9B (FLUX
-    Non-Commercial), Anima (CircleStone Labs non-commercial), Qwen-Image 2.1 (Qwen Research),
-    SD 3.x (Stability Community License) — licence acceptance before their first download.
-- Store only the accepted licence id + version in `settings.yaml`.
+- **Explicit acceptance (done).** Families and helpers with a `license_accept` id in
+  `config/models.yaml` download only after one "I accept" per licence id (shared by families
+  with the same licence). The download fails with code `license_needed` (message = a sentence naming the
+  `license_note`, details = the id); the UI's install wrappers show `LicencePrompt` (installs
+  asking for the same id at once share one prompt), call `accept_license` and retry. Only ids from the shipped list are accepted and only the ids are
+  stored (`Settings.accepted_licenses`); `set_settings` can't change them and overrides.yaml
+  can't remove a licence. No licence version is stored: a changed licence gets a new id, which
+  asks again. The prompt names the licence; a link to its full text is still open (first bullet).
+  Not covered: a user-picked family for a CivitAI file (picking FLUX.1 schnell for a dev
+  checkpoint), families added in overrides.yaml, and parts fetched for an installed model.
+  Current ids:
+  - `flux1-dev-non-commercial`: FLUX.1 [dev] and FLUX.1 Kontext [dev]. The configured Kontext
+    URL is a third-party re-upload that skips Black Forest Labs' gate, so Pinhole asks instead.
+  - `flux2-dev-non-commercial`, `flux2-klein-9b-non-commercial` (FLUX Non-Commercial).
+  - `krea2-community`: Krea 2 Turbo / Raw (Krea 2 Community License v1: §4.2 requires content
+    filters for any deployment, §2.3 limits commercial use to < $1M yearly revenue; §3 is the
+    content filter). The mirror's own LICENSE file is empty, so Pinhole names it and asks.
+  - `anima-non-commercial` (CircleStone Labs), `stability-community` (SD 3.x).
+  - `qwen-research`: Qwen-Image 2.1 (the one-click Realistic and Edit pick) and the default
+    Describe helper Qwen2.5-VL-3B.
 - SD 1.5 / SDXL (OpenRAIL-M / ++) use restrictions are repeated in the terms (§7).
 - `THIRD_PARTY_LICENSES` covers engines, bundled classifiers and the watermark model.
 
@@ -261,11 +326,14 @@ blocking logic with mocked classifier scores; measure false positives on harmles
 ## 7. Terms and notices
 
 - **Level 1:** an acceptable-use section in the README (added 2026-09-30: usage guidelines,
-  built-in local check, GitHub private reporting); add a link to `SAFETY.md` (§9) once it exists.
+  built-in local check, GitHub private reporting) with a link to `SAFETY.md` (§9).
 - **Level 2: first-run acceptable-use screen** (click-through; built 2026-09-30 as "Before you
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
-  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Built-in safety check"
-  box (local, can't be turned off, keeps no record) and "By continuing, you agree to the usage
+  of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
+  ("Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
+  this with AI running entirely on your own computer, so your work never leaves your device.",
+  David's pick 2026-09-30) and "Do not use Pinhole for anything illegal, harmful or
+  non-consensual. By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
   involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
@@ -298,6 +366,9 @@ templates, posts and UI.
   computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
   "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
   behind".
+- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
+  disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save."
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
@@ -309,10 +380,11 @@ templates, posts and UI.
 
 ## 9. Paper trail and reporting
 
-- **Level 1: `SAFETY.md`** in the repo root: what Pinhole blocks and doesn't (§3.2), how (on the
-  computer, nothing recorded), known limits (open-source code can be modified; classifiers miss
-  things), and how to report a problem (GitHub private vulnerability reporting only, no email
-  address; decided 2026-09-30).
+- **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
+  doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
+  (checks can make mistakes; a modified build can leave them out; no "limitations" section,
+  David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
+  no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
   states plainly that Pinhole can't identify its users or see what they made.
@@ -362,13 +434,18 @@ templates, posts and UI.
 - **Local word check on text — added** (2026-09-30, before §3 exists). `text_check.rs` blocks
   text that pairs an under-18 term with a sexual term, in every Safe mode: the positive prompt
   at Generate in Create and every Edit mode, queued jobs included (style, trigger words and the
-  picked add-ons' names and trigger words included; not the negative prompt), the idea sent to
+  picked add-ons' names, trigger words and CivitAI names and trained words included, even when
+  the user edited the trigger words; not the negative prompt, so CFG is never sent below 1,
+  where the engine would follow the negative prompt), the idea sent to
   "Improve my prompt", what Describe / Improve write back, and Browse search text. David first
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
   anime prompts pass. Word lists are compiled in (not YAML), so a config edit can't turn it off.
-  It ignores zero-width characters and fullwidth letters but misses misspellings, look-alike
-  letters and made-up words, so it doesn't replace §3.2 rule 2. Required before any helper model
+  Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
+  accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
+  repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
+  On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
+  new. It still misses misspellings and made-up words, so it doesn't replace §3.2 rule 2. Required before any helper model
   without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or
@@ -405,8 +482,9 @@ templates, posts and UI.
 - [x] §5 `poi` / `minor` models not offered for install; `sfwOnly` badge
 - [x] §5 `sdxl_pony` removed from `recommended.anime`
 - [x] §5 Edit references: covered by origin tracking + the image check (replaces the one-reference cap)
-- [x] §7 acceptable-use section in the README (link to `SAFETY.md` still to add with it)
-- [ ] §9 `SAFETY.md` + reporting route (GitHub private vulnerability reporting turned on)
+- [x] §7 acceptable-use section in the README, linking `SAFETY.md`
+- [ ] §9 `SAFETY.md` (written 2026-09-30) + reporting route (GitHub private vulnerability
+      reporting turned on: a repository setting only the owner can change)
 - [ ] §8 wording pass: README, repo description, docs, issue and PR templates, existing issue and
       PR text
 - [ ] SPEC.md, CLAUDE.md, PROJECT-BRIEF.md and ARCHITECTURE.md match this file (levels instead of
@@ -418,7 +496,7 @@ templates, posts and UI.
 - [ ] §1 choke points exist and every path goes through them
 - [ ] §2 AI marker: metadata + C2PA + watermark, always on, tests pass (or the documented fallback)
 - [ ] §3 origin tracking, the three block rules, fail-closed, coverage of every mode
-- [ ] §4 false-positive bar met for every rule; block messages and Details toggle
+- [ ] §4 false-positive bar met for every rule (the check itself is built, §3)
 - [ ] §5 flags stored at install; SFW-only rule; flagged models back in the catalog
 - [ ] §6 licence field everywhere; acceptance for non-commercial, gated and filter-requiring models
 - [ ] §7 first-run acceptable-use screen + Edit notice

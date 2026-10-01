@@ -16,6 +16,7 @@ use parking_lot::RwLock;
 use pinhole_engine::image::{self as img, Kind};
 
 use crate::generate::{ImportedImage, Origin, ResultImage, SavedBatch, SavedEntry, SavedImage};
+use crate::imagecheck::CheckedPng;
 use crate::{AppCore, CoreError, CoreResult};
 
 /// One image held in RAM.
@@ -32,11 +33,37 @@ pub struct SessionImage {
     pub meta: Option<ResultImage>,
     /// Made in Pinhole or brought in (RELEASE-SPEC §3.1). Held in memory only.
     pub origin: Origin,
+    /// The brought-in pictures a generated image was made from, through every step
+    /// (the image check compares results with them). Empty for imported images: they
+    /// are their own source (see [`SessionImage::sources`]), unless the file is one
+    /// Pinhole saved earlier in this session: then it keeps that picture's sources.
+    pub made_from: Arc<[Source]>,
+}
+
+/// A brought-in picture at the start of a chain of edits. Its bytes stay with every
+/// image made from it, so discarding the original doesn't lose it for the check.
+#[derive(Debug, Clone)]
+pub struct Source {
+    pub id: String,
+    pub bytes: Arc<Vec<u8>>,
 }
 
 impl SessionImage {
     pub fn parent_id(&self) -> Option<&str> {
         self.meta.as_ref().and_then(|m| m.parent_id.as_deref())
+    }
+
+    /// The brought-in pictures this image comes from: itself when it was brought in
+    /// (a saved picture opened again: what that picture came from).
+    pub fn sources(&self) -> Vec<Source> {
+        if self.meta.is_none() && self.origin == Origin::Imported && self.made_from.is_empty() {
+            vec![Source {
+                id: self.id.clone(),
+                bytes: self.bytes.clone(),
+            }]
+        } else {
+            self.made_from.to_vec()
+        }
     }
 }
 
@@ -49,10 +76,13 @@ pub struct Session {
 }
 
 impl Session {
-    /// Result intake: store a (scrubbed) generated PNG under `meta.id`, but
-    /// only while no Reset happened since [`Session::epoch`] returned `epoch` (a job that finishes after
-    /// Reset must not bring its images back). Returns whether it was stored.
-    pub fn insert_generated_since(&self, epoch: u64, png: Vec<u8>, meta: ResultImage) -> bool {
+    /// Result intake: store a (scrubbed) generated PNG that passed the image check under
+    /// `meta.id`, but only while no Reset happened since [`Session::epoch`] returned `epoch` (a
+    /// job that finishes after Reset must not bring its images back). Returns whether it was
+    /// stored. The only way a made picture gets into the session: it takes nothing but a
+    /// [`CheckedPng`].
+    pub fn insert_generated(&self, epoch: u64, checked: CheckedPng, meta: ResultImage) -> bool {
+        let (png, made_from) = checked.into_parts();
         let mut images = self.images.write();
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
@@ -65,6 +95,7 @@ impl Session {
             height: meta.height,
             origin: meta.origin,
             meta: Some(meta),
+            made_from,
         };
         images.insert(img.id.clone(), img);
         true
@@ -75,7 +106,10 @@ impl Session {
         self.epoch.load(Ordering::SeqCst)
     }
 
-    pub fn insert(&self, img: SessionImage) {
+    /// Brought-in pictures only ([`import_image`]); made pictures go through
+    /// [`Session::insert_generated`].
+    fn insert_imported(&self, img: SessionImage) {
+        debug_assert!(img.meta.is_none() && img.origin == Origin::Imported);
         self.images.write().insert(img.id.clone(), img);
     }
 
@@ -116,6 +150,10 @@ impl Session {
 /// orientation applied) and re-encoded, which drops EXIF / XMP (GPS, camera).
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
+    let made_from = core
+        .check
+        .exported_from(&bytes)
+        .unwrap_or_else(|| Arc::from(Vec::new()));
     let (bytes, width, height) = if info.kind == Kind::Png {
         (
             pinhole_engine::png::scrub(&bytes)
@@ -130,7 +168,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         })?
     };
     let id = uuid::Uuid::new_v4().to_string();
-    core.session.insert(SessionImage {
+    core.session.insert_imported(SessionImage {
         id: id.clone(),
         bytes: Arc::new(bytes),
         kind: Kind::Png,
@@ -138,6 +176,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         height,
         meta: None,
         origin: Origin::Imported,
+        made_from,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -158,6 +197,7 @@ pub fn discard(core: &AppCore, id: &str) {
 /// right after it.
 pub async fn clear(core: &AppCore) {
     core.session.clear();
+    core.check.forget();
     core.gen.logs.clear();
     core.describe.logs.clear();
     crate::generate::clear_engine_results(core).await;
@@ -187,8 +227,8 @@ fn settings_text(m: &ResultImage) -> String {
         "guidance": m.guidance,
         "sampler": m.sampler,
         "scheduler": m.scheduler,
-        "width": m.width,
-        "height": m.height,
+        "width": m.base_size.map_or(m.width, |s| s.0),
+        "height": m.base_size.map_or(m.height, |s| s.1),
     })
     .to_string()
 }
@@ -326,6 +366,12 @@ fn marked_pixels(im: &SessionImage) -> CoreResult<(Vec<u8>, u32, u32)> {
 /// "settings (no prompt)" chunk. A picture the user added and didn't change
 /// leaves as it came in (already scrubbed at import).
 pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
+    let bytes = export_bytes(core, im)?;
+    core.check.note_export(&bytes, im.sources());
+    Ok(bytes)
+}
+
+fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let Some(m) = &im.meta else {
         return Ok(im.bytes.as_ref().clone());
     };
@@ -453,6 +499,13 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
         let mut name = path.file_name().unwrap_or_default().to_os_string();
         name.push(format!(".{}", im.kind.ext()));
         path.set_file_name(name);
+        // The save dialog only asked about the name as typed, not this one.
+        if path.exists() {
+            return Err(CoreError::invalid(format!(
+                "A file named “{}” is already there. Pick another name.",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )));
+        }
     }
     let bytes = export_png(core, &im)?;
     write_file(&path, &bytes)?;
@@ -471,10 +524,8 @@ fn write_file(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
-        if path.exists() {
-            // Windows rename doesn't replace; the user already confirmed overwrite.
-            fs::remove_file(path)?;
-        }
+        // Replaces an existing file in one step on every platform (MoveFileExW with
+        // MOVEFILE_REPLACE_EXISTING on Windows): a failed save leaves the old file as it was.
         fs::rename(&tmp, path)
     })();
     if let Err(e) = res {
@@ -499,6 +550,16 @@ fn io_err(path: &Path, e: std::io::Error) -> CoreError {
 mod tests {
     use super::*;
 
+    #[test]
+    fn saving_over_a_file_replaces_it_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.png");
+        fs::write(&path, b"old").unwrap();
+        write_file(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
     fn meta(id: &str) -> ResultImage {
         ResultImage {
             id: id.into(),
@@ -516,6 +577,7 @@ mod tests {
             scheduler: None,
             parent_id: Some("p".into()),
             origin: Origin::Generated,
+            base_size: None,
         }
     }
 
@@ -525,10 +587,16 @@ mod tests {
             crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
         let epoch = core.session.epoch();
-        assert!(core
-            .session
-            .insert_generated_since(epoch, png.clone(), meta("a")));
-        assert!(core.session.insert_generated_since(epoch, png, meta("b")));
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png),
+            meta("b")
+        ));
         let dir = tmp.path().join("picked");
         fs::create_dir_all(&dir).unwrap();
         let ids = vec!["a".to_string(), "b".to_string(), "gone".to_string()];
@@ -556,14 +624,18 @@ mod tests {
     fn store_roundtrip_and_clear() {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
-        assert!(s.insert_generated_since(s.epoch(), png.clone(), meta("a")));
+        assert!(s.insert_generated(
+            s.epoch(),
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
         let got = s.get("a").unwrap();
         assert_eq!(got.bytes.as_slice(), png.as_slice());
         assert_eq!(got.parent_id(), Some("p"));
         assert_eq!(s.len(), 1);
         assert!(s.remove("a"));
         assert!(s.get("a").is_none());
-        assert!(s.insert_generated_since(s.epoch(), png, meta("b")));
+        assert!(s.insert_generated(s.epoch(), CheckedPng::unchecked_for_tests(png), meta("b")));
         s.clear();
         assert!(s.is_empty());
     }
@@ -573,14 +645,22 @@ mod tests {
         let s = Session::default();
         let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
         let epoch = s.epoch();
-        assert!(s.insert_generated_since(epoch, png.clone(), meta("a")));
+        assert!(s.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png.clone()),
+            meta("a")
+        ));
         s.clear();
         assert!(
-            !s.insert_generated_since(epoch, png.clone(), meta("b")),
+            !s.insert_generated(
+                epoch,
+                CheckedPng::unchecked_for_tests(png.clone()),
+                meta("b")
+            ),
             "Reset happened since the job started"
         );
         assert!(s.is_empty());
-        assert!(s.insert_generated_since(s.epoch(), png, meta("c")));
+        assert!(s.insert_generated(s.epoch(), CheckedPng::unchecked_for_tests(png), meta("c")));
     }
 
     #[test]
@@ -611,6 +691,34 @@ mod tests {
         assert_eq!(s.sampler.as_deref(), Some("euler_a"));
         assert_eq!(s.scheduler, None);
         assert_eq!((s.width, s.height), (Some(m.width), Some(m.height)));
+
+        // After hires fix or an upscale: the size it was made at, not the final size.
+        (m.width, m.height) = (2048, 2048);
+        m.base_size = Some((1024, 1024));
+        let s = read_picture_settings(&saved_with_settings(&m)).expect("settings");
+        assert_eq!((s.width, s.height), (Some(1024), Some(1024)));
+    }
+
+    #[test]
+    fn save_as_never_replaces_a_file_under_an_added_extension() {
+        let (tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
+        let epoch = core.session.epoch();
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png),
+            meta("a")
+        ));
+        let existing = tmp.path().join("cat.png");
+        fs::write(&existing, b"earlier picture").unwrap();
+        let typed = tmp.path().join("cat");
+        let err = save_image_as(&core, "a", typed.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "invalid");
+        assert_eq!(fs::read(&existing).unwrap(), b"earlier picture");
+        // The name as picked (the dialog asked about it) is replaced.
+        save_image_as(&core, "a", existing.to_str().unwrap()).unwrap();
+        assert_ne!(fs::read(&existing).unwrap(), b"earlier picture");
     }
 
     #[test]

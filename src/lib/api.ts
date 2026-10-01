@@ -24,6 +24,7 @@ async function invoke<R>(cmd: string, args?: InvokeArgs): Promise<R> {
     throw e;
   }
 }
+import { askLicence, LICENCE_DECLINED, LICENSE_NEEDED } from "./licence";
 
 // ---------------------------------------------------------------- app (store agent)
 export const appInfo = () => invoke<T.AppInfo>("app_info");
@@ -31,6 +32,22 @@ export const getSettings = () => invoke<T.Settings>("get_settings");
 /** Saves settings.yaml and applies side effects (offline flag, theme, GPU override). */
 export const setSettings = (settings: T.Settings) => invoke<T.Settings>("set_settings", { settings });
 export const quitApp = () => invoke<void>("quit_app");
+/** "I accept" on a model licence (id from a "license_needed" error). */
+export const acceptLicense = (id: string) => invoke<T.Settings>("accept_license", { id });
+
+/** Runs an install; when it needs a licence the user hasn't accepted yet, asks once, saves the
+ *  acceptance and tries again. Declining rejects with code "cancelled". */
+async function withLicence<R>(run: () => Promise<R>): Promise<R> {
+  try {
+    return await run();
+  } catch (e) {
+    const err = asCoreError(e);
+    if (err.code !== LICENSE_NEEDED || !err.details) throw e;
+    if (!(await askLicence(err.details, err.message))) throw LICENCE_DECLINED;
+    await acceptLicense(err.details);
+    return run();
+  }
+}
 export const getHardware = () => invoke<T.HardwareView>("get_hardware");
 export const openDataFolder = () => invoke<void>("open_data_folder");
 export const openOutputsFolder = () => invoke<void>("open_outputs_folder");
@@ -40,10 +57,6 @@ export const checkForUpdates = () => invoke<T.UpdateCheck>("check_for_updates");
 export const installUpdate = (version: string) => invoke<void>("install_update", { version });
 /** Opens the GitHub release page (or the releases list) in the system browser. */
 export const openReleasePage = (version: string | null) => invoke<void>("open_release_page", { version });
-/** Optional GitHub token (OS keychain only) so updates work while the repository is private. */
-export const hasGithubToken = () => invoke<boolean>("has_github_token");
-export const setGithubToken = (token: string) => invoke<void>("set_github_token", { token });
-export const clearGithubToken = () => invoke<void>("clear_github_token");
 
 // ---------------------------------------------------------------- engine (engine agent)
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
@@ -51,6 +64,12 @@ export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
 export const engineOutput = () => invoke<string>("engine_output");
 /** Downloads + verifies + unpacks the engine for the current backend. Progress via onDownload. */
 export const installEngine = () => invoke<T.EngineStatus>("install_engine");
+/** The image check's files (RELEASE-SPEC §4). Create and Edit stop with `check_missing` until they're in place. */
+export const safetyCheckStatus = () => invoke<T.SafetyCheckStatus>("safety_check_status");
+/** Downloads the image check's files; resolves when they're in place. Progress via onDownload. */
+export const installSafetyCheck = () => invoke<T.SafetyCheckStatus>("install_safety_check");
+/** Dev builds only: the image check's scores for a recent result (null in release builds). */
+export const checkReadings = (id: string) => invoke<string | null>("check_readings", { id });
 
 // ---------------------------------------------------------------- downloads (net agent)
 export const listDownloads = () => invoke<T.GroupStatus[]>("list_downloads");
@@ -70,13 +89,17 @@ export const previewModelsFolder = (folder: string | null) => invoke<T.ModelsFol
 /** Moves every model to `folder` (progress via onModelsMove), then Pinhole restarts. Resolves only on failure paths that return. */
 export const changeModelsFolder = (folder: string | null) => invoke<void>("change_models_folder", { folder });
 export const getRecommended = () => invoke<T.RecommendedPick[]>("get_recommended");
-export const installRecommended = (role: string) => invoke<T.InstallStarted>("install_recommended", { role });
+export const installRecommended = (role: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_recommended", { role }));
 /** "Add a file I already have": detects the family, then copies the file into Data/models/<kind>/ (hash computed while copying). */
 export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_local_model", { path });
 export const confirmFamily = (token: string, familyId: string) =>
   invoke<T.AddFileResult>("confirm_family", { token, familyId });
+/** The family question was closed without a pick: drop the copy made for it. */
+export const cancelAdd = (token: string) => invoke<void>("cancel_add", { token });
 /** Download the parts (VAE, text encoders) an installed model still needs, from its family's list. */
-export const installMissingParts = (modelId: string) => invoke<T.InstallStarted>("install_missing_parts", { modelId });
+export const installMissingParts = (modelId: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_missing_parts", { modelId }));
 /** Other apps' models folders used in place (read-only: Pinhole never writes, moves or deletes there). */
 export const listLinkedFolders = () => invoke<T.LinkedFolder[]>("list_linked_folders");
 export const addLinkedFolder = (path: string) => invoke<T.LinkedFolder>("add_linked_folder", { path });
@@ -105,7 +128,7 @@ export const openCivitaiPage = (modelId: number, versionId: number | null, nsfw:
   invoke<void>("open_civitai_page", { modelId, versionId, nsfw });
 export const planCivitaiInstall = (versionId: number, fileId: number | null = null) => invoke<T.InstallPlan>("plan_civitai_install", { versionId, fileId });
 export const installCivitai = (versionId: number, familyId: string | null, fileId: number | null = null) =>
-  invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId });
+  withLicence(() => invoke<T.InstallStarted>("install_civitai", { versionId, familyId, fileId }));
 export const hasCivitaiKey = () => invoke<boolean>("has_civitai_key");
 export const setCivitaiKey = (key: string) => invoke<void>("set_civitai_key", { key });
 export const clearCivitaiKey = () => invoke<void>("clear_civitai_key");
@@ -139,7 +162,8 @@ export const upscaleImage = (id: string, factor: 2 | 4) => invoke<T.ResultImage>
 // ---------------------------------------------------------------- describe (engine agent)
 export const captionerStatus = (purpose: T.HelperPurpose = "describe") => invoke<T.CaptionerStatus>("captioner_status", { purpose });
 /** `helperId`: a HelperModel id; omitted = the default helper. */
-export const installCaptioner = (helperId?: string) => invoke<T.InstallStarted>("install_captioner", { helperId: helperId ?? null });
+export const installCaptioner = (helperId?: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_captioner", { helperId: helperId ?? null }));
 export const listHelperModels = () => invoke<T.HelperModel[]>("list_helper_models");
 export const describeImage = (imageId: string, style: T.DescribeStyle) =>
   invoke<string>("describe_image", { imageId, style });

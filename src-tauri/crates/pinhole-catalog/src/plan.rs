@@ -431,6 +431,7 @@ pub fn civitai_install_files(
                     .nsfw_level
                     .is_some_and(|l| l >= crate::safe::LEVEL_R),
         ),
+        sfw_only: crate::api::sfw_only_of(version, model),
     };
     Ok(CivitaiInstall {
         label,

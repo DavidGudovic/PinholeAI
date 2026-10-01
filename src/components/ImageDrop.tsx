@@ -110,7 +110,7 @@ export function DropZone({ onFile, title, busy, children }: { onFile: (f: File) 
       </div>
       <h2 className="text-base font-semibold">{title}</h2>
       <p className="mt-1 max-w-sm text-sm text-neutral-500">
-        Drop an image here, paste one with <span className="font-medium">{modKey}+V</span>, or choose a file. It stays in memory — nothing is copied to disk.
+        Drop an image here, paste one with <span className="font-medium">{modKey}+V</span>, or choose a file.
       </p>
       <Button variant="primary" className={cx("mt-5", focusRing)} onClick={picker.open} disabled={busy}>
         <ImagePlus className="h-4 w-4" /> Choose an image

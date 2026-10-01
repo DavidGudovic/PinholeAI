@@ -12,6 +12,13 @@ use crate::{write_atomic, DataDir, StoreError};
 /// Current `installed.json` schema version.
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// Component ids renamed in `models.yaml` (old → new), applied when the index is read so an
+/// installed file keeps its component.
+const RENAMED_COMPONENTS: &[(&str, &str)] = &[(
+    "qwen25_vl_7b_abliterated_q4km",
+    "qwen25_vl_7b_safe_off_q4km",
+)];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CivitaiRef {
@@ -32,6 +39,10 @@ pub struct CivitaiRef {
     /// page can show it offline. Shown only after the UI sanitizes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creator_notes: Option<CreatorNotes>,
+    /// CivitAI marks the model "safe images only": the image check blocks intimate
+    /// results while it (or a LoRA with this mark) is in use (RELEASE-SPEC §4).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sfw_only: bool,
 }
 
 /// Most bytes kept per description (CivitAI descriptions are usually a few KB).
@@ -338,9 +349,10 @@ impl InstalledIndex {
             .collect();
         let mut seen: HashSet<String> = HashSet::new();
         for value in disk.files {
-            let Ok(entry) = serde_json::from_value::<LinkedEntry>(value) else {
+            let Ok(mut entry) = serde_json::from_value::<LinkedEntry>(value) else {
                 continue;
             };
+            rename_component(&mut entry.file);
             let Some(id) = linked_folder_id(&entry.file.rel_path) else {
                 continue;
             };
@@ -591,6 +603,15 @@ pub fn unknown_rel_path(entry: &serde_json::Value) -> Option<&str> {
     entry.get("relPath").and_then(|p| p.as_str())
 }
 
+fn rename_component(f: &mut InstalledFile) {
+    if let Some((_, new)) = RENAMED_COMPONENTS
+        .iter()
+        .find(|(old, _)| f.component_id.as_deref() == Some(*old))
+    {
+        f.component_id = Some((*new).into());
+    }
+}
+
 fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
     let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let obj = value.as_object()?;
@@ -600,7 +621,10 @@ fn parse_lenient(bytes: &[u8]) -> Option<InstalledIndex> {
         Some(serde_json::Value::Array(items)) => {
             for item in items {
                 match serde_json::from_value::<InstalledFile>(item.clone()) {
-                    Ok(f) => files.push(f),
+                    Ok(mut f) => {
+                        rename_component(&mut f);
+                        files.push(f)
+                    }
                     Err(_) => unknown.push(item.clone()),
                 }
             }
@@ -648,6 +672,7 @@ mod tests {
                 trained_words: vec!["tw".into()],
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             }),
             added_at: 1_700_000_000,
             last_used: None,
@@ -765,6 +790,39 @@ mod tests {
         let idx = InstalledIndex::load(&d).unwrap();
         assert_eq!(idx.files.len(), 1);
         assert_eq!(idx.files[0].id, "a");
+    }
+
+    #[test]
+    fn renamed_component_ids_are_read_as_the_new_id() {
+        let (tmp, d) = data();
+        let (old, new) = RENAMED_COMPONENTS[0];
+        let other = tmp.path().join("Other");
+        std::fs::create_dir_all(&other).unwrap();
+        let mut idx = InstalledIndex::new();
+        let mut f = file("h", "models/llm/h.gguf", ModelKind::Checkpoint);
+        f.component_id = Some(old.into());
+        idx.upsert(f);
+        idx.linked.folders.push(LinkedFolder {
+            id: "f1".into(),
+            path: other.display().to_string(),
+            added_at: 1,
+        });
+        let mut l = file("l", "linked/f1/l.gguf", ModelKind::Checkpoint);
+        l.component_id = Some(old.into());
+        idx.upsert(l);
+        idx.linked
+            .stamps
+            .insert("l".into(), FileStamp { size: 5, mtime: 7 });
+        idx.save(&d).unwrap();
+        let back = InstalledIndex::load(&d).unwrap();
+        assert!(back.find_component(old).is_none());
+        for id in ["h", "l"] {
+            assert_eq!(
+                back.get(id).unwrap().component_id.as_deref(),
+                Some(new),
+                "{id}"
+            );
+        }
     }
 
     #[test]

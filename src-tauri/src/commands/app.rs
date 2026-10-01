@@ -28,6 +28,15 @@ pub async fn set_settings(
     app::set_settings(&core, settings)
 }
 
+/// "I accept" on a model licence (RELEASE-SPEC §6).
+#[tauri::command]
+pub async fn accept_license(
+    core: State<'_, Arc<AppCore>>,
+    id: String,
+) -> Result<Settings, CoreError> {
+    pinhole_core::licence::accept_license(&core, &id)
+}
+
 #[tauri::command]
 pub async fn get_hardware(core: State<'_, Arc<AppCore>>) -> Result<HardwareView, CoreError> {
     Ok(app::hardware_view(&core))
@@ -113,22 +122,6 @@ pub async fn install_update(
     Ok(())
 }
 
-/// Optional GitHub token for updates while the repository is private (keychain only).
-#[tauri::command]
-pub async fn has_github_token() -> Result<bool, CoreError> {
-    Ok(update::has_github_token().await)
-}
-
-#[tauri::command]
-pub async fn set_github_token(token: String) -> Result<(), CoreError> {
-    update::set_github_token(token).await
-}
-
-#[tauri::command]
-pub async fn clear_github_token() -> Result<(), CoreError> {
-    update::clear_github_token().await
-}
-
 /// Open the GitHub release page in the system browser (the WebView never navigates).
 #[tauri::command]
 pub async fn open_release_page(
@@ -159,14 +152,12 @@ super::area_commands![
     app_info,
     get_settings,
     set_settings,
+    accept_license,
     get_hardware,
     open_data_folder,
     open_outputs_folder,
     check_for_updates,
     install_update,
     open_release_page,
-    has_github_token,
-    set_github_token,
-    clear_github_token,
     quit_app
 ];

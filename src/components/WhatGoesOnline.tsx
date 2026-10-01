@@ -20,38 +20,38 @@ export const ONLINE_CALLS: Call[] = [
   {
     when: "You open Models and browse or search",
     where: "civitai.com (pictures from image.civitai.com)",
-    sent: "Your search words and filters. Your CivitAI key, if you added one, goes in the request header.",
+    sent: "Your search words and filters. Never your CivitAI key.",
   },
   {
     when: "You open a model’s page",
     where: "civitai.com",
-    sent: "Which model you opened.",
+    sent: "Which model you opened. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
   },
   {
-    when: "You start a download: a model or add-on, the engine, a Describe or Improve helper, or the upscaler the first time you use Upscale",
+    when: "You start a download: a model or add-on, the engine and its safety check, a Describe or Improve helper, or the upscaler the first time you use Upscale",
     where: "civitai.com, huggingface.co or github.com, and their download servers",
-    sent: "A request for that file. Nothing about your pictures or prompts.",
+    sent: "A request for that file. Nothing about your pictures or prompts. For a file on CivitAI, your CivitAI key, if you added one, goes in the request header (to civitai.com only), also when the install window checks whether the file needs it.",
   },
   {
     when: "You paste generation data from CivitAI, or use a model page’s settings",
     where: "civitai.com",
-    sent: "Only the model and add-on numbers or file fingerprints, to find them. The prompt stays on this computer.",
+    sent: "Only the model and add-on numbers or file fingerprints, to find them. The prompt stays on this computer. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
   },
   {
     when: "You add a model file you already have that Pinhole doesn’t recognise",
     where: "civitai.com",
-    sent: "The file’s fingerprint (a SHA-256 hash), to find its name. Not the file.",
+    sent: "The file’s fingerprint (a SHA-256 hash), to find its name. Not the file. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
   },
   {
     when: "You press Check for updates in Settings",
     where: "api.github.com and github.com",
-    sent: "A request for the release list. Your GitHub token, if you added one, goes in the request header.",
+    sent: "A request for the release list.",
   },
 ];
 
 /** Stays on this computer, always. */
 export const STAYS_LOCAL = [
-  "Your prompts, pictures, styles and settings. Pictures live in memory until you click Save.",
+  "Your prompts, pictures, styles and settings.",
   "Making pictures, editing and Describe: the engines run on this computer and listen on this computer only.",
   "No usage data, crash reports, analytics or automatic update checks. Nothing goes online until you do something above.",
   "The app window itself makes no network calls of its own: no web fonts, no remote images.",

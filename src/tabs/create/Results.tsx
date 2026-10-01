@@ -13,6 +13,7 @@ import {
   UserRound,
   WandSparkles,
 } from "lucide-react";
+import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { ImageViewer } from "../../components/ImageViewer";
@@ -106,9 +107,8 @@ function EmptyResults() {
         Your images appear here
       </h2>
       <p className="mt-1.5 max-w-sm text-sm text-neutral-500">
-        Describe what you want to see, then press Generate. Images stay in
-        memory until you save them. Drop a picture you saved with Pinhole here
-        to reuse its settings.
+        Describe what you want to see, then press Generate. Drop a picture you
+        saved with Pinhole here to reuse its settings.
       </p>
       <p className="mt-3 inline-flex items-center gap-1 text-xs text-neutral-400">
         <Kbd>{modKey}</Kbd>
@@ -225,6 +225,7 @@ function Preview({
       <p className="text-center text-xs text-neutral-500 tabular-nums">
         {settingsSummary(result)}
       </p>
+      {import.meta.env.DEV && <CheckReadings id={result.id} />}
       <TipLine hasBatch={hasBatch} />
       {error && (
         <div className="mx-auto w-full max-w-xl">

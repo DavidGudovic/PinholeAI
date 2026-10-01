@@ -612,12 +612,37 @@ async fn finalize(
             });
         }
     }
-    tokio::fs::rename(part, &spec.dest).await?;
+    // A different file already has this name (one the user put in the models folder):
+    // it stays, and the download gets the next free name.
+    let dest = free_name(&spec.dest);
+    tokio::fs::rename(part, &dest).await?;
     Ok(DownloadedFile {
-        path: spec.dest.clone(),
+        path: dest,
         sha256: actual,
         size_bytes: size,
     })
+}
+
+/// `dest`, or `name-2.ext`, `name-3.ext`… when a file is already there.
+fn free_name(dest: &Path) -> PathBuf {
+    if !dest.exists() {
+        return dest.to_path_buf();
+    }
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name.as_str(), ""));
+    (2..10_000)
+        .map(|i| {
+            dest.with_file_name(if ext.is_empty() {
+                format!("{stem}-{i}")
+            } else {
+                format!("{stem}-{i}.{ext}")
+            })
+        })
+        .find(|p| !p.exists() && !part_path(p).exists())
+        .unwrap_or_else(|| dest.to_path_buf())
 }
 
 async fn remove_quietly(path: &Path) {
@@ -743,6 +768,8 @@ pub enum DownloadKind {
     Upscaler,
     /// A new version of Pinhole itself (Settings → Check for updates).
     AppUpdate,
+    /// The image check's model files.
+    SafetyCheck,
 }
 
 /// Progress of a group (what the UI shows as one row).
@@ -1220,9 +1247,11 @@ async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
     let mut need = 0u64;
     for f in files {
         let Some(size) = f.size_hint() else { continue };
+        // A file already there counts as done unless its size shows it's a different file
+        // (that one is kept and the download gets a new name).
         if tokio::fs::metadata(&f.dest)
             .await
-            .is_ok_and(|m| m.is_file())
+            .is_ok_and(|m| m.is_file() && f.size_bytes.is_none_or(|s| s == m.len()))
         {
             continue;
         }

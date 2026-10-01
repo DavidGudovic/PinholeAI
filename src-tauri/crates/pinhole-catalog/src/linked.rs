@@ -184,6 +184,7 @@ impl Note {
             trained_words: self.trained_words.clone(),
             license: None,
             creator_notes: None,
+            sfw_only: false,
         })
     }
 

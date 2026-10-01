@@ -42,16 +42,16 @@ export function UseNotice(props: { onAgreed: () => void }) {
 
         <div className="mt-6 rounded-xl border border-neutral-200 bg-white p-4 text-sm dark:border-neutral-800 dark:bg-neutral-900">
           <h2 className="flex items-center gap-2 font-semibold">
-            <ShieldCheck className="h-4 w-4 text-emerald-600" /> Built-in safety check
+            <ShieldCheck className="h-4 w-4 text-emerald-600" /> Safety, built in
           </h2>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
-            It reviews your prompts and the pictures Pinhole makes, right on your computer, and won't create anything
-            that breaks the usage guidelines. It works offline, can't be turned off, and keeps no record.
+            Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does this with AI
+            running entirely on your own computer, so your work never leaves your device.
           </p>
         </div>
 
         <p className="mt-6 text-sm text-neutral-600 dark:text-neutral-400">
-          Don't use Pinhole for anything illegal, harmful or non-consensual. By continuing, you agree to the{" "}
+          Do not use Pinhole for anything illegal, harmful or non-consensual. By continuing, you agree to the{" "}
           <button
             type="button"
             className={cx("rounded font-medium text-neutral-900 underline underline-offset-2 dark:text-neutral-100", focusRing)}

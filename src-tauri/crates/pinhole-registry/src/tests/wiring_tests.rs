@@ -422,6 +422,32 @@ fn launch_args_other_families_and_overrides() {
             "-1",
         ]
     );
+    // Regression: flag lists from an edited overrides.yaml can't load content or redirect
+    // the server; only tuning flags survive.
+    let over = with_overrides(
+        "hardware_profiles:\n  - { name: all, max_vram_gb: 999, flags: [\"--embd-dir\", \"/e\", \"--vae\", \"/x\", \"-p\", \"words\", \"--lora-model-dir=/l\", \"--upscale-model\", \"/u\", \"--listen-ip\", \"0.0.0.0\", \"--clip-on-cpu\"] }\n",
+    );
+    assert!(
+        !over.validate().is_empty(),
+        "validation names the flags that aren't allowed"
+    );
+    assert_eq!(
+        launch_args(&over, &q, &hw(16.0), &LaunchExtras::default()),
+        vec![
+            "--diffusion-model",
+            "/m/q.gguf",
+            "--vae",
+            "/c/qv",
+            "--llm",
+            "/c/ql",
+            "--llm_vision",
+            "/c/qm",
+            "--diffusion-fa",
+            "--model-args",
+            "qwen_image_zero_cond_t=true",
+            "--clip-on-cpu",
+        ]
+    );
     // Unknown component kinds get no flag; unknown families only get the files.
     let odd = files(
         "nope",
@@ -783,7 +809,22 @@ fn resolve_params_fine_tune_overrides() {
         GenMode::Txt2img,
         &hw(8.0),
     );
-    assert_eq!((t.width, t.height), (64, 4096));
+    // Regression: a tiny size makes faces too small for the image check, so Fine-tune
+    // sizes start at MIN_SIDE.
+    assert_eq!((t.width, t.height), (MIN_SIDE, 4096));
+    let cfg0 = FineTune {
+        cfg: Some(0.0),
+        ..Default::default()
+    };
+    let c = resolve_params(
+        reg,
+        fam("sd15"),
+        &dials(Shape::Square, Quality::Fast, 0.5, 1),
+        &cfg0,
+        GenMode::Txt2img,
+        &hw(8.0),
+    );
+    assert!(approx(c.cfg, 1.0), "CFG never below 1: {}", c.cfg);
     assert_eq!(round_to_multiple(512, 64), 512);
     assert_eq!(round_to_multiple(543, 64), 512);
     assert_eq!(round_to_multiple(544, 64), 576);

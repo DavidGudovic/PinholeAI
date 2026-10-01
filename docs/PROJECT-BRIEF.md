@@ -28,8 +28,8 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
 ## Features
 Create (dials: Shape, Quality, Stick to prompt, How many, Keep this look; Fine-tune drawer with every
 engine setting), **Paste from CivitAI** (reads "Copy generation data" text in memory, fills prompt +
-settings, matches or installs the checkpoint/LoRAs), Edit (instruction edit with Qwen Image Edit /
-Kontext, Restyle, Fix details, Extend (wider/taller canvas), "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
+settings, matches or installs the checkpoint/LoRAs), Edit (instruction edit with Qwen-Image 2.1,
+Qwen Image Edit or Kontext, Restyle, Fix details, Extend (wider/taller canvas), "Only change here" brush, undo chain, compare slider), Describe (sentence/tags),
 Styles (the only user text ever stored), Presets (never the prompt), Models (CivitAI browser with
 plain-language filters, one-click installs with component resolution, VRAM "Fits / Tight / Too big",
 use a ComfyUI / A1111 / Forge models folder in place),
@@ -52,7 +52,7 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   Hugging Face / GitHub APIs (verify-pins workflow). Gated repos are never used for one-click downloads.
 - sd.cpp auto-fit places weights GPU → RAM (no `--offload-to-cpu`); no live TAESD preview (the server
   has no preview API); cancel during generation restarts the engine.
-- Privacy by construction: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
+- Local by design: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
 - Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,
@@ -64,7 +64,8 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
 CI runs on CPU only, so these are built but unproven:
 - Z-Image Turbo (Q8 model + Q8 encoder) on 16 GB while another program holds ~9 GB of VRAM.
 - The out-of-memory retries (text encoder on the processor, then VAE tiling) and the Settings toggle.
-- Krea 2 Turbo on 12 and 16 GB: speed and whether it fits.
+- Qwen-Image 2.1 (now the Realistic and Edit pick): Q6_K on 12 GB, Q8_0 on 16 GB, bf16 on 24 GB:
+  speed, fit, edit quality, and the Q4_K edit pick on 6–10 GB (all figures are estimates).
 - Windows: the leftover-engine sweep at start and the `nvidia-smi` "other programs" note.
 - Defaults and VRAM figures for the new families (priority: FLUX.2 klein, Anima, Chroma, SD 3.5,
   Qwen-Image 2.1); int8 files on Vulkan.

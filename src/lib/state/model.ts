@@ -187,8 +187,11 @@ export interface AppState {
   saved: Record<string, string>;
   /** Prompts sent this session, oldest first. Memory only; Up/Down in the prompt box. */
   promptHistory: string[];
-  /** Waiting for the user to decide what to do about unsaved pictures before closing / resetting. */
-  leave: "close" | "clear" | null;
+  /**
+   * Waiting for the user to decide what to do about unsaved pictures before closing / resetting,
+   * or ("edit") before another image replaces Edit's history.
+   */
+  leave: LeaveKind | null;
   edit: EditParams;
   describe: DescribeParams;
   job: Job | null;
@@ -295,7 +298,7 @@ export type Action =
   | { type: "removeResult"; id: string }
   | { type: "markSaved"; entries: { id: string; path: string }[] }
   | { type: "pushPrompt"; prompt: string }
-  | { type: "askLeave"; what: "close" | "clear" | null }
+  | { type: "askLeave"; what: LeaveKind | null }
   | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
   | { type: "jobEnd" }
@@ -386,6 +389,13 @@ export function loraCompatible(lora: InstalledLora, modelFamily: string | null |
 export const PROMPT_HISTORY_MAX = 50;
 
 /** Pictures made this session (Create results and Edit results) that haven't been saved yet. */
+export type LeaveKind = "close" | "clear" | "edit";
+
+/** Edit results in the history that were never saved (lost when another image is loaded into Edit). */
+export function unsavedEditIds(s: Pick<AppState, "edit" | "saved" | "images">): string[] {
+  return s.edit.chain.filter((n) => n.meta && s.images[n.imageId] && !s.saved[n.imageId]).map((n) => n.imageId);
+}
+
 export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "images">): string[] {
   const ids = new Set<string>(s.results.map((r) => r.id));
   for (const n of s.edit.chain) if (n.meta) ids.add(n.imageId);
@@ -645,7 +655,7 @@ function inner(s: AppState, a: Action): AppState {
       return index === s.edit.index ? s : { ...s, edit: { ...s.edit, index } };
     }
     case "editDelete": {
-      // The original (index 0) stays; use "New image" to start over.
+      // The original (index 0) stays; use "Another image" to start over.
       if (a.index <= 0 || a.index >= s.edit.chain.length) return s;
       const chain = s.edit.chain
         .filter((_, i) => i !== a.index)
@@ -682,7 +692,9 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: {},
-        create: { ...c, prompt: "", presetId: c.presetId, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
+        // The preset goes with its Fine-tune values (cleared here); its saved "before"
+        // settings can also hold an earlier negative prompt.
+        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
         results: [],
         selectedResultId: null,
         batches: {},

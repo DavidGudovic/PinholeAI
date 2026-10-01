@@ -106,10 +106,27 @@ pub fn parent_allows_kill(parent: &Parent, my_exe: Option<&Path>) -> bool {
     match parent {
         Parent::Gone | Parent::Me | Parent::Reused => true,
         Parent::Running(exe) => match (exe, my_exe) {
-            (Some(p), Some(me)) => comparable(p) != comparable(me),
+            (Some(p), Some(me)) => {
+                comparable(p) != comparable(me)
+                    && !matches!(
+                        (inside_appimage(p), inside_appimage(me)),
+                        (Some(a), Some(b)) if a == b
+                    )
+            }
             _ => true,
         },
     }
+}
+
+/// The path inside an AppImage mount (`/tmp/.mount_XXXX/usr/bin/pinhole` → `usr/bin/pinhole`).
+/// Every AppImage launch mounts at a new folder, so two copies of the same app only match
+/// on this part.
+fn inside_appimage(exe: &Path) -> Option<PathBuf> {
+    let mut parts = exe.components();
+    parts
+        .by_ref()
+        .find(|c| c.as_os_str().to_string_lossy().starts_with(".mount_"))?;
+    Some(parts.collect())
 }
 
 fn parent_of(sys: &System, p: &sysinfo::Process, me: u32) -> Parent {
@@ -268,6 +285,16 @@ mod tests {
             !parent_allows_kill(&Parent::Running(Some(me.to_path_buf())), Some(me)),
             "Pinhole opened twice"
         );
+        let a = Path::new("/tmp/.mount_PinhAb12/usr/bin/pinhole");
+        let b = Path::new("/tmp/.mount_PinhXy34/usr/bin/pinhole");
+        assert!(
+            !parent_allows_kill(&Parent::Running(Some(a.to_path_buf())), Some(b)),
+            "the AppImage opened twice mounts at two folders"
+        );
+        assert!(parent_allows_kill(
+            &Parent::Running(Some("/tmp/.mount_OtherApp/usr/bin/other".into())),
+            Some(b)
+        ));
     }
 
     #[cfg(unix)]

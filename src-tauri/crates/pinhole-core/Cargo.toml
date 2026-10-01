@@ -11,6 +11,9 @@ pinhole-store = { workspace = true }
 pinhole-hardware = { workspace = true }
 pinhole-engine = { workspace = true }
 pinhole-catalog = { workspace = true }
+pinhole-check = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

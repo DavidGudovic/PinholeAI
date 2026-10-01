@@ -315,7 +315,7 @@ pub async fn plan_civitai_install(
     let (version, model) = (&fetched.0, &fetched.1);
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
-    let index = core.installed.lock().clone();
+    let index = crate::models::snapshot_present(core);
 
     let free = local::free_space(&core.data.models_root());
     let env = PlanEnv {
@@ -373,7 +373,8 @@ pub async fn install_civitai(
     }
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
-    let index = core.installed.lock().clone();
+    // A part deleted by hand counts as missing, so the install queues it again.
+    let index = crate::models::snapshot_present(core);
 
     let kind = plan::version_kind(version, model.as_ref());
     let is_lora = filters.is_lora_type(&kind);
@@ -406,6 +407,10 @@ pub async fn install_civitai(
             }
         },
     };
+    // RELEASE-SPEC §6: the base model's licence is accepted once before the first download.
+    if !is_lora {
+        crate::licence::require_family(core, family.as_deref())?;
+    }
     let env = PlanEnv {
         registry: &registry,
         index: &index,

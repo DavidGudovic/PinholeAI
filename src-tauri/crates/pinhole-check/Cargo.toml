@@ -1,0 +1,21 @@
+[package]
+name = "pinhole-check"
+description = "Local image check: small classifiers run on the processor before a result is shown"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# Pure-Rust ONNX runtime: no native library to download or ship.
+tract-onnx = "0.23"
+tract-linalg = { version = "0.23", features = ["multithread-mm"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+sha2 = { workspace = true }
+hex = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+# The measure example also reads JPEGs.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }

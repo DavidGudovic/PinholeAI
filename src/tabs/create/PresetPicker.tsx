@@ -188,7 +188,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span className="mr-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
-            <Lock className="h-3.5 w-3.5" /> Your prompt is never saved in a preset.
+            <Lock className="h-3.5 w-3.5" /> Presets keep settings, not the prompt.
           </span>
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -218,7 +218,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
               Dials: {SHAPE_LABEL[s.create.shape]} · {qualityLabel(s.create.quality)} · {s.create.count} at a time
             </li>
             <li>Fine-tune: {Object.keys(s.create.fineTune).filter((k) => k !== "negativePrompt" && k !== "hiresScale" && k !== "hiresDenoise").length} changed setting(s)</li>
-            <li>LoRAs: {s.create.loras.length || "none"}</li>
+            <li>Style add-ons: {s.create.loras.length || "none"}</li>
           </ul>
         </div>
         {error && <ErrorNotice error={error} />}

@@ -26,6 +26,7 @@ import {
   useFilePicker,
   useImagePaste,
 } from "../../components/ImageDrop";
+import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { LiveJobProgress } from "../../components/JobProgress";
@@ -35,6 +36,7 @@ import { StylePicker } from "../../components/StylePicker";
 import { ImageViewer } from "../../components/ImageViewer";
 import {
   AutoTextarea,
+  Badge,
   Button,
   IconButton,
   Kbd,
@@ -59,6 +61,7 @@ import {
   createModels,
   editBusy,
   editModels,
+  initialEdit,
   isEditJob,
   willQueue,
   type ChangeAmount,
@@ -83,7 +86,7 @@ import { useFitBox } from "./useFitBox";
 type SizeChoice = EditSizeChoice;
 
 // Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
-const TWO_IMAGE_PICKS = ["qwen_image_edit_2511"];
+const TWO_IMAGE_PICKS = ["qwen_image_21"];
 
 const EDIT_JOBS = ["edit", "editUpscale"] as const;
 
@@ -268,7 +271,9 @@ export function EditTab() {
         model,
         mask: m,
         size: outFrom,
-        from,
+        // Only Try again names the step: a normal edit uses the step shown when it runs, so
+        // one queued behind another is added after its result instead of replacing it.
+        from: again ? from : undefined,
         newSeed: again,
       });
       running.current = false;
@@ -318,9 +323,12 @@ export function EditTab() {
         t &&
         (t.tagName === "TEXTAREA" ||
           t.tagName === "INPUT" ||
+          t.tagName === "SELECT" ||
           t.isContentEditable)
       )
         return;
+      // Not behind a dialog, sheet or the viewer.
+      if (document.querySelector('[role="dialog"]')) return;
       ev.preventDefault();
       if (editBusy(store.getState())) return;
       const s = store.getState().edit;
@@ -329,6 +337,13 @@ export function EditTab() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tab, dispatch, store]);
+
+  // Shown on the closed Fine-tune header, as in Create, so a fixed seed or size isn't hidden.
+  const fineTuneChanged =
+    (e.seed != null ? 1 : 0) +
+    (e.loras.length ? 1 : 0) +
+    (e.quality !== initialEdit().quality ? 1 : 0) +
+    (size !== "normal" && !fixing && !extending ? 1 : 0);
 
   const needsEditModel = mode === "instruction" && !autoEdit;
   const text =
@@ -508,18 +523,18 @@ export function EditTab() {
                       ? "Describing a change needs a graphics card"
                       : twoImages
                         ? "Combining two images needs another edit model"
-                        : "Get the best edit model for your GPU"}
+                        : "Get the best edit model for your graphics card"}
                   </div>
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {noGpu
                       ? "Pinhole didn't find one it can use, and edit models are too big for the processor. Switch to Restyle — it works with the model you already have."
                       : twoImages
-                        ? "Qwen Image Edit and FLUX.2 models can use a second image. Or remove the second image to edit with the model you have."
+                        ? "Qwen-Image 2.1, Qwen Image Edit and FLUX.2 models can use a second image. Or remove the second image to edit with the model you have."
                         : "Edit models change just what you ask for. Or switch to Restyle — it works with the model you already have."}
                   </p>
                 </div>
                 <RecommendedCards
-                  roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                  roles={["edit"]}
                   families={twoImages ? TWO_IMAGE_PICKS : undefined}
                   compact
                 />
@@ -536,7 +551,7 @@ export function EditTab() {
                 />
                 {editFit && editFit !== "fits" && !noGpu && (
                   <RecommendedCards
-                    roles={twoImages ? ["edit"] : ["edit", "edit_alt"]}
+                    roles={["edit"]}
                     families={twoImages ? TWO_IMAGE_PICKS : undefined}
                     compact
                     offers="all"
@@ -874,6 +889,9 @@ export function EditTab() {
             >
               <SlidersHorizontal className="h-4 w-4 text-neutral-500" />{" "}
               Fine-tune
+              {fineTuneChanged > 0 && (
+                <Badge tone="amber">{fineTuneChanged} changed</Badge>
+              )}
               <ChevronDown
                 className={cx(
                   "ml-auto h-4 w-4 text-neutral-400 transition-transform",
@@ -1130,11 +1148,11 @@ export function EditTab() {
                   variant="ghost"
                   disabled={locked}
                   onClick={picker.open}
-                  title="Edit a different image"
-                  aria-label="New image"
+                  title="Pick another image to edit"
+                  aria-label="Another image"
                 >
                   <ImagePlus className="h-3.5 w-3.5" />{" "}
-                  <span className="hidden xl:inline">New image</span>
+                  <span className="hidden xl:inline">Another image</span>
                 </Button>
                 <UpscaleMenu
                   size="sm"
@@ -1193,6 +1211,11 @@ export function EditTab() {
               <p className="-mt-3 shrink-0 pb-3 text-center text-xs text-neutral-500 tabular-nums">
                 {settingsSummary(node.meta)}
               </p>
+            )}
+            {import.meta.env.DEV && node && (
+              <div className="-mt-2 shrink-0 pb-2">
+                <CheckReadings id={node.imageId} />
+              </div>
             )}
 
             <div className="shrink-0 border-t border-neutral-200 bg-white/60 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/40">

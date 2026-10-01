@@ -66,6 +66,8 @@ export interface Settings {
   editNoticeSeen?: boolean;
   /** Show the quiet "Tip" line under a result (default on). */
   showTips?: boolean;
+  /** Model licences the user accepted (ids). Changed only by acceptLicense. */
+  acceptedLicenses?: string[];
 }
 
 export type Vendor = "nvidia" | "amd" | "intel" | "other";
@@ -98,6 +100,14 @@ export interface HardwareView {
 }
 
 // ---------------------------------------------------------------- engine
+/** SafetyCheckStatus (imagecheck.rs): the image check's files. Nothing is made until `ready`. */
+export interface SafetyCheckStatus {
+  ready: boolean;
+  downloading: boolean;
+  /** Bytes still to download. */
+  downloadBytes: number;
+}
+
 export interface EngineStatus {
   installed: boolean;
   installing: boolean;
@@ -121,7 +131,7 @@ export interface EngineStatus {
 export type DownloadState = "queued" | "downloading" | "verifying" | "done" | "failed" | "cancelled";
 
 /** What a download group fetches (match on this, never on the label). */
-export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate";
+export type DownloadKind = "engine" | "model" | "captioner" | "upscaler" | "appUpdate" | "safetyCheck";
 
 export interface GroupStatus {
   groupId: string;
@@ -265,7 +275,7 @@ export interface DeletePreview {
 }
 
 export interface RecommendedPick {
-  /** realistic | realistic_detail (optional second Realistic card) | anime | edit | edit_alt (optional lighter edit model) | describe */
+  /** realistic | realistic_fast (optional fast second Realistic card) | anime | edit | describe */
   role: string;
   roleLabel: string;
   /** null when nothing fits / no candidate verified yet. */

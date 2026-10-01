@@ -194,6 +194,20 @@ pub fn register_download(
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
+        // A part downloaded again replaces an entry whose file was deleted by hand (it may
+        // have had another name), so the part is found by its new file.
+        if let Some(cid) = entry.component_id.as_deref() {
+            let data = &core.data;
+            let stale: Vec<String> = index
+                .files
+                .iter()
+                .filter(|f| f.id != entry.id && !f.is_linked())
+                .filter(|f| f.component_id.as_deref() == Some(cid))
+                .filter(|f| !index.abs_path(data, f).is_file())
+                .map(|f| f.id.clone())
+                .collect();
+            index.files.retain(|f| !stale.contains(&f.id));
+        }
         // An unreadable entry at this path described the file that was there.
         let replaced = index.remove_unknown_at(&entry.rel_path);
         if let Err(e) = index.save(&core.data) {
@@ -242,11 +256,34 @@ fn snapshot(core: &AppCore) -> pinhole_store::InstalledIndex {
     core.installed.lock().clone()
 }
 
+/// The index without parts (VAE, encoders…) whose file is gone from Pinhole's folders, so a
+/// part deleted by hand shows as missing and "Get missing parts" downloads it again (as
+/// Generate already reports it). Main models and add-ons stay listed so they can be deleted.
+pub(crate) fn snapshot_present(core: &AppCore) -> pinhole_store::InstalledIndex {
+    let mut index = snapshot(core);
+    let data = &core.data;
+    let gone: Vec<String> = index
+        .files
+        .iter()
+        .filter(|f| {
+            !f.is_linked()
+                && !matches!(
+                    f.kind,
+                    ModelKind::Checkpoint | ModelKind::Diffusion | ModelKind::Lora
+                )
+        })
+        .filter(|f| !index.abs_path(data, f).is_file())
+        .map(|f| f.id.clone())
+        .collect();
+    index.files.retain(|f| !gone.contains(&f.id));
+    index
+}
+
 /// Installed main models (checkpoints + diffusion files), by name.
 pub fn list_models(core: &AppCore) -> CoreResult<Vec<InstalledModel>> {
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
-    let index = snapshot(core);
+    let index = snapshot_present(core);
     let mut out: Vec<InstalledModel> = index
         .models()
         .map(|f| inventory::installed_model_view(&registry, &index, f, &hw))
@@ -296,10 +333,16 @@ pub fn set_lora_trigger_words(
         .iter_mut()
         .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
         .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
-    file.trigger_words = Some(clean);
+    let old = file.trigger_words.replace(clean);
     let file = file.clone();
     let view = inventory::installed_lora_view(&index, &file);
-    index.save(&core.data)?;
+    if let Err(e) = index.save(&core.data) {
+        // Not saved: keep the old words in memory too, so a later save can't write them.
+        if let Some(f) = index.files.iter_mut().find(|f| f.id == lora_id) {
+            f.trigger_words = old;
+        }
+        return Err(e.into());
+    }
     Ok(view)
 }
 
@@ -389,6 +432,23 @@ pub(crate) fn helper_files<'a>(
         .collect()
 }
 
+/// The name of an installed model whose family uses one of `files` as a component.
+fn model_using_helper_files(
+    core: &AppCore,
+    index: &pinhole_store::InstalledIndex,
+    files: &[&InstalledFile],
+) -> Option<String> {
+    let registry = core.registry();
+    index.models().find_map(|m| {
+        let family = registry.family(m.family.as_deref()?)?;
+        let used = families::family_component_ids(family);
+        files
+            .iter()
+            .any(|f| f.component_id.as_deref().is_some_and(|c| used.contains(c)))
+            .then(|| m.friendly_name.clone())
+    })
+}
+
 /// Installed helpers: one row per Describe / Improve model (its two files together) and
 /// upscalers / other captioner files.
 pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
@@ -476,6 +536,13 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
         if files.iter().any(|f| f.is_linked()) {
             return Err(CoreError::invalid(LINKED_DELETE));
         }
+        // A model can reuse a Describe helper's files (Qwen Image Edit reads the 7B model):
+        // they stay while that model is installed.
+        if let Some(user) = model_using_helper_files(core, &index, &files) {
+            return Err(CoreError::invalid(format!(
+                "{user} also uses this helper. Delete {user} first, then delete the helper."
+            )));
+        }
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;
     }
@@ -493,6 +560,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
             ));
         }
         crate::generate::shutdown(core).await;
+        crate::engine_setup::emit_status(core);
     }
     let failed;
     {
@@ -553,7 +621,7 @@ pub fn get_recommended(core: &AppCore) -> CoreResult<Vec<RecommendedPick>> {
 
 /// One-click install of a role's pick (first run, empty Create/Edit/Describe).
 pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<InstallStarted> {
-    let action = {
+    let (action, family_id) = {
         let registry = core.registry();
         let hw = crate::app::hw_context(core);
         let index = snapshot(core);
@@ -572,11 +640,12 @@ pub async fn install_recommended(core: &Arc<AppCore>, role: &str) -> CoreResult<
                         .unwrap_or_else(|| "No recommended model fits this computer.".into()),
                 ))
             }
-            other => other,
+            other => (other, plan.pick.family_id),
         }
     };
     match action {
         PickAction::Download { label, files } => {
+            crate::licence::require_family(core, family_id.as_deref())?;
             let items = files.into_iter().map(|f| (f, None)).collect();
             start_install(core, label, items, None).await
         }
@@ -599,7 +668,7 @@ pub async fn install_missing_parts(
     let (label, files) = {
         let registry = core.registry();
         let hw = crate::app::hw_context(core);
-        let index = snapshot(core);
+        let index = snapshot_present(core);
         let model = index
             .get(model_id)
             .ok_or_else(|| CoreError::not_found("That model isn't installed any more."))?;
@@ -610,6 +679,8 @@ pub async fn install_missing_parts(
             .ok_or_else(|| {
                 CoreError::invalid("Pinhole doesn't know which parts this model needs.")
             })?;
+        // A licensed family's parts download only after its licence was accepted.
+        crate::licence::require_family(core, Some(&family.id))?;
         let files = recommend::parts_to_run(&registry, family, &hw, &index);
         (model.friendly_name.clone(), files)
     };
@@ -1004,6 +1075,22 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         let client = crate::catalog::civitai_client(core).await;
         let lookup = tokio::time::timeout(Duration::from_secs(20), client.by_hash(&sha256)).await;
         if let Ok(Ok(Some(v))) = lookup {
+            // The model's flags, as for a Browse install (RELEASE-SPEC §5).
+            let model = if v.model_id > 0 {
+                tokio::time::timeout(Duration::from_secs(20), client.model(v.model_id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+            } else {
+                None
+            };
+            if pinhole_catalog::api::version_is_person_or_minor(&v, model.as_ref()) {
+                remove_copy(&pending);
+                return Err(CoreError::invalid(
+                    pinhole_catalog::api::PERSON_OR_MINOR_REASON,
+                ));
+            }
+            let sfw_only = pinhole_catalog::api::sfw_only_of(&v, model.as_ref());
             let name = pinhole_catalog::plan::model_name(&v, None);
             pending.friendly_name = pinhole_catalog::plan::friendly_name(&v, None);
             pending.civitai = Some(CivitaiRef {
@@ -1015,6 +1102,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                 trained_words: v.trained_words.clone(),
                 license: None,
                 creator_notes: None,
+                sfw_only,
             });
             resolution = families::resolve_family(
                 &registry,
@@ -1085,6 +1173,14 @@ pub fn confirm_family(core: &AppCore, token: &str, family_id: &str) -> CoreResul
         .ok_or_else(|| CoreError::not_found("This choice has expired. Add the file again."))?;
     register_pending(core, &pending, Some(family_id.to_string()))
         .inspect_err(|_| remove_copy(&pending))
+}
+
+/// The family question was closed without a pick: the copy made for it is removed.
+pub fn cancel_add(core: &AppCore, token: &str) {
+    let pending = core.models.pending.lock().remove(token);
+    if let Some(p) = pending {
+        remove_copy(&p);
+    }
 }
 
 // ------------------------------------------------------------------ delete
@@ -1286,6 +1382,7 @@ mod tests {
                 trained_words: vec![],
                 license: None,
                 creator_notes: None,
+                sfw_only: false,
             }),
             dtype: Some("f16".into()),
         };
@@ -1384,6 +1481,19 @@ mod tests {
                     confirm_family(&core, "bogus", "sdxl").unwrap_err().code,
                     "not_found"
                 );
+                // Closing the question removes the copy made for it.
+                let other = tmp.path().join("Other.safetensors");
+                std::fs::copy(&src, &other).unwrap();
+                let out2 = add_local_model(&core, other.to_str().unwrap())
+                    .await
+                    .unwrap();
+                let copy = core
+                    .data
+                    .models(ModelKind::Checkpoint)
+                    .join("Other.safetensors");
+                assert!(copy.is_file());
+                cancel_add(&core, &out2.needs_choice.unwrap().token);
+                assert!(!copy.exists() && other.is_file());
                 assert_eq!(
                     confirm_family(&core, &choice.token, "nope")
                         .unwrap_err()
@@ -2087,6 +2197,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_helper_a_model_reuses_is_kept_until_the_model_is_deleted() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let add = |kind: ModelKind, name: &str, family: Option<&str>, comp: Option<&str>| {
+            let dir = core.data.models(kind);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(name), b"1234").unwrap();
+            let file = DownloadedFile {
+                path: dir.join(name),
+                sha256: format!("{:0>64}", name.len()),
+                size_bytes: 4,
+            };
+            let reg = Registration {
+                kind,
+                friendly_name: name.into(),
+                family: family.map(Into::into),
+                component_id: comp.map(Into::into),
+                civitai: None,
+                dtype: None,
+            };
+            register_download(&core, &file, reg).unwrap();
+        };
+        add(
+            ModelKind::Captioner,
+            "m7.gguf",
+            None,
+            Some("qwen25_vl_7b_q8"),
+        );
+        add(
+            ModelKind::Captioner,
+            "p7.gguf",
+            None,
+            Some("qwen25_vl_7b_mmproj"),
+        );
+        add(ModelKind::Diffusion, "qwen.gguf", Some("qwen_image"), None);
+
+        let err = delete_helper(&core, "qwen25_vl_7b").await.unwrap_err();
+        assert!(err.message.contains("qwen.gguf"), "{err:?}");
+        let dir = core.data.models(ModelKind::Captioner);
+        assert!(dir.join("m7.gguf").exists());
+
+        // Deleting the model keeps the helper's files; then the helper can go.
+        let id = list_models(&core).unwrap()[0].id.clone();
+        delete_model(&core, &id).await.unwrap();
+        assert!(dir.join("m7.gguf").exists() && dir.join("p7.gguf").exists());
+        delete_helper(&core, "qwen25_vl_7b").await.unwrap();
+        assert!(!dir.join("m7.gguf").exists());
+    }
+
+    #[tokio::test]
     async fn the_safe_mode_off_helper_shares_the_7b_vision_file_and_is_automatic_while_off() {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
         let mut st = core.settings.read().clone();
@@ -2096,10 +2255,7 @@ mod tests {
             .into_iter()
             .map(|m| m.id)
             .collect();
-        assert_eq!(
-            ids,
-            ["describe", "qwen25_vl_7b", "qwen25_vl_7b_abliterated"]
-        );
+        assert_eq!(ids, ["describe", "qwen25_vl_7b", "qwen25_vl_7b_safe_off"]);
 
         let dir = core.data.models(ModelKind::Captioner);
         std::fs::create_dir_all(&dir).unwrap();
@@ -2120,13 +2276,13 @@ mod tests {
             };
             register_download(&core, &file, reg).unwrap();
         };
-        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("ab.gguf", "qwen25_vl_7b_safe_off_q4km");
         add("p7.gguf", "qwen25_vl_7b_mmproj");
         // Only the Safe-mode-Off helper is listed, with the shared vision file.
         let rows = list_helpers(&core).unwrap();
         assert_eq!(
             rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-            ["qwen25_vl_7b_abliterated"]
+            ["qwen25_vl_7b_safe_off"]
         );
         assert_eq!(rows[0].size_bytes, 8);
         // Automatic uses it while Safe mode is Off.
@@ -2141,15 +2297,13 @@ mod tests {
             rows.iter()
                 .map(|r| (r.id.as_str(), r.size_bytes))
                 .collect::<Vec<_>>(),
-            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_abliterated", 4)]
+            [("qwen25_vl_7b", 8), ("qwen25_vl_7b_safe_off", 4)]
         );
         assert!(crate::describe::list_helper_models(&core)
             .iter()
             .filter(|m| m.id != "describe")
             .all(|m| m.installed && m.removable));
-        delete_helper(&core, "qwen25_vl_7b_abliterated")
-            .await
-            .unwrap();
+        delete_helper(&core, "qwen25_vl_7b_safe_off").await.unwrap();
         assert!(!dir.join("ab.gguf").exists());
         assert!(dir.join("p7.gguf").exists() && dir.join("m7.gguf").exists());
         let rows = list_helpers(&core).unwrap();
@@ -2160,7 +2314,7 @@ mod tests {
         );
 
         // Safe mode On: the Safe-mode-Off helper is never picked, even when installed.
-        add("ab.gguf", "qwen25_vl_7b_abliterated_q4km");
+        add("ab.gguf", "qwen25_vl_7b_safe_off_q4km");
         delete_helper(&core, "qwen25_vl_7b").await.unwrap();
         assert!(
             dir.join("p7.gguf").exists(),
@@ -2173,13 +2327,10 @@ mod tests {
         crate::app::set_settings(&core, st).unwrap();
         assert!(crate::describe::list_helper_models(&core)
             .iter()
-            .all(|m| m.id != "qwen25_vl_7b_abliterated"));
+            .all(|m| m.id != "qwen25_vl_7b_safe_off"));
         let s = crate::describe::captioner_status(&core, crate::describe::Purpose::Describe);
         assert!(s.source.is_none(), "nothing else is installed");
         // Installed helpers still lists it, so it can be removed.
-        assert_eq!(
-            list_helpers(&core).unwrap()[0].id,
-            "qwen25_vl_7b_abliterated"
-        );
+        assert_eq!(list_helpers(&core).unwrap()[0].id, "qwen25_vl_7b_safe_off");
     }
 }

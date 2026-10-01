@@ -23,7 +23,7 @@ pub fn registry_style_badge(registry: &Registry, file: &InstalledFile) -> Option
     let family = file.family.as_deref()?;
     for (role, label) in [
         ("realistic", "Realistic"),
-        ("realistic_detail", "Realistic"),
+        ("realistic_fast", "Realistic"),
         ("anime", "Anime"),
     ] {
         let heads = registry
@@ -161,13 +161,19 @@ pub fn orphaned_components<'a>(
         let Some(comp) = registry.component(id) else {
             continue;
         };
-        // Files in the user's other models folders are never deleted.
-        for f in index.files.iter().filter(|f| !f.is_linked()).filter(|f| {
-            f.component_id.as_deref() == Some(id.as_str())
-                || (f.component_id.is_none()
-                    && families::normalize_sha(&comp.sha256)
-                        .is_some_and(|h| f.sha256.eq_ignore_ascii_case(&h)))
-        }) {
+        // Files in the user's other models folders are never deleted, and files downloaded
+        // as a Describe helper belong to the helper (removed from Models → Helpers).
+        for f in index
+            .files
+            .iter()
+            .filter(|f| !f.is_linked() && f.kind != ModelKind::Captioner)
+            .filter(|f| {
+                f.component_id.as_deref() == Some(id.as_str())
+                    || (f.component_id.is_none()
+                        && families::normalize_sha(&comp.sha256)
+                            .is_some_and(|h| f.sha256.eq_ignore_ascii_case(&h)))
+            })
+        {
             if !out.iter().any(|o| o.id == f.id) {
                 out.push(f);
             }
@@ -258,6 +264,20 @@ mod tests {
         assert!(p.files[1..]
             .iter()
             .all(|f| f.reason == DeleteReason::OrphanComponent));
+    }
+
+    #[test]
+    fn describe_helper_files_stay_when_a_model_that_reuses_them_is_deleted() {
+        let reg = registry();
+        // The encoder was downloaded as a Describe helper, then reused by the model.
+        let mut helper = component(&reg, "qwen3_4b");
+        helper.kind = ModelKind::Captioner;
+        let idx = index(vec![
+            model("zit", "z_image_turbo", ModelKind::Diffusion, "z.gguf"),
+            component(&reg, "flux_ae"),
+            helper,
+        ]);
+        assert_eq!(ids(orphaned_components(&reg, &idx, "zit")), ["flux_ae"]);
     }
 
     #[test]

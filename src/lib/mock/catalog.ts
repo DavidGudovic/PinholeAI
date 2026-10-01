@@ -4,6 +4,7 @@ import type { MockTable } from "./index";
 import { baseArch } from "../state/model";
 import type { BrowsePage, BrowseQuery, CatalogCard, CatalogFilterOptions, CoreError, InstallPlan, VramNeed } from "../types";
 import { mockFlags, mockSettings } from "./app";
+import { requireLicence } from "./licences";
 import { COMPONENTS, FAMILIES, installedComponents, sizeFor, isVersionInstalled, modelsChanged, registerLora, registerModel, startMockDownload } from "./models";
 
 const MB = 1024 * 1024;
@@ -578,6 +579,7 @@ async function install(versionId: number, familyId: string | null, fileId: numbe
     throw err("unauthorized", "CivitAI only lets signed-in users download this model. Add your CivitAI API key and try again.", "HTTP 401 Unauthorized from civitai.com/api/download/models/" + versionId);
   const fam = familyId ?? p.family?.familyId ?? null;
   if (!p.isLora && !fam) throw err("invalid", "Pick which kind of model this is first.");
+  if (!p.isLora) requireLicence(fam);
   const missing = p.components.filter((c) => !c.installed);
   const groupId = startMockDownload(e.name, [{ name: p.mainFile.name, bytes: p.mainFile.sizeBytes }, ...missing.map((c) => ({ name: COMPONENTS[c.componentId].path.split("/").pop()!, bytes: c.sizeBytes }))], {
     onDone: () => {

@@ -50,6 +50,9 @@ pub struct Settings {
     pub edit_notice_seen: bool,
     /// Show the one quiet "Tip" line under a result (Settings → Show tips).
     pub show_tips: bool,
+    /// Ids of the model licences the user accepted (`license_accept` in models.yaml).
+    /// Only changed by `accept_license` in pinhole-core, never by a plain settings save.
+    pub accepted_licenses: Vec<String>,
 }
 
 impl Default for Settings {
@@ -74,6 +77,7 @@ impl Default for Settings {
             notice_accepted: 0,
             edit_notice_seen: false,
             show_tips: true,
+            accepted_licenses: Vec::new(),
         }
     }
 }
@@ -127,6 +131,10 @@ impl Settings {
                 t
             };
         }
+        self.accepted_licenses
+            .retain(|id| !id.trim().is_empty() && id.len() <= 64);
+        self.accepted_licenses.sort();
+        self.accepted_licenses.dedup();
         self.models_folder = self
             .models_folder
             .filter(|p| std::path::Path::new(p.trim()).is_absolute())
@@ -155,15 +163,35 @@ fn gpu_index(s: &str) -> Option<usize> {
 
 const HEADER: &str = "# Pinhole settings. App preferences only: no prompts, no history.\n";
 
-/// Load settings. A missing, unreadable or corrupt file gives the defaults
-/// (never an error); a single bad value falls back to its default without
-/// losing the others; unknown fields are ignored.
+/// Load settings. A missing or empty file gives the defaults (never an error); a single
+/// bad value falls back to its default without losing the others; unknown fields are
+/// ignored. An unreadable or damaged file is kept aside as `settings.yaml.corrupt-<timestamp>`
+/// and gives the defaults with Offline mode on, so a broken file never turns it off.
 pub fn load(dir: &DataDir) -> Result<Settings, StoreError> {
-    let text = match std::fs::read_to_string(dir.settings_file()) {
-        Ok(t) => t,
-        Err(_) => return Ok(Settings::default()),
+    let path = dir.settings_file();
+    let damaged = || {
+        let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let _ = std::fs::rename(&path, path.with_extension(format!("yaml.corrupt-{stamp}")));
+        let recovered = Settings {
+            offline: true,
+            ..Settings::default()
+        };
+        // Written back so Offline mode stays on after a restart too (best effort).
+        let _ = save(dir, &recovered);
+        Ok(recovered)
     };
-    Ok(parse_lenient(&text))
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Settings::default()),
+        Err(_) => return damaged(),
+    };
+    if text.trim().is_empty() {
+        return Ok(Settings::default());
+    }
+    match parse_lenient(&text) {
+        Some(s) => Ok(s),
+        None => damaged(),
+    }
 }
 
 pub fn save(dir: &DataDir, settings: &Settings) -> Result<(), StoreError> {
@@ -173,12 +201,13 @@ pub fn save(dir: &DataDir, settings: &Settings) -> Result<(), StoreError> {
     write_atomic(&dir.settings_file(), format!("{HEADER}{body}").as_bytes())
 }
 
-fn parse_lenient(text: &str) -> Settings {
+/// `None` when the text isn't a YAML mapping (a damaged file).
+fn parse_lenient(text: &str) -> Option<Settings> {
     let Ok(Value::Mapping(user)) = serde_yaml::from_str::<Value>(text) else {
-        return Settings::default();
+        return None;
     };
     let Ok(Value::Mapping(mut merged)) = serde_yaml::to_value(Settings::default()) else {
-        return Settings::default();
+        return Some(Settings::default());
     };
     for (key, value) in user {
         if !merged.contains_key(&key) {
@@ -190,9 +219,11 @@ fn parse_lenient(text: &str) -> Settings {
             merged.insert(key, value);
         }
     }
-    serde_yaml::from_value::<Settings>(Value::Mapping(merged))
-        .unwrap_or_default()
-        .normalized()
+    Some(
+        serde_yaml::from_value::<Settings>(Value::Mapping(merged))
+            .unwrap_or_default()
+            .normalized(),
+    )
 }
 
 #[cfg(test)]
@@ -233,6 +264,7 @@ mod tests {
             notice_accepted: 1,
             edit_notice_seen: true,
             show_tips: false,
+            accepted_licenses: vec!["flux1-dev-non-commercial".into()],
             models_folder: Some(
                 if cfg!(windows) {
                     r"D:\Shared\Pinhole Models"
@@ -251,21 +283,46 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_file_gives_defaults() {
+    fn corrupt_file_gives_defaults_offline_and_is_kept_aside() {
         let (_t, d) = data();
         std::fs::create_dir_all(d.config()).unwrap();
-        for junk in ["{{{ not yaml", "- a\n- b\n", "42", "", "\u{0}\u{1}binary"] {
+        let offline = Settings {
+            offline: true,
+            ..Settings::default()
+        };
+        for junk in ["{{{ not yaml", "- a\n- b\n", "42", "\u{0}\u{1}binary"] {
             std::fs::write(d.settings_file(), junk).unwrap();
-            assert_eq!(load(&d).unwrap(), Settings::default(), "{junk:?}");
+            assert_eq!(load(&d).unwrap(), offline, "{junk:?}");
+            assert_eq!(
+                load(&d).unwrap(),
+                offline,
+                "{junk:?} still offline next time"
+            );
         }
+        let kept = std::fs::read_dir(d.config())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("settings.yaml.corrupt-")
+            })
+            .count();
+        assert!(kept >= 1);
+        // Invalid UTF-8 (a hand edit saved in another encoding) is damaged too.
+        std::fs::write(d.settings_file(), b"modelsFolder: C:\\Jos\xe9\n").unwrap();
+        assert_eq!(load(&d).unwrap(), offline);
+        // An empty file is just the defaults.
+        std::fs::write(d.settings_file(), "").unwrap();
+        assert_eq!(load(&d).unwrap(), Settings::default());
     }
 
     #[test]
-    fn unreadable_path_gives_defaults() {
+    fn unreadable_path_gives_defaults_offline() {
         let (_t, d) = data();
-        // settings.yaml is a directory → read fails → defaults.
+        // settings.yaml is a directory → read fails → defaults with Offline mode on.
         std::fs::create_dir_all(d.settings_file()).unwrap();
-        assert_eq!(load(&d).unwrap(), Settings::default());
+        assert!(load(&d).unwrap().offline);
     }
 
     #[test]

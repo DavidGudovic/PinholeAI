@@ -49,6 +49,11 @@
 #   modes:               txt2img / img2img / inpaint / edit (edit = reference image
 #                        + instruction; listed in Edit → "Describe a change").
 #   multi_ref: true      edits can take a second image (Edit's "Add another image").
+#   license_accept: <id> the user accepts this licence once (one "I accept",
+#                        shared by families with the same id) before Pinhole
+#                        downloads the family (RELEASE-SPEC §6). Needs a
+#                        `license_note`; not inherited; overrides.yaml can't
+#                        change it. Captioner helpers take it too.
 #   dials.size_multiple: width/height multiple (UNet 64 = vae 8 × unet 8;
 #                        DiT 16 = vae 8 × 2×2 patches). See
 #                        get_diffusion_model_down_factor(), diffusion_engine.cpp.
@@ -160,14 +165,13 @@ components:
   # Vision tower for Qwen-Image 2.1 edits (--llm_vision; the GGUF LLMs above have no
   # vision weights). docs/qwen_image_2.1.md names this file. Loads as Qwen3-VL vision
   # (name_conversion.cpp qwen3_vl_vision_name_map, 27 layers → deepstack {8, 16, 24}).
-  # SHA-256 / size from the HF file page (commit 00e7d63), 2026-09-30; size_mb rounded
-  # up from "1.16 GB". Not downloaded from the session (huggingface.co blocked).
+  # SHA-256 / size: HF resolve headers (X-Linked-ETag / X-Linked-Size), 2026-09-30.
   qwen3vl_8b_mmproj:
     kind: llm_vision
     file: mmproj-Qwen3VL-8B-Instruct-F16.gguf
     url: https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-Qwen3VL-8B-Instruct-F16.gguf
     sha256: ca524100ebf825c9a870db1c580d03879e0da0ab2541697e2458e64891cf9d38
-    size_mb: 1165
+    size_mb: 1159
   # Mistral-Small-3.2 24B for FLUX.2 dev (docs/flux2.md example uses this Q4_K_M).
   mistral_small_32_q4km:
     kind: llm
@@ -239,11 +243,12 @@ components:
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
     size_mb: 853
-  # Qwen2.5-VL 7B with its refusals removed ("abliterated", huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated,
-  # Apache-2.0), GGUF by mradermacher. The helper for Safe mode Off. Its vision file is not needed:
+  # Qwen2.5-VL 7B fine-tune that is less restrictive than the stock model (upstream
+  # huihui-ai/Qwen2.5-VL-7B-Instruct-*, Apache-2.0), GGUF by mradermacher. Offered only
+  # with Safe mode Off; the word check still runs on its output. Its vision file is not needed:
   # all 519 tensors of this repo's mmproj-Q8_0 are byte-identical to qwen25_vl_7b_mmproj (only the
   # GGUF name metadata differs, checked 2026-09-30), so it shares that one.
-  qwen25_vl_7b_abliterated_q4km:
+  qwen25_vl_7b_safe_off_q4km:
     kind: llm
     file: Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-abliterated-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-abliterated.Q4_K_M.gguf
@@ -458,6 +463,7 @@ families:
 
   # ---------------------------------------------------------------- FLUX.1
   flux1_dev:
+    license_accept: flux1-dev-non-commercial
     label: "FLUX.1 dev"
     lora_metadata: ["flux1", "flux-1"]
     style_template: natural
@@ -618,6 +624,7 @@ families:
 
   # ---------------------------------------------------------------- Qwen-Image 2.1
   qwen_image_21:
+    license_accept: qwen-research
     label: "Qwen-Image 2.1"
     style_template: natural
     activation_gb: 3.0
@@ -625,6 +632,7 @@ families:
     # Edits need Qwen3-VL-8B's vision weights (--llm_vision; conditioner.hpp errors
     # without them), so they are a component: installs made before it show "Missing parts".
     modes: [txt2img, img2img, edit]   # docs/qwen_image_2.1.md "Image editing"
+    edit_priority: 1                  # the recommended edit model (recommended.edit)
     multi_ref: true                   # docs: repeat -r for several reference images
     detect:
       # get_sd_version(): exact `model.diffusion_model.txt_in.text_norm.weight`
@@ -646,6 +654,23 @@ families:
       quality: { fast: 16, balanced: 25, best: 35 }   # ComfyUI template: 25 steps
       cfg_range: [3.0, 8.0]
       cfg_default: 6.0                  # docs/qwen_image_2.1.md: --cfg-scale 6.0
+    # One-click download (recommended.realistic and .edit): the 7B DiT. bf16 from
+    # Comfy-Org (ungated); GGUF quants from leejet/Qwen-Image-2.1-GGUF, made with the
+    # engine's own converter and named by docs/qwen_image_2.1.md (ungated). The Comfy
+    # int8_convrot file is not used: it needs INT8 dot products (docs/int8_convrot.md)
+    # that many Vulkan cards lack. Licence: Qwen Research License (non-commercial).
+    # No vram_gb: the need is estimated from the file sizes (vram.rs estimate), so the
+    # figures follow the text encoder the card gets. Sizes / SHA-256: HF tree API
+    # (LFS oid + size), 2026-09-30. Untested on real hardware.
+    download:
+      file: qwen_image_2.1_bf16.safetensors
+      url: https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_bf16.safetensors
+      sha256: 89f4158d066cc33906a199fca85634f766892dd78f49b6698dabf187ac86c4bc
+      size_mb: 14230
+      alt_quants:
+        q8_0: { file: qwen_image_2.1-Q8_0.gguf, url: "https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1-Q8_0.gguf", sha256: f8b244b00937f0e444a40dbf7866460871b89b30142594973b6012d1b471dc0a, size_mb: 7687 }
+        q6_k: { file: qwen_image_2.1-Q6_K.gguf, url: "https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1-Q6_K.gguf", sha256: 1c51d1a8e6cf2b215719dea0c4f0f4cbfff9214a1c7571e57913f57d6a9c3c12, size_mb: 5997 }
+        q4_k: { file: qwen_image_2.1-Q4_K.gguf, url: "https://huggingface.co/leejet/Qwen-Image-2.1-GGUF/resolve/main/qwen_image_2.1-Q4_K.gguf", sha256: 29f9c83c249ff0292fb2943fceddfa2319b446601866c82a4f8be062abea72c2, size_mb: 4197 }
 
   # ---------------------------------------------------------------- FLUX.2
   # get_sd_version(): `double_stream_modulation_img` → FLUX.2; with
@@ -695,6 +720,7 @@ families:
       cfg_default: 4.0                  # docs/flux2.md: --cfg-scale 4.0 (ComfyUI template: 5)
 
   flux2_klein_9b:
+    license_accept: flux2-klein-9b-non-commercial
     label: "FLUX.2 klein 9B"
     style_template: natural
     activation_gb: 2.5
@@ -721,6 +747,7 @@ families:
 
   flux2_klein_9b_base:
     inherits: flux2_klein_9b
+    license_accept: flux2-klein-9b-non-commercial
     label: "FLUX.2 klein 9B Base"
     name_hints: [base]
     civitai_base_models: ["Flux.2 Klein 9B-base"]
@@ -736,6 +763,7 @@ families:
   # 20 steps). Heavy: ~20 GB Q4 diffusion + 14 GB text encoder, auto-fit streams
   # from RAM on anything under ~40 GB of VRAM.
   flux2_dev:
+    license_accept: flux2-dev-non-commercial
     label: "FLUX.2 dev"
     style_template: natural
     activation_gb: 4.0
@@ -771,6 +799,7 @@ families:
   # nvfp4 / mxfp8 / int4 files do not (U8-packed weights are skipped by the
   # safetensors reader).
   krea2_turbo:
+    license_accept: krea2-community
     label: "Krea 2 Turbo"
     name_hints: [turbo]
     style_template: natural
@@ -793,8 +822,9 @@ families:
       size_multiple: 16                 # README: sizes are padded up to a multiple of 16
       quality: { fast: 6, balanced: 8, best: 12 }
       cfg_fixed: 1.0
-    # One-click download (recommended.realistic_detail): GGUF quants from
-    # realrebelai/KREA-2_GGUFs (docs/krea2.md; ungated). krea/Krea-2-* are gated,
+    # Registry files (GGUF quants from realrebelai/KREA-2_GGUFs): no longer a one-click pick since
+    # Qwen-Image 2.1 took Realistic; kept for the VRAM figures of installed copies. Source:
+    # docs/krea2.md (ungated). krea/Krea-2-* are gated,
     # so never used. Licence (LICENSE.pdf in krea-ai/krea-2, identical copy in
     # Comfy-Org/Krea-2): Krea 2 Community License v1 — use, copy, distribute and
     # make derivatives allowed (§2.1, §3); commercial use only under $1M yearly
@@ -812,6 +842,7 @@ families:
 
   krea2_raw:
     inherits: krea2_turbo
+    license_accept: krea2-community
     label: "Krea 2 Raw"
     name_hints: [raw]
     detect: { same_as: krea2_turbo }
@@ -828,6 +859,7 @@ families:
   # prompts; recommended prefix / negative below. Engine: AnimaConditioner
   # (Qwen3 0.6B) + the Qwen-Image VAE (docs/anima.md).
   anima:
+    license_accept: anima-non-commercial
     label: "Anima"
     style_template: tags
     activation_gb: 1.5
@@ -854,6 +886,7 @@ families:
 
   anima_turbo:
     inherits: anima
+    license_accept: anima-non-commercial
     label: "Anima Turbo"
     name_hints: [turbo]
     detect: { same_as: anima }          # not in CivitAI's list: recognised by hash or picked
@@ -902,6 +935,7 @@ families:
   # VAE, so all-in-one. CivitAI currently lists no SD 3.x checkpoints (probe
   # 2026-09-28 returned none for every SD 3.x string); kept for local files / LoRAs.
   sd3:
+    license_accept: stability-community
     label: "Stable Diffusion 3 / 3.5"
     style_template: natural
     activation_gb: 2.5
@@ -925,6 +959,7 @@ families:
 
   sd35_turbo:
     inherits: sd3
+    license_accept: stability-community
     label: "Stable Diffusion 3.5 Large Turbo"
     name_hints: [turbo]
     civitai_base_models: ["SD 3.5 Large Turbo"]
@@ -1057,7 +1092,7 @@ families:
     activation_gb: 3.0
     license_note: "Apache 2.0"
     role: edit                     # used by the Edit tab's instruction mode
-    edit_priority: 1               # preferred edit model when it fits
+    edit_priority: 2               # after Qwen-Image 2.1
     modes: [edit]
     multi_ref: true   # 1–3 input images (Qwen-Image-Edit-2509+); docs/edit.md preset qwen
     detect:
@@ -1097,13 +1132,14 @@ families:
         q8_0: { file: qwen-image-edit-2511-Q8_0.gguf, url: "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q8_0.gguf", sha256: ab4f0622fb002fccaaa679a2ecce6fd1b3190d8ea28a5b7b2b17b8669bc24afa, size_mb: 21762, vram_gb: { min: 14, recommended: 24 } }
 
   flux1_kontext:
+    license_accept: flux1-dev-non-commercial
     label: "FLUX.1 Kontext"
     name_hints: [kontext]
     style_template: natural
     activation_gb: 2.5
     license_note: "Non-commercial license"
     role: edit
-    edit_priority: 2               # fallback for lower VRAM
+    edit_priority: 3
     modes: [edit]
     detect: { same_as: flux1_dev }
     civitai_base_models: ["Flux.1 Kontext"]
@@ -1128,29 +1164,41 @@ families:
 
 # Recommended models per role (SPEC §6.1). Ranked best-first.
 # Pinhole picks the first candidate whose VRAM min fits this GPU, then the best quant that fits.
+# `min_quant: q6_k` = only when a version at least that good Fits (else the next candidate):
+# a model that would need a 4-bit copy or a tight fit gives way to a smaller one that runs well.
 # Without a usable GPU a candidate "fits" when it can run on the processor (vram.rs fit_cpu).
 # Nothing here is bundled — every entry is a one-click download.
 # CivitAI size_mb: CivitAI `sizeKB` is KiB → size_mb = sizeKB × 1024 / 1e6.
+#
+# Picks by card (recommend.rs `tier_picks` test; ESTIMATES, untested on real hardware):
+#   no GPU / 4 GB  SD 1.5                                  Edit: none (needs a graphics card)
+#   6–8 GB         Z-Image Turbo Q4 (tight)                Edit: Qwen-Image 2.1 Q4 (tight)
+#   10 GB          Z-Image Turbo Q4                        Edit: Qwen-Image 2.1 Q4
+#   12 GB          Qwen-Image 2.1 Q6 + Z-Image Turbo Q4    Edit: the same Qwen-Image 2.1
+#   16–20 GB       Qwen-Image 2.1 Q8 + Z-Image Turbo Q8    Edit: the same Qwen-Image 2.1
+#   24 GB+         Qwen-Image 2.1 bf16 + Z-Image bf16      Edit: the same Qwen-Image 2.1
 recommended:
   realistic:
+    # Newest and best (7B, 2026-09); one download also does Edit and two-image edits.
+    # 25 steps with CFG: several times slower than Z-Image Turbo, hence the fast card below.
+    - { family: qwen_image_21, source: registry, min_quant: q6_k }
     - { family: z_image_turbo, source: registry }
     - { family: sdxl, source: civitai, civitai_model_id: 133005, civitai_version_id: 1759168, title: "Juggernaut XL (Ragnarok)", size_mb: 7105, vram_gb: { min: 6, recommended: 10 }, note: "top-rated realistic SDXL finetune, for GPUs < 8 GB" }
     # Last resort: no usable GPU (fits against RAM, vram.rs fit_cpu) or under 5 GB of VRAM.
     - { family: sd15, source: registry, title: "Stable Diffusion 1.5 (small, runs on any computer)", note: "older and less detailed, but runs without a graphics card" }
-  # A second Realistic card (recommend.rs OPTIONAL_ROLES): shown only when it
-  # fits (12 GB+: Q5_K_S below 20 GB, Q8_0 from 20 GB); Z-Image Turbo stays first.
-  realistic_detail:
-    - { family: krea2_turbo, source: registry, title: "Krea 2 Turbo — more detail, slower" }
+  # A second Realistic card (recommend.rs OPTIONAL_ROLES): the fast model next to
+  # Qwen-Image 2.1, left out when it is already the Realistic pick (smaller cards).
+  realistic_fast:
+    - { family: z_image_turbo, source: registry, title: "Z-Image Turbo" }
   anime:
     - { family: sdxl_illustrious, source: civitai, civitai_model_id: 376130, civitai_version_id: 2940478, title: "Nova Anime XL (IL v19.0)", size_mb: 6939, vram_gb: { min: 6, recommended: 10 }, note: "top-rated Illustrious checkpoint" }
     # Pony stays a supported family, but isn't a one-click pick (RELEASE-SPEC §5).
+  # Qwen-Image 2.1 edits (up to several reference images) with the same files as
+  # Create; at 7B it fits where the 20B Qwen Image Edit 2511 needed a 3-bit copy
+  # (16 GB) and it is smaller than FLUX.1 Kontext, so both stay supported for
+  # installed copies but are no longer one-click picks.
   edit:
-    - { family: qwen_image_edit_2511, source: registry }
-    - { family: flux1_kontext, source: registry }
-  # A second Edit card (recommend.rs OPTIONAL_ROLES): a lighter edit model next
-  # to Qwen Image Edit, left out when it is already the Edit pick (small cards).
-  edit_alt:
-    - { family: flux1_kontext, source: registry, title: "FLUX.1 Kontext — lighter, faster edits" }
+    - { family: qwen_image_21, source: registry }
   describe:
     - { captioner: reuse }       # free if Qwen Image Edit is installed
     - { captioner: default }
@@ -1172,14 +1220,16 @@ captioner:
       title: "Qwen2.5-VL 3B"
       note: "Small and quick. Enough for Describe and short prompt ideas."
       default: true
+      license_note: "Qwen Research License"
+      license_accept: qwen-research
     - id: qwen25_vl_7b
       title: "Qwen2.5-VL 7B"
       note: "Writes fuller, more careful prompts and descriptions. Large download; shared with Qwen Image Edit."
       components: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]
-    - id: qwen25_vl_7b_abliterated
+    - id: qwen25_vl_7b_safe_off
       title: "Qwen2.5-VL 7B for Safe mode Off"
-      note: "Describes and writes adult content of adults plainly instead of refusing. Only while Safe mode is Off; the word check still applies."
-      components: [qwen25_vl_7b_abliterated_q4km, qwen25_vl_7b_mmproj]
+      note: "Less restrictive helper for Describe and Improve. Only while Safe mode is Off; the word check still applies."
+      components: [qwen25_vl_7b_safe_off_q4km, qwen25_vl_7b_mmproj]
       needs_safe_off: true
   prompts:
     sentence: >
@@ -1211,10 +1261,10 @@ captioner:
     # Added instead of `safe` while Safe mode is Off. The word check still runs on the idea and
     # on the answer whatever Safe mode says.
     adult: >
-      Adult content is allowed. If the idea is sexual or includes nudity, keep it and write it plainly
-      and specifically instead of softening or leaving it out, and describe every person in it as an
-      adult. Add nothing sexual or nude the user did not ask for. If the idea includes anyone under 18,
-      keep the whole prompt non-sexual and fully clothed.
+      Adult themes are allowed. If the idea includes nudity or sexual content between adults, keep
+      it and describe it clearly instead of softening or leaving it out, and describe every person in
+      it as an adult. Add nothing of that kind the user did not ask for. If the idea includes anyone under 18, keep
+      the whole prompt non-sexual and fully clothed.
     avoid: >
       Do not write any of these words or phrases, they are added separately: {words}.
 
@@ -1270,6 +1320,10 @@ known_files:
   - { sha256: 98763a127701eb6fb59096f7742cb3aa7d64ed510b9f4e882d8351f8176e3ce3, family: qwen_image, friendly_name: "Qwen-Image (fp8)" }
   - { sha256: cbf55390fff27dbc785046d7007b04e0c5dd7421e7ef128f2831eacb53a8e075, family: qwen_image, friendly_name: "Qwen-Image 2512 (bf16)" }
   - { sha256: 5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b, family: qwen_image, friendly_name: "Qwen-Image 2512 (fp8)" }
+  - { sha256: 89f4158d066cc33906a199fca85634f766892dd78f49b6698dabf187ac86c4bc, family: qwen_image_21, friendly_name: "Qwen-Image 2.1 (bf16)" }   # Comfy-Org/Qwen-Image-2.1
+  - { sha256: f8b244b00937f0e444a40dbf7866460871b89b30142594973b6012d1b471dc0a, family: qwen_image_21, friendly_name: "Qwen-Image 2.1 (Q8_0)" }   # leejet/Qwen-Image-2.1-GGUF
+  - { sha256: 1c51d1a8e6cf2b215719dea0c4f0f4cbfff9214a1c7571e57913f57d6a9c3c12, family: qwen_image_21, friendly_name: "Qwen-Image 2.1 (Q6_K)" }
+  - { sha256: 29f9c83c249ff0292fb2943fceddfa2319b446601866c82a4f8be062abea72c2, family: qwen_image_21, friendly_name: "Qwen-Image 2.1 (Q4_K)" }
   - { sha256: dd08fa32f98d05a2443ca1419e46df1575a0811f6e3b246d9dd47ff20f5eb66a, family: sdxl, friendly_name: "Juggernaut XL (Ragnarok)" }
   - { sha256: fa486caafc330f133605d3c18b418d183812f14946631c6544bfb28730db6d6f, family: sdxl_illustrious, friendly_name: "Nova Anime XL (IL v19.0)" }
   - { sha256: 67ab2fd8ec439a89b3fedb15cc65f54336af163c7eb5e4f2acc98f090a29b0b3, family: sdxl_pony, friendly_name: "Pony Diffusion V6 XL" }

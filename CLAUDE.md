@@ -87,8 +87,7 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
    The WebView makes no network calls of its own; CivitAI preview images are fetched through
    the Rust client and handed to the UI as blobs.
 6. Engines bind to `127.0.0.1` only. Engine stdout/stderr go to an in-memory ring buffer only.
-7. CivitAI API key and the optional GitHub token (updates while the repo is private) live in the
-   OS keychain (`keyring` crate), never in `Data/`. Secrets go only in the `Authorization` header.
+7. The CivitAI API key lives in the OS keychain (`keyring` crate), never in `Data/`. Secrets go only in the `Authorization` header.
 
 **Privacy tests (must exist and pass in CI):**
 - Generate with a sentinel prompt (e.g. `PINHOLE_SENTINEL_7f3a`) plus a saved style, save the
@@ -139,6 +138,9 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
 - Privacy copy states facts (what stays on the computer, what is saved and when, what goes online).
   Don't frame it as hiding what someone made ("forgets everything", "wipes your tracks", "nobody
   will see"). The top-bar control is **Reset**. No one-click adult-content shortcuts in the UI.
+- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
+  disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
+  saved until you press Save." The privacy rules above still apply to the code.
 - Edit examples change scenes, objects, lighting or style — never a real person's body or clothes
   while keeping their face.
 - Screenshots and examples: safe for work, fictional subjects, no real people.

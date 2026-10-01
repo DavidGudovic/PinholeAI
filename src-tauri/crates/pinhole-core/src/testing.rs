@@ -21,8 +21,18 @@ use crate::AppCore;
 
 /// Make `generate` talk to an already-running (mock) sd-server at `base_url`
 /// instead of installing/spawning the real engine.
+/// Also puts a stand-in image check that passes every picture in place (see
+/// [`use_check`]), so tests don't need the check's model files.
 pub fn use_external_engine(core: &AppCore, base_url: &str) {
     *core.gen.external.lock() = Some(base_url.trim_end_matches('/').to_string());
+    use_check(core, FakeCheck::default());
+}
+
+pub use crate::imagecheck::FakeCheck;
+
+/// Replace the image check with `fake`.
+pub fn use_check(core: &AppCore, fake: FakeCheck) {
+    crate::imagecheck::use_fake(core, fake);
 }
 
 /// sd-server's output buffer (memory only, redacted), so a mock engine can
@@ -175,6 +185,7 @@ pub fn register_fake_lora(core: &AppCore, family_id: &str, trained_words: &[&str
             trained_words: trained_words.iter().map(|s| s.to_string()).collect(),
             license: None,
             creator_notes: None,
+            sfw_only: false,
         }),
         added_at: now(),
         last_used: None,
@@ -231,6 +242,8 @@ mod tests {
             rec.clone(),
         )
         .expect("AppCore::new");
+        // No check model files in tests: a stand-in that passes everything.
+        use_check(&core, FakeCheck::default());
         (tmp, core, rec)
     }
 
@@ -601,10 +614,18 @@ mod tests {
             req
         };
 
+        let fake = FakeCheck::default();
+        let sizes = fake.sizes.clone();
+        use_check(&core, fake);
         let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
             .await
             .unwrap();
         assert_eq!(res.images.len(), 1);
+        // Regression: the redrawn box is checked on its own too, not only as a small part of
+        // the whole picture.
+        let sizes = sizes.lock().clone();
+        assert_eq!(sizes.len(), 2, "{sizes:?}");
+        assert_eq!(sizes[0], (1200, 900));
         let out = &res.images[0];
         assert_eq!(
             (out.width, out.height),
@@ -616,6 +637,11 @@ mod tests {
         let (w, h) = (
             body["width"].as_u64().unwrap(),
             body["height"].as_u64().unwrap(),
+        );
+        // The engine's own output, at the model's size, not the ~128 px box it becomes.
+        assert!(
+            sizes[1].0 >= 768 && sizes[1].1 >= 768,
+            "the redraw is checked at the size it was drawn: {sizes:?}"
         );
         // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
         assert!(
@@ -806,6 +832,29 @@ mod tests {
         assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
         assert!(body.get("init_image").is_none());
         assert_eq!(body["width"], body["height"]);
+    }
+
+    #[tokio::test]
+    async fn a_create_reference_picture_needs_the_vision_encoder() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let qwen = register_fake_model(&core, "qwen_image_21");
+        core.installed
+            .lock()
+            .files
+            .retain(|f| f.component_id.as_deref() != Some("qwen3vl_8b_mmproj"));
+        let mut req = GenerateRequest::txt2img(qwen, "a lighthouse in the style of the picture");
+        req.ref_image_ids = vec![reference.id.clone()];
+        let err = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(err.code, "not_found");
+        assert!(err.message.contains("Get"), "{}", err.message);
+        assert!(mock.requests().is_empty());
     }
 
     #[tokio::test]
@@ -1858,6 +1907,35 @@ mod tests {
         assert!(generate::upscale_image(&core, &src.id, 3).await.is_err());
         let (rgba, w, h) = session::decode_rgba(&core, &up2.id).unwrap();
         assert_eq!(rgba.len() as u32, w * h * 4);
+
+        // Upscales go through the image check like every made picture.
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().minor = 0.9;
+        use_check(
+            &core,
+            FakeCheck {
+                readings,
+                ..Default::default()
+            },
+        );
+        let kept = core.session.len();
+        let e = generate::upscale_image(&core, &src.id, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(core.session.len(), kept);
+        // And nothing is made without the check's files.
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["nudity"],
+                ..Default::default()
+            },
+        );
+        let e = generate::upscale_image(&core, &src.id, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "check_missing");
     }
 
     /// 2× runs at 4× first: a source over 2048 px per side is refused for 2×
@@ -1900,6 +1978,424 @@ mod tests {
             .iter()
             .any(|e| matches!(e, CoreEvent::Generation(_))));
         assert_eq!(core.session.len(), 1, "only the source image");
+    }
+
+    /// Readings of an intimate photo of an adult (made-up scores).
+    fn intimate_adult() -> pinhole_check::Readings {
+        pinhole_check::Readings {
+            nudity: 0.95,
+            tags: Some(pinhole_check::Tags {
+                questionable: 0.6,
+                explicit: 0.3,
+                realistic: 0.8,
+                nude: 0.9,
+                ..Default::default()
+            }),
+            faces: Some(vec![pinhole_check::Face {
+                score: 0.9,
+                side: 100.0,
+                child_face: Some(0.02),
+            }]),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_check_files_stop_create_and_edit_before_the_engine() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["Safety check: face finder"],
+                ..Default::default()
+            },
+        );
+        let model = register_fake_model(&core, "sdxl");
+        let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "a boat"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::imagecheck::MISSING);
+        assert!(e.message.contains("Set up safety check"), "{}", e.message);
+        let src = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap();
+        let mut req = GenerateRequest::txt2img(model, "at sunset");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(src.id);
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, crate::imagecheck::MISSING);
+        assert!(mock.requests().is_empty(), "nothing reaches the engine");
+        assert!(!crate::imagecheck::status(&core).ready);
+
+        // The real check with no files in Data/check is not ready either.
+        let tmp2 = tempfile::tempdir().unwrap();
+        let bare = AppCore::new(
+            ShippedPaths {
+                config_dir: config_dir(),
+            },
+            DataDir::at(tmp2.path().join("Data"), false),
+            Arc::new(crate::NullSink),
+        )
+        .unwrap();
+        let st = crate::imagecheck::status(&bare);
+        assert!(!st.ready);
+        assert_eq!(st.download_bytes, pinhole_check::files::total_bytes());
+        assert_eq!(
+            crate::imagecheck::ensure_ready(&bare).unwrap_err().code,
+            crate::imagecheck::MISSING
+        );
+    }
+
+    #[tokio::test]
+    async fn a_blocked_result_drops_the_whole_batch() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().minor = 0.9;
+        let fake = FakeCheck {
+            readings,
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        let mut req = GenerateRequest::txt2img(model, "a boat");
+        req.dials.count = 2;
+        let e = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(e.message, crate::text_check::BLOCKED_MESSAGE);
+        assert_eq!(core.session.len(), 0, "no picture of the batch is kept");
+        assert!(counts.lock().0 >= 1);
+        // Dev builds name the rule for tuning; the message never changes.
+        if cfg!(debug_assertions) {
+            assert!(e.details.unwrap().starts_with("looks_underage"));
+        }
+    }
+
+    #[tokio::test]
+    async fn adult_results_pass_unless_made_from_a_brought_in_photo_of_someone() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: false,
+            },
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        // Create: adult content of adults is allowed.
+        let made = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        assert_eq!(counts.lock().1, 0, "no originals to measure");
+
+        let restyle = |src: &str| {
+            let mut req = GenerateRequest::txt2img(model.clone(), "y");
+            req.mode = GenMode::Img2img;
+            req.init_image_id = Some(src.to_string());
+            req
+        };
+        // Restyling a Pinhole picture: fine.
+        generate::generate(&core, restyle(&made)).await.unwrap();
+        // A brought-in photo of a person made intimate: blocked.
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let e = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(counts.lock().1, 1);
+
+        // A chain with an ordinary step first, the original discarded, then intimate.
+        use_check(
+            &core,
+            FakeCheck {
+                original: pinhole_check::Original {
+                    has_face: true,
+                    intimate: false,
+                },
+                ..Default::default()
+            },
+        );
+        let step = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        session::discard(&core, &photo);
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: false,
+            },
+            ..Default::default()
+        };
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        let e = generate::generate(&core, restyle(&step)).await.unwrap_err();
+        assert_eq!(e.code, "blocked", "the chain still leads back to the photo");
+        assert_eq!(counts.lock().1, 0, "the original's readings were kept");
+
+        // Reset forgets the originals.
+        session::clear(&core).await;
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        // A photo that was already intimate when brought in: edits pass.
+        let fake = FakeCheck {
+            readings: intimate_adult(),
+            original: pinhole_check::Original {
+                has_face: true,
+                intimate: true,
+            },
+            ..Default::default()
+        };
+        use_check(&core, fake);
+        generate::generate(&core, restyle(&photo)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reopened_save_keeps_the_photo_it_was_made_from() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let face = pinhole_check::Original {
+            has_face: true,
+            intimate: false,
+        };
+        use_check(
+            &core,
+            FakeCheck {
+                original: face,
+                ..Default::default()
+            },
+        );
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut req = GenerateRequest::txt2img(model.clone(), "y");
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(photo.clone());
+        let step = generate::generate(&core, req.clone()).await.unwrap().images[0]
+            .id
+            .clone();
+        let saved = session::save_image(&core, &step).unwrap();
+        let file = std::fs::read(&saved.path).unwrap();
+        session::discard(&core, &photo);
+        session::discard(&core, &step);
+        let reopened = session::import_image(&core, file).unwrap().id;
+        let sources = core.session.get(&reopened).unwrap().sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].id, photo, "the chain leads back to the photo");
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                original: face,
+                ..Default::default()
+            },
+        );
+        req.init_image_id = Some(reopened);
+        assert_eq!(
+            generate::generate(&core, req).await.unwrap_err().code,
+            "blocked"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_part_deleted_by_hand_shows_as_missing_and_asks_for_its_licence() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let id = register_fake_model(&core, "flux1_dev");
+        let model = |core: &AppCore| crate::models::list_models(core).unwrap().remove(0);
+        assert!(model(&core).missing_components.is_empty());
+        let (part, comp, kind) = {
+            let idx = core.installed.lock();
+            let f = idx.files.iter().find(|f| f.component_id.is_some()).unwrap();
+            (idx.abs_path(&core.data, f), f.component_id.clone(), f.kind)
+        };
+        std::fs::remove_file(&part).unwrap();
+        assert_eq!(model(&core).missing_components.len(), 1);
+        // FLUX.1 dev's parts download only after its licence was accepted.
+        let e = crate::models::install_missing_parts(&core, &id)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+
+        // Downloaded again under another name: it replaces the stale entry.
+        let again = part.with_file_name("again.safetensors");
+        std::fs::write(&again, b"1234").unwrap();
+        let file = pinhole_net::download::DownloadedFile {
+            path: again,
+            sha256: "ab".repeat(32),
+            size_bytes: 4,
+        };
+        let reg = crate::models::Registration {
+            kind,
+            friendly_name: "part".into(),
+            family: None,
+            component_id: comp.clone(),
+            civitai: None,
+            dtype: None,
+        };
+        crate::models::register_download(&core, &file, reg).unwrap();
+        let entries = core
+            .installed
+            .lock()
+            .files
+            .iter()
+            .filter(|f| f.component_id == comp)
+            .count();
+        assert_eq!(entries, 1);
+        assert!(model(&core).missing_components.is_empty());
+    }
+
+    #[tokio::test]
+    async fn licences_are_accepted_once_and_only_by_id() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let mut st = crate::app::get_settings(&core);
+        st.engine_backend = "cpu".into();
+        crate::app::set_settings(&core, st).unwrap();
+
+        // FLUX.1 dev needs its licence accepted; SDXL has none to accept.
+        let e = crate::licence::require_family(&core, Some("flux1_dev")).unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+        assert_eq!(e.details.as_deref(), Some("flux1-dev-non-commercial"));
+        assert!(crate::licence::require_family(&core, Some("sdxl")).is_ok());
+        assert!(crate::licence::require_family(&core, None).is_ok());
+
+        // The default Describe helper (Qwen research licence) asks before its files download.
+        let e = describe::install_captioner(&core, None).await.unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+        assert!(e.message.contains("Qwen Research License"), "{}", e.message);
+
+        // Unknown ids are refused; a plain settings save can't add or drop one.
+        assert_eq!(
+            crate::licence::accept_license(&core, "anything-goes")
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        let mut st = crate::app::get_settings(&core);
+        st.accepted_licenses = vec!["flux1-dev-non-commercial".into()];
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_err());
+
+        // Accepting once covers every family with that licence (dev and Kontext) and is saved.
+        crate::licence::accept_license(&core, "flux1-dev-non-commercial").unwrap();
+        crate::licence::accept_license(&core, "flux1-dev-non-commercial").unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_ok());
+        assert!(crate::licence::require_family(&core, Some("flux1_kontext")).is_ok());
+        let saved = pinhole_store::settings::load(&core.data).unwrap();
+        assert_eq!(
+            saved.accepted_licenses,
+            vec!["flux1-dev-non-commercial".to_string()]
+        );
+        let mut st = crate::app::get_settings(&core);
+        st.accepted_licenses.clear();
+        crate::app::set_settings(&core, st).unwrap();
+        assert!(crate::licence::require_family(&core, Some("flux1_dev")).is_ok());
+
+        crate::licence::accept_license(&core, "qwen-research").unwrap();
+        assert!(describe::install_captioner(&core, None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn setting_up_the_check_twice_does_not_hang() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // the download fails at once, nothing leaves the machine
+        for _ in 0..3 {
+            let r =
+                tokio::time::timeout(Duration::from_secs(20), crate::imagecheck::install(&core))
+                    .await
+                    .expect("install must not hang");
+            assert_eq!(r.unwrap_err().code, "offline");
+        }
+        let st = crate::imagecheck::status(&core);
+        assert!(!st.downloading);
+    }
+
+    #[tokio::test]
+    async fn safe_images_only_models_cant_make_intimate_pictures() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                ..Default::default()
+            },
+        );
+        let made = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        // Dev builds measure a picture on request for the readings view; release builds
+        // never show readings.
+        let readings = crate::imagecheck::readings_of(&core, &made).await.unwrap();
+        if cfg!(debug_assertions) {
+            let r = readings.unwrap();
+            assert!(r.starts_with("nudity 0.95"), "{r}");
+            assert!(r.contains("Made with AI watermark: no"), "{r}");
+        } else {
+            assert!(readings.is_none());
+        }
+        {
+            let mut idx = core.installed.lock();
+            let m = idx.get_mut(&model).unwrap();
+            let mut c = pinhole_store::installed::CivitaiRef {
+                model_id: 1,
+                version_id: 2,
+                model_name: None,
+                version_name: None,
+                base_model: None,
+                trained_words: vec![],
+                license: None,
+                creator_notes: None,
+                sfw_only: false,
+            };
+            c.sfw_only = true;
+            m.civitai = Some(c);
+        }
+        let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // Ordinary pictures from it are fine.
+        use_check(&core, FakeCheck::default());
+        generate::generate(&core, GenerateRequest::txt2img(model, "x"))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -1960,15 +2456,31 @@ mod tests {
             words: None,
         }];
         req.add_trigger_words = false;
+        let e = generate::generate(&core, req.clone()).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
+        // of the check; the add-on still steers the picture.
+        crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
         // Under-18 terms in the negative prompt are how people keep them out.
-        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
         req.fine_tune.negative_prompt = Some("child, loli".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
+
+        // Regression: below CFG 1 the engine follows the negative prompt, so the request
+        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        for cfg in [0.0, 0.5, -3.0] {
+            let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
+            req.fine_tune.cfg = Some(cfg);
+            generate::generate(&core, req).await.unwrap();
+            let body = mock.requests().pop().unwrap();
+            assert_eq!(body["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+        }
     }
 
     #[tokio::test]
@@ -2082,7 +2594,7 @@ mod tests {
             .and_then(|t| t.as_str())
             .unwrap()
             .to_string();
-        assert!(system.contains("Adult content is allowed"), "{system}");
+        assert!(system.contains("Adult themes are allowed"), "{system}");
         assert!(system.contains("anyone under 18"), "{system}");
         assert!(!system.contains("safe for work"), "{system}");
     }
@@ -2101,6 +2613,40 @@ mod tests {
         let body = &llama.requests()[0];
         assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
+    }
+
+    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
+    /// content past the checks.
+    #[tokio::test]
+    async fn sd_args_keep_only_tuning_launch_defaults() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp.launch_defaults = [
+            "--embd-dir",
+            "/e",
+            "--photo-maker",
+            "/p",
+            "-n",
+            "words",
+            "--mmap",
+            "--log-level",
+            "warn",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let wiring = vec!["--model".to_string(), "/m.safetensors".to_string()];
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        for bad in ["--embd-dir", "/e", "--photo-maker", "/p", "-n", "words"] {
+            assert!(!args.iter().any(|a| a == bad), "{bad}: {args:?}");
+        }
+        assert!(args.iter().any(|a| a == "--mmap"), "{args:?}");
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--log-level" && w[1] == "warn"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--model" && w[1] == "/m.safetensors"));
     }
 
     #[tokio::test]
@@ -2198,7 +2744,12 @@ mod tests {
             pinhole_engine::SdClient::new_plain_for_tests(mock.base_url()).with_api_key("k3y");
         assert!(with.is_ready().await);
         let id = with
-            .submit(&pinhole_engine::ImgGenRequest::new("a cat", 64, 64, 1))
+            .submit(&pinhole_engine::ImgGenRequest::new(
+                pinhole_engine::words::CheckedPrompt::check("a cat").unwrap(),
+                64,
+                64,
+                1,
+            ))
             .await
             .unwrap();
         assert!(with.job(&id).await.is_ok());

@@ -5,6 +5,7 @@ import { CircleCheck, Compass, FilePlus2, FolderOpen, Images, Puzzle, Trash2, Tr
 import {
   addLocalModel,
   asCoreError,
+  cancelAdd,
   confirmFamily,
   deleteHelper,
   deleteModel,
@@ -452,7 +453,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
       <DeleteHelperDialog target={helperTarget} onClose={() => setHelperTarget(null)} onDeleted={() => void refresh()} />
       <FamilyChoiceDialog
         choice={choice}
-        onClose={() => setChoice(null)}
+        onClose={() => {
+          // The copy made for the question goes too.
+          if (choice) void cancelAdd(choice.token).catch(() => undefined);
+          setChoice(null);
+        }}
         onDone={(r) => {
           setChoice(null);
           handleResult(r);

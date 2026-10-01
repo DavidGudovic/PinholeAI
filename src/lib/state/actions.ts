@@ -13,11 +13,13 @@ import {
   loraCompatible,
   referenceModel,
   takesReference,
+  unsavedEditIds,
   unsavedIds,
   willQueue,
   type EditMode,
   type ImgRef,
   type JobKind,
+  type LeaveKind,
   type QueuedJob,
   type TabId,
   type Toast,
@@ -280,6 +282,10 @@ export function makeActions(store: Store) {
   }
 
   async function upscale(resultId: string, factor: 2 | 4) {
+    // Read before the job: the source (and with it its batch) may be removed while it runs.
+    // The job holds the batch's reference picture, so Variations of the upscale still work.
+    const batchId = get().resultBatch[resultId];
+    const batch = batchId ? get().batches[batchId] : undefined;
     try {
       await withJob("upscale", async () => {
         const nonce = get().sessionNonce;
@@ -291,10 +297,8 @@ export function makeActions(store: Store) {
           throw cancelledError();
         }
         const refs = await jobRefs([im], nonce);
-        const batchId = get().resultBatch[resultId];
-        const batch = batchId ? get().batches[batchId] : undefined;
         dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
-      }, 1);
+      }, 1, [resultId, ...(batch?.request.refImageIds ?? [])]);
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
@@ -324,9 +328,9 @@ export function makeActions(store: Store) {
     return saved;
   }
 
-  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled; throws if some couldn't be saved. */
-  async function saveAll(): Promise<boolean> {
-    const ids = unsavedIds(get());
+  /** "Save all": asks for a folder, then saves every unsaved picture (or just `only`) there. False when cancelled; throws if some couldn't be saved. */
+  async function saveAll(only?: string[]): Promise<boolean> {
+    const ids = only ?? unsavedIds(get());
     if (!ids.length) return true;
     const dir = await chooseFolder("Save all pictures to…");
     if (!dir) return false;
@@ -343,13 +347,36 @@ export function makeActions(store: Store) {
   /** The window is closing (or Reset was pressed): true = go ahead; false = unsaved pictures, the question dialog is now showing. */
   function requestLeave(what: "close" | "clear"): boolean {
     if (!unsavedIds(get()).length) return true;
+    afterEditReplaced = null;
     dispatch({ type: "askLeave", what });
     return false;
   }
 
-  async function finishLeave(what: "close" | "clear") {
+  // What runs when the user goes ahead with replacing Edit's history ("edit" in the dialog).
+  let afterEditReplaced: (() => Promise<void> | void) | null = null;
+
+  /**
+   * Another image is about to replace Edit's history: true = go ahead. With unsaved edit
+   * results, the unsaved-pictures dialog asks first and `then` runs if the user goes ahead.
+   */
+  function confirmReplaceEdit(then: () => Promise<void> | void): boolean {
+    if (!unsavedEditIds(get()).length) return true;
+    afterEditReplaced = then;
+    dispatch({ type: "askLeave", what: "edit" });
+    return false;
+  }
+
+  async function finishLeave(what: LeaveKind) {
     dispatch({ type: "askLeave", what: null });
-    if (what === "close") await closeWindow();
+    if (what === "edit") {
+      const then = afterEditReplaced;
+      afterEditReplaced = null;
+      try {
+        await then?.();
+      } catch (e) {
+        toast(api.asCoreError(e).message);
+      }
+    } else if (what === "close") await closeWindow();
     else await clearSession();
   }
 
@@ -397,13 +424,14 @@ export function makeActions(store: Store) {
     if (edit) dispatch({ type: "patchEdit", patch: { loras: edit } });
   }
 
-  function sendToEdit(id: string) {
+  function sendToEdit(id: string, confirmed = false) {
     const ref = get().images[id];
     if (!ref) return;
     if (editBusy(get())) {
       toast("Wait for the edits in progress to finish first.");
       return;
     }
+    if (!confirmed && !confirmReplaceEdit(() => sendToEdit(id, true))) return;
     dispatch({ type: "editLoad", ref });
     setTab("edit");
   }
@@ -438,7 +466,7 @@ export function makeActions(store: Store) {
    * one, else "Describe a change" in Edit, which offers a one-click edit model when none is
    * installed. The image keeps its id, so its origin follows every result made from it.
    */
-  function sameCharacter(id: string) {
+  function sameCharacter(id: string, confirmed = false) {
     const s = get();
     const ref = s.images[id];
     if (!ref) return;
@@ -465,6 +493,7 @@ export function makeActions(store: Store) {
       toast("Wait for the edits in progress to finish first.");
       return;
     }
+    if (!confirmed && !confirmReplaceEdit(() => sameCharacter(id, true))) return;
     dispatch({ type: "editLoad", ref });
     dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
     // One picture in, not a two-image combine with a leftover image 2.
@@ -492,17 +521,35 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- import
-  async function importToEdit(blob: Blob) {
+  /** Reset pressed while an image was being read: it belongs to the cleared session. */
+  function importOutlived(ref: ImgRef, nonce: number) {
+    if (!resetting && get().sessionNonce === nonce) return false;
+    releaseRefs([ref], true);
+    return true;
+  }
+
+  /**
+   * False without loading when the user is first asked about unsaved edits: if they go
+   * ahead it loads then and opens the Edit tab.
+   */
+  async function importToEdit(blob: Blob, confirmed = false): Promise<boolean> {
     if (editBusy(get())) throw busyError();
+    if (!confirmed && !confirmReplaceEdit(async () => {
+      await importToEdit(blob, true);
+      setTab("edit");
+    })) return false;
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return true;
     // An edit started while the image was being read: keep its history.
     if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
     }
     dispatch({ type: "editLoad", ref });
+    return true;
   }
 
   /** Create's optional reference picture. */
@@ -511,19 +558,17 @@ export function makeActions(store: Store) {
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
-    // Reset pressed while it was being read: it belongs to the cleared session.
-    if (resetting || get().sessionNonce !== nonce) {
-      releaseRefs([ref], true);
-      return;
-    }
+    if (importOutlived(ref, nonce)) return;
     dispatch({ type: "createSetRef", ref });
   }
   /** The optional second image for "Describe a change". */
   async function importSecondToEdit(blob: Blob) {
     if (editBusy(get())) throw busyError();
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return;
     if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
@@ -534,9 +579,11 @@ export function makeActions(store: Store) {
 
 
   async function importToDescribe(blob: Blob) {
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return;
     dispatch({ type: "describeLoad", ref });
   }
 
@@ -647,17 +694,19 @@ export function makeActions(store: Store) {
     }
   }
 
-  /** The edit model Pinhole picks automatically (the registry lists edit families best-first). */
   /** Best installed edit model; with `twoImages`, only ones that combine two images. */
   function autoEditModel(twoImages = false): InstalledModel | null {
     const list = editModels(get().models, twoImages).filter((m) => !m.missingComponents.length);
     const all = list.length ? list : editModels(get().models, twoImages);
-    const rank = (m: InstalledModel) => (m.familyId === "qwen_image_edit_2511" ? 0 : m.familyId === "flux1_kontext" ? 1 : 2);
+    // Qwen-Image 2.1 (the recommended edit model, it also creates) first, then the dedicated
+    // edit models, then other generators that can edit (FLUX.2).
+    const rank = (m: InstalledModel) =>
+      m.familyId === "qwen_image_21" ? 0 : m.familyId === "qwen_image_edit_2511" ? 1 : m.familyId === "flux1_kontext" ? 2 : m.isEditModel ? 3 : 4;
     const fitRank = (m: InstalledModel) => (m.fit === "fits" ? 0 : m.fit === "tight" ? 1 : m.fit === "tooBig" ? 3 : 2);
-    // One image: dedicated edit models first unless they're too big; then generators that can edit (FLUX.2).
+    // One image: the models ranked above generators first unless they're too big.
     // Two images need more memory, so a model that fits wins (FLUX.2 klein over a tight Qwen Edit).
-    const tier = (m: InstalledModel) => (twoImages ? fitRank(m) : m.isEditModel && m.fit !== "tooBig" ? 0 : 1);
-    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || Number(b.isEditModel) - Number(a.isEditModel) || rank(a) - rank(b))[0] ?? null;
+    const tier = (m: InstalledModel) => (twoImages ? fitRank(m) : rank(m) < 4 && m.fit !== "tooBig" ? 0 : 1);
+    return [...all].sort((a, b) => tier(a) - tier(b) || fitRank(a) - fitRank(b) || rank(a) - rank(b))[0] ?? null;
   }
 
   // ---------------------------------------------------------------- session
@@ -668,6 +717,7 @@ export function makeActions(store: Store) {
 
   async function clearSession() {
     resetting = true;
+    afterEditReplaced = null;
     try {
       clearQueue();
       if (get().job) await cancel();

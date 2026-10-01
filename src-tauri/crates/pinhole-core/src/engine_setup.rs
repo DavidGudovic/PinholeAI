@@ -54,7 +54,7 @@ pub fn selected_build(
     let cfg = engine_config(core)?;
     let backend = desired_backend(core);
     let sel = cfg.select_build(kind.pin(&cfg), pins::current_os(), &backend).map_err(|_| {
-        // Not `engine_missing`: the UI answers that code with "Set up engine", which can't help here.
+        // Not `engine_missing`: the UI answers that code with "Get the engine", which can't help here.
         CoreError::new("engine_failed", "Pinhole's engine isn't available for this system (Windows 10/11 and Ubuntu 24.04+ are supported).")
     })?;
     Ok((cfg, sel))
@@ -250,6 +250,8 @@ pub(crate) fn emit_status(core: &AppCore) {
 /// Download + verify + unpack the image engine for the current backend.
 /// Resolves when done; progress arrives as `download-progress`.
 pub async fn install_engine(core: &Arc<AppCore>) -> CoreResult<EngineStatus> {
+    // Nothing is made without the image check, so set it up alongside.
+    crate::imagecheck::install_in_background(core);
     let result = install_kind(core, EngineKind::Sd).await;
     match result {
         Ok(_) => {
@@ -419,7 +421,10 @@ async fn download_and_unpack(
         .wait_detailed(&group)
         .await
         .map_err(|e| CoreError::new(&e.code, e.message))?;
-    unpack_downloaded(core, kind, cfg, sel, files).await
+    // The downloads row says the engine is ready only if it unpacked.
+    unpack_downloaded(core, kind, cfg, sel, files)
+        .await
+        .inspect_err(|e| core.downloads.fail_done(&group, &e.code, &e.message))
 }
 
 pub(crate) fn backend_label(backend: &str) -> &'static str {

@@ -69,6 +69,8 @@ pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> 
     let mut current = core.settings.write();
     // The Models folder only changes by moving the models (models_folder.rs).
     settings.models_folder = current.models_folder.clone();
+    // Accepted licences only change through `accept_license` (licence.rs).
+    settings.accepted_licenses = current.accepted_licenses.clone();
     pinhole_store::settings::save(&core.data, &settings).map_err(crate::library::store_err)?;
     core.offline.set(settings.offline);
     *current = settings.clone();

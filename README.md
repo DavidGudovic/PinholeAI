@@ -19,7 +19,7 @@ decision can be seen and changed in the **Fine-tune** drawer.
   **Describe** (image → prompt), reusable **Styles** and **Presets**.
 - **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
   CivitAI* in Pinhole: prompt, negative, steps, CFG, sampler, seed, size and LoRAs are applied,
-  and missing models/LoRAs are one click away. The pasted text is never stored.
+  and missing models/LoRAs are one click away.
 - **Runs on your computer.** No account and no cloud service. Works offline once models are
   downloaded.
 - **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
@@ -35,9 +35,8 @@ Pinhole works like any other desktop app: your prompts and pictures stay on your
 - **Going online only when you ask.** Browsing CivitAI, downloading a model or the engine, and
   **Check for updates** connect to `civitai.com`, `huggingface.co` or `github.com` (plus their
   download servers). **Offline mode** in Settings turns all of that off.
-- **Saving is up to you.** New pictures are kept in the app until you click **Save**. Prompts
-  are not written to disk, logs or saved files. Text you save as a named Style is stored in
-  `Data/styles/`.
+- **Saving is up to you.** Nothing is saved until you press **Save**. Text you save as a named
+  Style is stored in `Data/styles/`.
 - **Local engines.** The image and text engines run as separate programs that only accept
   connections from your own computer (`127.0.0.1`). The optional CivitAI API key is kept in your
   system's keychain.
@@ -55,6 +54,7 @@ this with AI running entirely on your own computer, so your work never leaves yo
 When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
 and to each model's licence. You are responsible for what you make.
 
+[SAFETY.md](SAFETY.md) explains what the safeguards do.
 The safeguards are part of Pinhole. Modified versions are the responsibility of whoever makes and
 distributes them.
 
@@ -127,7 +127,7 @@ Uninstalling does not delete `Data/` — remove it yourself to free the disk spa
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.88), Node.js 22, and the
+Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.91), Node.js 22, and the
 [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/):
 
 - **Windows:** Microsoft C++ Build Tools (MSVC) and WebView2 (preinstalled on Windows 11).
