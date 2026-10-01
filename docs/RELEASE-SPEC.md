@@ -171,15 +171,12 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    of any chain of edits) has a face (face finder ≥ 0.6, ≥ 12 px, since Edit and Upscale enlarge a
    small face; the finder works at 640 px, so a picture above 640 px is also searched at its own
    resolution and at half of it in overlapping 640 px windows; with no face upright, a copy shrunk
-   to 1280 px is tried turned 90/180/270° and at 45/135/225/315°) and was **not** intimate when
-   brought in. A made picture fed into the request from such a chain (an enlarged or edited
-   step) is measured too: a face that shows up in it counts as a person, and it is only exempt
-   when every brought-in picture behind it was intimate with a face. Comparing with the original import (not the direct input) means a photo can't be
-   walked towards intimate in small steps. An intimate picture brought in that way can be edited:
-   it existed before Pinhole saw it. "Intimate when brought in" is judged per person (each
-   face's own region, up to 8 people), so a collage of an ordinary photo of someone next to an
-   intimate picture doesn't exempt that person; a face found only with the picture turned, or
-   more than 8 people, counts as not intimate.
+   to 1280 px is tried turned 90/180/270° and at 45/135/225/315°), whatever it already showed.
+   A made picture fed into the request from such a chain (an enlarged or edited step) is
+   measured too: a face that shows up in it counts as a person. Comparing with the original
+   import (not the direct input) means a photo can't be walked towards intimate in small steps.
+   A picture that was already intimate when brought in is no exception (2026-10-01): what a
+   picture shows says nothing about the consent of the person in it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
    (explicit ≥ 0.35, or nudity ≥ 0.85 with questionable + explicit ≥ 0.5; no tags needed, so
    swimwear can count here) **and** either:
@@ -224,7 +221,7 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   hires fix at 4× (`wiring.rs`, `MAX_ASPECT`, `MAX_HIRES_SCALE`), and sampler, tiling and
   guidance override flags are never passed through from the Fine-tune extra arguments; the face finder and
   age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
-  finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
+  finder only), only when a result made from them is intimate.
   About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
 - **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
   before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the
@@ -487,8 +484,9 @@ templates, posts and UI.
   regulators; the UK defence asks for steps that *prevent* non-consensual use; and the app can't
   see consent. The notices in §7 stay as a supplement.
 - **Intimate edits of Imported photos with a face are blocked, even with consent** (2026-09-29).
-  Consensual use is legal, but it looks identical to non-consensual use. Generated (fictional)
-  images are not restricted.
+  Consensual use is legal, but it looks identical to non-consensual use. Since 2026-10-01 this
+  includes pictures that were already intimate when brought in. Pictures made in Pinhole aren't
+  restricted by this rule, but where a picture came from never exempts it from rules 2 and 3.
 - **Apparent-age estimation on drawn images — rejected** (2026-09-29). Age models are trained on
   photos; drawn images use the tagger's explicit child tags.
 - **Always hiding `poi` / `minor` models — replaced** (2026-09-29) by CivitAI's own rule: flagged

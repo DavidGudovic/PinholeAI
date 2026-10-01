@@ -22,8 +22,8 @@ setting) doesn't change it.
   shown when:
   - it is sexual and shows someone who looks under 18: a child, or in a photo-style picture a
     face that looks like a teenager's;
-  - it makes a photo of a real person that was brought into Pinhole intimate, when that photo
-    wasn't already;
+  - it makes a picture of a person that was brought into Pinhole intimate, whatever that
+    picture already showed;
   - it is intimate and comes from a model or add-on that is "safe images only": its CivitAI
     author marked it so, or it was added from your computer or another app's folder and CivitAI
     hasn't confirmed what it is.
