@@ -48,13 +48,14 @@ pub const CHILD_FACE: f32 = 0.6;
 /// young-looking adults: on FairFace portraits 42 % of faces labelled 10–19 and 2.9 % labelled
 /// 20–29 reach it with the child groups (RELEASE-SPEC §3.2 rule 2).
 pub const UNDER_20_FACE: f32 = 0.8;
-/// Second age estimate (years) below which a face blocks. Set above 18 on purpose: the
-/// estimate is off by a few years either way, so a margin is what catches 16- and
-/// 17-year-olds. It also blocks some young adults (RELEASE-SPEC §3.2 rule 2 has the numbers).
-pub const UNDER_AGE: f32 = 21.0;
+/// Second age estimate (years) below which a face blocks. Set well above 18 on purpose: the
+/// estimate is off by a few years either way, and the margin is what catches 16- and
+/// 17-year-olds. It also blocks some young adults, which only matters on sexual photo-style
+/// results (RELEASE-SPEC §3.2 rule 2 has the numbers per age).
+pub const UNDER_AGE: f32 = 22.0;
 /// From [`UNDER_AGE`] up to this age a face is borderline: the picture is blocked when the
-/// tagger also sees a setting or clothing that presents the person as under 18
-/// (`Tags::young_context`). Older faces are never judged by context.
+/// tagger also sees a setting, clothing or object that presents the person as under 18
+/// (`Tags::young_context`). Older faces are never judged by the setting.
 pub const BORDERLINE_AGE: f32 = 26.0;
 /// `Tags::young_context` that counts.
 pub const YOUNG_CONTEXT_TAG: f32 = 0.35;

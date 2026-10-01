@@ -167,28 +167,53 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
      whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6, or whose
      under-20 groups (0–2, 3–9 and 10–19, `under_20_face`) reach ≥ 0.8 (`UNDER_20_FACE`,
-     teenagers). The age estimate
+     teenagers), or whose age in years from the second age estimate (MiVOLO v2, `age`) is under
+     22 (`UNDER_AGE`), or
+   - photo style and a borderline face (second estimate 22 to under 26, `BORDERLINE_AGE`) in a
+     picture where the tagger sees a setting, clothing or object that presents the person as
+     under 18 (`young_context` ≥ 0.35: 13 tags plus the child tags, by id in `run.rs`). A face
+     estimated 26 or older is never judged by the setting. The age estimates
      judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
      as a child's (fails closed). With no face upright, the result is also tried turned
      90/180/270° (someone lying down). A result above 1280 px is also searched in 640 px
      windows at its own resolution and at half of it (upright).
 
-   Drawn images never use the age estimate (it is trained on photos, and adult characters are
+   Drawn images never use the age estimates (they are trained on photos, and adult characters are
    often drawn young). The under-20 threshold was picked on FairFace validation portraits
    (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
    some wrong blocks of young-looking adults, which only matter on sexual photo-style results.
-   The table is the share of ordinary, non-sexual face photos the age half of rule 2 would act on.
-   The 10–19 label includes adults aged 18 and 19, so it is not a count of under-18s, and these
-   are numbers for the age estimate alone, not how often the whole check catches harmful pictures:
+   The second estimate and its line at 22 were added on 2026-10-01 and measured on UTKFace
+   portraits with exact ages (used for measurement only; nothing kept), through the app's own
+   face finder and crops (`falsepos` with `FALSEPOS_AGES=1`, one folder per age). The table is
+   the share of ordinary, non-sexual face photos the age half of rule 2 acts on. These are
+   numbers for the age estimates alone, not how often the whole check catches harmful pictures,
+   and UTKFace ages are themselves sometimes wrong:
+
+   | Age (faces) | 10–12 (351) | 13 (81) | 14–15 (200) | 16–17 (200) | 18–19 (197) | 20–21 (164) | 22–23 (160) | 24–25 (160) | 26–30 (199) |
+   |---|---|---|---|---|---|---|---|---|---|
+   | First estimate's groups only (before) | 85.5 % | 84.0 % | 60.5 % | 22.5 % | 4.6 % | 3.0 % | 1.2 % | 1.9 % | 0.0 % |
+   | + second estimate under 21 | 99.4 % | 100 % | 95.5 % | 79.5 % | 37.6 % | 15.9 % | 8.1 % | 4.4 % | 1.0 % |
+   | **+ second estimate under 22 (shipped)** | **99.4 %** | **100 %** | **96.5 %** | **86.5 %** | **51.3 %** | **27.4 %** | **12.5 %** | **6.9 %** | **2.5 %** |
+   | + second estimate under 23 | 99.7 % | 100 % | 97.5 % | 89.5 % | 65.0 % | 36.0 % | 17.5 % | 10.0 % | 3.0 % |
+
+   Ages 10–17 together: 64.2 % before, 95.7 % with the line at 22; ages 20–25 together: 2.1 %
+   before, 15.4 % after. The line at 22 was picked because 16- and 17-year-olds are the hardest
+   to tell from adults, and it is the lowest line that catches most of them; the cost falls on
+   young-looking adults in sexual photo-style results only. On FairFace children labelled 3–9,
+   the age half catches 99.7 % (94.2 % before); 0–2: 99.0 % (unchanged). Earlier FairFace
+   numbers for the first estimate alone, by its apparent-age labels:
 
    | Faces the age rule acts on | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
    |---|---|---|---|
-   | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % | 1.1 % |
+   | Child groups ≥ 0.6 only | 15.5 % | 1.7 % | 1.1 % |
    | + under 20 ≥ 0.9 | 23.6 % | 1.8 % | 1.4 % |
    | + under 20 ≥ 0.85 | 35.8 % | 2.3 % | 1.6 % |
    | **+ under 20 ≥ 0.8 (shipped)** | **41.6 %** | **2.9 %** | **1.6 %** |
    | + under 20 ≥ 0.7 | 48.5 % | 4.1 % | 1.9 % |
 
+   The setting signal was checked on everyday Flickr30k photos whose captions call the people
+   teenagers (167) or young adults (377): it reached 0.35 on 1.8 % and 0.8 % of them, so it is
+   rare in ordinary pictures and only read for a borderline face in a sexual photo-style result.
    The 10–19 group alone never reached 0.8 on any face, so it can't be used on its own.
    Teenagers the estimate misses are left to the word check, the brought-in photo rule
    (rule 1) and, for drawings, the child tags.
@@ -235,7 +260,8 @@ this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the
   it keeps finished jobs readable on its local port.
 - **Fixed in code:** the files' URLs (pinned commits), sizes and SHA-256 values and every
   threshold are constants in `pinhole-check`, not config. Tests use a stand-in check.
-- **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
+- **Resources:** ~1.2 GB download; ~2.5 s per result on 4 cores, plus about 1 s per face for the
+  second age estimate on sexual photo-style results; the models take up to ~1.5 GB RAM while
   loaded, 0 VRAM.
 
 ### 3.4 Models (verified by download, 2026-09-30)
@@ -246,9 +272,15 @@ this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the
 | Rating + child tags + photo style | `SmilingWolf/wd-vit-tagger-v3` + `selected_tags.csv` | Apache 2.0 | 379 MB |
 | Face finder | `opencv/face_detection_yunet` 2023mar | MIT | 0.2 MB |
 | Age estimate (photos only) | `onnx-community/fairface_age_image_detection-ONNX` | Apache 2.0 | 343 MB |
+| Age in years (photos only, 2026-10-01) | `Sam-Apostel/mivolo-v2-age-onnx` (ONNX export of `iitolstykh/mivolo_v2`, face input only; its `Col2Im` steps are rewritten into `Reshape` + `ConvTranspose` as it loads, same output) | Apache 2.0 | 118 MB |
 
 Rejected: `Freepik/nsfw_image_detector` (no ONNX), `AdamCodd/vit-nsfw-stable-diffusion` (CC BY-NC-ND,
 gated), InsightFace (non-commercial), NudeNet (AGPL), the SD safety checker (~1.2 GB, no better).
+Not added for now (2026-10-01): a small vision-language model judging the whole picture
+(Qwen3-VL 2B, Apache 2.0, ~1.5 GB: about 5 s per picture on 4 cores, and on the GPU it competes
+with the image model for VRAM), MiVOLO's body input (no clear gain over the face alone on
+everyday photos), and the larger `wd-eva02-large-tagger-v3` (1.26 GB, several times slower on the
+processor; it is trained on drawings, so it doesn't help with ages in photos).
 The nudity model is weaker on generated pictures (86 % accuracy on its author's test) — one more
 reason for §4's measurement.
 
@@ -466,7 +498,12 @@ templates, posts and UI.
   Before matching it normalizes the text (Unicode variants, accents and spacing; 2026-09-30, no
   text model).
   On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
-  new. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
+  new. Since 2026-10-01 it also blocks text that names an identity document or banknote with a
+  word asking for a usable copy of it (its data fields, a flat scan, that it be valid or
+  official, or a fake): `words::asks_for_document_copy`. On DiffusionDB's 1,528,513 distinct
+  prompts it blocked 13 (mostly joke documents for cartoon characters) and on 81,910
+  Stable-Diffusion-Prompts none (`doccheck` example). Pictures aren't checked for documents: the
+  tagger's document tags are trained on drawings and fire on badges and cards in scenes. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
   without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or

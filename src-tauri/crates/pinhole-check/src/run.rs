@@ -793,7 +793,6 @@ fn rotate_any(img: &RgbImage, degrees: f32) -> RgbImage {
     })
 }
 
-/// Square crop 1.5× the face box, kept inside the image.
 /// MiVOLO's input side.
 const MIVOLO_SIDE: usize = 384;
 
@@ -963,6 +962,7 @@ fn rewrite_col2im(g: &mut tract_onnx::pb::GraphProto) -> Option<()> {
     (rewritten > 0).then_some(())
 }
 
+/// Square crop 1.5× the face box, kept inside the image.
 fn face_crop(img: &RgbImage, b: [f32; 4]) -> RgbImage {
     let side = b[2].max(b[3]) * 1.5;
     let (cx, cy) = (b[0] + b[2] / 2.0, b[1] + b[3] / 2.0);

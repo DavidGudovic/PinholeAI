@@ -38,11 +38,11 @@ A change may make a safeguard wrongly block less only if all of these hold:
    workflow's "Safety, enforcement and privacy tests" step) passes, and no existing test was
    removed or changed to accept weaker behaviour.
 2. **Catch rate:** on the developer measurements that come with Pinhole (`falsepos` and
-   `measure` in `pinhole-check/examples`, `wordcheck` in `pinhole-engine/examples`), run on
+   `measure` in `pinhole-check/examples`, `wordcheck` and `doccheck` in `pinhole-engine/examples`), run on
    copies of the same inputs before and after the change, the changed version catches at least
-   as many of the cases it is meant to catch. For the age estimate (`falsepos` with
-   `FALSEPOS_AGES=1`), the number of faces in the 0–9 and 10–19 folders that the age rule would
-   block does not go down.
+   as many of the cases it is meant to catch. For the age estimates (`falsepos` with
+   `FALSEPOS_AGES=1`), the number of faces in folders of people under 20 (the 0–9 and 10–19
+   folders, or one folder per age) that the age rule would block does not go down.
 3. **Published results:** the numbers from 1 and 2, before and after, are published with the
    change, together with the test inputs used or a way to get them. Test inputs must be lawful,
    openly licensed material.
