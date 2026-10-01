@@ -221,6 +221,11 @@ swap/pagefile; Pinhole cannot control that.
 
 Four tabs: **Create**, **Edit**, **Describe**, **Models**. Plus a Settings sheet.
 
+A picture pasted with Ctrl/Cmd+V on any tab (outside a text field) opens a small chooser: **Create
+reference picture** (only while Create shows the reference slot), **Edit** or **Describe**. The
+choice for the current tab is first. The picture is then imported exactly like a dropped or chosen
+file, and that tab opens.
+
 ### 5.1 Create (txt2img)
 
 Default view shows only:
@@ -282,7 +287,7 @@ per app session; × closes it, **Don't show tips** (or Settings → Show tips) t
 or "the same character somewhere else". Shown only for models whose architecture takes reference
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
 file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
-(Ctrl/Cmd+V) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+(Ctrl/Cmd+V, see §5) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
 `ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
 result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears

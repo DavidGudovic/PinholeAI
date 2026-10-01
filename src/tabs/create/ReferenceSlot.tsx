@@ -4,7 +4,7 @@
 // picture from this session. Like every session image it stays in memory; it never goes into a preset.
 import { useState } from "react";
 import { ImagePlus, Trash, TriangleAlert } from "lucide-react";
-import { DropTarget, useFilePicker, useImagePaste } from "../../components/ImageDrop";
+import { DropTarget, useFilePicker } from "../../components/ImageDrop";
 import { Button, ErrorNotice, IconButton, Spinner } from "../../components/ui";
 import * as api from "../../lib/api";
 import { useActions } from "../../lib/state/AppProvider";
@@ -19,7 +19,6 @@ const RECENT = 6;
 export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
   const refId = useAppState((s) => s.create.refImageId);
   const ref = useAppState((s) => (refId ? s.images[refId] : undefined));
-  const tab = useAppState((s) => s.tab);
   const models = useAppState((s) => s.models);
   const results = useAppState((s) => s.results);
   const images = useAppState((s) => s.images);
@@ -41,7 +40,6 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
       setImporting(false);
     }
   };
-  useImagePaste(tab === "create" && shown, (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
   if (!shown) return null;
 

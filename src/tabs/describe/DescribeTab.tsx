@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
-import { DropTarget, DropZone, useFilePicker, useImagePaste } from "../../components/ImageDrop";
+import { DropTarget, DropZone, useFilePicker } from "../../components/ImageDrop";
 import { AutoTextarea, Button, Kbd, Segmented, Spinner } from "../../components/ui";
 import { HelperPicker } from "../../components/HelperPicker";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
@@ -72,7 +72,6 @@ export function DescribeTab() {
       setImporting(false);
     }
   };
-  useImagePaste(tab === "describe", (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
 
   const describe = async () => {
