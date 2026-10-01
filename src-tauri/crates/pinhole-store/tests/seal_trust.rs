@@ -43,12 +43,12 @@ fn an_unsigned_entry_is_safe_images_only_until_checked_again() {
     assert!(index.files[1].safe_images_only());
 
     index.save_seals(&d).unwrap();
-    let saved = seal::read(&d);
+    let saved = seal::read(&d, &key);
     assert!(key.verify(&index.files[0], &saved["a"]));
     assert!(!saved.contains_key("b"));
 
     seal::trust("b");
     assert!(!index.files[1].safe_images_only());
     index.save_seals(&d).unwrap();
-    assert!(key.verify(&index.files[1], &seal::read(&d)["b"]));
+    assert!(key.verify(&index.files[1], &seal::read(&d, &key)["b"]));
 }

@@ -97,10 +97,11 @@ impl Signer {
                 seals.insert(f.id.clone(), self.key.seal(f));
             }
         }
-        let mut json = serde_json::to_vec_pretty(&SealsOnDisk {
-            seals: seals.clone(),
-        })
-        .map_err(|e| StoreError::Invalid(format!("could not encode the model lookups: {e}")))?;
+        // Another computer's signatures (a portable Data folder) stay as they are.
+        let mut all = read_all(dir);
+        all.by_key.insert(self.key.id(), seals.clone());
+        let mut json = serde_json::to_vec_pretty(&all)
+            .map_err(|e| StoreError::Invalid(format!("could not encode the model lookups: {e}")))?;
         json.push(b'\n');
         write_atomic(&seals_file(dir), &json)
     }
@@ -140,6 +141,13 @@ pub fn trust(id: &str) {
 impl SealKey {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+
+    /// A name for the key (not the key): which signatures in the file are this key's.
+    pub fn id(&self) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.0).expect("any key length");
+        mac.update(b"pinhole-model-lookup-key-id");
+        hex::encode(&mac.finalize().into_bytes()[..8])
     }
 
     /// The signature of what the lookups found for `f`.
@@ -199,35 +207,52 @@ pub fn load_or_create_key() -> KeyState {
 fn load_or_create_blocking(gave_up: &AtomicBool) -> Option<KeyState> {
     let entry = keyring::Entry::new(crate::keychain::SERVICE, KEY_ACCOUNT).ok()?;
     match entry.get_password() {
-        Ok(hex_key) => {
-            let bytes: [u8; 32] = hex::decode(hex_key.trim()).ok()?.try_into().ok()?;
-            Some(KeyState::Existing(SealKey::from_bytes(bytes)))
-        }
-        Err(keyring::Error::NoEntry) if !gave_up.load(Ordering::SeqCst) => {
-            let bytes: [u8; 32] = rand::random();
-            entry.set_password(&hex::encode(bytes)).ok()?;
-            Some(KeyState::Created(SealKey::from_bytes(bytes)))
-        }
+        Ok(hex_key) => match hex::decode(hex_key.trim()).ok()?.try_into() {
+            Ok(bytes) => Some(KeyState::Existing(SealKey::from_bytes(bytes))),
+            // Not a key: replace it (what was signed with the old one is checked again).
+            Err(_) => create(&entry, gave_up),
+        },
+        Err(keyring::Error::NoEntry) => create(&entry, gave_up),
         Err(_) => None,
     }
 }
 
+fn create(entry: &keyring::Entry, gave_up: &AtomicBool) -> Option<KeyState> {
+    if gave_up.load(Ordering::SeqCst) {
+        return None;
+    }
+    let bytes: [u8; 32] = rand::random();
+    entry.set_password(&hex::encode(bytes)).ok()?;
+    if gave_up.load(Ordering::SeqCst) {
+        // This run went on without it: a key without its signatures would mark everything.
+        let _ = entry.delete_credential();
+        return None;
+    }
+    Some(KeyState::Created(SealKey::from_bytes(bytes)))
+}
+
+/// Signatures by key ([`SealKey::id`]), then by file id.
 #[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 struct SealsOnDisk {
     #[serde(default)]
-    seals: BTreeMap<String, String>,
+    by_key: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 pub fn seals_file(dir: &DataDir) -> PathBuf {
     dir.root.join("catalog").join(SEALS_FILE)
 }
 
-/// The saved signatures by file id. Missing or damaged → none (every entry is checked again).
-pub fn read(dir: &DataDir) -> BTreeMap<String, String> {
+/// The signatures made with `key`, by file id. Missing or damaged → none (every entry is
+/// checked again).
+pub fn read(dir: &DataDir, key: &SealKey) -> BTreeMap<String, String> {
+    read_all(dir).by_key.remove(&key.id()).unwrap_or_default()
+}
+
+fn read_all(dir: &DataDir) -> SealsOnDisk {
     std::fs::read(seals_file(dir))
         .ok()
-        .and_then(|b| serde_json::from_slice::<SealsOnDisk>(&b).ok())
-        .map(|s| s.seals)
+        .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
 
@@ -312,10 +337,10 @@ mod tests {
         Signer::new(key.clone(), BTreeMap::new(), Vec::new())
             .write(&d, std::iter::once(&f))
             .unwrap();
-        let back = read(&d);
+        let back = read(&d, &key);
         assert!(key.verify(&f, &back["a"]));
         std::fs::write(seals_file(&d), b"{not json").unwrap();
-        assert!(read(&d).is_empty());
+        assert!(read(&d, &key).is_empty());
     }
 
     /// A save signs the entries it has except unchecked ones, and keeps every other signature
@@ -334,7 +359,7 @@ mod tests {
         let signer = Signer::new(key.clone(), saved, vec!["edited".into()]);
         assert!(!signer.is_trusted("edited") && signer.is_trusted("a"));
         signer.write(&d, [file(), edited.clone()].iter()).unwrap();
-        let back = read(&d);
+        let back = read(&d, &key);
         assert!(key.verify(&file(), &back["a"]));
         assert_eq!(back["elsewhere"], "11".repeat(32));
         assert_eq!(
@@ -345,6 +370,14 @@ mod tests {
 
         signer.trust("edited");
         signer.write(&d, std::iter::once(&edited)).unwrap();
-        assert!(key.verify(&edited, &read(&d)["edited"]));
+        assert!(key.verify(&edited, &read(&d, &key)["edited"]));
+
+        // Another key's signatures (a portable Data folder on another computer) stay.
+        let other = SealKey::from_bytes([3; 32]);
+        Signer::new(other.clone(), BTreeMap::new(), Vec::new())
+            .write(&d, std::iter::once(&file()))
+            .unwrap();
+        assert!(other.verify(&file(), &read(&d, &other)["a"]));
+        assert!(key.verify(&edited, &read(&d, &key)["edited"]));
     }
 }

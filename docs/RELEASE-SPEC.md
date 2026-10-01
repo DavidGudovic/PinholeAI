@@ -306,10 +306,11 @@ prints them for a folder of test pictures.
     is loaded, §3.2 rule 3 applies.
   - **Saved lookup results are signed** (`pinhole-store/src/seal.rs`): HMAC-SHA256 over each
     model's and add-on's lookup result, CivitAI ids and `sfw_only`, with a key made once per
-    computer and kept in the OS keychain; the signatures are in `Data/catalog/model-lookups.json`.
-    An entry that doesn't match at start (`lookup::unsigned`) counts as "safe images only" until
-    it is checked again on this computer: a file Pinhole offers itself by hashing it again in the
-    background, any other by its next lookup (with its file hashed again first). The entry itself
+    computer and kept in the OS keychain; the signatures are in `Data/catalog/model-lookups.json`,
+    by key. An entry that doesn't match at start (`lookup::unsigned`) counts as "safe images only"
+    until it is checked again on this computer: a one-click download or a file Pinhole offers
+    itself by hashing it again in the background, any other by its next lookup, always with the
+    hash of its own file (`lookup::look_up_existing`). A verified download is signed as it is. The entry itself
     isn't changed, so a Models folder shared with another system keeps what that one found. A save
     keeps the signatures of entries it doesn't have (a Models folder on a drive that isn't
     connected). The first start with signing (no signatures file yet) signs what is installed.

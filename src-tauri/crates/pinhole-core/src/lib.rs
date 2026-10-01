@@ -126,7 +126,7 @@ impl AppCore {
                 true
             }
             seal::KeyState::Created(key) | seal::KeyState::Existing(key) => {
-                let seals = seal::read(&data);
+                let seals = seal::read(&data, &key);
                 let unsigned = lookup::unsigned(&installed, &key, &seals);
                 seal::activate(seal::Signer::new(key, seals, unsigned));
                 false
