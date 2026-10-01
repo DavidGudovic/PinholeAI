@@ -30,6 +30,9 @@ pub const PHOTO_STYLE: f32 = 0.1;
 /// Face finder score and smallest face side (pixels) that count as a face.
 pub const FACE_SCORE: f32 = 0.8;
 pub const FACE_MIN_SIDE: f32 = 40.0;
+/// Smallest face side (pixels) that counts on a brought-in picture. Much lower than on a result:
+/// Edit and Upscale make a small face large again, so a small face still means a person.
+pub const ORIGINAL_FACE_MIN_SIDE: f32 = 12.0;
 /// Age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups) that blocks.
 /// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
 /// the photo-face rule stops at clear children.
@@ -68,6 +71,16 @@ pub struct Face {
 impl Face {
     pub fn counts(&self) -> bool {
         self.score >= FACE_SCORE && self.side >= FACE_MIN_SIDE
+    }
+
+    /// A clear face too small for the age estimate to judge.
+    pub fn too_small_to_judge(&self) -> bool {
+        self.score >= FACE_SCORE && self.side < FACE_MIN_SIDE
+    }
+
+    /// A face on a brought-in picture (see [`ORIGINAL_FACE_MIN_SIDE`]).
+    pub fn counts_in_original(&self) -> bool {
+        self.score >= FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
     }
 }
 
@@ -148,11 +161,12 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
         // without also blocking many adults. This rule therefore only acts on faces it is
         // confident are children. Teenagers are left to the word check, the brought-in
         // photo rule (rule 1) and, for drawings, the tagger's tags.
+        // A clear face too small to judge counts as a child's (fails closed).
         let child_face = tags.is_some_and(is_photo_style)
-            && r.faces
-                .iter()
-                .flatten()
-                .any(|f| f.counts() && f.child_face.is_some_and(|c| c >= CHILD_FACE));
+            && r.faces.iter().flatten().any(|f| {
+                f.too_small_to_judge()
+                    || (f.counts() && f.child_face.is_some_and(|c| c >= CHILD_FACE))
+            });
         if minor_tag || child_face {
             return Some(Rule::LooksUnderage);
         }
@@ -282,16 +296,23 @@ mod tests {
             vec![face(0.02), face(0.8)],
         );
         assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
-        // Faces too small or unsure don't count.
-        let tiny = Face {
-            side: 20.0,
-            ..face(0.9)
-        };
+        // Unsure faces don't count.
         let unsure = Face {
             score: 0.5,
             ..face(0.9)
         };
-        let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![tiny, unsure]);
+        let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![unsure]);
+        assert_eq!(decide(&r, &[], false), None);
+        // A clear face too small to judge blocks a sexual photo (fails closed), but not an
+        // ordinary one.
+        let tiny = Face {
+            score: 0.9,
+            side: 20.0,
+            child_face: None,
+        };
+        let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![tiny]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        let r = readings(0.1, Some(photo(tags(0.0, 0.0))), vec![tiny]);
         assert_eq!(decide(&r, &[], false), None);
         // Not a photo: the age estimate is ignored.
         let r = readings(0.95, Some(tags(0.2, 0.7)), vec![face(0.9)]);
@@ -371,6 +392,19 @@ mod tests {
         assert_eq!(decide(&r, &[], false), None);
         let r = readings(0.4, Some(tags(0.1, 0.0)), vec![]);
         assert_eq!(decide(&r, &[], true), None);
+    }
+
+    #[test]
+    fn small_faces_count_on_brought_in_pictures() {
+        let small = Face {
+            score: 0.9,
+            side: 25.0,
+            child_face: None,
+        };
+        assert!(!small.counts());
+        assert!(small.counts_in_original());
+        let speck = Face { side: 8.0, ..small };
+        assert!(!speck.counts_in_original());
     }
 
     #[test]
