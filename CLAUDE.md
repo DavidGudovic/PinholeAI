@@ -8,15 +8,16 @@ update the spec in the same PR and explain why.
 
 Pinhole is released on GitHub from v1.0.0. Public releases follow `docs/RELEASE-SPEC.md`.
 
-## Repo layout (target)
+## Repo layout
 ```
 src-tauri/        Rust core (registry, detector, wiring, engine, catalog, downloads, presets, hardware)
 src/              React + TypeScript UI
 config/           shipped YAML: models.yaml, catalog-filters.yaml, engine.yaml, presets/
 docs/SPEC.md      product + technical spec
-docs/RELEASE-SPEC.md  what must be done before any build is shared (marking, safety checks, licences)
+docs/RELEASE-SPEC.md  safeguards + release rules every public build follows (marking, image check, licences)
+docs/SAFETY-MATRIX.md what each usage rule is enforced and tested by (public; linked from SAFETY.md)
 docs/ARCHITECTURE.md  crates, IPC contract, flows, where each area lives
-docs/PROJECT-BRIEF.md status, decisions, roadmap (start here)
+docs/PROJECT-BRIEF.md status, decisions, open work (start here)
 tests/            Rust integration tests + privacy tests; tests/e2e/ drives the real app (WebDriver)
 scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin verification, packaging (Node, no Python)
 .claude/          session start hook for Claude Code on the web
@@ -24,17 +25,17 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
 ```
 
 ## How to work
-- Build milestone by milestone (SPEC §11). One PR per milestone, or smaller.
+- The app is feature-complete (SPEC §11). Work comes in as GitHub issues: one PR per issue, or smaller.
 - Each PR: `scripts/check.sh` passes (Actions CI is manual, see below), a manual full CI run
   when the change is Windows-specific, short PR description with screenshots for UI changes.
 - Keep the default UI minimal. New options go in the **Fine-tune** drawer unless the spec says otherwise.
 - Prefer boring, well-maintained crates. No Python anywhere in the product.
 - Keep the four choke points from RELEASE-SPEC §1 as one function each (request builder, Edit
-  input intake, result intake incl. previews, export for Save/Copy) so release safeguards can be
-  added without a refactor.
+  input intake, result intake incl. previews, export for Save/Copy). The safeguards hang off them
+  and `pinhole-core/src/one_way.rs` fails if a new path goes around them.
 
 ## Working in a Claude Code session
-- **Start with** `docs/PROJECT-BRIEF.md` (status, decisions, roadmap), then SPEC.md and
+- **Start with** `docs/PROJECT-BRIEF.md` (status, decisions, open work), then SPEC.md and
   `docs/ARCHITECTURE.md` (where each area lives). Feature requests and bugs come in as GitHub issues
   (templates in `.github/ISSUE_TEMPLATE/`).
 - The session start hook (`.claude/hooks/session-start.sh`) installs the Tauri Linux deps, runs
@@ -53,7 +54,7 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
   through in a debugger. `check.sh` caps cargo's parallel jobs by free RAM (override with
   `CARGO_BUILD_JOBS`); `scripts/prune-target.sh` frees `target/` space (`--all` = cargo clean).
 - **Flow:** work on your session branch → `scripts/check.sh` → PR to `main` (use
-  `.github/pull_request_template.md`) → merge → the branch is deleted. One PR per issue or milestone.
+  `.github/pull_request_template.md`) → merge → the branch is deleted. One PR per issue.
 - **GitHub Actions are manual only.** Pushes and PRs run nothing (no minutes spent). Actions → CI →
   Run workflow (`full`, optional `installers`) covers what can't run locally: Windows tests, the
   WebDriver e2e, Linux + Windows engine smoke and test installers. Run it before a release or after

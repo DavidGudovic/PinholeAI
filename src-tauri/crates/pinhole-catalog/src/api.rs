@@ -166,7 +166,7 @@ pub fn sfw_only_of(version: &ModelVersion, model: Option<&Model>) -> bool {
     model.map_or(version.model_id > 0, |m| m.sfw_only)
 }
 
-/// Why a model CivitAI marks `poi` / `minor` can't be installed (RELEASE-SPEC §5, Level 1).
+/// Why a model CivitAI marks `poi` / `minor` can't be installed (RELEASE-SPEC §5).
 pub const PERSON_OR_MINOR_REASON: &str =
     "Pinhole doesn't install models that CivitAI marks as showing a real person or someone under 18.";
 

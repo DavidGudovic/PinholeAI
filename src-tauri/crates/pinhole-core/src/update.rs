@@ -44,7 +44,7 @@ const INSTALLER_STAGING_DIR: &str = "pinhole-update";
 const PRODUCT: &str = "Pinhole";
 
 /// In-app install ("Update and restart"). Off until release files are signed with a
-/// key only the maintainer holds (RELEASE-SPEC §12.2 "Signed updates"): the SHA-256
+/// key only the maintainer holds (RELEASE-SPEC §12 "Signed updates"): the SHA-256
 /// list comes from the same release, so it can't catch a release someone else
 /// uploaded. While off, "Check for updates" offers the release page for every copy
 /// and [`install_update`] refuses.
