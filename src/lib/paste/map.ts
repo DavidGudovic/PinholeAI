@@ -375,7 +375,7 @@ export function planPaste(p: ParsedGeneration, ui: FamilyUi | null): PastePlan {
   let guidance = p.guidance;
   if (!ui) {
     if (cfg != null) {
-      ft.cfg = cfg;
+      ft.cfg = Math.max(1, cfg);
       applied.push(`CFG ${cfg}`);
     }
     if (guidance != null) {
@@ -399,7 +399,7 @@ export function planPaste(p: ParsedGeneration, ui: FamilyUi | null): PastePlan {
   } else {
     if (cfg != null) {
       if (ui.showStick) {
-        ft.cfg = cfg;
+        ft.cfg = Math.max(1, cfg);
         stick = stickPositionFor(ui, cfg);
         const [lo, hi] = ui.stickRange;
         applied.push(cfg < lo || cfg > hi ? `Stick to prompt: CFG ${cfg} (outside the usual ${lo}–${hi})` : `Stick to prompt: CFG ${cfg}`);

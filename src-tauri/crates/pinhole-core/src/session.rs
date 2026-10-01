@@ -517,10 +517,8 @@ fn write_file(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
         drop(f);
-        if path.exists() {
-            // Windows rename doesn't replace; the user already confirmed overwrite.
-            fs::remove_file(path)?;
-        }
+        // Replaces an existing file in one step on every platform (MoveFileExW with
+        // MOVEFILE_REPLACE_EXISTING on Windows): a failed save leaves the old file as it was.
         fs::rename(&tmp, path)
     })();
     if let Err(e) = res {
@@ -544,6 +542,16 @@ fn io_err(path: &Path, e: std::io::Error) -> CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_over_a_file_replaces_it_and_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.png");
+        fs::write(&path, b"old").unwrap();
+        write_file(&path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     fn meta(id: &str) -> ResultImage {
         ResultImage {

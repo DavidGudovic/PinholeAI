@@ -249,7 +249,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
             <NumberInput id="ft-steps" integer min={1} max={150} value={ft.steps} placeholder={steps != null ? String(steps) : "Auto"} onChange={(v) => set({ steps: v })} />
           </Row>
           <Row label="CFG" htmlFor="ft-cfg" def={cfgDefault ?? undefined} changed={ft.cfg != null} onReset={() => set({ cfg: null })}>
-            <NumberInput id="ft-cfg" step={0.5} min={0} max={30} value={ft.cfg} placeholder={cfgDefault != null ? String(cfgDefault) : "Auto"} onChange={(v) => set({ cfg: v })} />
+            <NumberInput id="ft-cfg" step={0.5} min={1} max={30} value={ft.cfg} placeholder={cfgDefault != null ? String(cfgDefault) : "Auto"} onChange={(v) => set({ cfg: v })} />
           </Row>
 
           {showGuidance && (

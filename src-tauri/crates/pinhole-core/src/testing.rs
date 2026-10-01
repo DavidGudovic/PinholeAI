@@ -614,10 +614,18 @@ mod tests {
             req
         };
 
+        let fake = FakeCheck::default();
+        let sizes = fake.sizes.clone();
+        use_check(&core, fake);
         let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
             .await
             .unwrap();
         assert_eq!(res.images.len(), 1);
+        // Regression: the redrawn box is checked on its own too, not only as a small part of
+        // the whole picture.
+        let sizes = sizes.lock().clone();
+        assert_eq!(sizes.len(), 2, "{sizes:?}");
+        assert_eq!(sizes[0], (1200, 900));
         let out = &res.images[0];
         assert_eq!(
             (out.width, out.height),
@@ -629,6 +637,11 @@ mod tests {
         let (w, h) = (
             body["width"].as_u64().unwrap(),
             body["height"].as_u64().unwrap(),
+        );
+        // The engine's own output, at the model's size, not the ~128 px box it becomes.
+        assert!(
+            sizes[1].0 >= 768 && sizes[1].1 >= 768,
+            "the redraw is checked at the size it was drawn: {sizes:?}"
         );
         // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
         assert!(
@@ -1874,7 +1887,7 @@ mod tests {
 
         // Upscales go through the image check like every made picture.
         let mut readings = intimate_adult();
-        readings.tags.as_mut().unwrap().child = 0.9;
+        readings.tags.as_mut().unwrap().minor = 0.9;
         use_check(
             &core,
             FakeCheck {
@@ -1952,12 +1965,13 @@ mod tests {
                 questionable: 0.6,
                 explicit: 0.3,
                 realistic: 0.8,
+                nude: 0.9,
                 ..Default::default()
             }),
             faces: Some(vec![pinhole_check::Face {
                 score: 0.9,
                 side: 100.0,
-                under_ten: Some(0.02),
+                child_face: Some(0.02),
             }]),
         }
     }
@@ -2019,7 +2033,7 @@ mod tests {
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
         let mut readings = intimate_adult();
-        readings.tags.as_mut().unwrap().child = 0.9;
+        readings.tags.as_mut().unwrap().minor = 0.9;
         let fake = FakeCheck {
             readings,
             ..Default::default()
@@ -2371,15 +2385,31 @@ mod tests {
             words: None,
         }];
         req.add_trigger_words = false;
+        let e = generate::generate(&core, req.clone()).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
+        // of the check; the add-on still steers the picture.
+        crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
         // Under-18 terms in the negative prompt are how people keep them out.
-        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
         req.fine_tune.negative_prompt = Some("child, loli".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
+
+        // Regression: below CFG 1 the engine follows the negative prompt, so the request
+        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        for cfg in [0.0, 0.5, -3.0] {
+            let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
+            req.fine_tune.cfg = Some(cfg);
+            generate::generate(&core, req).await.unwrap();
+            let body = mock.requests().pop().unwrap();
+            assert_eq!(body["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+        }
     }
 
     #[tokio::test]
@@ -2512,6 +2542,40 @@ mod tests {
         let body = &llama.requests()[0];
         assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
+    }
+
+    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
+    /// content past the checks.
+    #[tokio::test]
+    async fn sd_args_keep_only_tuning_launch_defaults() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp.launch_defaults = [
+            "--embd-dir",
+            "/e",
+            "--photo-maker",
+            "/p",
+            "-n",
+            "words",
+            "--mmap",
+            "--log-level",
+            "warn",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let wiring = vec!["--model".to_string(), "/m.safetensors".to_string()];
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        for bad in ["--embd-dir", "/e", "--photo-maker", "/p", "-n", "words"] {
+            assert!(!args.iter().any(|a| a == bad), "{bad}: {args:?}");
+        }
+        assert!(args.iter().any(|a| a == "--mmap"), "{args:?}");
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--log-level" && w[1] == "warn"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--model" && w[1] == "/m.safetensors"));
     }
 
     #[tokio::test]

@@ -204,8 +204,8 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
     ("Saved styles are stored on this computer"). The main prompt is never stored, and
     nothing is ever saved as a style automatically.
 
-Honest limitation to put in the README: the OS may page RAM to swap/pagefile; Pinhole cannot
-control that.
+Known limit (not for the README, which keeps no limitations section): the OS may page RAM to
+swap/pagefile; Pinhole cannot control that.
 
 ---
 
