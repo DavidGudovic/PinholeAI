@@ -22,8 +22,8 @@ furnished to do so, subject to the following conditions:
 
    You may not distribute, or otherwise make available to others, a copy of
    the Software or any work based on it in which a safeguard is removed,
-   disabled, bypassed, made optional, or changed so that it blocks less than
-   it does in the copy you received.
+   disabled, bypassed, made optional, or changed so that it blocks or labels
+   less, or is otherwise less strict, than in the copy you received.
 
    The one exception: you may change a safeguard so that it wrongly blocks
    less, if the changed version meets the reference-test rule in

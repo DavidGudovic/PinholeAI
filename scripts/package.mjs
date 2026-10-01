@@ -203,7 +203,8 @@ This is the portable build: everything is kept in the "Data" folder next to
 Pinhole.exe (see Data\\README.txt). The "config" folder holds Pinhole's
 built-in model registry — don't delete it.
 
-Licenses: LICENSE.txt (Pinhole Licence 1.0) and THIRD_PARTY_LICENSES.txt.
+Licenses: LICENSE.txt (Pinhole Licence 1.0, with SAFEGUARDS.md) and
+THIRD_PARTY_LICENSES.txt.
 `;
 
 // ---------------------------------------------------------------- main
@@ -257,6 +258,7 @@ if (platform === "windows") {
   fs.writeFileSync(path.join(stage, "Data", "README.txt"), DATA_README.replace(/\n/g, "\r\n"));
   fs.writeFileSync(path.join(stage, "README.txt"), TOP_README.replace(/\n/g, "\r\n"));
   fs.copyFileSync(path.join(ROOT, "LICENSE"), path.join(stage, "LICENSE.txt"));
+  fs.copyFileSync(path.join(ROOT, "SAFEGUARDS.md"), path.join(stage, "SAFEGUARDS.md"));
   if (fs.existsSync(path.join(ROOT, "THIRD_PARTY_LICENSES"))) fs.copyFileSync(path.join(ROOT, "THIRD_PARTY_LICENSES"), path.join(stage, "THIRD_PARTY_LICENSES.txt"));
   else console.warn("package: THIRD_PARTY_LICENSES missing — not included in the portable zip");
 
