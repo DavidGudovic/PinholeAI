@@ -36,6 +36,10 @@ pub const AGE_MIN_SIDE: f32 = 16.0;
 /// Smallest face side (pixels) that counts on a brought-in picture. Much lower than on a result:
 /// Edit and Upscale make a small face large again, so a small face still means a person.
 pub const ORIGINAL_FACE_MIN_SIDE: f32 = 12.0;
+/// Face finder score that counts on a brought-in picture. Lower than on a result: a wrong
+/// find only means an intimate edit of that picture is refused, a miss means a real person's
+/// photo can be made intimate.
+pub const ORIGINAL_FACE_SCORE: f32 = 0.6;
 /// Age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups) that blocks.
 /// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
 /// the photo-face rule stops at clear children.
@@ -88,7 +92,7 @@ impl Face {
 
     /// A face on a brought-in picture (see [`ORIGINAL_FACE_MIN_SIDE`]).
     pub fn counts_in_original(&self) -> bool {
-        self.score >= FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
+        self.score >= ORIGINAL_FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
     }
 }
 

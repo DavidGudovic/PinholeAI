@@ -2101,8 +2101,18 @@ async fn generate_inner(
     let mut input_origins: Vec<Origin> = Vec::new();
     // The brought-in pictures behind them, for the image check.
     let mut sources: Vec<crate::session::Source> = Vec::new();
+    // Made pictures fed in from a brought-in chain: a face can show up in them (enlarged,
+    // straightened, sharpened) that the brought-in picture didn't show clearly.
+    let mut inputs: Vec<crate::session::Source> = Vec::new();
     let mut add_sources = |img: &SessionImage| {
-        for s in img.sources() {
+        let from = img.sources();
+        if !from.is_empty() && !from.iter().any(|s| s.id == img.id) {
+            inputs.push(crate::session::Source {
+                id: img.id.clone(),
+                bytes: img.bytes.clone(),
+            });
+        }
+        for s in from {
             if !sources.iter().any(|k| k.id == s.id) {
                 sources.push(s);
             }
@@ -2447,9 +2457,15 @@ async fn generate_inner(
     }
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept. A redrawn box is also checked on its own.
-    let checked =
-        crate::imagecheck::check_results(core, pngs, also_check, sources, prep.safe_images_only)
-            .await?;
+    let checked = crate::imagecheck::check_results(
+        core,
+        pngs,
+        also_check,
+        sources,
+        inputs,
+        prep.safe_images_only,
+    )
+    .await?;
     // Cancel pressed during the check: nothing is kept (as for an upscale).
     if cancel.is_cancelled() {
         return Err(CoreError::new("cancelled", "Cancelled."));
@@ -2936,11 +2952,19 @@ async fn upscale_inner(
     meta.parent_id = Some(src.id.clone());
     // Checked like every made picture (one way in), and it keeps the source's brought-in
     // pictures for later edits.
-    let checked =
-        crate::imagecheck::check_results(core, vec![png], Vec::new(), src.sources(), false)
-            .await?
-            .pop()
-            .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
+    let from = src.sources();
+    let input = if !from.is_empty() && !from.iter().any(|s| s.id == src.id) {
+        vec![crate::session::Source {
+            id: src.id.clone(),
+            bytes: src.bytes.clone(),
+        }]
+    } else {
+        Vec::new()
+    };
+    let checked = crate::imagecheck::check_results(core, vec![png], Vec::new(), from, input, false)
+        .await?
+        .pop()
+        .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
     if cancel.is_cancelled()
         || !core
             .session

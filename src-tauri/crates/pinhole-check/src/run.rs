@@ -96,10 +96,28 @@ impl Checker {
         let img = decode(png)?;
         let mut l = self.loaded.lock();
         *self.last_used.lock() = Some(Instant::now());
-        let nudity = self.nudity(&mut l, &img)?;
+        let mut nudity = self.nudity(&mut l, &img)?;
         // Always: an explicit picture the nudity classifier scores low must still reach
         // the child tags.
-        let tags = Some(self.tags(&mut l, &img)?);
+        let mut tags = Some(self.tags(&mut l, &img)?);
+        // A large picture is also measured in sections: shrunk whole to the classifiers'
+        // size, a part of it can be too small to judge. The first section that reads as
+        // sexual (or else intimate) stands for the picture.
+        if !rules::is_sexual(nudity, tags.as_ref()) {
+            let mut intimate = rules::is_intimate(nudity, tags.as_ref());
+            for (x, y, w, h) in sections(img.dimensions()) {
+                let part = image::imageops::crop_imm(&img, x, y, w, h).to_image();
+                let n = self.nudity(&mut l, &part)?;
+                let t = Some(self.tags(&mut l, &part)?);
+                if rules::is_sexual(n, t.as_ref()) {
+                    (nudity, tags) = (n, t);
+                    break;
+                }
+                if !intimate && rules::is_intimate(n, t.as_ref()) {
+                    (nudity, tags, intimate) = (n, t, true);
+                }
+            }
+        }
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
             Some(self.judged_faces(&mut l, &img)?)
         } else {
@@ -254,6 +272,10 @@ impl Checker {
     /// Faces with their box (x, y, w, h) in image pixels.
     fn faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
         let m = self.face_model(l)?;
+        if img.width().max(img.height()) > WINDOW * 2 {
+            // A large picture: also searched at its own resolution.
+            return find_faces_everywhere(&m, img);
+        }
         let mut found = find_faces(&m, img, 1.0)?;
         if found.iter().any(|f| f.0.counts()) {
             return Ok(found);
@@ -302,45 +324,41 @@ impl Checker {
         l: &mut Loaded,
         img: &RgbImage,
     ) -> Result<Option<Vec<[f32; 4]>>, CheckError> {
-        use image::imageops::{crop_imm, rotate180, rotate270, rotate90};
+        use image::imageops::{rotate180, rotate270, rotate90};
         let m = self.face_model(l)?;
-        let boxes = |img: &RgbImage, fill: f32| -> Result<Vec<[f32; 4]>, CheckError> {
-            Ok(find_faces(&m, img, fill)?
+        let keep = |found: Vec<(Face, [f32; 4])>| -> Vec<[f32; 4]> {
+            found
                 .into_iter()
                 .filter(|f| f.0.counts_in_original())
                 .map(|f| f.1)
-                .collect())
+                .collect()
         };
-        for fill in [1.0, 0.5] {
-            let found = boxes(img, fill)?;
-            if !found.is_empty() {
-                return Ok(Some(found));
+        // The whole picture first (quick); then, for a large picture, its own resolution.
+        let whole = keep(
+            find_faces(&m, img, 1.0)?
+                .into_iter()
+                .chain(find_faces(&m, img, 0.5)?)
+                .collect(),
+        );
+        if !whole.is_empty() {
+            return Ok(Some(whole));
+        }
+        if img.width().max(img.height()) > WINDOW {
+            let upright = keep(find_faces_everywhere(&m, img)?);
+            if !upright.is_empty() {
+                return Ok(Some(upright));
             }
         }
-        for turn in [rotate90, rotate180, rotate270] {
-            if !boxes(&turn(img), 1.0)?.is_empty() {
+        // Turned on its side, upside down, or at a slant (a face is only found upright).
+        let small = shrink(img, 1280);
+        let mut turned: Vec<RgbImage> =
+            vec![rotate90(&small), rotate180(&small), rotate270(&small)];
+        turned.extend([45.0, 135.0, 225.0, 315.0].map(|a| rotate_any(&small, a)));
+        for t in &turned {
+            if !keep(find_faces(&m, t, 1.0)?).is_empty()
+                || !keep(find_faces(&m, t, 0.5)?).is_empty()
+            {
                 return Ok(Some(Vec::new()));
-            }
-        }
-        let (w, h) = img.dimensions();
-        if w.max(h) > 1280 {
-            // 3 × 3 overlapping sections, each half the picture's size.
-            let (tw, th) = (w / 2, h / 2);
-            let mut found = Vec::new();
-            for i in 0..3 {
-                for j in 0..3 {
-                    let (x0, y0) = (i * tw / 2, j * th / 2);
-                    let tile = crop_imm(img, x0, y0, tw, th).to_image();
-                    for b in boxes(&tile, 1.0)? {
-                        let b = [b[0] + x0 as f32, b[1] + y0 as f32, b[2], b[3]];
-                        if found.iter().all(|k| iou(k, &b) < 0.3) {
-                            found.push(b);
-                        }
-                    }
-                }
-            }
-            if !found.is_empty() {
-                return Ok(Some(found));
             }
         }
         Ok(None)
@@ -579,6 +597,106 @@ fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
     }
 }
 
+/// Side (pixels) of the windows a large picture is searched in at its own resolution: the
+/// face finder's input size.
+const WINDOW: u32 = 640;
+
+/// Faces anywhere in the picture: the whole picture (also with a border, for close-ups), and
+/// for a picture larger than the finder's input, overlapping windows at its own resolution
+/// and at half of it. Shrunk whole, a face in a large picture is too small to find.
+/// Boxes are in picture pixels; overlapping finds are merged.
+fn find_faces_everywhere(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
+    let mut all = find_faces(m, img, 1.0)?;
+    all.extend(find_faces(m, img, 0.5)?);
+    let (w, h) = img.dimensions();
+    for win in [WINDOW, WINDOW * 2] {
+        if w.max(h) <= win {
+            continue;
+        }
+        let step = win * 3 / 4;
+        for y in starts(h, win, step) {
+            for x in starts(w, win, step) {
+                let tile = image::imageops::crop_imm(img, x, y, win.min(w), win.min(h)).to_image();
+                for (f, b) in find_faces(m, &tile, 1.0)? {
+                    all.push((f, [b[0] + x as f32, b[1] + y as f32, b[2], b[3]]));
+                }
+            }
+        }
+    }
+    all.sort_by(|a, b| b.0.score.total_cmp(&a.0.score));
+    let mut keep: Vec<(Face, [f32; 4])> = Vec::new();
+    for f in all {
+        if keep.iter().all(|k| iou(&k.1, &f.1) < 0.3) {
+            keep.push(f);
+        }
+    }
+    Ok(keep)
+}
+
+/// Window positions along one side: every `step`, the last one flush with the end.
+fn starts(len: u32, win: u32, step: u32) -> Vec<u32> {
+    if len <= win {
+        return vec![0];
+    }
+    let mut out: Vec<u32> = (0..len - win).step_by(step.max(1) as usize).collect();
+    out.push(len - win);
+    out
+}
+
+/// Sections a large or long result is also measured in (x, y, w, h): none up to 2048 pixels
+/// on the long side and 3:1; otherwise overlapping squares of about a third of the long side
+/// (at least half the short side, at most all of it), so a part shrunk whole to the
+/// classifiers' size can still be judged.
+fn sections((w, h): (u32, u32)) -> Vec<(u32, u32, u32, u32)> {
+    let long = w.max(h);
+    if long <= 2048 && long <= w.min(h) * 3 {
+        return Vec::new();
+    }
+    let side = (long / 3).max(w.min(h) / 2).min(w.min(h)).max(1);
+    let step = side * 3 / 4;
+    let mut out = Vec::new();
+    for y in starts(h, side, step) {
+        for x in starts(w, side, step) {
+            out.push((x, y, side.min(w), side.min(h)));
+        }
+    }
+    out
+}
+
+/// The picture shrunk so its long side is at most `max`.
+fn shrink(img: &RgbImage, max: u32) -> RgbImage {
+    let (w, h) = img.dimensions();
+    if w.max(h) <= max {
+        return img.clone();
+    }
+    let s = max as f32 / w.max(h) as f32;
+    image::imageops::resize(
+        img,
+        ((w as f32 * s).round() as u32).max(1),
+        ((h as f32 * s).round() as u32).max(1),
+        FilterType::Triangle,
+    )
+}
+
+/// The picture turned by `degrees` (clockwise) on a black canvas large enough to hold it.
+fn rotate_any(img: &RgbImage, degrees: f32) -> RgbImage {
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let nw = (w * cos.abs() + h * sin.abs()).ceil().max(1.0) as u32;
+    let nh = (w * sin.abs() + h * cos.abs()).ceil().max(1.0) as u32;
+    let (cx, cy, ncx, ncy) = (w / 2.0, h / 2.0, nw as f32 / 2.0, nh as f32 / 2.0);
+    RgbImage::from_fn(nw, nh, |x, y| {
+        let (dx, dy) = (x as f32 + 0.5 - ncx, y as f32 + 0.5 - ncy);
+        let sx = cos * dx + sin * dy + cx;
+        let sy = -sin * dx + cos * dy + cy;
+        if sx >= 0.0 && sy >= 0.0 && sx < w && sy < h {
+            *img.get_pixel(sx as u32, sy as u32)
+        } else {
+            image::Rgb([0, 0, 0])
+        }
+    })
+}
+
 /// The part of the picture that shows the person a face box belongs to: three face widths
 /// wide, from just above the face to about six face heights below it, kept inside the image.
 fn body_region(img: &RgbImage, b: [f32; 4]) -> RgbImage {
@@ -640,6 +758,53 @@ mod tests {
         assert_eq!(ix.count, end);
         // A list without the tags the rules need is rejected.
         assert!(tag_index(b"tag_id,name,category,count\n1,tag,0,1\n").is_none());
+    }
+
+    #[test]
+    fn windows_cover_the_whole_side() {
+        assert_eq!(starts(500, 640, 480), vec![0]);
+        assert_eq!(starts(640, 640, 480), vec![0]);
+        let s = starts(4000, 640, 480);
+        assert_eq!(*s.first().unwrap(), 0);
+        assert_eq!(*s.last().unwrap(), 4000 - 640);
+        assert!(s.windows(2).all(|p| p[1] - p[0] <= 480), "{s:?}");
+        // Sections only for large pictures, inside the picture, covering both ends.
+        assert!(sections((2048, 1024)).is_empty());
+        assert!(sections((768, 256)).is_empty());
+        for dims in [
+            (4096, 4096),
+            (4096, 256),
+            (8192, 6144),
+            (3000, 2100),
+            (2048, 256),
+        ] {
+            let secs = sections(dims);
+            assert!(!secs.is_empty(), "{dims:?}");
+            assert!(secs
+                .iter()
+                .all(|&(x, y, w, h)| x + w <= dims.0 && y + h <= dims.1));
+            assert!(secs.iter().any(|&(x, y, _, _)| x == 0 && y == 0));
+            assert!(secs
+                .iter()
+                .any(|&(x, y, w, h)| x + w == dims.0 && y + h == dims.1));
+        }
+    }
+
+    #[test]
+    fn rotate_any_keeps_the_picture_and_turns_it() {
+        // A white dot right of the centre ends up below it after a quarter turn clockwise.
+        let mut img = RgbImage::new(41, 41);
+        img.put_pixel(35, 20, image::Rgb([255, 255, 255]));
+        let r = rotate_any(&img, 90.0);
+        assert_eq!(r.dimensions(), (41, 41));
+        let (x, y) = r
+            .enumerate_pixels()
+            .find(|p| p.2[0] > 0)
+            .map(|p| (p.0, p.1))
+            .unwrap();
+        assert!((19..=21).contains(&x) && (34..=36).contains(&y), "{x},{y}");
+        let d = rotate_any(&RgbImage::new(100, 50), 45.0);
+        assert!(d.width() >= 106 && d.height() >= 106);
     }
 
     #[test]
