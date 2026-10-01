@@ -1,6 +1,6 @@
 # Pinhole CI: manual only (Actions → CI → Run workflow). Pushes and PRs no longer run anything,
 # so Actions minutes aren't needed to merge: the required pre-merge check is `scripts/check.sh`
-# (see CLAUDE.md). Use this workflow for what can't run locally:
+# (see README). Use this workflow for what can't run locally:
 #   full ......... Windows tests, engine smoke (Linux + Windows), real-app e2e
 #   installers ... also build the installers (Windows NSIS + portable zip, Linux AppImage + deb)
 # Without "full" it runs the fast tier only (frontend + privacy lint, Rust tests on Linux).
@@ -101,7 +101,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/privacy-lint.mjs --self-test
 
-      - name: Privacy lint (CLAUDE.md static check)
+      - name: Privacy lint
         if: ${{ !cancelled() }}
         run: node scripts/privacy-lint.mjs
 

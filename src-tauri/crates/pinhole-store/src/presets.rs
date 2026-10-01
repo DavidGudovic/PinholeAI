@@ -1,5 +1,5 @@
 //! Presets (SPEC §7): model + style reference + dial and Fine-tune values +
-//! LoRAs. NEVER the prompt and NEVER the negative prompt (CLAUDE.md rule 1).
+//! LoRAs. NEVER the prompt and NEVER the negative prompt (SPEC §4).
 //!
 //! The types below have no prompt fields, and serde drops unknown fields on
 //! deserialization, so a `prompt` / `fineTune.negativePrompt` sent by the UI

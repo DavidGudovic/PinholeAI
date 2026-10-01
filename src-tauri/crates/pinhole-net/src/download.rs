@@ -1,4 +1,4 @@
-//! Resumable, SHA-256-verified downloads (CLAUDE.md "Security rules for downloads"):
+//! Resumable, SHA-256-verified downloads:
 //! free-disk check first, write `<dest>.part`, resume with `Range`, verify hash,
 //! then atomic rename. A [`DownloadManager`] queues groups of files (a model
 //! plus its missing components) and broadcasts progress.

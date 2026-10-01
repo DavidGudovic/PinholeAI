@@ -1,4 +1,4 @@
-//! CLAUDE.md "Privacy tests": generate with a sentinel prompt + negative + a saved
+//! Privacy test (SPEC §4): generate with a sentinel prompt + negative + a saved
 //! style (through the real core service layer and a mock sd-server that bakes the
 //! prompt into PNG text chunks, like sd-server's default), save images, save a
 //! preset, then scan every byte of the Data folder (incl. decompressed PNG text

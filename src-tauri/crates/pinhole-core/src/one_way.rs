@@ -1,8 +1,8 @@
-//! Guards the two choke points (RELEASE-SPEC §1) against a new path that skips them. The types
-//! do most of the work: `ImgGenRequest::new` takes only a word-checked `CheckedPrompt`, and
-//! `Session::insert_generated` takes only an image-checked `CheckedPng`. These tests catch the
-//! ways around the types: building a session picture or a checked picture by hand, calling
-//! the image engine from somewhere new, or turning on the test-only constructors in the app.
+//! Checks that the two choke points (RELEASE-SPEC §1) are the only paths. The types do most of
+//! the work: `ImgGenRequest::new` takes only a word-checked `CheckedPrompt`, and
+//! `Session::insert_generated` takes only an image-checked `CheckedPng`. These tests check that
+//! only the owning modules build those values, that only generate.rs calls the image engine,
+//! and that the app doesn't enable the test-only constructors.
 
 use std::path::{Path, PathBuf};
 

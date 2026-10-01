@@ -1,5 +1,4 @@
-//! Safe file selection for CivitAI installs (CLAUDE.md "Security rules for
-//! downloads", SPEC §5.4 Install step 1):
+//! Safe file selection for CivitAI installs (SPEC §5.4 Install step 1):
 //! * only `SafeTensor` (`.safetensors`) and `GGUF` (`.gguf`) — never
 //!   `PickleTensor` / `.ckpt` / `.pt` / `.pth` / `.bin`;
 //! * `pickleScanResult` and `virusScanResult` must both be `Success`;

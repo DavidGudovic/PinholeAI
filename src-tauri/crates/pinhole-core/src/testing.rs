@@ -2082,8 +2082,8 @@ mod tests {
         }
     }
 
-    /// Regression: a face the brought-in picture didn't show clearly (too small, blurred,
-    /// turned) but a later step does used to stay unseen for the whole chain.
+    /// A face the brought-in picture didn't show clearly (too small, blurred, turned) counts
+    /// once a later step of the chain shows it.
     #[tokio::test]
     async fn a_face_that_shows_up_later_in_a_brought_in_chain_counts() {
         let (_tmp, core, _rec) = new_core();
@@ -2699,21 +2699,20 @@ mod tests {
         let e = generate::generate(&core, req.clone()).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
-        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
-        // of the check; the add-on still steers the picture.
+        // CivitAI's trigger words stay part of the word check when the user clears the
+        // add-on's own trigger words.
         crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
-        // Under-18 terms in the negative prompt are how people keep them out.
+        // The negative prompt is not part of the word check.
         let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
-        req.fine_tune.negative_prompt = Some("child, loli".into());
+        req.fine_tune.negative_prompt = Some("child".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
 
-        // Regression: below CFG 1 the engine follows the negative prompt, so the request
-        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        // The request never carries a CFG below 1, whatever Fine-tune or a pasted setting says.
         for cfg in [0.0, 0.5, -3.0] {
             let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
             req.fine_tune.cfg = Some(cfg);
@@ -2913,8 +2912,7 @@ mod tests {
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
     }
 
-    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
-    /// content past the checks.
+    /// engine.yaml's launch defaults are filtered to tuning flags.
     #[tokio::test]
     async fn sd_args_keep_only_tuning_launch_defaults() {
         let (_tmp, core, _) = new_core();
@@ -3633,7 +3631,7 @@ mod tests {
                 m.contains("digitalsourcetype/trainedAlgorithmicMedia"),
                 "{m}"
             );
-            assert!(!m.contains("Pinhole"), "no app name (David): {m}");
+            assert!(!m.contains("Pinhole"), "no app name: {m}");
             assert!(!m.contains("a boat"));
             let path = tmp.path().join(format!("as_{with_settings}.png"));
             let saved = std::fs::read(

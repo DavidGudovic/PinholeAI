@@ -105,8 +105,8 @@ fn normalize(list: &mut [String]) {
 }
 
 impl SafeFilter {
-    /// Lowercase the lists and clamp the numbers to safe ranges: the YAML may
-    /// tune Safe mode, never switch it off or allow previews above PG-13.
+    /// Lowercase the lists and clamp the numbers to their valid ranges (preview
+    /// level at most PG-13).
     pub fn normalized(mut self) -> Self {
         normalize(&mut self.hide_tags);
         normalize(&mut self.suggestive_tags);
@@ -219,7 +219,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn yaml_can_tune_but_not_disable() {
+    fn yaml_values_are_clamped() {
         let s: SafeFilter = serde_yaml::from_str(
             "hide_tags: [' PORN ']\nsuggestive_tags_to_hide: 0\nmax_mature_image_share: 7\nmin_rated_images: 0\nmax_preview_level: 16",
         )

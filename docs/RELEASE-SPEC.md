@@ -22,7 +22,7 @@ Last reviewed: 2026-10-01.
 | EU Product Liability Directive, Cyber Resilience Act | Exempt only non-commercial open source (only if monetised) | §10 |
 
 The goal is not a perfect filter. The goal is that Pinhole is clearly general-purpose, blocks the
-few misuse paths the law targets, blocks **nothing else**, and can show it took reasonable steps.
+few uses the law targets, blocks **nothing else**, and can show it took reasonable steps.
 
 Safeguards that fire on normal work drive people away, so every block rule here is narrow, needs
 two signals to agree, and must pass a false-positive bar (§4) before it ships.
@@ -43,7 +43,7 @@ instead of a refactor:
    they are ever turned on, passes through one function before the UI sees it. → image check (§3).
 4. **Export** — Save and Copy to clipboard both go through one function. → AI marker (§2).
 
-**Enforced by type (done).** The two checks can't be skipped by a new code path:
+**Enforced by type (done).** Every code path goes through both checks:
 - Text: `pinhole_engine::sdapi::ImgGenRequest::new` takes only a `CheckedPrompt`, which only the
   word check makes (`pinhole_engine::words`, wrapped by `pinhole_core::text_check`). `prepare`
   in generate.rs checks the final prompt (idea + style + prefix + trigger words) with the
@@ -111,7 +111,7 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
 Built 2026-09-30 (crate `pinhole-check`, wired in `pinhole-core/src/imagecheck.rs`). All local
 and offline: small ONNX classifiers run on the processor through `tract` (pure Rust, no native
 library to download or ship) → **zero VRAM**. Loaded on first use, dropped after 5 minutes idle.
-Scores and verdicts are handled like prompts (CLAUDE.md privacy rules). Safe mode doesn't change any of it.
+Scores and verdicts are handled like prompts (SPEC §4). Safe mode doesn't change any of it.
 
 ### 3.1 Where each image came from
 
@@ -156,8 +156,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    resolution and at half of it in overlapping 640 px windows; with no face upright, a copy shrunk
    to 1280 px is tried turned 90/180/270° and at 45/135/225/315°), whatever it already showed.
    A made picture fed into the request from such a chain (an enlarged or edited step) is
-   measured too: a face that shows up in it counts as a person. Comparing with the original
-   import (not the direct input) means a photo can't be walked towards intimate in small steps.
+   measured too: a face that shows up in it counts as a person. The rule compares with the
+   original import, not the direct input, so it applies across any number of edits.
    A picture that was already intimate when brought in is no exception (2026-10-01): what a
    picture shows says nothing about the consent of the person in it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
@@ -209,8 +209,7 @@ If one picture of a batch is blocked, the whole batch is dropped.
 
 Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
 this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
-(§7). It never names the rule, the content or what triggered it, has no retry hint, and never reads
-as an accusation, since a false block can hit an ordinary user (David, 2026-09-30).
+(§7). It is the same for every rule and doesn't name the rule or the content.
 
 ### 3.3 How it runs
 
@@ -284,8 +283,7 @@ prints them for a folder of test pictures.
   rule, §3.4).
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
-- **No details for users:** release builds show only the neutral message (David, 2026-09-30: never
-  say what triggered). Dev builds show the rule and scores for tuning (§3.4). A user can still
+- **Release builds show only the block message.** Dev builds show the rule and scores for tuning (§3.4). A user can still
   report a false positive in a GitHub issue, describing what they tried.
 
 ---
@@ -375,8 +373,7 @@ prints them for a folder of test pictures.
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
   ("Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-  this with AI running entirely on your own computer.", David's pick 2026-09-30, trimmed
-  2026-10-01 so no privacy line sits next to the safeguards, §8) and "Do not use Pinhole for anything illegal, harmful or
+  this with AI running entirely on your own computer.", David's pick 2026-09-30) and "Do not use Pinhole for anything illegal, harmful or
   non-consensual. By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
@@ -401,24 +398,15 @@ prints them for a folder of test pictures.
 Applies to the README, repo description, docs, release notes, screenshots, videos, issue
 templates, posts and UI.
 
-- Describe privacy as ownership of your work: "Your prompts and images stay on your computer."
-- Never use: "leaves no trace", "untraceable", "no one will know", "uncensored", "unfiltered",
-  "NSFW", "undress", "nudify", "face swap". Only exception: "NSFW" as the label of the Browse
-  tag filter (CivitAI's own term, so people can find or avoid those models), never in marketing.
-- Don't frame privacy as hiding what you made from other people ("forgets everything", "wipes
-  your tracks", "nobody will see", "no history"). State facts instead: what stays on the
-  computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
-  "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
-  behind".
-- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
-  disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
-  saved until you press Save."
-- Never say that nothing is reported, recorded or sent about what people make, and keep privacy and
-  no-telemetry facts out of safeguard text (SAFETY.md, usage guidelines, notices, block message);
-  no hints at consequences or monitoring either. Limitations stay honest but neutral, never a
-  challenge ("can't stop someone determined") or a pointer to how checks could be removed or fooled.
-- Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
-  against …").
+- Describe privacy plainly: "Your prompts and images stay on your computer." State facts: what
+  stays on the computer, what is saved and when, what goes online. Where saving needs explaining,
+  say it once, like any editor: "Nothing is saved until you press Save."
+- "NSFW" appears only as the label of the Browse tag filter (CivitAI's own term), never in
+  marketing.
+- Controls get plain names ("Reset"). Portable mode is described as portable.
+- Safety text (SAFETY.md, usage guidelines, notices, block message) describes the safeguards and
+  their limitations in neutral terms ("the checks can make mistakes in both directions").
+- Say what Pinhole blocks ("has safeguards against …") rather than calling it "safe".
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
   person's body or clothes while keeping their face.
 - Screenshots and demos: Safe mode on, safe for work, fictional subjects, no celebrities or real
@@ -429,8 +417,7 @@ templates, posts and UI.
 ## 9. Paper trail and reporting
 
 - **`SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
-  doesn't (§3.2), how it works, a "Limitations" section in plain words
-  (no workaround detail; 2026-10-01), and how to report a problem (GitHub private vulnerability reporting only,
+  doesn't (§3.2), how it works, a "Limitations" section in plain words, and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Before marketing (§12): a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast.
@@ -459,7 +446,7 @@ templates, posts and UI.
 - **Remote prompt classification — rejected** (e.g. sending prompts to a server running the Jev
   API). Prompts would leave the machine (Jev is API-only; standard data retention for
   non-enterprise accounts), it breaks Offline mode, it doesn't fit Pinhole's local design, and it creates data-protection obligations for the developer.
-- **Telemetry / prompt logging — rejected** (privacy rules, CLAUDE.md).
+- **Telemetry / prompt logging — rejected** (SPEC §4).
 - **Safety classifiers on GPU — rejected.** VRAM cost; CPU is fast enough.
 - **Local prompt guard LLM — dropped for v1** (2026-09-29; was planned as Qwen3Guard / Llama Guard
   on `llama-server`). Small guard models are trained on chat, not tag-style image prompts, and
@@ -476,9 +463,8 @@ templates, posts and UI.
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
   anime prompts pass. Word lists are compiled in (not YAML).
-  Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
-  accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
-  repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
+  Before matching it normalizes the text (Unicode variants, accents and spacing; 2026-09-30, no
+  text model).
   On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
   new. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
   without its own refusals is offered.
@@ -500,14 +486,12 @@ templates, posts and UI.
   old commits: GitHub keeps every pull request's commits (`refs/pull/*`) and only GitHub Support
   can purge them. Old commits add nothing over today's source, and the history is the dated
   record of when safeguards were decided. Full-history scan on 2026-09-29 (220 commits including
-  every pull request ref): no secrets, no files over 5 MB, no banned wording in commit messages.
+  every pull request ref): no secrets, no files over 5 MB.
 - **Never add these features:**
   - Identity features: PhotoMaker, PuLID, InstantID, IP-Adapter FaceID, face swapping, or
     training a LoRA from photos of a person. The wiring parser knows `--photo-maker` and
     `--pulid-weights` (`pinhole-registry/src/wiring.rs`); nothing exposes them, and nothing will.
-  - Concealment features: a panic key, hide-window, a disguised app name or icon, secure delete of
-    saved images, clipboard auto-clear, a switch to turn off the AI marker, or stripping other
-    tools' AI markers.
+  - A switch to turn off the AI marker, or removing other tools' AI labels from pictures.
 
 ---
 

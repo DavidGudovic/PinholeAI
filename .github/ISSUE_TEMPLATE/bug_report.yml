@@ -8,7 +8,7 @@ body:
       value: |
         Thanks! Please **don't paste your prompts** — describe them instead (Pinhole never puts your
         prompt in the error Details, but double-check anything you paste). Screenshots must be safe for
-        work with fictional subjects (see CLAUDE.md wording rules).
+        work with fictional subjects.
   - type: textarea
     id: what
     attributes:

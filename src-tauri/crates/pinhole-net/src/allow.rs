@@ -1,4 +1,4 @@
-//! Host allow-list (CLAUDE.md privacy rule 5).
+//! Host allow-list (SPEC §4).
 //!
 //! * **Primary hosts** (and their subdomains) may be requested directly.
 //! * **CDN hosts** are redirect-only: a hop to a CDN host is accepted only when

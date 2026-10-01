@@ -1,5 +1,5 @@
 //! User-facing error type returned by every core call / Tauri command.
-//! `message` is plain language and says what to do next (CLAUDE.md UX rules);
+//! `message` is plain language and says what to do next;
 //! `details` holds technical output (engine ring buffer tail) for the
 //! "Details" toggle. PRIVACY: never put prompt text in either field.
 
