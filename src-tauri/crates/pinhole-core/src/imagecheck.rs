@@ -312,6 +312,7 @@ pub async fn check_results(
         .map(|png| CheckedPng {
             png,
             made_from: made_from.clone(),
+            safe_images_only,
         })
         .collect())
 }
@@ -323,6 +324,9 @@ pub async fn check_results(
 pub struct CheckedPng {
     png: Vec<u8>,
     made_from: Arc<[Source]>,
+    /// Checked as made with a "safe images only" model or add-on (rule 3). An upscale of it
+    /// is checked the same way: the upscaler doesn't change what the picture comes from.
+    safe_images_only: bool,
 }
 
 impl CheckedPng {
@@ -330,8 +334,8 @@ impl CheckedPng {
         &self.png
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>) {
-        (self.png, self.made_from)
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>, bool) {
+        (self.png, self.made_from, self.safe_images_only)
     }
 
     /// Tests that exercise the session without running the check.
@@ -340,6 +344,7 @@ impl CheckedPng {
         Self {
             png,
             made_from: Arc::from(Vec::new()),
+            safe_images_only: false,
         }
     }
 }
