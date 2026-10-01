@@ -29,9 +29,6 @@ keyring = { workspace = true, features = ["sync-secret-service", "crypto-rust"] 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { workspace = true, features = ["apple-native"] }
 
-[features]
-test-util = []
-
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }

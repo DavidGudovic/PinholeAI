@@ -87,8 +87,6 @@ pub struct AppCore {
     pub linked: linked::LinkedRuntime,
     /// The local image check (RELEASE-SPEC §4).
     pub check: imagecheck::CheckState,
-    /// Files to hash again at start ([`lookup::check_seals`]).
-    rehash: Mutex<Vec<String>>,
 }
 
 impl AppCore {
@@ -116,29 +114,31 @@ impl AppCore {
         )?;
         let mut installed = InstalledIndex::load(&data)?;
         // Saved lookup results are signed with a key in the OS keychain (not in tests).
-        let mut rehash = Vec::new();
-        let mut changed = false;
-        let key = if cfg!(feature = "test-util") {
+        let key = if cfg!(any(test, feature = "test-util")) {
             seal::KeyState::Unavailable
         } else {
             seal::load_or_create_key()
         };
-        match key {
-            seal::KeyState::Created(key) => {
-                seal::activate(key);
-                changed = true;
+        let sign_all = match key {
+            // First start with signing: what is installed is signed as it is.
+            seal::KeyState::Created(key) if !seal::seals_file(&data).exists() => {
+                seal::activate(seal::Signer::new(key, Default::default(), Vec::new()));
+                true
             }
-            seal::KeyState::Existing(key) => {
-                rehash = lookup::check_seals(&mut installed, &key, &seal::read(&data));
-                changed = !rehash.is_empty();
-                seal::activate(key);
+            seal::KeyState::Created(key) | seal::KeyState::Existing(key) => {
+                let seals = seal::read(&data);
+                let unsigned = lookup::unsigned(&installed, &key, &seals);
+                seal::activate(seal::Signer::new(key, seals, unsigned));
+                false
             }
-            seal::KeyState::Unavailable => {}
-        }
+            seal::KeyState::Unavailable => false,
+        };
         // Files added by hand or linked before the CivitAI lookup covered them all.
-        changed |= lookup::mark_unchecked(&registry, &mut installed);
-        if changed {
+        if lookup::mark_unchecked(&registry, &mut installed) {
             let _ = installed.save(&data);
+        }
+        if sign_all {
+            let _ = installed.save_seals(&data);
         }
         let offline = OfflineFlag::new(settings.offline);
         let http = HttpClient::new(offline.clone())?;
@@ -163,7 +163,6 @@ impl AppCore {
             models: models::ModelsState::default(),
             linked: linked::LinkedRuntime::default(),
             check,
-            rehash: Mutex::new(rehash),
         }))
     }
 
@@ -177,7 +176,7 @@ impl AppCore {
         describe::start_idle_watchdog(self);
         linked::start(self);
         imagecheck::start_idle_unload(self);
-        lookup::start_rehash(self, std::mem::take(&mut *self.rehash.lock()));
+        lookup::start_recheck(self);
     }
 
     /// Stop engines (app exit).

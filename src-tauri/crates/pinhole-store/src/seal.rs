@@ -3,18 +3,23 @@
 //! What the CivitAI lookups found for each installed model and add-on (`InstalledFile::lookup`
 //! and the CivitAI flags) is signed with HMAC-SHA256. The key is made once per computer and kept
 //! in the OS keychain ([`crate::keychain`]); the signatures go to `Data/catalog/model-lookups.json`
-//! (per computer, like the linked folders), keyed by file id. At start, a file whose entry
-//! doesn't match its signature goes back to "not looked up yet" (pinhole-core `lookup.rs`).
+//! (per computer, like the linked folders), keyed by file id. An entry whose saved result doesn't
+//! match its signature counts as "safe images only" ([`InstalledFile::safe_images_only`]) until
+//! Pinhole has checked it again on this computer (pinhole-core `lookup.rs`). Nothing in the
+//! models list is changed for it, so a Models folder shared with another computer or system
+//! keeps what that one found.
 //!
 //! No keychain (e.g. a Linux desktop without a Secret Service): nothing is signed or checked,
 //! as before signing existed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{mpsc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
 use hmac::{Hmac, Mac};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
@@ -37,30 +42,103 @@ impl std::fmt::Debug for SealKey {
     }
 }
 
-/// The key in use: every save of the models list signs it ([`crate::installed::InstalledIndex::save`]).
-static ACTIVE: OnceLock<SealKey> = OnceLock::new();
-
-/// Start signing with `key` (once per run; later calls are ignored).
-pub fn activate(key: SealKey) {
-    let _ = ACTIVE.set(key);
-}
-
-pub(crate) fn active() -> Option<&'static SealKey> {
-    ACTIVE.get()
-}
-
 /// The key as found at start.
 pub enum KeyState {
-    /// Made now (first start with signing on this computer): what is installed is signed as it is.
+    /// Made now (first start with signing on this computer).
     Created(SealKey),
     Existing(SealKey),
     /// No keychain to keep it in: nothing is signed or checked this run.
     Unavailable,
 }
 
+/// The signatures in use this run, and the entries that didn't match theirs.
+pub struct Signer {
+    key: SealKey,
+    /// Every saved signature, also of entries not in the list now (a Models folder on a
+    /// drive that isn't connected): a save replaces only those of the entries it has.
+    seals: Mutex<BTreeMap<String, String>>,
+    /// Entries that didn't match their signature at start, until checked again.
+    unchecked: Mutex<HashSet<String>>,
+}
+
+impl Signer {
+    pub fn new(key: SealKey, seals: BTreeMap<String, String>, unchecked: Vec<String>) -> Self {
+        Self {
+            key,
+            seals: Mutex::new(seals),
+            unchecked: Mutex::new(unchecked.into_iter().collect()),
+        }
+    }
+
+    pub fn is_trusted(&self, id: &str) -> bool {
+        !self.unchecked.lock().contains(id)
+    }
+
+    /// Pinhole has checked the entry again: sign it from the next save on.
+    pub fn trust(&self, id: &str) {
+        self.unchecked.lock().remove(id);
+    }
+
+    /// Undo [`Signer::trust`] (the change that came with it wasn't saved).
+    pub fn distrust(&self, id: &str) {
+        self.unchecked.lock().insert(id.to_string());
+    }
+
+    /// Sign `files` (all but the unchecked ones) and save every signature.
+    pub fn write<'a>(
+        &self,
+        dir: &DataDir,
+        files: impl Iterator<Item = &'a InstalledFile>,
+    ) -> Result<(), StoreError> {
+        let mut seals = self.seals.lock();
+        {
+            let unchecked = self.unchecked.lock();
+            for f in files.filter(|f| !unchecked.contains(&f.id)) {
+                seals.insert(f.id.clone(), self.key.seal(f));
+            }
+        }
+        let mut json = serde_json::to_vec_pretty(&SealsOnDisk {
+            seals: seals.clone(),
+        })
+        .map_err(|e| StoreError::Invalid(format!("could not encode the model lookups: {e}")))?;
+        json.push(b'\n');
+        write_atomic(&seals_file(dir), &json)
+    }
+}
+
+/// See [`Signer::distrust`].
+pub fn distrust(id: &str) {
+    if let Some(s) = active() {
+        s.distrust(id);
+    }
+}
+
+/// The signer every save of the models list uses ([`crate::installed::InstalledIndex::save`]).
+static ACTIVE: OnceLock<Signer> = OnceLock::new();
+
+/// Start signing (once per run; later calls are ignored).
+pub fn activate(signer: Signer) {
+    let _ = ACTIVE.set(signer);
+}
+
+pub fn active() -> Option<&'static Signer> {
+    ACTIVE.get()
+}
+
+/// Whether the saved lookup result of `id` can be used as it is (always, without signing).
+pub fn trusted(id: &str) -> bool {
+    active().is_none_or(|s| s.is_trusted(id))
+}
+
+/// See [`Signer::trust`].
+pub fn trust(id: &str) {
+    if let Some(s) = active() {
+        s.trust(id);
+    }
+}
+
 impl SealKey {
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn for_tests(bytes: [u8; 32]) -> Self {
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
@@ -106,26 +184,29 @@ fn json<T: Serialize>(v: &T) -> String {
 /// Read the key from the keychain, or make and store one when there is none.
 pub fn load_or_create_key() -> KeyState {
     let (tx, rx) = mpsc::channel();
+    // Past the timeout this run goes on without signing: the late thread must not store a
+    // key then, or the next start would find a key without the signatures made with it.
+    let gave_up = Arc::new(AtomicBool::new(false));
+    let late = gave_up.clone();
     std::thread::spawn(move || {
-        let _ = tx.send(load_or_create_blocking());
+        let _ = tx.send(load_or_create_blocking(&late));
     });
-    rx.recv_timeout(KEY_TIMEOUT)
-        .ok()
-        .flatten()
-        .unwrap_or(KeyState::Unavailable)
+    let key = rx.recv_timeout(KEY_TIMEOUT).ok().flatten();
+    gave_up.store(true, Ordering::SeqCst);
+    key.unwrap_or(KeyState::Unavailable)
 }
 
-fn load_or_create_blocking() -> Option<KeyState> {
+fn load_or_create_blocking(gave_up: &AtomicBool) -> Option<KeyState> {
     let entry = keyring::Entry::new(crate::keychain::SERVICE, KEY_ACCOUNT).ok()?;
     match entry.get_password() {
         Ok(hex_key) => {
             let bytes: [u8; 32] = hex::decode(hex_key.trim()).ok()?.try_into().ok()?;
-            Some(KeyState::Existing(SealKey(bytes)))
+            Some(KeyState::Existing(SealKey::from_bytes(bytes)))
         }
-        Err(keyring::Error::NoEntry) => {
+        Err(keyring::Error::NoEntry) if !gave_up.load(Ordering::SeqCst) => {
             let bytes: [u8; 32] = rand::random();
             entry.set_password(&hex::encode(bytes)).ok()?;
-            Some(KeyState::Created(SealKey(bytes)))
+            Some(KeyState::Created(SealKey::from_bytes(bytes)))
         }
         Err(_) => None,
     }
@@ -148,19 +229,6 @@ pub fn read(dir: &DataDir) -> BTreeMap<String, String> {
         .and_then(|b| serde_json::from_slice::<SealsOnDisk>(&b).ok())
         .map(|s| s.seals)
         .unwrap_or_default()
-}
-
-/// Sign `files` and save the signatures (replacing the old ones).
-pub fn write<'a>(
-    dir: &DataDir,
-    key: &SealKey,
-    files: impl Iterator<Item = &'a InstalledFile>,
-) -> Result<(), StoreError> {
-    let seals = files.map(|f| (f.id.clone(), key.seal(f))).collect();
-    let mut json = serde_json::to_vec_pretty(&SealsOnDisk { seals })
-        .map_err(|e| StoreError::Invalid(format!("could not encode the model lookups: {e}")))?;
-    json.push(b'\n');
-    write_atomic(&seals_file(dir), &json)
 }
 
 #[cfg(test)]
@@ -201,12 +269,12 @@ mod tests {
 
     #[test]
     fn a_seal_matches_only_the_same_lookup_result() {
-        let key = SealKey::for_tests([7; 32]);
+        let key = SealKey::from_bytes([7; 32]);
         let f = file();
         let seal = key.seal(&f);
         assert!(key.verify(&f, &seal));
         assert!(
-            !SealKey::for_tests([8; 32]).verify(&f, &seal),
+            !SealKey::from_bytes([8; 32]).verify(&f, &seal),
             "another key"
         );
         assert!(!key.verify(&f, "zz"));
@@ -239,12 +307,44 @@ mod tests {
     fn seals_round_trip_and_a_damaged_file_reads_as_none() {
         let tmp = tempfile::tempdir().unwrap();
         let d = DataDir::at(tmp.path().join("Data"), false);
-        let key = SealKey::for_tests([1; 32]);
+        let key = SealKey::from_bytes([1; 32]);
         let f = file();
-        write(&d, &key, std::iter::once(&f)).unwrap();
+        Signer::new(key.clone(), BTreeMap::new(), Vec::new())
+            .write(&d, std::iter::once(&f))
+            .unwrap();
         let back = read(&d);
         assert!(key.verify(&f, &back["a"]));
         std::fs::write(seals_file(&d), b"{not json").unwrap();
         assert!(read(&d).is_empty());
+    }
+
+    /// A save signs the entries it has except unchecked ones, and keeps every other signature
+    /// (entries of a Models folder that isn't connected now).
+    #[test]
+    fn a_save_keeps_other_signatures_and_signs_only_checked_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = DataDir::at(tmp.path().join("Data"), false);
+        let key = SealKey::from_bytes([2; 32]);
+        let mut edited = file();
+        edited.id = "edited".into();
+        let saved = BTreeMap::from([
+            ("elsewhere".to_string(), "11".repeat(32)),
+            ("edited".to_string(), "22".repeat(32)),
+        ]);
+        let signer = Signer::new(key.clone(), saved, vec!["edited".into()]);
+        assert!(!signer.is_trusted("edited") && signer.is_trusted("a"));
+        signer.write(&d, [file(), edited.clone()].iter()).unwrap();
+        let back = read(&d);
+        assert!(key.verify(&file(), &back["a"]));
+        assert_eq!(back["elsewhere"], "11".repeat(32));
+        assert_eq!(
+            back["edited"],
+            "22".repeat(32),
+            "not signed while unchecked"
+        );
+
+        signer.trust("edited");
+        signer.write(&d, std::iter::once(&edited)).unwrap();
+        assert!(key.verify(&edited, &read(&d)["edited"]));
     }
 }

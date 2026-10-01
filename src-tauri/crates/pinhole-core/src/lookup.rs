@@ -104,34 +104,38 @@ pub fn mark_unchecked(registry: &Registry, index: &mut InstalledIndex) -> bool {
     changed
 }
 
-/// At start, with signing on (`pinhole_store::seal`): a model or add-on whose saved lookup
-/// result doesn't match its signature goes back to "not looked up yet" (so "safe images only"),
-/// and its hash is cleared so the file itself is hashed again ([`start_rehash`]; a linked file
-/// by the next look through its folder). Returns the ids to hash again.
-pub fn check_seals(
-    index: &mut InstalledIndex,
+/// At start, with signing on (`pinhole_store::seal`): the models and add-ons whose saved lookup
+/// result doesn't match its signature. They count as "safe images only" until checked again
+/// on this computer: a file Pinhole offers itself by hashing it again ([`start_recheck`]), any
+/// other by the next lookup ([`look_up_pending`]).
+pub fn unsigned(
+    index: &InstalledIndex,
     key: &pinhole_store::seal::SealKey,
     seals: &std::collections::BTreeMap<String, String>,
 ) -> Vec<String> {
-    let mut out = Vec::new();
-    let parked = index.linked.parked.iter_mut().map(|e| &mut e.file);
-    for f in index.files.iter_mut().chain(parked) {
-        if !looked_up_kind(f.kind) || seals.get(&f.id).is_some_and(|s| key.verify(f, s)) {
-            continue;
-        }
-        f.lookup = Some(Lookup::NotYet);
-        f.sha256.clear();
-        if !f.is_linked() {
-            out.push(f.id.clone());
-        }
-    }
-    out
+    let parked = index.linked.parked.iter().map(|e| &e.file);
+    index
+        .files
+        .iter()
+        .chain(parked)
+        .filter(|f| looked_up_kind(f.kind))
+        .filter(|f| !seals.get(&f.id).is_some_and(|s| key.verify(f, s)))
+        .map(|f| f.id.clone())
+        .collect()
 }
 
-/// Hash again the files [`check_seals`] cleared, in the background. A file Pinhole offers
-/// itself gets its trust back; any other stays "not looked up yet" until it is looked up
-/// (Offline mode turned off, or added again), as for a file added offline.
-pub fn start_rehash(core: &Arc<AppCore>, ids: Vec<String>) {
+/// Hash again, in the background, the files marked as ones Pinhole offers whose entry isn't
+/// signed ([`unsigned`]). Local only: nothing is looked up.
+pub fn start_recheck(core: &Arc<AppCore>) {
+    let ids: Vec<String> = {
+        let index = core.installed.lock();
+        index
+            .files
+            .iter()
+            .filter(|f| f.lookup == Some(Lookup::Shipped) && !pinhole_store::seal::trusted(&f.id))
+            .map(|f| f.id.clone())
+            .collect()
+    };
     if ids.is_empty() {
         return;
     }
@@ -139,37 +143,64 @@ pub fn start_rehash(core: &Arc<AppCore>, ids: Vec<String>) {
         return;
     };
     let core = core.clone();
-    rt.spawn(async move { rehash(&core, ids).await });
+    rt.spawn(async move {
+        for id in ids {
+            recheck(&core, &id).await;
+        }
+        core.emit(CoreEvent::ModelsChanged);
+    });
 }
 
-async fn rehash(core: &Arc<AppCore>, ids: Vec<String>) {
-    for id in ids {
-        let found = {
-            let index = core.installed.lock();
-            index
-                .get(&id)
-                .filter(|f| f.sha256.is_empty())
-                .map(|f| (index.abs_path(&core.data, f), f.kind))
+/// What hashing an unsigned entry's file again showed ([`recheck`]).
+enum Recheck {
+    /// The file can't be read now (a drive that isn't connected): it stays unsigned.
+    Unreadable,
+    /// Signed again: the hash matches and the entry is what Pinhole makes for that hash
+    /// (offered by Pinhole, or not looked up yet), or the file changed and the entry starts
+    /// over for its new hash.
+    Signed,
+    /// The hash matches, but the lookup result needs a lookup (with this hash).
+    NeedsLookup(String),
+}
+
+async fn recheck(core: &Arc<AppCore>, id: &str) -> Recheck {
+    let abs = {
+        let index = core.installed.lock();
+        let Some(f) = index.get(id) else {
+            return Recheck::Unreadable;
         };
-        let Some((abs, kind)) = found else {
-            continue;
-        };
-        let hashed = tokio::task::spawn_blocking(move || pinhole_catalog::local::hash_file(&abs))
-            .await
-            .ok()
-            .and_then(Result::ok);
-        let Some((sha256, _)) = hashed else {
-            continue;
-        };
-        let registry = core.registry();
-        let mut index = core.installed.lock();
-        if let Some(f) = index.get_mut(&id).filter(|f| f.sha256.is_empty()) {
-            f.lookup = initial(&registry, kind, &sha256);
-            f.sha256 = sha256;
-            let _ = index.save(&core.data);
+        index.abs_path(&core.data, f)
+    };
+    let hashed = tokio::task::spawn_blocking(move || pinhole_catalog::local::hash_file(&abs))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let Some((sha256, _)) = hashed else {
+        return Recheck::Unreadable;
+    };
+    let registry = core.registry();
+    let mut index = core.installed.lock();
+    let Some(f) = index.get_mut(id) else {
+        return Recheck::Unreadable;
+    };
+    let fresh = initial(&registry, f.kind, &sha256);
+    if f.sha256.eq_ignore_ascii_case(&sha256) {
+        if f.lookup != fresh {
+            return Recheck::NeedsLookup(sha256);
         }
+        pinhole_store::seal::trust(id);
+        let _ = index.save_seals(&core.data);
+    } else {
+        f.sha256 = sha256;
+        f.lookup = fresh;
+        pinhole_store::seal::trust(id);
+        let _ = if f.is_linked() {
+            index.save_linked(&core.data)
+        } else {
+            index.save(&core.data)
+        };
     }
-    core.emit(CoreEvent::ModelsChanged);
+    Recheck::Signed
 }
 
 /// Ask CivitAI about one file by its SHA-256 (and the model's flags, as for a Browse install).
@@ -273,7 +304,11 @@ pub async fn look_up_pending(core: &Arc<AppCore>, folder: Option<&str>) {
         index
             .files
             .iter()
-            .filter(|f| f.lookup == Some(Lookup::NotYet) && !f.sha256.is_empty())
+            .filter(|f| {
+                (f.lookup == Some(Lookup::NotYet) || !pinhole_store::seal::trusted(&f.id))
+                    && looked_up_kind(f.kind)
+                    && !f.sha256.is_empty()
+            })
             .filter(|f| folder.is_none() || linked_folder_id(&f.rel_path) == folder)
             .map(|f| (f.id.clone(), f.sha256.clone()))
             .collect()
@@ -293,19 +328,37 @@ pub async fn look_up_pending(core: &Arc<AppCore>, folder: Option<&str>) {
         if core.offline.get() {
             break;
         }
-        look_up_one(core, id, sha).await;
+        // An unsigned entry is looked up with its file's own hash.
+        if pinhole_store::seal::trusted(id) {
+            look_up_one(core, id, sha).await;
+        } else if let Recheck::NeedsLookup(sha) = recheck(core, id).await {
+            look_up_one(core, id, &sha).await;
+        }
     }
 }
 
 /// Look up one installed or linked file and store what CivitAI said.
 pub async fn look_up_one(core: &AppCore, id: &str, sha256: &str) -> Outcome {
     let outcome = look_up(core, sha256).await;
+    let unsigned = !pinhole_store::seal::trusted(id);
+    if unsigned && outcome == Outcome::Failed {
+        // Keep what the entry says until a lookup answers (it counts as "safe images only").
+        return outcome;
+    }
     let saved = {
         let mut index = core.installed.lock();
         let before = index.clone();
         let linked = index.get(id).is_some_and(InstalledFile::is_linked);
-        if !apply(&mut index, id, sha256, &outcome) {
+        let changed = apply(&mut index, id, sha256, &outcome);
+        let signs = unsigned
+            && index
+                .get(id)
+                .is_some_and(|f| f.sha256.eq_ignore_ascii_case(sha256));
+        if !changed && !signs {
             return outcome;
+        }
+        if signs {
+            pinhole_store::seal::trust(id);
         }
         // A linked file's result goes to the linked list only (the Models folder may be
         // on a drive that isn't connected).
@@ -316,6 +369,9 @@ pub async fn look_up_one(core: &AppCore, id: &str, sha256: &str) -> Outcome {
         };
         if saved.is_err() {
             *index = before;
+            if signs {
+                pinhole_store::seal::distrust(id);
+            }
         }
         saved.is_ok()
     };
@@ -679,19 +735,16 @@ mod tests {
         assert!(index.files.iter().all(InstalledFile::safe_images_only));
     }
 
-    /// A saved lookup result that doesn't match its signature goes back to "not looked up
-    /// yet", and the file is hashed again.
-    #[tokio::test]
-    async fn a_lookup_result_that_fails_its_signature_is_checked_again() {
-        let (_tmp, core) = test_core(Arc::new(Recorder::default()));
-        let key = pinhole_store::seal::SealKey::for_tests([3; 32]);
-        let registry = core.registry();
-        let shipped = registry.known_files()[0].sha256.clone();
-        let file = |id: &str, rel: &str, kind: ModelKind, sha: &str, lookup| InstalledFile {
+    /// The models and add-ons whose saved lookup result doesn't match its signature (parts
+    /// aren't looked up, so they aren't signed).
+    #[test]
+    fn entries_that_dont_match_their_signature_are_found() {
+        let key = pinhole_store::seal::SealKey::from_bytes([3; 32]);
+        let file = |id: &str, kind: ModelKind, lookup| InstalledFile {
             id: id.into(),
-            rel_path: rel.into(),
+            rel_path: format!("models/x/{id}.safetensors"),
             kind,
-            sha256: sha.into(),
+            sha256: "aa".repeat(32),
             size_bytes: 1,
             family: None,
             component_id: None,
@@ -704,72 +757,26 @@ mod tests {
             trigger_words: None,
             lookup,
         };
-        let lora_dir = core.data.models(ModelKind::Lora);
-        std::fs::create_dir_all(&lora_dir).unwrap();
-        std::fs::write(lora_dir.join("ok.safetensors"), b"ok").unwrap();
-        std::fs::write(lora_dir.join("edited.safetensors"), b"edited").unwrap();
         let mut index = InstalledIndex {
             files: vec![
-                file(
-                    "ok",
-                    "models/loras/ok.safetensors",
-                    ModelKind::Lora,
-                    &"aa".repeat(32),
-                    Some(Lookup::Found),
-                ),
-                file(
-                    "edited",
-                    "models/loras/edited.safetensors",
-                    ModelKind::Lora,
-                    &"bb".repeat(32),
-                    Some(Lookup::NoMatch),
-                ),
-                file(
-                    "linked",
-                    "linked/abc/loras/l.safetensors",
-                    ModelKind::Lora,
-                    &"cc".repeat(32),
-                    Some(Lookup::NotYet),
-                ),
-                file(
-                    "vae",
-                    "models/vae/v.safetensors",
-                    ModelKind::Vae,
-                    &shipped,
-                    None,
-                ),
+                file("ok", ModelKind::Lora, Some(Lookup::Found)),
+                file("edited", ModelKind::Lora, Some(Lookup::NoMatch)),
+                file("new", ModelKind::Diffusion, Some(Lookup::Shipped)),
+                file("vae", ModelKind::Vae, None),
             ],
             ..Default::default()
         };
         let seals: std::collections::BTreeMap<String, String> = index
             .files
             .iter()
-            .filter(|f| f.id != "linked")
+            .filter(|f| f.id != "new")
             .map(|f| (f.id.clone(), key.seal(f)))
             .collect();
-        // Changed after it was signed, and a linked file with no signature.
         index.files[1].lookup = Some(Lookup::Found);
-        let again = check_seals(&mut index, &key, &seals);
-        assert_eq!(again, ["edited"]);
-        let get = |id: &str| index.get(id).unwrap().clone();
-        assert_eq!(get("ok").lookup, Some(Lookup::Found));
-        assert_eq!(get("ok").sha256, "aa".repeat(32));
-        for id in ["edited", "linked"] {
-            assert_eq!(
-                (get(id).lookup, get(id).sha256.as_str()),
-                (Some(Lookup::NotYet), "")
-            );
-            assert!(get(id).safe_images_only());
-        }
-        assert_eq!(get("vae").lookup, None, "parts aren't looked up");
-
-        // The file itself is hashed again; it stays "not looked up yet" until it is looked up.
-        *core.installed.lock() = index;
-        rehash(&core, vec!["edited".into()]).await;
-        let f = core.installed.lock().get("edited").unwrap().clone();
-        use sha2::Digest;
-        assert_eq!(f.sha256, hex::encode(sha2::Sha256::digest(b"edited")));
-        assert_eq!(f.lookup, Some(Lookup::NotYet));
+        index.files[3].sha256 = "bb".repeat(32);
+        assert_eq!(unsigned(&index, &key, &seals), ["edited", "new"]);
+        let other = pinhole_store::seal::SealKey::from_bytes([4; 32]);
+        assert_eq!(unsigned(&index, &other, &seals), ["ok", "edited", "new"]);
     }
 
     #[test]
