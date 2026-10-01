@@ -170,6 +170,8 @@ fn a_job_reads_session_pictures_only_as_declared_inputs() {
     assert_eq!(code.matches("session_image(").count(), 3);
     assert!(!code.contains("session::get("));
     assert!(!code.contains("session::decode_rgba("));
+    assert!(!code.contains("usecrate::session::{"));
+    assert!(!code.contains("usecrate::session::get"));
 }
 
 #[test]

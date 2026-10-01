@@ -2035,9 +2035,13 @@ impl Inputs {
     }
 
     /// A mask: only its shape (black and white) is sent, so it isn't an input.
-    fn mask(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
+    async fn mask(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
         let img = session_image(core, id)?;
-        let shape = pinhole_engine::detail::mask_shape(&img.bytes)
+        let bytes = img.bytes.clone();
+        // Decode and encode: off the async workers.
+        let shape = tokio::task::spawn_blocking(move || pinhole_engine::detail::mask_shape(&bytes))
+            .await
+            .map_err(|_| CoreError::internal("Reading the painted area stopped unexpectedly."))?
             .map_err(|e| CoreError::invalid(e.to_string()))?;
         Ok((base64::engine::general_purpose::STANDARD.encode(shape), img))
     }
@@ -2167,7 +2171,7 @@ async fn generate_inner(
     let mut mask_src = None;
     if req.mode != GenMode::Txt2img {
         if let Some(mid) = req.mask_image_id.as_deref() {
-            let (b64, img) = Inputs::mask(core, mid)?;
+            let (b64, img) = Inputs::mask(core, mid).await?;
             mask_image = Some(b64);
             mask_src = Some(img);
         }

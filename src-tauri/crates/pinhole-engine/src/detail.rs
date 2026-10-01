@@ -125,7 +125,6 @@ impl DetailPlan {
     }
 }
 
-/// Bounding box of the painted pixels.
 /// A mask as painted (255) or not (0): white = change; a transparent pixel is unpainted.
 fn painted(mask: &[u8]) -> Result<GrayImage, ImageError> {
     let (mpx, mw, mh) = decode_rgba(mask)?;
@@ -153,6 +152,7 @@ pub fn mask_shape(mask: &[u8]) -> Result<Vec<u8>, ImageError> {
     encode_png_rgba(rgba.as_raw(), w, h)
 }
 
+/// Bounding box of the painted pixels.
 fn painted_box(mask: &GrayImage) -> Option<Rect> {
     let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
     for (x, y, p) in mask.enumerate_pixels() {
