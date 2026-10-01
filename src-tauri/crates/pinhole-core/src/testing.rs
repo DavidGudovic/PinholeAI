@@ -218,7 +218,6 @@ mod tests {
     use super::*;
     use crate::events::{CoreEvent, EventSink, GenPhase};
     use crate::generate::{self, GenerateRequest};
-    use crate::text_check::{self, BLOCKED_MESSAGE};
     use crate::{describe, session, ShippedPaths};
 
     const SENTINEL: &str = "PINHOLE_SENTINEL_7f3a";
@@ -2163,92 +2162,6 @@ mod tests {
             .id
             .clone();
         generate::generate(&core, restyle(&made)).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn prompts_of_pictures_made_in_the_session_are_word_checked_with_the_new_prompt() {
-        let (_tmp, core, _rec) = new_core();
-        let mock = MockSdServer::start().await;
-        use_external_engine(&core, &mock.base_url());
-        let model = register_fake_model(&core, "flux2_klein_4b");
-        install_fake_upscaler(&core);
-        let (first, then) = ("a passport on a desk", "scan");
-        assert!(text_check::check(first).is_ok() && text_check::check(then).is_ok());
-        assert!(text_check::check(&format!("{first}, {then}")).is_err());
-
-        let create = |prompt: &str| GenerateRequest::txt2img(model.clone(), prompt);
-        let edit = |src: &str, prompt: &str| {
-            let mut req = create(prompt);
-            req.mode = GenMode::Edit;
-            req.ref_image_ids = vec![src.to_string()];
-            req
-        };
-        let made = generate::generate(&core, create(first))
-            .await
-            .unwrap()
-            .images[0]
-            .id
-            .clone();
-        let sent = mock.requests().len();
-
-        // Edit, Create's reference picture and a later step of the chain: blocked before the
-        // engine runs.
-        let e = generate::generate(&core, edit(&made, then))
-            .await
-            .unwrap_err();
-        assert_eq!(
-            (e.code.as_str(), e.message.as_str()),
-            ("blocked", BLOCKED_MESSAGE)
-        );
-        let mut with_ref = create(then);
-        with_ref.ref_image_ids = vec![made.clone()];
-        let e = generate::generate(&core, with_ref).await.unwrap_err();
-        assert_eq!(e.code, "blocked");
-        let step = generate::generate(&core, edit(&made, "make it evening"))
-            .await
-            .unwrap()
-            .images[0]
-            .id
-            .clone();
-        session::discard(&core, &made);
-        let e = generate::generate(&core, edit(&step, then))
-            .await
-            .unwrap_err();
-        assert_eq!(e.code, "blocked", "the chain keeps the first prompt");
-        let up = generate::upscale_image(&core, &step, 2).await.unwrap().id;
-        let e = generate::generate(&core, edit(&up, then))
-            .await
-            .unwrap_err();
-        assert_eq!(e.code, "blocked", "an upscale keeps its source's prompts");
-        assert_eq!(
-            mock.requests().len(),
-            sent + 1,
-            "only the ordinary edit ran"
-        );
-
-        // A saved picture opened again in the same session keeps its prompts.
-        let saved = session::export_png(&core, &core.session.get(&step).unwrap()).unwrap();
-        let reopened = session::import_image(&core, saved.clone()).unwrap().id;
-        let e = generate::generate(&core, edit(&reopened, then))
-            .await
-            .unwrap_err();
-        assert_eq!(e.code, "blocked");
-
-        // Pictures from outside carry no prompt, and Reset forgets them all.
-        let outside = session::import_image(
-            &core,
-            pinhole_engine::testutil::solid_png(64, 64, [1, 2, 3, 255]),
-        )
-        .unwrap()
-        .id;
-        generate::generate(&core, edit(&outside, then))
-            .await
-            .unwrap();
-        session::clear(&core).await;
-        let reopened = session::import_image(&core, saved).unwrap().id;
-        generate::generate(&core, edit(&reopened, then))
-            .await
-            .unwrap();
     }
 
     #[tokio::test]

@@ -16,8 +16,7 @@ change it.
 - **Word check.** Prompts, "Improve my prompt" ideas, text written by the Describe helper and
   Browse searches are checked against fixed word lists in the code. Text that combines words about
   minors with sexual words is refused, and so is text that asks for a usable copy of an identity
-  document or a banknote. A prompt for a picture made from pictures Pinhole made in the same
-  session is checked together with the prompts that made them.
+  document or a banknote.
 - **Image check.** Every picture Pinhole makes is checked before it is shown, by small open
   models that run on the processor (about 1.2 GB, downloaded with the engine). A result is not
   shown when:
