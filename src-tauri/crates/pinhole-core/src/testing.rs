@@ -2108,10 +2108,7 @@ mod tests {
             readings: intimate_adult(),
             original_by_size: vec![(
                 (step.width, step.height),
-                pinhole_check::Original {
-                    has_face: true,
-                    intimate: false,
-                },
+                pinhole_check::Original { has_face: true },
             )],
             ..Default::default()
         };
@@ -2138,10 +2135,7 @@ mod tests {
         let model = register_fake_model(&core, "sdxl");
         let fake = FakeCheck {
             readings: intimate_adult(),
-            original: pinhole_check::Original {
-                has_face: true,
-                intimate: false,
-            },
+            original: pinhole_check::Original { has_face: true },
             ..Default::default()
         };
         let counts = fake.counts.clone();
@@ -2180,10 +2174,7 @@ mod tests {
         use_check(
             &core,
             FakeCheck {
-                original: pinhole_check::Original {
-                    has_face: true,
-                    intimate: false,
-                },
+                original: pinhole_check::Original { has_face: true },
                 ..Default::default()
             },
         );
@@ -2196,10 +2187,7 @@ mod tests {
         session::discard(&core, &photo);
         let fake = FakeCheck {
             readings: intimate_adult(),
-            original: pinhole_check::Original {
-                has_face: true,
-                intimate: false,
-            },
+            original: pinhole_check::Original { has_face: true },
             ..Default::default()
         };
         let counts = fake.counts.clone();
@@ -2212,7 +2200,7 @@ mod tests {
             "the original's readings were kept; only the fed-in step is measured"
         );
 
-        // Reset forgets the originals.
+        // After Reset, a new brought-in picture.
         session::clear(&core).await;
         let photo = session::import_image(
             &core,
@@ -2220,17 +2208,34 @@ mod tests {
         )
         .unwrap()
         .id;
-        // A photo that was already intimate when brought in: edits pass.
+        // Whatever a brought-in picture of a person already shows, it can't be made intimate:
+        // what a picture shows says nothing about the consent of the person in it.
         let fake = FakeCheck {
             readings: intimate_adult(),
-            original: pinhole_check::Original {
-                has_face: true,
-                intimate: true,
-            },
+            original: pinhole_check::Original { has_face: true },
             ..Default::default()
         };
         use_check(&core, fake);
-        generate::generate(&core, restyle(&photo)).await.unwrap();
+        let e = generate::generate(&core, restyle(&photo))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // A brought-in picture without a person (a room, a landscape): fine.
+        let room = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [4, 5, 6, 255]),
+        )
+        .unwrap()
+        .id;
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                original: pinhole_check::Original { has_face: false },
+                ..Default::default()
+            },
+        );
+        generate::generate(&core, restyle(&room)).await.unwrap();
     }
 
     #[tokio::test]
@@ -2239,10 +2244,7 @@ mod tests {
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
-        let face = pinhole_check::Original {
-            has_face: true,
-            intimate: false,
-        };
+        let face = pinhole_check::Original { has_face: true };
         use_check(
             &core,
             FakeCheck {

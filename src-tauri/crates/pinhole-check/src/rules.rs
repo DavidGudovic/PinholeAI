@@ -2,7 +2,7 @@
 //! is unit-tested with made-up scores (no model files, no test images).
 //!
 //! Three things are blocked, whatever Safe mode is set to (RELEASE-SPEC §4):
-//! 1. a brought-in photo of a person made intimate;
+//! 1. a brought-in picture of a person made intimate, whatever it already showed;
 //! 2. a sexual image of someone who looks like a child;
 //! 3. an intimate image from a model CivitAI marks "safe images only".
 //!
@@ -107,24 +107,12 @@ pub struct Readings {
     pub faces: Option<Vec<Face>>,
 }
 
-/// Most people on one brought-in picture measured on their own; with more, the picture
-/// doesn't count as already intimate.
-pub const MAX_PEOPLE_MEASURED: usize = 8;
-
-/// Whether a brought-in picture that reads as intimate as a whole counts as already intimate:
-/// only when every person in it (`people` faces, `each` = their own region intimate) is. A
-/// collage of an ordinary photo of someone next to an intimate picture is not. People found
-/// only with the picture turned, or too many to measure, fail closed.
-pub fn already_intimate(people: usize, each: &[bool]) -> bool {
-    people > 0 && people <= MAX_PEOPLE_MEASURED && each.len() == people && each.iter().all(|&i| i)
-}
-
-/// What the check measured once on a brought-in picture (the start of a chain).
+/// What the check measured once on a brought-in picture (the start of a chain). Only whether it
+/// shows a person: what the picture already showed doesn't make an intimate edit of that person
+/// acceptable (nothing in a picture shows the consent of the person in it).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Original {
     pub has_face: bool,
-    /// Already intimate when it was brought in.
-    pub intimate: bool,
 }
 
 /// Which rule blocked (shown only in dev builds; users see one neutral message).
@@ -175,7 +163,8 @@ pub fn needs_faces(nudity: f32, tags: Option<&Tags>) -> bool {
 
 /// The verdict for one result. `originals`: the brought-in pictures it was made from
 /// (empty for a plain Create). `safe_images_only`: a model or LoRA in use is marked
-/// "safe images only" on CivitAI.
+/// "safe images only" on CivitAI. Rules 2 and 3 never read `originals`: where a picture came
+/// from (made in Pinhole or brought in) never exempts it from them.
 pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> Option<Rule> {
     let tags = r.tags.as_ref();
     if is_sexual(r.nudity, tags) {
@@ -196,7 +185,7 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
         }
     }
     if is_intimate(r.nudity, tags) {
-        if originals.iter().any(|o| o.has_face && !o.intimate) {
+        if originals.iter().any(|o| o.has_face) {
             return Some(Rule::PhotoMadeIntimate);
         }
         if safe_images_only {
@@ -241,10 +230,8 @@ mod tests {
             faces: Some(faces),
         }
     }
-    const PHOTO_ORIGINAL: Original = Original {
-        has_face: true,
-        intimate: false,
-    };
+    const PHOTO_ORIGINAL: Original = Original { has_face: true };
+    const NO_PERSON: Original = Original { has_face: false };
 
     #[test]
     fn ordinary_pictures_pass() {
@@ -285,19 +272,8 @@ mod tests {
         // Drawn adults: no child tags, the age estimate isn't used on drawings.
         let r = readings(0.99, Some(tags(0.1, 0.9)), vec![face(0.9)]);
         assert_eq!(decide(&r, &[], false), None);
-        // Starting from an intimate picture that was brought in that way.
-        let r = readings(0.99, Some(photo(tags(0.1, 0.9))), vec![face(0.02)]);
-        let orig = Original {
-            has_face: true,
-            intimate: true,
-        };
-        assert_eq!(decide(&r, &[orig], false), None);
         // A brought-in picture without a person (a room, a landscape).
-        let orig = Original {
-            has_face: false,
-            intimate: false,
-        };
-        assert_eq!(decide(&r, &[orig], false), None);
+        assert_eq!(decide(&r, &[NO_PERSON], false), None);
     }
 
     #[test]
@@ -351,12 +327,8 @@ mod tests {
             Some(Rule::PhotoMadeIntimate)
         );
         // Any of two inputs.
-        let other = Original {
-            has_face: false,
-            intimate: false,
-        };
         assert_eq!(
-            decide(&r, &[other, PHOTO_ORIGINAL], false),
+            decide(&r, &[NO_PERSON, PHOTO_ORIGINAL], false),
             Some(Rule::PhotoMadeIntimate)
         );
         // Underwear counts too.
@@ -450,23 +422,10 @@ mod tests {
         assert!(!is_intimate(1.0, None));
     }
 
-    /// Regression: an intimate part elsewhere in a brought-in picture (a collage) used to
-    /// exempt an ordinary photo of someone in it from the real-photo rule.
+    /// Regression: a brought-in picture of a person that already looked intimate used to be
+    /// exempt from rule 1. What a picture shows says nothing about consent, so it never is.
     #[test]
-    fn already_intimate_is_per_person() {
-        assert!(already_intimate(1, &[true]));
-        assert!(already_intimate(2, &[true, true]));
-        assert!(!already_intimate(2, &[true, false]), "a collage");
-        assert!(!already_intimate(1, &[false]));
-        assert!(!already_intimate(0, &[]), "found only turned: fail closed");
-        assert!(!already_intimate(
-            MAX_PEOPLE_MEASURED + 1,
-            &[true; MAX_PEOPLE_MEASURED]
-        ));
-        let o = Original {
-            has_face: true,
-            intimate: already_intimate(2, &[true, false]),
-        };
+    fn an_intimate_brought_in_picture_of_a_person_cant_be_edited_intimate() {
         let r = Readings {
             nudity: 1.0,
             tags: Some(Tags {
@@ -476,6 +435,54 @@ mod tests {
             }),
             ..Default::default()
         };
-        assert_eq!(decide(&r, &[o], false), Some(Rule::PhotoMadeIntimate));
+        assert_eq!(
+            decide(&r, &[PHOTO_ORIGINAL], false),
+            Some(Rule::PhotoMadeIntimate)
+        );
+        assert_eq!(
+            decide(&r, &[PHOTO_ORIGINAL, PHOTO_ORIGINAL], false),
+            Some(Rule::PhotoMadeIntimate)
+        );
+    }
+
+    /// Where a result came from never exempts it from rules 2 and 3: the same readings give the
+    /// same verdict whether the picture was made in Pinhole (no originals) or from brought-in
+    /// pictures with or without a person.
+    #[test]
+    fn origin_never_exempts_a_result_from_rules_2_and_3() {
+        let origins: [&[Original]; 4] = [
+            &[],
+            &[NO_PERSON],
+            &[PHOTO_ORIGINAL],
+            &[NO_PERSON, PHOTO_ORIGINAL],
+        ];
+        // Rule 2: drawn (child tag) and photo (child face).
+        let mut drawn = tags(0.0, 0.8);
+        drawn.minor = 0.9;
+        let drawn = readings(0.9, Some(drawn), vec![]);
+        let photo_child = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![face(0.8)]);
+        // Rule 3: intimate, no person or child.
+        let intimate = readings(0.9, Some(nude(tags(0.7, 0.2))), vec![]);
+        for from in origins {
+            for safe_only in [false, true] {
+                assert_eq!(
+                    decide(&drawn, from, safe_only),
+                    Some(Rule::LooksUnderage),
+                    "{from:?}"
+                );
+                assert_eq!(
+                    decide(&photo_child, from, safe_only),
+                    Some(Rule::LooksUnderage),
+                    "{from:?}"
+                );
+            }
+            let rule3 = decide(&intimate, from, true);
+            if from.iter().any(|o| o.has_face) {
+                // Rule 1 comes first for a brought-in picture of a person; still blocked.
+                assert_eq!(rule3, Some(Rule::PhotoMadeIntimate), "{from:?}");
+            } else {
+                assert_eq!(rule3, Some(Rule::SafeImagesOnlyModel), "{from:?}");
+            }
+        }
     }
 }
