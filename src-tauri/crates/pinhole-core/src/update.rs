@@ -910,10 +910,7 @@ mod tests {
 
     #[test]
     fn stable_copies_are_not_offered_pre_releases() {
-        let releases = vec![
-            rel("v1.1.0-rc.1", false, &[]),
-            rel("v1.0.1", false, &[]),
-        ];
+        let releases = vec![rel("v1.1.0-rc.1", false, &[]), rel("v1.0.1", false, &[])];
         let stable = semver::Version::new(1, 0, 0);
         let info = pick_update(&releases, &stable, &Target::Manual).unwrap();
         assert_eq!(info.version, "1.0.1");
