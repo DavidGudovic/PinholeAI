@@ -58,6 +58,7 @@ keyring = "3"
 sysinfo = { version = ">=0.36, <0.40", default-features = false, features = ["system", "disk"] }
 async-trait = "0.1"
 semver = "1"
+minisign-verify = "0.3"
 
 # Dev/test builds: keep line tables (backtraces and panics still show file:line) but drop full
 # variable debug info. It is the biggest share of linker memory, build time and target/ size;

@@ -556,10 +556,12 @@ Done items live in git history. Still open:
   tool, too few to show 1 in 1,000. Re-measure with the read-only tool, then on a larger set.
 - **§6 licence field** (name + link) on every family, component and captioner, shown on every
   download, with a link to the full text in the acceptance prompt.
-- **Signed updates:** release files signed with a key only the maintainer holds (e.g. minisign),
-  and "Update and restart" refuses a file whose signature doesn't verify. Until then
-  `update::SELF_UPDATE = false`: "Check for updates" only opens the release page (SPEC §13
-  "Updates"). Then set `SELF_UPDATE = true`.
+- **Signed updates:** the code is in (SPEC §13 "Updates"); it switches on when the maintainer
+  generates the key (`npx tauri signer generate -w ~/.pinhole/update.key`), stores the private key
+  as the `PINHOLE_UPDATE_KEY` secret (and its password, if it has one, as
+  `PINHOLE_UPDATE_KEY_PASSWORD`) of the `release` environment (deployment branches and tags: `main` and `v*` only) and commits
+  the `.pub` file as `src-tauri/update-key.pub`. Keep a backup of the key: without it, copies can
+  only update by hand.
 - **Release files traceable to the source commit** (today `SHA256SUMS.txt` proves integrity, not
   who made them) and **Windows code signing** (Authenticode), so SmartScreen stops warning.
 - **Security review** of dependencies and the native engine build.
