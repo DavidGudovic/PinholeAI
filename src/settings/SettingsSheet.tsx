@@ -355,7 +355,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             {st && !st.installed && !engine.busy && (
               <Button size="sm" variant="primary" onClick={() => void engine.install()}>
                 <Download className="h-3.5 w-3.5" />
-                Install engine
+                Get the engine
               </Button>
             )}
           </div>
@@ -397,6 +397,9 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
           hint="Early-access models cost money on CivitAI. They're hidden unless this is on."
           control={<Toggle checked={settings.showPaid} onChange={(v) => update({ showPaid: v })} label={<span className="sr-only">Show paid models</span>} />}
         />
+      </Section>
+
+      <Section title="Creating">
         <Row
           label="Show tips"
           hint="One short tip about a feature you may have missed, under a picture. At most one per session."

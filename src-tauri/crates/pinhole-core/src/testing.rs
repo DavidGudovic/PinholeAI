@@ -614,10 +614,18 @@ mod tests {
             req
         };
 
+        let fake = FakeCheck::default();
+        let sizes = fake.sizes.clone();
+        use_check(&core, fake);
         let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
             .await
             .unwrap();
         assert_eq!(res.images.len(), 1);
+        // Regression: the redrawn box is checked on its own too, not only as a small part of
+        // the whole picture.
+        let sizes = sizes.lock().clone();
+        assert_eq!(sizes.len(), 2, "{sizes:?}");
+        assert_eq!(sizes[0], (1200, 900));
         let out = &res.images[0];
         assert_eq!(
             (out.width, out.height),
@@ -629,6 +637,11 @@ mod tests {
         let (w, h) = (
             body["width"].as_u64().unwrap(),
             body["height"].as_u64().unwrap(),
+        );
+        // The engine's own output, at the model's size, not the ~128 px box it becomes.
+        assert!(
+            sizes[1].0 >= 768 && sizes[1].1 >= 768,
+            "the redraw is checked at the size it was drawn: {sizes:?}"
         );
         // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
         assert!(
@@ -819,6 +832,29 @@ mod tests {
         assert_eq!(body["ref_images"].as_array().unwrap().len(), 1);
         assert!(body.get("init_image").is_none());
         assert_eq!(body["width"], body["height"]);
+    }
+
+    #[tokio::test]
+    async fn a_create_reference_picture_needs_the_vision_encoder() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let qwen = register_fake_model(&core, "qwen_image_21");
+        core.installed
+            .lock()
+            .files
+            .retain(|f| f.component_id.as_deref() != Some("qwen3vl_8b_mmproj"));
+        let mut req = GenerateRequest::txt2img(qwen, "a lighthouse in the style of the picture");
+        req.ref_image_ids = vec![reference.id.clone()];
+        let err = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(err.code, "not_found");
+        assert!(err.message.contains("Get"), "{}", err.message);
+        assert!(mock.requests().is_empty());
     }
 
     #[tokio::test]
@@ -2192,6 +2228,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_part_deleted_by_hand_shows_as_missing_and_asks_for_its_licence() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let id = register_fake_model(&core, "flux1_dev");
+        let model = |core: &AppCore| crate::models::list_models(core).unwrap().remove(0);
+        assert!(model(&core).missing_components.is_empty());
+        let (part, comp, kind) = {
+            let idx = core.installed.lock();
+            let f = idx.files.iter().find(|f| f.component_id.is_some()).unwrap();
+            (idx.abs_path(&core.data, f), f.component_id.clone(), f.kind)
+        };
+        std::fs::remove_file(&part).unwrap();
+        assert_eq!(model(&core).missing_components.len(), 1);
+        // FLUX.1 dev's parts download only after its licence was accepted.
+        let e = crate::models::install_missing_parts(&core, &id)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+
+        // Downloaded again under another name: it replaces the stale entry.
+        let again = part.with_file_name("again.safetensors");
+        std::fs::write(&again, b"1234").unwrap();
+        let file = pinhole_net::download::DownloadedFile {
+            path: again,
+            sha256: "ab".repeat(32),
+            size_bytes: 4,
+        };
+        let reg = crate::models::Registration {
+            kind,
+            friendly_name: "part".into(),
+            family: None,
+            component_id: comp.clone(),
+            civitai: None,
+            dtype: None,
+        };
+        crate::models::register_download(&core, &file, reg).unwrap();
+        let entries = core
+            .installed
+            .lock()
+            .files
+            .iter()
+            .filter(|f| f.component_id == comp)
+            .count();
+        assert_eq!(entries, 1);
+        assert!(model(&core).missing_components.is_empty());
+    }
+
+    #[tokio::test]
     async fn licences_are_accepted_once_and_only_by_id() {
         let (_tmp, core, _rec) = new_core();
         core.offline.set(true); // nothing leaves the machine
@@ -2372,15 +2456,31 @@ mod tests {
             words: None,
         }];
         req.add_trigger_words = false;
+        let e = generate::generate(&core, req.clone()).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert!(mock.requests().is_empty());
+        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
+        // of the check; the add-on still steers the picture.
+        crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
         // Under-18 terms in the negative prompt are how people keep them out.
-        let mut req = GenerateRequest::txt2img(model, "a nude woman, oil painting");
+        let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
         req.fine_tune.negative_prompt = Some("child, loli".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
+
+        // Regression: below CFG 1 the engine follows the negative prompt, so the request
+        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        for cfg in [0.0, 0.5, -3.0] {
+            let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
+            req.fine_tune.cfg = Some(cfg);
+            generate::generate(&core, req).await.unwrap();
+            let body = mock.requests().pop().unwrap();
+            assert_eq!(body["sample_params"]["guidance"]["txt_cfg"], 1.0, "{cfg}");
+        }
     }
 
     #[tokio::test]
@@ -2513,6 +2613,40 @@ mod tests {
         let body = &llama.requests()[0];
         assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
+    }
+
+    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
+    /// content past the checks.
+    #[tokio::test]
+    async fn sd_args_keep_only_tuning_launch_defaults() {
+        let (_tmp, core, _) = new_core();
+        let mut cfg = (*crate::engine_setup::engine_config(&core).unwrap()).clone();
+        cfg.stable_diffusion_cpp.launch_defaults = [
+            "--embd-dir",
+            "/e",
+            "--photo-maker",
+            "/p",
+            "-n",
+            "words",
+            "--mmap",
+            "--log-level",
+            "warn",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let wiring = vec!["--model".to_string(), "/m.safetensors".to_string()];
+        let args = crate::generate::full_sd_args(&core, &wiring, &cfg);
+        for bad in ["--embd-dir", "/e", "--photo-maker", "/p", "-n", "words"] {
+            assert!(!args.iter().any(|a| a == bad), "{bad}: {args:?}");
+        }
+        assert!(args.iter().any(|a| a == "--mmap"), "{args:?}");
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--log-level" && w[1] == "warn"));
+        assert!(args
+            .windows(2)
+            .any(|w| w[0] == "--model" && w[1] == "/m.safetensors"));
     }
 
     #[tokio::test]

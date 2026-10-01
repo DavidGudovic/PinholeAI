@@ -137,7 +137,8 @@ export function ModelDetails({
         blob = await loadBlob(item.thumbUrl, { front: true });
         actions.toast("The full-size image is too large, so a smaller copy was opened in Edit.");
       }
-      await actions.importToEdit(blob);
+      // Not loaded yet when the user is first asked about unsaved edits.
+      if (!(await actions.importToEdit(blob))) return;
       setOpen(null);
       actions.setTab("edit");
     } catch (e) {

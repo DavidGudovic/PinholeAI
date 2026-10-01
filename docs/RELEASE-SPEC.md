@@ -185,9 +185,11 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    Any check model output that isn't a finite number is an error, so the picture is dropped.
 3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
-   Models flagged `poi` or `minor` can't be installed at all (§5). Known limits: the flag is set
-   only by installs from Browse / paste with the model's data (a file matched by hash gets none),
-   and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
+   Models flagged `poi` or `minor` can't be installed at all (§5). The flag comes from the
+   model's data at a Browse / paste install and from "Add a file"'s by-hash lookup; when the
+   model's data can't be fetched, the file counts as "safe images only" (fail closed). Known
+   limits: files added offline, linked from another app's folder or unknown to CivitAI get no
+   flag, and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
@@ -278,7 +280,8 @@ prints them for a folder of test pictures.
     Paste from CivitAI, Use these settings). `sfwOnly` models show a "Safe images only" badge.
   - **Level 2:** flagged models are shown and installable again. The flags are stored in
     `installed.json` at install time (model metadata, not prompts). Files added by hand get flags
-    only from the by-hash lookup "Add a file" already does when it can't tell the type; no
+    only from the by-hash lookup "Add a file" already does when it can't tell the type (a
+    `poi`/`minor` match is refused there too); no
     background or folder-wide lookups (privacy, 2026-09-30). While any flagged resource is loaded, §3.2 rule 3 applies.
     This mirrors CivitAI's own rule and keeps the legitimate SFW uses (satire of public figures,
     historical figures, an avatar model of yourself, child characters in SFW art).
@@ -436,7 +439,9 @@ templates, posts and UI.
 - **Local word check on text — added** (2026-09-30, before §3 exists). `text_check.rs` blocks
   text that pairs an under-18 term with a sexual term, in every Safe mode: the positive prompt
   at Generate in Create and every Edit mode, queued jobs included (style, trigger words and the
-  picked add-ons' names and trigger words included; not the negative prompt), the idea sent to
+  picked add-ons' names, trigger words and CivitAI names and trained words included, even when
+  the user edited the trigger words; not the negative prompt, so CFG is never sent below 1,
+  where the engine would follow the negative prompt), the idea sent to
   "Improve my prompt", what Describe / Improve write back, and Browse search text. David first
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary

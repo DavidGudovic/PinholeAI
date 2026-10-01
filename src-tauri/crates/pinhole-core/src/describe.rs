@@ -452,6 +452,7 @@ pub async fn install_captioner(
                 },
             };
             if let Err(e) = register_download(&core2, &file, reg) {
+                core2.downloads.fail_done(&gid, &e.code, &e.message);
                 *core2.describe.last_error.lock() = Some(e.message);
             }
         }
@@ -469,6 +470,7 @@ pub async fn install_captioner(
                 Err(e) => Err(e),
             };
             if let Err(e) = res {
+                core2.downloads.fail_done(&gid, &e.code, &e.message);
                 *core2.describe.last_error.lock() = Some(e.message);
             }
         }
@@ -951,19 +953,30 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
     if let Some(url) = core.describe.external.lock().clone() {
         return Ok(LlamaClient::new(core.local.clone(), url));
     }
-    if let Some(msg) = core.describe.last_error.lock().clone() {
-        return Err(CoreError::new("engine_failed", msg));
-    }
+    // A failed install's message explains why its files are missing; once the files and the
+    // engine are there (another helper, a retried install) it no longer applies.
+    let last_error = || {
+        core.describe
+            .last_error
+            .lock()
+            .clone()
+            .map(|msg| CoreError::new("engine_failed", msg))
+    };
     let (_, model, mmproj) = captioner_files(core, helper).ok_or_else(|| {
-        CoreError::not_found(
-            "The describe model isn't installed yet. Click Get on the Describe tab.",
-        )
+        last_error().unwrap_or_else(|| {
+            CoreError::not_found(
+                "The describe model isn't installed yet. Click Get on the Describe tab.",
+            )
+        })
     })?;
     let engine = engine_setup::installed_engine(core, EngineKind::Llama).ok_or_else(|| {
-        CoreError::not_found(
-            "The describe engine isn't installed yet. Click Get on the Describe tab.",
-        )
+        last_error().unwrap_or_else(|| {
+            CoreError::not_found(
+                "The describe engine isn't installed yet. Click Get on the Describe tab.",
+            )
+        })
     })?;
+    *core.describe.last_error.lock() = None;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
         // Same files AND the same engine build (the backend may have changed in Settings).
@@ -975,6 +988,15 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
             return Ok(LlamaClient::new(core.local.clone(), s.proc.base_url())
                 .with_api_key(s.api_key.clone()));
         }
+    }
+    // Describe and Improve can use different helpers: never stop one that is still answering
+    // the other (the caller's own guard counts as one).
+    if slot.as_mut().is_some_and(|s| s.proc.is_running())
+        && core.describe.busy.load(Ordering::SeqCst) > 1
+    {
+        return Err(CoreError::invalid(
+            "Wait for the other description or prompt to finish, then try again.",
+        ));
     }
     // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
     let cancel = core.describe.stopping.lock().clone();
@@ -996,7 +1018,31 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
     })?;
     // `launch_args` sets the host and port (loopback only).
     let mut args = cfg.llama_cpp.launch_defaults.clone();
-    crate::generate::strip_flag(&mut args, &["--host", "--port"]);
+    // engine.yaml is editable in some installs: nothing that writes text to disk, prints
+    // prompts or loads extra weights.
+    crate::generate::strip_flag(
+        &mut args,
+        &[
+            "--host",
+            "--port",
+            "--log-file",
+            "--lora",
+            "--lora-scaled",
+            "--control-vector",
+            "--control-vector-scaled",
+            "--slot-save-path",
+            "--model",
+            "-m",
+            "--mmproj",
+            "--path",
+        ],
+    );
+    args.retain(|a| {
+        !matches!(
+            a.as_str(),
+            "-v" | "--verbose" | "--log-verbose" | "--verbose-prompt" | "--log-prompts"
+        )
+    });
     args.extend(llama::launch_args(
         &model,
         &mmproj,

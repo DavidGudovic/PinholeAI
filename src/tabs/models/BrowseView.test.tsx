@@ -5,6 +5,7 @@ import { installMocks } from "../../lib/mock";
 import { createStore, StoreContext } from "../../lib/state/store";
 import { ScrollRootContext } from "./lib/preview";
 import { BrowseView } from "./BrowseView";
+import * as api from "../../lib/api";
 
 const observers: { options: IntersectionObserverInit | undefined; targets: Element[] }[] = [];
 class FakeIO {
@@ -48,4 +49,25 @@ describe("BrowseView infinite scroll", () => {
     expect(io.options?.root).toBe(scroller);
     expect(io.options?.rootMargin).toBe("1600px 0px");
   }, 10_000);
+});
+
+describe("BrowseView cached pages", () => {
+  const show = () =>
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <BrowseView settings={null} onShowInstalled={() => undefined} />
+      </StoreContext.Provider>,
+    );
+  const card = async (name: string) => (await screen.findByText(name, undefined, { timeout: 5000 })).closest("article")!;
+
+  it("drops a deleted model's Installed badge even when it was deleted while Browse was closed", async () => {
+    show();
+    await waitFor(async () => expect((await card("Juggernaut XL")).textContent).toContain("Installed"));
+    cleanup(); // Browse closes (e.g. the Installed view opens)
+    const m = (await api.listModels()).find((x) => x.civitaiVersionId === 782002)!;
+    await api.deleteModel(m.id);
+    await new Promise((r) => setTimeout(r, 0)); // let the models-changed event arrive
+    show();
+    await waitFor(async () => expect((await card("Juggernaut XL")).textContent).not.toContain("Installed"), { timeout: 5000 });
+  }, 15_000);
 });

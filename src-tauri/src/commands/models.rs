@@ -63,6 +63,12 @@ pub async fn confirm_family(
 }
 
 #[tauri::command]
+pub async fn cancel_add(core: State<'_, Arc<AppCore>>, token: String) -> Result<(), CoreError> {
+    pinhole_core::models::cancel_add(&core, &token);
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn install_missing_parts(
     core: State<'_, Arc<AppCore>>,
     model_id: String,
@@ -199,6 +205,7 @@ super::area_commands![
     install_recommended,
     add_local_model,
     confirm_family,
+    cancel_add,
     install_missing_parts,
     list_linked_folders,
     add_linked_folder,

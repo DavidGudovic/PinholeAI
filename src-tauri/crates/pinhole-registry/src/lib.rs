@@ -425,20 +425,19 @@ impl Registry {
                     "family `{id}`: neither dials.cfg_fixed nor dials.cfg_range"
                 ));
             }
-            for flag in &f.flags {
-                if flag.starts_with("--") && !wiring::is_known_flag(flag) {
-                    problems.push(format!("family `{id}`: unknown sd-server flag `{flag}`"));
-                }
+            if wiring::keep_tuning_flags(&f.flags, &[]) != f.flags {
+                problems.push(format!(
+                    "family `{id}`: flags {:?} hold an unknown flag, a flag without its value, or one that loads content",
+                    f.flags
+                ));
             }
         }
         for p in &self.file.hardware_profiles {
-            for flag in &p.flags {
-                if flag.starts_with("--") && !wiring::is_known_flag(flag) {
-                    problems.push(format!(
-                        "hardware profile `{}`: unknown sd-server flag `{flag}`",
-                        p.name
-                    ));
-                }
+            if wiring::keep_tuning_flags(&p.flags, &[]) != p.flags {
+                problems.push(format!(
+                    "hardware profile `{}`: flags {:?} hold an unknown flag, a flag without its value, or one that loads content",
+                    p.name, p.flags
+                ));
             }
         }
         for (role, list) in &self.file.recommended {

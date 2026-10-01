@@ -77,6 +77,8 @@ pub struct FakeCheck {
     pub original: pinhole_check::Original,
     /// How many results and originals were measured.
     pub counts: std::sync::Arc<parking_lot::Mutex<(usize, usize)>>,
+    /// Width and height of every result measured, in order.
+    pub sizes: std::sync::Arc<parking_lot::Mutex<Vec<(u32, u32)>>>,
 }
 
 #[cfg(any(test, feature = "test-util"))]
@@ -84,11 +86,14 @@ impl Inspector for FakeCheck {
     fn missing(&self) -> Vec<&'static str> {
         self.missing.clone()
     }
-    fn readings(&self, _png: &[u8]) -> Result<pinhole_check::Readings, pinhole_check::CheckError> {
+    fn readings(&self, png: &[u8]) -> Result<pinhole_check::Readings, pinhole_check::CheckError> {
         if !self.missing.is_empty() {
             return Err(pinhole_check::CheckError::Missing(self.missing[0]));
         }
         self.counts.lock().0 += 1;
+        self.sizes
+            .lock()
+            .push(pinhole_engine::png::dimensions(png).unwrap_or_default());
         Ok(self.readings.clone())
     }
     fn original(&self, _png: &[u8]) -> Result<pinhole_check::Original, pinhole_check::CheckError> {
@@ -239,11 +244,14 @@ pub fn ensure_ready(core: &AppCore) -> CoreResult<()> {
 
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
 /// when none is blocked; otherwise the whole batch is dropped.
+/// `also_check`: parts of the results measured on their own and judged the same way (a
+/// Fix details box, which is too small to judge in a large whole picture); never kept.
 /// `sources`: the brought-in pictures the batch was made from. `safe_images_only`: the
 /// model or a LoRA in use is marked "safe images only" on CivitAI.
 pub async fn check_results(
     core: &Arc<AppCore>,
     pngs: Vec<Vec<u8>>,
+    also_check: Vec<Vec<u8>>,
     sources: Vec<Source>,
     safe_images_only: bool,
 ) -> CoreResult<Vec<CheckedPng>> {
@@ -251,8 +259,8 @@ pub async fn check_results(
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
         let inspector = c.check.inspector();
-        let mut all = Vec::with_capacity(pngs.len());
-        for png in &pngs {
+        let mut all = Vec::with_capacity(pngs.len() + also_check.len());
+        for png in pngs.iter().chain(&also_check) {
             all.push(inspector.readings(png)?);
         }
         // The originals only matter when a result is intimate.

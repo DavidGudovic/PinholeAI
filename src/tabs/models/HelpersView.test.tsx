@@ -54,14 +54,14 @@ describe("Helpers view", () => {
     await waitFor(() => expect(api.installCaptioner).toHaveBeenCalledWith("qwen25_vl_7b"));
   });
 
-  it("offers Remove only for helpers Pinhole downloaded", async () => {
+  it("offers Delete only for helpers Pinhole downloaded", async () => {
     list = [helper({ installed: true, removable: true, downloadBytes: 0 }), helper({ id: "qwen25_vl_7b", title: "Qwen2.5-VL 7B", installed: true, removable: false, downloadBytes: 0 })];
     show();
     await screen.findByText("Qwen2.5-VL 7B");
-    expect(screen.getAllByRole("button", { name: /Remove/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /Delete/ })).toHaveLength(1);
     expect(screen.getByText("Came with another model")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /Remove/ }));
-    fireEvent.click(await screen.findByRole("button", { name: /Remove · frees/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Delete/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Delete · frees/ }));
     await waitFor(() => expect(api.deleteHelper).toHaveBeenCalledWith("describe"));
   });
 });
