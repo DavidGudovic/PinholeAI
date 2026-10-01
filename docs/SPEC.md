@@ -738,50 +738,30 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Windows: NSIS installer + portable zip (with an empty `Data/` folder → portable mode).
 - Linux: AppImage + .deb (built on Ubuntu 22.04; engine needs 24.04+, see §13).
 - GitHub Actions matrix build for both; release artifacts with SHA-256 sums.
-- License: MIT (compatible with stable-diffusion.cpp and llama.cpp). Include their license
-  files in `THIRD_PARTY_LICENSES`.
+- License: Pinhole Licence 1.0 (`LICENSE`): the MIT License plus a Safeguards condition
+  (`SAFEGUARDS.md`), so source-available, not open source. The
+  engines (stable-diffusion.cpp, llama.cpp) keep their MIT licences; include their license files
+  in `THIRD_PARTY_LICENSES`.
 - Model licenses are the user's concern, but show the license name on the model card
-  (e.g. FLUX.1-dev is non-commercial). Release adds licence acceptance (`docs/RELEASE-SPEC.md` §6).
-- **No build is shared with anyone** (public release, zip for a friend, store listing) until
-  every item in `docs/RELEASE-SPEC.md` is done.
+  (e.g. FLUX.1-dev is non-commercial). Licence acceptance: `docs/RELEASE-SPEC.md` §6.
+- Every public build follows `docs/RELEASE-SPEC.md` (safeguards, marking, release gate).
 
 ---
 
 ## 11. Milestones
 
-**M0 – Skeleton**: Tauri + React app, Data folder resolution, settings, hardware detection,
-engine download + launch of `sd-server`, health check.
-
-**M1 – Generate**: registry loader, header detector, wiring, VRAM estimate, Create tab with
-simple dials and Style field, in-memory results, Save, Cancel, Reset. First-run
-"Recommended for your GPU" screen with one-click download (§6.1).
-
-**M2 – Models tab**: CivitAI browse with all filters (Safe mode, Tags, paid hidden by default),
-model cards with VRAM needed, install flow with component resolution, Installed view, delete.
-
-**M3 – Edit**: instruction edit (Qwen Image Edit 2511 / Kontext), restyle img2img, mask brush,
-edit chain with undo and compare slider.
-
-**M4 – Describe + Styles + Presets**: llama-server captioner, sentence/tags modes, Use as prompt;
-style library (built-ins + user styles, final-prompt preview); presets save/load/built-ins.
-
-**M5 – Polish**: live preview (TAESD), upscale, LoRAs + trigger words, offline mode enforcement
-test, packaging, README with screenshots.
-
-**M6 – Release readiness**: everything in `docs/RELEASE-SPEC.md` (AI-generated marking, local
-image check + guard LLM, catalog and licence changes, terms, `SAFETY.md`). Required before any
-build is shared.
+M0–M6 are done (skeleton, generate, models, edit, describe + styles + presets, polish, release
+readiness); v1.0.0 was released on GitHub on 2026-10-01. The plans are in git history. New work
+comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/RELEASE-SPEC.md` §12.
 
 ---
 
 ## 12. Nice-to-haves (post v1, pick later)
 
-- **Prompt helper**: "Improve my prompt" using the local captioner/LLM, fully offline.
 - **Face fix** pass (ADetailer-style) for small faces in full-body shots.
-- **Background remover** for product shots (brand work).
 - **Batch edit**: apply the same instruction to several images (e.g. a product line).
-- **Seed grid**: 4 seeds side by side, pick one to continue.
-- **Keyboard-first flow** (built): Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
+- Built: "Improve my prompt" (§5.1) and the keyboard-first flow: Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
+- Ruled out: background remover, ControlNet, seed grid (Edit Fine-tune stays slim).
 
 ---
 
@@ -795,8 +775,8 @@ build is shared.
 - **Paid (early access) models**: hidden by default.
 - **Content filter**: Safe mode On (default) · Off. No "adult only" mode; the NSFW tag in the
   Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
-- **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` §12 lists what
-  was done first).
+- **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` sets the
+  rules every public build follows).
 - **Updates** (manual only): **Update and restart** is off (`update::SELF_UPDATE = false`) until
   release files are signed with a key only the maintainer holds: `SHA256SUMS.txt` comes from the
   same release, so it can't catch a release someone else uploaded. Until then every copy is offered

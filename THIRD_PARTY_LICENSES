@@ -1,7 +1,7 @@
 Pinhole — third-party licenses
 ==============================
 
-Pinhole itself is released under the MIT License (see LICENSE).
+Pinhole itself is released under the Pinhole Licence 1.0 (see LICENSE).
 
 Pinhole ships NO model weights and NO inference-engine binaries. The engines
 below are downloaded once, on first run, from their official GitHub releases

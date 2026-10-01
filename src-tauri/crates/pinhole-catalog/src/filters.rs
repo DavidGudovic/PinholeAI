@@ -737,7 +737,7 @@ impl CatalogFilters {
 
     /// Why [`CatalogFilters::keep_model`] drops a model (`None` = kept).
     pub fn hidden_by(&self, q: &BrowseQuery, m: &Model) -> Option<Hidden> {
-        // Not offered at all (RELEASE-SPEC §5, Level 1): CivitAI marks it as a real person or a minor.
+        // Not offered at all (RELEASE-SPEC §5): CivitAI marks it as a real person or a minor.
         if m.is_unavailable() || m.is_person_or_minor() {
             return Some(Hidden::Other);
         }

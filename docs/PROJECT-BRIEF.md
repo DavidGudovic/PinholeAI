@@ -2,7 +2,7 @@
 
 The one-page context for anyone (human or Claude) picking up Pinhole. Details live in
 [`SPEC.md`](SPEC.md) (what), [`ARCHITECTURE.md`](ARCHITECTURE.md) (how the code is organised),
-[`RELEASE-SPEC.md`](RELEASE-SPEC.md) (what must happen before anything is shared) and
+[`RELEASE-SPEC.md`](RELEASE-SPEC.md) (the safeguards and release rules every public build follows) and
 [`../CLAUDE.md`](../CLAUDE.md) (working rules).
 
 ## What it is
@@ -12,12 +12,11 @@ press Generate. Tauri 2 + Rust core + React/TS UI. Images are made by
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. Both are pinned, SHA-256-verified
 downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on your computer.
 
-## Status (v1.1.0)
-- Milestones M0–M5 implemented on `main`. v1.0.0 is the first GitHub release (2026-10-01). v1.1.0
-  (safety and model-trust fixes, `RELEASE-SPEC.md` top) is built as a draft release that the
-  maintainer publishes. `RELEASE-SPEC.md` §12 lists what was
-  done for it and what is still open. In-app updates open the release page until release files
-  are signed (`update::SELF_UPDATE`).
+## Status (v1.0.1)
+- The app is feature-complete (milestones M0–M6 done). v1.0.0 is the first GitHub release
+  (2026-10-01); v1.0.1 followed the same day (safety and model-trust fixes; Pinhole Licence 1.0).
+  `RELEASE-SPEC.md` §12 lists what is still open. In-app updates open the release page until
+  release files are signed (`update::SELF_UPDATE`).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
   Ubuntu 24.04 (CPU), the app's own install → add model → wire → generate → save path, a
   WebDriver test that drives the real app, the privacy sentinel scan, Offline mode, installers.
@@ -57,8 +56,9 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
   has no preview API); cancel during generation restarts the engine.
 - Local by design: prompts only in RAM, `embed_image_metadata:false` + `--disable-image-metadata`
   + PNG text-chunk scrub, engines on 127.0.0.1, incognito WebView, WebView makes no network calls.
-- Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
-  results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,
+- Hardening: patched sd-server with a per-launch key that rejects browser requests
+  (`ENGINE_LOCKDOWN`); engine stops after Reset / 5 min idle (it keeps results 600 s);
+  llama-server per-launch API key, engine identity check, CivitAI files content-checked,
   imports re-encoded to PNG, downloads size-bounded, release builds refuse unpinned engines.
 - Linux engine needs Ubuntu 24.04+ (the builds use glibc 2.38); Linux NVIDIA uses CUDA on RTX 30xx+ with the NVIDIA driver, else Vulkan.
 - Windows engines need the VC++ runtime: bundled and copied next to the engine only when missing.
@@ -93,31 +93,16 @@ fine-tune installed to reproduce.
 - Actions → API probe fetches CivitAI / Hugging Face URLs on a runner (sessions' containers can't
   reach those hosts).
 
-## Open work / roadmap
-1. **VRAM robustness on real GPUs** (built, awaiting a real-GPU re-test): see Status. Untested in
-   CI: CUDA/Vulkan behaviour, the Windows leftover-engine sweep and `nvidia-smi` on Windows.
-2. **More model families** (registry entries done, not yet run on a real GPU): Krea 2 (Turbo is
-   the second "Realistic" one-click pick on 12 GB+), Anima, Flux.1 Krea, Flux.2 (dev, klein 4B/9B
-   + base), Chroma, Qwen-Image 2.1, SD 3 / 3.5, HiDream-O1, ERNIE-Image, Mage-Flow; CivitAI int8
-   (ComfyUI int8_tensorwise) files now install. Not runnable: MiniMax H3 (video + audio only in the
-   engine), "Qwen 2" (API-only on CivitAI). Needs real-GPU checks of defaults and VRAM figures.
-3. **CivitAI browser** (built, awaiting a real-app check): Safe mode (On/Off) = Stability Matrix's default
-   (hide CivitAI-flagged models, PG previews only) plus YAML tag / name / sample-rating rules tuned on
-   live data; opens on Most downloaded · All time; full pages (client-side filters fetch more, then
-   "Load more"); gzip JSON, CivitAI's own 450 px card renditions, RAM caches, prefetch.
-4. **Engine auth patch** (decided 2026-09-28: before any shared build, not now): build a patched
-   sd-server in CI that rejects browser requests and requires a per-launch token. Listed in the
-   RELEASE-SPEC §12 checklist.
-5. Measure real VRAM on 8 / 12 / 16 GB cards (SPEC §14) and record observed peak VRAM.
-6. Code signing (e.g. Azure Trusted Signing) to remove SmartScreen warnings.
-7. M6 / `RELEASE-SPEC.md`: AI-generated marking, local image check + guard LLM, licence acceptance,
-   terms, SAFETY.md.
-8. Optional: our own Ubuntu 22.04 engine build; live preview once sd-server supports it.
+## Open work
+1. **Real-GPU checks** of everything under "Waiting on a real-GPU test" above, including defaults
+   and VRAM figures for the newer families (Krea 2, Anima, Flux.1 Krea, Flux.2, Chroma, SD 3 / 3.5,
+   HiDream-O1, ERNIE-Image, Mage-Flow, CivitAI int8 files). Not runnable: MiniMax H3 (video and
+   audio only in the engine), "Qwen 2" (API-only on CivitAI).
+2. **CivitAI browser** real-app check (Safe mode rules, paging, gzip, thumbnails).
+3. Measure real VRAM on 8 / 12 / 16 GB cards (SPEC §14) and record observed peak VRAM.
+4. The open safeguard and release items in `RELEASE-SPEC.md` §12 (false-positive re-measure,
+   licence field on every download, signed updates and release files, Windows code signing,
+   dependency review).
+5. Optional: our own Ubuntu 22.04 engine build; live preview once sd-server supports it.
 
-## Positioning (for later, after M6)
-"Local AI images that just work — no nodes, no Python; your prompts and images stay on your
-computer." Audiences: freelancers/agencies/e-commerce (client work stays local, commercial-use filter,
-licences shown), RTX owners who bounced off ComfyUI/A1111, CivitAI users (Paste from CivitAI),
-AMD/Intel GPU owners (Vulkan), indie game devs/writers. Channels: r/StableDiffusion, r/LocalLLaMA,
-Show HN, Product Hunt, stable-diffusion.cpp's README/Discord, YouTube reviewers, winget/Scoop/Flathub.
-Never market it as "uncensored/unfiltered/no one will know" (see CLAUDE.md wording rules).
+Never market Pinhole as "uncensored", "unfiltered" or "no one will know" (CLAUDE.md wording rules).
