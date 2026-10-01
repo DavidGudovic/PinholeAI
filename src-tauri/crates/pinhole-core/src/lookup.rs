@@ -104,6 +104,74 @@ pub fn mark_unchecked(registry: &Registry, index: &mut InstalledIndex) -> bool {
     changed
 }
 
+/// At start, with signing on (`pinhole_store::seal`): a model or add-on whose saved lookup
+/// result doesn't match its signature goes back to "not looked up yet" (so "safe images only"),
+/// and its hash is cleared so the file itself is hashed again ([`start_rehash`]; a linked file
+/// by the next look through its folder). Returns the ids to hash again.
+pub fn check_seals(
+    index: &mut InstalledIndex,
+    key: &pinhole_store::seal::SealKey,
+    seals: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let parked = index.linked.parked.iter_mut().map(|e| &mut e.file);
+    for f in index.files.iter_mut().chain(parked) {
+        if !looked_up_kind(f.kind) || seals.get(&f.id).is_some_and(|s| key.verify(f, s)) {
+            continue;
+        }
+        f.lookup = Some(Lookup::NotYet);
+        f.sha256.clear();
+        if !f.is_linked() {
+            out.push(f.id.clone());
+        }
+    }
+    out
+}
+
+/// Hash again the files [`check_seals`] cleared, in the background. A file Pinhole offers
+/// itself gets its trust back; any other stays "not looked up yet" until it is looked up
+/// (Offline mode turned off, or added again), as for a file added offline.
+pub fn start_rehash(core: &Arc<AppCore>, ids: Vec<String>) {
+    if ids.is_empty() {
+        return;
+    }
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let core = core.clone();
+    rt.spawn(async move { rehash(&core, ids).await });
+}
+
+async fn rehash(core: &Arc<AppCore>, ids: Vec<String>) {
+    for id in ids {
+        let found = {
+            let index = core.installed.lock();
+            index
+                .get(&id)
+                .filter(|f| f.sha256.is_empty())
+                .map(|f| (index.abs_path(&core.data, f), f.kind))
+        };
+        let Some((abs, kind)) = found else {
+            continue;
+        };
+        let hashed = tokio::task::spawn_blocking(move || pinhole_catalog::local::hash_file(&abs))
+            .await
+            .ok()
+            .and_then(Result::ok);
+        let Some((sha256, _)) = hashed else {
+            continue;
+        };
+        let registry = core.registry();
+        let mut index = core.installed.lock();
+        if let Some(f) = index.get_mut(&id).filter(|f| f.sha256.is_empty()) {
+            f.lookup = initial(&registry, kind, &sha256);
+            f.sha256 = sha256;
+            let _ = index.save(&core.data);
+        }
+    }
+    core.emit(CoreEvent::ModelsChanged);
+}
+
 /// Ask CivitAI about one file by its SHA-256 (and the model's flags, as for a Browse install).
 pub async fn look_up_with(client: &CivitaiClient, sha256: &str) -> Outcome {
     let v = match tokio::time::timeout(TIMEOUT, client.by_hash(sha256)).await {
@@ -609,6 +677,99 @@ mod tests {
         );
         assert_eq!(index.files[1].lookup, Some(Lookup::NotYet));
         assert!(index.files.iter().all(InstalledFile::safe_images_only));
+    }
+
+    /// A saved lookup result that doesn't match its signature goes back to "not looked up
+    /// yet", and the file is hashed again.
+    #[tokio::test]
+    async fn a_lookup_result_that_fails_its_signature_is_checked_again() {
+        let (_tmp, core) = test_core(Arc::new(Recorder::default()));
+        let key = pinhole_store::seal::SealKey::for_tests([3; 32]);
+        let registry = core.registry();
+        let shipped = registry.known_files()[0].sha256.clone();
+        let file = |id: &str, rel: &str, kind: ModelKind, sha: &str, lookup| InstalledFile {
+            id: id.into(),
+            rel_path: rel.into(),
+            kind,
+            sha256: sha.into(),
+            size_bytes: 1,
+            family: None,
+            component_id: None,
+            friendly_name: id.into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+            trigger_words: None,
+            lookup,
+        };
+        let lora_dir = core.data.models(ModelKind::Lora);
+        std::fs::create_dir_all(&lora_dir).unwrap();
+        std::fs::write(lora_dir.join("ok.safetensors"), b"ok").unwrap();
+        std::fs::write(lora_dir.join("edited.safetensors"), b"edited").unwrap();
+        let mut index = InstalledIndex {
+            files: vec![
+                file(
+                    "ok",
+                    "models/loras/ok.safetensors",
+                    ModelKind::Lora,
+                    &"aa".repeat(32),
+                    Some(Lookup::Found),
+                ),
+                file(
+                    "edited",
+                    "models/loras/edited.safetensors",
+                    ModelKind::Lora,
+                    &"bb".repeat(32),
+                    Some(Lookup::NoMatch),
+                ),
+                file(
+                    "linked",
+                    "linked/abc/loras/l.safetensors",
+                    ModelKind::Lora,
+                    &"cc".repeat(32),
+                    Some(Lookup::NotYet),
+                ),
+                file(
+                    "vae",
+                    "models/vae/v.safetensors",
+                    ModelKind::Vae,
+                    &shipped,
+                    None,
+                ),
+            ],
+            ..Default::default()
+        };
+        let seals: std::collections::BTreeMap<String, String> = index
+            .files
+            .iter()
+            .filter(|f| f.id != "linked")
+            .map(|f| (f.id.clone(), key.seal(f)))
+            .collect();
+        // Changed after it was signed, and a linked file with no signature.
+        index.files[1].lookup = Some(Lookup::Found);
+        let again = check_seals(&mut index, &key, &seals);
+        assert_eq!(again, ["edited"]);
+        let get = |id: &str| index.get(id).unwrap().clone();
+        assert_eq!(get("ok").lookup, Some(Lookup::Found));
+        assert_eq!(get("ok").sha256, "aa".repeat(32));
+        for id in ["edited", "linked"] {
+            assert_eq!(
+                (get(id).lookup, get(id).sha256.as_str()),
+                (Some(Lookup::NotYet), "")
+            );
+            assert!(get(id).safe_images_only());
+        }
+        assert_eq!(get("vae").lookup, None, "parts aren't looked up");
+
+        // The file itself is hashed again; it stays "not looked up yet" until it is looked up.
+        *core.installed.lock() = index;
+        rehash(&core, vec!["edited".into()]).await;
+        let f = core.installed.lock().get("edited").unwrap().clone();
+        use sha2::Digest;
+        assert_eq!(f.sha256, hex::encode(sha2::Sha256::digest(b"edited")));
+        assert_eq!(f.lookup, Some(Lookup::NotYet));
     }
 
     #[test]

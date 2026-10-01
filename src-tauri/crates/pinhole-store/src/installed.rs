@@ -441,6 +441,20 @@ impl InstalledIndex {
 
     /// Save the linked folders and their files (`Data/catalog/linked-folders.json`).
     pub fn save_linked(&self, dir: &DataDir) -> Result<(), StoreError> {
+        self.save_linked_file(dir)?;
+        self.save_seals(dir)
+    }
+
+    /// Sign what the lookups found for every file ([`crate::seal`]), when signing is on.
+    fn save_seals(&self, dir: &DataDir) -> Result<(), StoreError> {
+        let Some(key) = crate::seal::active() else {
+            return Ok(());
+        };
+        let parked = self.linked.parked.iter().map(|e| &e.file);
+        crate::seal::write(dir, key, self.files.iter().chain(parked))
+    }
+
+    fn save_linked_file(&self, dir: &DataDir) -> Result<(), StoreError> {
         let path = linked_file(dir);
         if self.linked.folders.is_empty() && !path.exists() {
             return Ok(());
@@ -504,7 +518,8 @@ impl InstalledIndex {
     /// Also saves the linked folders ([`InstalledIndex::save_linked`]).
     pub fn save(&self, dir: &DataDir) -> Result<(), StoreError> {
         self.save_to(dir, &dir.installed_file())?;
-        self.save_linked(dir)
+        self.save_linked_file(dir)?;
+        self.save_seals(dir)
     }
 
     /// Save to an explicit index file (moving the Models folder). Never creates

@@ -306,6 +306,13 @@ prints them for a folder of test pictures.
   - `sfwOnly` models show a "Safe images only" badge. The flag is stored in `installed.json` at
     install time (`CivitaiRef.sfw_only`, model metadata, not prompts). While any such resource
     is loaded, §3.2 rule 3 applies.
+  - **Saved lookup results are signed** (`pinhole-store/src/seal.rs`): HMAC-SHA256 over each
+    model's and add-on's lookup result, CivitAI ids and `sfw_only`, with a key made once per
+    computer and kept in the OS keychain; the signatures are in `Data/catalog/model-lookups.json`.
+    At start, an entry that doesn't match goes back to "not looked up yet" (so "safe images only")
+    and the file is hashed again (`lookup::check_seals`). The first start with signing signs what
+    is installed. Without a keychain (a Linux desktop with no Secret Service) nothing is signed
+    or checked, so models keep working as before.
   - **Files added by hand or linked** (built 2026-10-01, `pinhole-core/src/lookup.rs`): every
     main model and add-on gets a CivitAI by-hash lookup (SHA-256 of the file itself; a linked
     folder's notes are not trusted for it), whether or not its family is already known. A

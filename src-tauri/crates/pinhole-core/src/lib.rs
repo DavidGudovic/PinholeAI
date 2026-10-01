@@ -40,7 +40,7 @@ use pinhole_hardware::HardwareInfo;
 use pinhole_net::download::DownloadManager;
 use pinhole_net::{HttpClient, LocalClient, OfflineFlag};
 use pinhole_registry::Registry;
-use pinhole_store::{DataDir, InstalledIndex, Settings};
+use pinhole_store::{seal, DataDir, InstalledIndex, Settings};
 
 pub use error::{CoreError, CoreResult};
 pub use events::{CoreEvent, EventSink, InstallStarted, NullSink};
@@ -87,6 +87,8 @@ pub struct AppCore {
     pub linked: linked::LinkedRuntime,
     /// The local image check (RELEASE-SPEC §4).
     pub check: imagecheck::CheckState,
+    /// Files to hash again at start ([`lookup::check_seals`]).
+    rehash: Mutex<Vec<String>>,
 }
 
 impl AppCore {
@@ -113,8 +115,29 @@ impl AppCore {
             overrides.exists().then_some(overrides.as_path()),
         )?;
         let mut installed = InstalledIndex::load(&data)?;
+        // Saved lookup results are signed with a key in the OS keychain (not in tests).
+        let mut rehash = Vec::new();
+        let mut changed = false;
+        let key = if cfg!(feature = "test-util") {
+            seal::KeyState::Unavailable
+        } else {
+            seal::load_or_create_key()
+        };
+        match key {
+            seal::KeyState::Created(key) => {
+                seal::activate(key);
+                changed = true;
+            }
+            seal::KeyState::Existing(key) => {
+                rehash = lookup::check_seals(&mut installed, &key, &seal::read(&data));
+                changed = !rehash.is_empty();
+                seal::activate(key);
+            }
+            seal::KeyState::Unavailable => {}
+        }
         // Files added by hand or linked before the CivitAI lookup covered them all.
-        if lookup::mark_unchecked(&registry, &mut installed) {
+        changed |= lookup::mark_unchecked(&registry, &mut installed);
+        if changed {
             let _ = installed.save(&data);
         }
         let offline = OfflineFlag::new(settings.offline);
@@ -140,6 +163,7 @@ impl AppCore {
             models: models::ModelsState::default(),
             linked: linked::LinkedRuntime::default(),
             check,
+            rehash: Mutex::new(rehash),
         }))
     }
 
@@ -153,6 +177,7 @@ impl AppCore {
         describe::start_idle_watchdog(self);
         linked::start(self);
         imagecheck::start_idle_unload(self);
+        lookup::start_rehash(self, std::mem::take(&mut *self.rehash.lock()));
     }
 
     /// Stop engines (app exit).
