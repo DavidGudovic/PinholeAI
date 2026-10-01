@@ -47,11 +47,7 @@ instead of a refactor:
 - Text: `pinhole_engine::sdapi::ImgGenRequest::new` takes only a `CheckedPrompt`, which only the
   word check makes (`pinhole_engine::words`, wrapped by `pinhole_core::text_check`). `prepare`
   in generate.rs checks the final prompt (idea + style + prefix + trigger words) with the
-  add-on names; the request's prompt field is private. When a job's pictures (Edit, Create's
-  reference picture) were made in this session, that text is checked again together with the
-  prompts that made them (`text_check::check_with_inputs`): each made picture keeps the
-  prompts of its chain in memory (`SessionImage::made_with`, also kept for a saved picture
-  opened again in the same session) until Reset. Never written, logged or shown.
+  add-on names; the request's prompt field is private.
 - Pictures: `Session::insert_generated` takes only a `CheckedPng`, which only
   `imagecheck::check_results` makes. Every made picture (Create, Edit in every mode, batches,
   Upscale) reaches the UI through it; imported pictures go in through `import_image` only.

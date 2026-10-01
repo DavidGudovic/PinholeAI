@@ -19,7 +19,7 @@ use pinhole_net::download::{DownloadKind, DownloadSpec};
 use serde::Serialize;
 
 use crate::session::{SessionImage, Source};
-use crate::text_check::{MadeWith, BLOCKED_MESSAGE};
+use crate::text_check::BLOCKED_MESSAGE;
 use crate::{AppCore, CoreError, CoreResult};
 
 /// Models are dropped from memory after this long without a check.
@@ -123,8 +123,8 @@ pub struct CheckState {
     /// Held while deciding what to download and queueing it, so two setups at once
     /// (engine setup + the button) can't queue the same files twice.
     install_start: tokio::sync::Mutex<()>,
-    /// SHA-256 of each exported (saved) picture → the brought-in pictures and prompts it was
-    /// made from, so opening a saved picture again keeps its chain (memory only, until Reset).
+    /// SHA-256 of each exported (saved) picture → the brought-in pictures it was made
+    /// from, so opening a saved picture again keeps its chain (memory only, until Reset).
     exported: Mutex<HashMap<String, Exported>>,
     /// Brought-in pictures that passed the check before Describe, by session image id.
     describable: Mutex<std::collections::HashSet<String>>,
@@ -154,14 +154,8 @@ impl CheckState {
     }
 
     /// Save/Copy: remember what an exported picture was made from.
-    pub fn note_export(
-        &self,
-        bytes: &[u8],
-        made_from: Vec<Source>,
-        safe_images_only: bool,
-        made_with: MadeWith,
-    ) {
-        if made_from.is_empty() && !safe_images_only && made_with.is_empty() {
+    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>, safe_images_only: bool) {
+        if made_from.is_empty() && !safe_images_only {
             return;
         }
         let key = hex_sha256(bytes);
@@ -170,7 +164,6 @@ impl CheckState {
             Exported {
                 made_from: Arc::from(made_from),
                 safe_images_only,
-                made_with,
             },
         );
     }
@@ -191,8 +184,6 @@ pub struct Exported {
     pub made_from: Arc<[Source]>,
     /// See [`SessionImage::safe_images_only`].
     pub safe_images_only: bool,
-    /// See [`SessionImage::made_with`].
-    pub made_with: MadeWith,
 }
 
 /// `SafetyCheckStatus` in src/lib/types.ts.
@@ -281,12 +272,10 @@ pub fn ensure_ready(core: &AppCore) -> CoreResult<()> {
 pub enum MadeBy<'a> {
     /// Drawn by an installed model (file id) with these add-ons (file ids), from these
     /// pictures (none for a plain Create; the mask isn't one: it is only a shape).
-    /// `prompt`: the step's prompt with its add-on names and trigger words.
     Model {
         model_id: &'a str,
         addon_ids: &'a [String],
         inputs: &'a [SessionImage],
-        prompt: &'a str,
     },
     /// Enlarged by the upscaler, which adds no model of its own.
     Upscale(&'a SessionImage),
@@ -315,16 +304,6 @@ impl MadeBy<'_> {
             }
         }
         (sources, fed_in)
-    }
-
-    /// The prompts of this step and of every step before it in this session.
-    fn made_with(&self) -> MadeWith {
-        match self {
-            MadeBy::Model { inputs, prompt, .. } => {
-                MadeWith::joined(Some(prompt), inputs.iter().map(|i| &i.made_with))
-            }
-            MadeBy::Upscale(img) => img.made_with.clone(),
-        }
     }
 
     /// Rule 3: a model or add-on of this step, or of any step before it, is marked "safe
@@ -389,7 +368,6 @@ pub async fn check_results(
 ) -> CoreResult<Vec<CheckedPng>> {
     let (sources, inputs) = made_by.sources();
     let safe_images_only = made_by.safe_images_only(core);
-    let made_with = made_by.made_with();
     let made_from: Arc<[Source]> = Arc::from(sources.clone());
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
@@ -439,7 +417,6 @@ pub async fn check_results(
             png,
             made_from: made_from.clone(),
             safe_images_only,
-            made_with: made_with.clone(),
         })
         .collect())
 }
@@ -453,7 +430,6 @@ pub struct CheckedPng {
     made_from: Arc<[Source]>,
     /// Checked under rule 3 (see [`MadeBy`]); every picture made from it is too.
     safe_images_only: bool,
-    made_with: MadeWith,
 }
 
 impl CheckedPng {
@@ -461,13 +437,8 @@ impl CheckedPng {
         &self.png
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>, bool, MadeWith) {
-        (
-            self.png,
-            self.made_from,
-            self.safe_images_only,
-            self.made_with,
-        )
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>, bool) {
+        (self.png, self.made_from, self.safe_images_only)
     }
 
     /// Tests that exercise the session without running the check.
@@ -477,7 +448,6 @@ impl CheckedPng {
             png,
             made_from: Arc::from(Vec::new()),
             safe_images_only: false,
-            made_with: MadeWith::default(),
         }
     }
 }
