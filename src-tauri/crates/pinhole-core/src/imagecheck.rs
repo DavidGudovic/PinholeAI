@@ -279,17 +279,12 @@ pub async fn check_results(
         {
             let mut found = originals(&c, inspector.as_ref(), &sources)?;
             // A face the brought-in picture didn't show clearly but a later step does (made
-            // larger, straightened, sharpened) counts too. It's exempt as already intimate
-            // only when every brought-in picture was.
-            let exempt = !found.is_empty() && found.iter().all(|o| o.has_face && o.intimate);
-            for o in originals(&c, inspector.as_ref(), &inputs)? {
-                if o.has_face {
-                    found.push(Original {
-                        has_face: true,
-                        intimate: exempt && o.intimate,
-                    });
-                }
-            }
+            // larger, straightened, sharpened) counts too.
+            found.extend(
+                originals(&c, inspector.as_ref(), &inputs)?
+                    .into_iter()
+                    .filter(|o| o.has_face),
+            );
             found
         } else {
             Vec::new()
@@ -423,11 +418,11 @@ pub async fn readings_of(core: &Arc<AppCore>, id: &str) -> CoreResult<Option<Str
             .map(|(px, w, h)| pinhole_engine::watermark::is_marked(&px, w, h))
             .unwrap_or(false);
         Ok::<_, CheckError>(format!(
-            "{} · sexual {} · as a brought-in picture: face {}, intimate {} · rule on its own: {verdict} · Made with AI watermark: {}",
+            "{} · sexual {} · intimate {} · as a brought-in picture: face {} · rule on its own: {verdict} · Made with AI watermark: {}",
             describe(&r),
             yes(pinhole_check::rules::is_sexual(r.nudity, r.tags.as_ref())),
+            yes(pinhole_check::rules::is_intimate(r.nudity, r.tags.as_ref())),
             yes(o.has_face),
-            yes(o.intimate),
             yes(mark),
         ))
     })

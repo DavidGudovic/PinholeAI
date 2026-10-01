@@ -20,8 +20,8 @@ always on. Safe mode (a Models setting) doesn't change it.
   models that run on the processor (about 1.1 GB, downloaded with the engine). A result is not
   shown when:
   - it is sexual and shows someone who looks like a child;
-  - it makes a photo of a real person that was brought into Pinhole intimate, when that photo
-    wasn't already;
+  - it makes a picture of a person that was brought into Pinhole intimate, whatever that
+    picture already showed;
   - it is intimate and comes from a model its CivitAI author marked "safe images only".
 
   It doesn't block adult content of adults. If the check's files are missing or
