@@ -18,7 +18,7 @@ use pinhole_check::{files, CheckError, Checker, Original, Readings, Rule};
 use pinhole_net::download::{DownloadKind, DownloadSpec};
 use serde::Serialize;
 
-use crate::session::Source;
+use crate::session::{SessionImage, Source};
 use crate::text_check::BLOCKED_MESSAGE;
 use crate::{AppCore, CoreError, CoreResult};
 
@@ -248,22 +248,78 @@ pub fn ensure_ready(core: &AppCore) -> CoreResult<()> {
     Ok(())
 }
 
+/// How a batch of results was made. [`check_results`] works out every rule input from it
+/// (the brought-in pictures behind it, and the flags of every model and add-on involved,
+/// including those that made the pictures fed in), so no caller passes a rule input itself.
+pub enum MadeBy<'a> {
+    /// Drawn by an installed model (file id) with these add-ons (file ids), from these
+    /// pictures (none for a plain Create; the mask isn't one: it is only a shape).
+    Model {
+        model_id: &'a str,
+        addon_ids: &'a [String],
+        inputs: &'a [SessionImage],
+    },
+    /// Enlarged by the upscaler, which adds no model of its own.
+    Upscale(&'a SessionImage),
+}
+
+impl MadeBy<'_> {
+    fn inputs(&self) -> &[SessionImage] {
+        match self {
+            MadeBy::Model { inputs, .. } => inputs,
+            MadeBy::Upscale(img) => std::slice::from_ref(*img),
+        }
+    }
+
+    /// The brought-in pictures behind the inputs (each once), and the made pictures from
+    /// those chains that are fed in: a face can show up in them (enlarged, straightened,
+    /// sharpened) that the brought-in picture didn't show clearly.
+    fn sources(&self) -> (Vec<Source>, Vec<Source>) {
+        let mut sources: Vec<Source> = Vec::new();
+        let mut fed_in = Vec::new();
+        for img in self.inputs() {
+            fed_in.extend(img.fed_in_source());
+            for s in img.sources() {
+                if !sources.iter().any(|k| k.id == s.id) {
+                    sources.push(s);
+                }
+            }
+        }
+        (sources, fed_in)
+    }
+
+    /// Rule 3: a model or add-on of this step, or of any step before it, is marked "safe
+    /// images only". A file that isn't installed any more counts as marked.
+    fn safe_images_only(&self, core: &AppCore) -> bool {
+        let inherited = self.inputs().iter().any(|i| i.safe_images_only);
+        let MadeBy::Model {
+            model_id,
+            addon_ids,
+            ..
+        } = self
+        else {
+            return inherited;
+        };
+        let idx = core.installed.lock();
+        inherited
+            || std::iter::once(*model_id)
+                .chain(addon_ids.iter().map(String::as_str))
+                .any(|id| idx.get(id).is_none_or(|f| f.safe_images_only()))
+    }
+}
+
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
 /// when none is blocked; otherwise the whole batch is dropped.
 /// `also_check`: parts of the results measured on their own and judged the same way (a
 /// Fix details box, which is too small to judge in a large whole picture); never kept.
-/// `sources`: the brought-in pictures the batch was made from. `inputs`: made pictures from
-/// those chains fed into this step; a person found in one counts like one in a brought-in
-/// picture. `safe_images_only`: the model or a LoRA in use is marked "safe images only" on
-/// CivitAI.
 pub async fn check_results(
     core: &Arc<AppCore>,
     pngs: Vec<Vec<u8>>,
     also_check: Vec<Vec<u8>>,
-    sources: Vec<Source>,
-    inputs: Vec<Source>,
-    safe_images_only: bool,
+    made_by: MadeBy<'_>,
 ) -> CoreResult<Vec<CheckedPng>> {
+    let (sources, inputs) = made_by.sources();
+    let safe_images_only = made_by.safe_images_only(core);
     let made_from: Arc<[Source]> = Arc::from(sources.clone());
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
@@ -324,8 +380,7 @@ pub async fn check_results(
 pub struct CheckedPng {
     png: Vec<u8>,
     made_from: Arc<[Source]>,
-    /// Checked as made with a "safe images only" model or add-on (rule 3). An upscale of it
-    /// is checked the same way: the upscaler doesn't change what the picture comes from.
+    /// Checked under rule 3 (see [`MadeBy`]); every picture made from it is too.
     safe_images_only: bool,
 }
 

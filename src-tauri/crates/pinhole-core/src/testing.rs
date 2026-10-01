@@ -2533,7 +2533,7 @@ mod tests {
         assert_eq!(e.code, "blocked");
         // Ordinary pictures from it are fine.
         use_check(&core, FakeCheck::default());
-        let ordinary = generate::generate(&core, GenerateRequest::txt2img(model, "x"))
+        let ordinary = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
             .await
             .unwrap()
             .images[0]
@@ -2555,8 +2555,20 @@ mod tests {
         if cfg!(debug_assertions) {
             assert!(e.details.unwrap().starts_with("safe_images_only"));
         }
-        // An upscale of a picture from an unmarked model isn't.
+        // Nor does restyling it with another, unmarked model lift the rule.
+        let other = register_fake_model(&core, "sdxl");
+        assert_ne!(other, model);
+        let mut restyle = GenerateRequest::txt2img(other.clone(), "y");
+        restyle.mode = GenMode::Img2img;
+        restyle.init_image_id = Some(ordinary.clone());
+        let e = generate::generate(&core, restyle).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // An upscale or restyle of a picture from an unmarked model isn't under it.
         generate::upscale_image(&core, &made, 4).await.unwrap();
+        let mut restyle = GenerateRequest::txt2img(other, "y");
+        restyle.mode = GenMode::Img2img;
+        restyle.init_image_id = Some(made);
+        generate::generate(&core, restyle).await.unwrap();
     }
 
     /// RELEASE-SPEC §5: an add-on or model added by hand or linked counts as "safe images

@@ -23,9 +23,9 @@ change it.
     face that looks like a teenager's;
   - it makes a picture of a person that was brought into Pinhole intimate, whatever that
     picture already showed;
-  - it is intimate and comes from a model or add-on that is "safe images only": its CivitAI
+  - it is intimate and comes from a model or add-on that is "safe images only" (its CivitAI
     author marked it so, or it was added from your computer or another app's folder and CivitAI
-    hasn't confirmed what it is.
+    hasn't confirmed what it is), or from a picture such a model or add-on made.
 
   It doesn't block adult content of adults. If the check's files are missing or
   damaged, Pinhole makes nothing until they are downloaded again. When a picture is stopped, it
