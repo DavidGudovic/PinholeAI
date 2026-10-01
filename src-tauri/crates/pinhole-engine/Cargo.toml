@@ -28,6 +28,7 @@ tar = { version = "0.4", default-features = false }
 # Decode/encode for clipboard copy (RGBA), 2x upscale downsample, import sniffing.
 # Already in the tree via tauri-plugin-clipboard-manager (arboard).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+unicode-normalization = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 # prctl(PR_SET_PDEATHSIG) so engines die with the app; SIGTERM for graceful stop.
