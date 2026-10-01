@@ -355,22 +355,16 @@ impl Checker {
     ) -> Result<Option<Vec<[f32; 4]>>, CheckError> {
         use image::imageops::{rotate180, rotate270, rotate90};
         let m = self.face_model(l)?;
-        let keep = |found: Vec<(Face, [f32; 4])>| -> Vec<[f32; 4]> {
-            found
-                .into_iter()
-                .filter(|f| f.0.counts_in_original())
-                .map(|f| f.1)
-                .collect()
-        };
+        let keep = original_boxes;
         // The whole picture first (quick); then, for a large picture, its own resolution.
         let mut whole = find_faces(&m, img, 1.0)?;
         whole.extend(find_faces(&m, img, 0.5)?);
-        let whole = keep(merge_faces(whole));
+        let whole = keep(whole);
         if !whole.is_empty() {
             return Ok(Some(whole));
         }
         if img.width().max(img.height()) > WINDOW {
-            let upright = keep(merge_faces(find_faces_in_windows(&m, img)?));
+            let upright = keep(find_faces_in_windows(&m, img)?);
             if !upright.is_empty() {
                 return Ok(Some(upright));
             }
@@ -658,6 +652,20 @@ fn find_faces_in_windows(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4
     Ok(all)
 }
 
+/// The boxes of faces that count in a brought-in picture, one per face. Filtered before
+/// merging: a confident box too small to count must not hide a larger box of the same face.
+fn original_boxes(found: Vec<(Face, [f32; 4])>) -> Vec<[f32; 4]> {
+    merge_faces(
+        found
+            .into_iter()
+            .filter(|f| f.0.counts_in_original())
+            .collect(),
+    )
+    .into_iter()
+    .map(|f| f.1)
+    .collect()
+}
+
 /// One find per face: overlapping boxes from several passes are merged, the most confident
 /// kept.
 fn merge_faces(mut all: Vec<(Face, [f32; 4])>) -> Vec<(Face, [f32; 4])> {
@@ -826,6 +834,20 @@ mod tests {
                 .iter()
                 .any(|&(x, y, w, h)| x + w == dims.0 && y + h == dims.1));
         }
+    }
+
+    #[test]
+    fn a_small_confident_box_does_not_hide_a_face_that_counts() {
+        let face = |score: f32, side: f32| Face {
+            score,
+            side,
+            ..Default::default()
+        };
+        let found = vec![
+            (face(0.95, 10.0), [100.0, 100.0, 10.0, 10.0]),
+            (face(0.7, 16.0), [97.0, 97.0, 16.0, 16.0]),
+        ];
+        assert_eq!(original_boxes(found), vec![[97.0, 97.0, 16.0, 16.0]]);
     }
 
     #[test]
