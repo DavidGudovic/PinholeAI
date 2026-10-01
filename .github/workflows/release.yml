@@ -105,15 +105,12 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Pinhole ${{ needs.check.outputs.version }}
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
-          # Personal test builds only until docs/RELEASE-SPEC.md is done (CLAUDE.md).
-          prerelease: true
+          # A version with a suffix (1.1.0-rc.1) is a pre-release.
+          prerelease: ${{ contains(needs.check.outputs.version, '-') }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: upload/*
           body: |
-            > **Personal test build.** Not for sharing: no build is shared with anyone until
-            > everything in `docs/RELEASE-SPEC.md` is done.
-
             ## Download
 
             | System | File |
@@ -127,3 +124,6 @@ jobs:
             Verify downloads with `sha256sum -c SHA256SUMS.txt`.
 
             No model weights or engine binaries are bundled: Pinhole downloads the engine for your GPU and the models you pick, once, on first run.
+            Windows SmartScreen may warn because the app isn't code-signed yet: choose **More info → Run anyway**.
+
+            Pinhole shows its usage guidelines when it first opens, and each model's licence before download. How the safeguards work: [SAFETY.md](https://github.com/${{ github.repository }}/blob/main/SAFETY.md).

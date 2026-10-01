@@ -745,7 +745,7 @@ export interface ResolvedResources {
 }
 
 // ---------------------------------------------------------------- updates (Rust pinhole_core::update)
-/** How this copy can update itself. manual = open the release page (the .deb, dev builds). */
+/** How this copy can update itself. manual = open the release page (every copy while in-app updates are off, the .deb, dev builds). */
 export type UpdateInstallMode = "installer" | "portable" | "appImage" | "manual";
 
 export interface UpdateInfo {
