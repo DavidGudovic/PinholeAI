@@ -43,6 +43,9 @@ pub struct SessionImage {
     /// XMP or a C2PA manifest), read before its metadata was dropped. Written back on export;
     /// never used by the image check (anyone can write such a label onto a real photo).
     pub ai_label: Option<AiLabel>,
+    /// Made with a model or add-on marked "safe images only" (RELEASE-SPEC §3.2 rule 3), or
+    /// an upscale of such a picture. False for brought-in pictures.
+    pub safe_images_only: bool,
 }
 
 /// A brought-in picture at the start of a chain of edits. Its bytes stay with every
@@ -113,7 +116,7 @@ impl Session {
     /// stored. The only way a made picture gets into the session: it takes nothing but a
     /// [`CheckedPng`].
     pub fn insert_generated(&self, epoch: u64, checked: CheckedPng, meta: ResultImage) -> bool {
-        let (png, made_from) = checked.into_parts();
+        let (png, made_from, safe_images_only) = checked.into_parts();
         let mut images = self.images.write();
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
@@ -128,6 +131,7 @@ impl Session {
             meta: Some(meta),
             made_from,
             ai_label: None,
+            safe_images_only,
         };
         images.insert(img.id.clone(), img);
         true
@@ -212,6 +216,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         origin: Origin::Imported,
         made_from,
         ai_label,
+        safe_images_only: false,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -872,6 +877,7 @@ mod tests {
             origin,
             made_from: Arc::from(from),
             ai_label: None,
+            safe_images_only: false,
         }
     }
 

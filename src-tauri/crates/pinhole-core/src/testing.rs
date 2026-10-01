@@ -1844,34 +1844,35 @@ mod tests {
         let _ = leftover.wait();
     }
 
+    /// Pretend the upscaler component is installed.
+    fn install_fake_upscaler(core: &Arc<AppCore>) {
+        let (rel, size) = write_dummy(core, ModelKind::Upscaler, "RealESRGAN_x4plus.pth");
+        core.installed.lock().upsert(InstalledFile {
+            id: "up".into(),
+            rel_path: rel,
+            kind: ModelKind::Upscaler,
+            sha256: "0".repeat(64),
+            size_bytes: size,
+            family: None,
+            component_id: Some(generate::UPSCALER_COMPONENT.into()),
+            friendly_name: "ESRGAN".into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+            trigger_words: None,
+            lookup: None,
+        });
+    }
+
     #[tokio::test]
     async fn upscale_uses_installed_esrgan() {
         let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
-        // Pretend the upscaler component is installed.
-        {
-            let (rel, size) = write_dummy(&core, ModelKind::Upscaler, "RealESRGAN_x4plus.pth");
-            let mut idx = core.installed.lock();
-            idx.upsert(InstalledFile {
-                id: "up".into(),
-                rel_path: rel,
-                kind: ModelKind::Upscaler,
-                sha256: "0".repeat(64),
-                size_bytes: size,
-                family: None,
-                component_id: Some(generate::UPSCALER_COMPONENT.into()),
-                friendly_name: "ESRGAN".into(),
-                civitai: None,
-                added_at: 0,
-                last_used: None,
-                observed_vram_gb: None,
-                dtype: None,
-                trigger_words: None,
-                lookup: None,
-            });
-        }
+        install_fake_upscaler(&core);
         let mut req = GenerateRequest::txt2img(model, "a cat");
         req.fine_tune.width = Some(64);
         req.fine_tune.height = Some(48);
@@ -2532,9 +2533,30 @@ mod tests {
         assert_eq!(e.code, "blocked");
         // Ordinary pictures from it are fine.
         use_check(&core, FakeCheck::default());
-        generate::generate(&core, GenerateRequest::txt2img(model, "x"))
+        let ordinary = generate::generate(&core, GenerateRequest::txt2img(model, "x"))
             .await
-            .unwrap();
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        // An upscale of one stays under the rule: the upscaler adds no model of its own.
+        install_fake_upscaler(&core);
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                ..Default::default()
+            },
+        );
+        let e = generate::upscale_image(&core, &ordinary, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        if cfg!(debug_assertions) {
+            assert!(e.details.unwrap().starts_with("safe_images_only"));
+        }
+        // An upscale of a picture from an unmarked model isn't.
+        generate::upscale_image(&core, &made, 4).await.unwrap();
     }
 
     /// RELEASE-SPEC §5: an add-on or model added by hand or linked counts as "safe images

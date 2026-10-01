@@ -2946,13 +2946,20 @@ async fn upscale_inner(
     meta.height = h;
     meta.parent_id = Some(src.id.clone());
     // Checked like every made picture (one way in), and it keeps the source's brought-in
-    // pictures for later edits.
+    // pictures for later edits. A picture from a "safe images only" model stays under rule 3.
     let from = src.sources();
     let input = src.fed_in_source().into_iter().collect();
-    let checked = crate::imagecheck::check_results(core, vec![png], Vec::new(), from, input, false)
-        .await?
-        .pop()
-        .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
+    let checked = crate::imagecheck::check_results(
+        core,
+        vec![png],
+        Vec::new(),
+        from,
+        input,
+        src.safe_images_only,
+    )
+    .await?
+    .pop()
+    .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
     if cancel.is_cancelled()
         || !core
             .session
