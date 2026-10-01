@@ -1,6 +1,6 @@
 // The model picker for Describe: the same card as Create's model picker, listing the helper models
 // that can describe pictures. It reads and saves the same choice as Settings → Helper models
-// ("Automatic" = Pinhole picks, the larger model when it is installed). Only installed helpers can be
+// ("Automatic" = Pinhole picks). Only installed helpers can be
 // chosen; "Get more models…" opens Models → Helpers. Safe-mode-Off helpers never show while Safe mode
 // is On (the backend leaves them out of the list too).
 import { useState } from "react";
@@ -77,7 +77,7 @@ export function HelperPicker({ purpose, label = "Model" }: { purpose: HelperPurp
                 close();
               }}
               right={!current ? <Check className="h-4 w-4 text-amber-600" /> : undefined}
-              hint="Pinhole picks. Uses the larger model when it is installed."
+              hint="Pinhole picks the best installed model."
             >
               <span className="font-medium">Automatic</span>
             </MenuItem>

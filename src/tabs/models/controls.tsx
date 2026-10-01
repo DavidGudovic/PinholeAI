@@ -76,37 +76,32 @@ export function Chip({
 
 /**
  * One filter-bar row that never wraps: when its items don't fit, the row scrolls sideways
- * (a mouse wheel scrolls it too while it can still move; at either end the page scrolls).
+ * (touchpad, Shift + wheel, or keyboard focus) and the cut-off edge fades out.
  */
 export function ScrollRow({ label, className = "", children }: { label?: string; className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   // Which ends have more to scroll to: those edges fade out, so a cut-off row reads as one.
   const [more, setMore] = useState({ left: false, right: false });
+  const measure = useRef(() => {});
+  measure.current = () => {
+    const el = ref.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    const left = el.scrollLeft > 1;
+    const right = max > 1 && el.scrollLeft < max - 1;
+    setMore((m) => (m.left === left && m.right === right ? m : { left, right }));
+  };
+  // Items come and go with the filters (Clear filters, Runs on my card): measure after every render.
+  useEffect(() => measure.current());
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => {
-      const max = el.scrollWidth - el.clientWidth;
-      const left = el.scrollLeft > 1;
-      const right = max > 1 && el.scrollLeft < max - 1;
-      setMore((m) => (m.left === left && m.right === right ? m : { left, right }));
-    };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaX !== 0 || e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return;
-      const max = el.scrollWidth - el.clientWidth;
-      if ((e.deltaY < 0 && el.scrollLeft <= 0) || (e.deltaY > 0 && el.scrollLeft >= max - 1)) return;
-      e.preventDefault();
-      el.scrollLeft += e.deltaY;
-    };
-    measure();
-    el.addEventListener("wheel", onWheel, { passive: false });
-    el.addEventListener("scroll", measure, { passive: true });
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    const onChange = () => measure.current();
+    el.addEventListener("scroll", onChange, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(onChange) : null;
     ro?.observe(el);
-    if (el.firstElementChild) ro?.observe(el.firstElementChild);
     return () => {
-      el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("scroll", measure);
+      el.removeEventListener("scroll", onChange);
       ro?.disconnect();
     };
   }, []);
@@ -117,7 +112,12 @@ export function ScrollRow({ label, className = "", children }: { label?: string;
   return (
     <div className="flex items-center gap-2" role={label ? "group" : undefined} aria-label={label}>
       {label && <span className="shrink-0 text-xs font-medium text-neutral-500 dark:text-neutral-400">{label}</span>}
-      <div ref={ref} style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined} className={cx("flex min-w-0 flex-1 items-center overflow-x-auto [&>*]:shrink-0", className)}>
+      {/* p-1/-m-1: room for focus rings, which the scroll box would otherwise clip. */}
+      <div
+        ref={ref}
+        style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+        className={cx("-m-1 flex min-w-0 flex-1 items-center overflow-x-auto p-1 [&>*]:shrink-0", className)}
+      >
         {children}
       </div>
     </div>

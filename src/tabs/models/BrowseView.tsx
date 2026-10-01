@@ -361,7 +361,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
           <Select label="Time" value={filters.period} onChange={(period) => update({ period })} options={options.periods.map((p) => ({ value: p.api, label: p.label }))} />
         </div>
 
-        <ScrollRow label="Look" className="gap-1.5 py-0.5">
+        <ScrollRow label="Look" className="gap-1.5">
           <Chip active={filters.look === null} onClick={() => update({ look: null })}>
             Any
           </Chip>
@@ -378,7 +378,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
           ))}
         </ScrollRow>
 
-        <ScrollRow label="Tags" className="gap-1.5 py-0.5">
+        <ScrollRow label="Tags" className="gap-1.5">
           {options.tags.map((t) => {
             const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
             return (
@@ -397,7 +397,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
 
         {/* One line: scrolls sideways in a narrow window instead of folding. */}
         <div className="border-t border-neutral-100 pt-3 dark:border-neutral-800">
-          <ScrollRow className="gap-x-4 py-0.5">
+          <ScrollRow className="gap-x-4">
             <FilterGroup label="Safe mode">
               <Segmented ariaLabel="Safe mode" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
             </FilterGroup>

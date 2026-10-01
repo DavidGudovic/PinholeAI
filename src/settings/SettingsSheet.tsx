@@ -479,32 +479,6 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         </Button>
       </Section>
 
-      <Section title="Safety">
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setShowGuidelines(true)}>
-            <BookOpen className="h-4 w-4" /> Usage guidelines
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setShowLicence(true)}>
-            <Scale className="h-4 w-4" /> Licence
-          </Button>
-        </div>
-        <Labeled
-          label="Report a problem"
-          hint="Report privately when a safeguard doesn’t work as described, or for a security issue. Open a public issue for other bugs, or when something harmless was stopped. Both open GitHub in your browser. Please don’t attach the picture or anything private."
-        >
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PRIVATELY_URL)}>
-              <ShieldAlert className="h-4 w-4" /> Report privately
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PUBLICLY_URL)}>
-              <Bug className="h-4 w-4" /> Open a public issue
-            </Button>
-          </div>
-        </Labeled>
-        <UsageGuidelines open={showGuidelines} onClose={() => setShowGuidelines(false)} />
-        <LicenceText open={showLicence} onClose={() => setShowLicence(false)} />
-      </Section>
-
       <Section title="CivitAI API key">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0 text-sm">
@@ -538,6 +512,32 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
 
       <Section title="Keyboard shortcuts">
         <ShortcutsList />
+      </Section>
+
+      <Section title="Safety">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={() => setShowGuidelines(true)}>
+            <BookOpen className="h-4 w-4" /> Usage guidelines
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setShowLicence(true)}>
+            <Scale className="h-4 w-4" /> Licence
+          </Button>
+        </div>
+        <Labeled
+          label="Report a problem"
+          hint="Report privately when a safeguard doesn’t work as described, or for a security issue. Open a public issue for other bugs, or when something harmless was stopped. Both open GitHub in your browser. Please don’t attach the picture or anything private."
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PRIVATELY_URL)}>
+              <ShieldAlert className="h-4 w-4" /> Report privately
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PUBLICLY_URL)}>
+              <Bug className="h-4 w-4" /> Open a public issue
+            </Button>
+          </div>
+        </Labeled>
+        <UsageGuidelines open={showGuidelines} onClose={() => setShowGuidelines(false)} />
+        <LicenceText open={showLicence} onClose={() => setShowLicence(false)} />
       </Section>
 
       <Section title="Appearance">
