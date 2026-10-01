@@ -11,6 +11,7 @@ path = "lib.rs"
 
 # tests/tests/privacy.rs      — sentinel prompt never reaches disk
 # tests/tests/offline.rs      — Offline mode blocks every call before a socket opens
+# tests/tests/model_signing.rs — signed model lookups (signing on for its own process)
 # tests/tests/engine_smoke.rs — real sd-server + SD 1.5 on CPU (only with PINHOLE_SMOKE=1)
 
 [dependencies]
