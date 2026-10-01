@@ -96,7 +96,8 @@ export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_loca
 export const confirmFamily = (token: string, familyId: string) =>
   invoke<T.AddFileResult>("confirm_family", { token, familyId });
 /** Download the parts (VAE, text encoders) an installed model still needs, from its family's list. */
-export const installMissingParts = (modelId: string) => invoke<T.InstallStarted>("install_missing_parts", { modelId });
+export const installMissingParts = (modelId: string) =>
+  withLicence(() => invoke<T.InstallStarted>("install_missing_parts", { modelId }));
 /** Other apps' models folders used in place (read-only: Pinhole never writes, moves or deletes there). */
 export const listLinkedFolders = () => invoke<T.LinkedFolder[]>("list_linked_folders");
 export const addLinkedFolder = (path: string) => invoke<T.LinkedFolder>("add_linked_folder", { path });

@@ -242,11 +242,34 @@ fn snapshot(core: &AppCore) -> pinhole_store::InstalledIndex {
     core.installed.lock().clone()
 }
 
+/// The index without parts (VAE, encoders…) whose file is gone from Pinhole's folders, so a
+/// part deleted by hand shows as missing and "Get missing parts" downloads it again (as
+/// Generate already reports it). Main models and add-ons stay listed so they can be deleted.
+fn snapshot_present(core: &AppCore) -> pinhole_store::InstalledIndex {
+    let mut index = snapshot(core);
+    let data = &core.data;
+    let gone: Vec<String> = index
+        .files
+        .iter()
+        .filter(|f| {
+            !f.is_linked()
+                && !matches!(
+                    f.kind,
+                    ModelKind::Checkpoint | ModelKind::Diffusion | ModelKind::Lora
+                )
+        })
+        .filter(|f| !index.abs_path(data, f).is_file())
+        .map(|f| f.id.clone())
+        .collect();
+    index.files.retain(|f| !gone.contains(&f.id));
+    index
+}
+
 /// Installed main models (checkpoints + diffusion files), by name.
 pub fn list_models(core: &AppCore) -> CoreResult<Vec<InstalledModel>> {
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
-    let index = snapshot(core);
+    let index = snapshot_present(core);
     let mut out: Vec<InstalledModel> = index
         .models()
         .map(|f| inventory::installed_model_view(&registry, &index, f, &hw))
@@ -631,7 +654,7 @@ pub async fn install_missing_parts(
     let (label, files) = {
         let registry = core.registry();
         let hw = crate::app::hw_context(core);
-        let index = snapshot(core);
+        let index = snapshot_present(core);
         let model = index
             .get(model_id)
             .ok_or_else(|| CoreError::not_found("That model isn't installed any more."))?;
@@ -642,6 +665,8 @@ pub async fn install_missing_parts(
             .ok_or_else(|| {
                 CoreError::invalid("Pinhole doesn't know which parts this model needs.")
             })?;
+        // A licensed family's parts download only after its licence was accepted.
+        crate::licence::require_family(core, Some(&family.id))?;
         let files = recommend::parts_to_run(&registry, family, &hw, &index);
         (model.friendly_name.clone(), files)
     };

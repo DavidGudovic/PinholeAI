@@ -2192,6 +2192,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_part_deleted_by_hand_shows_as_missing_and_asks_for_its_licence() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let id = register_fake_model(&core, "flux1_dev");
+        let model = |core: &AppCore| crate::models::list_models(core).unwrap().remove(0);
+        assert!(model(&core).missing_components.is_empty());
+        let part = {
+            let idx = core.installed.lock();
+            let f = idx.files.iter().find(|f| f.component_id.is_some()).unwrap();
+            idx.abs_path(&core.data, f)
+        };
+        std::fs::remove_file(&part).unwrap();
+        assert_eq!(model(&core).missing_components.len(), 1);
+        // FLUX.1 dev's parts download only after its licence was accepted.
+        let e = crate::models::install_missing_parts(&core, &id)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+    }
+
+    #[tokio::test]
     async fn licences_are_accepted_once_and_only_by_id() {
         let (_tmp, core, _rec) = new_core();
         core.offline.set(true); // nothing leaves the machine
