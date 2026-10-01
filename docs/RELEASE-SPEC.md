@@ -425,8 +425,8 @@ templates, posts and UI.
 ## 9. Paper trail and reporting
 
 - **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
-  doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
-  (checks can make mistakes), no "limitations" section (owner, 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
+  doesn't (§3.2), how (on the computer, nothing recorded), a "Limitations" section in plain words
+  (no workaround detail; 2026-10-01), and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
@@ -528,12 +528,11 @@ templates, posts and UI.
 
 - [x] §1 choke points exist and every path goes through them (enforced by type, `one_way.rs`)
 - [x] §2 AI marker: metadata + watermark, always on, tests pass. C2PA dropped (2026-09-30, plan trimmed
-      for a free app after the owner's ruling below; a self-signed manifest only shows "unknown
-      signer", and the XMP marker + watermark already give the two layers §2 asks for)
+      for a free app; a self-signed manifest only shows "unknown signer", and the XMP marker + watermark already give the two layers §2 asks for)
 - [x] §3 origin tracking, the three block rules, fail-closed, coverage of every mode: implemented
       and tested with made-up scores. How often harmful content gets through is not measured
       (real examples of that content must never be collected); see docs/SAFETY-MATRIX.md
-- [ ] §4 false-positive bar met for every rule: measured on 60–200 pictures per group, too few to
+- [ ] §4 false-positive bar met for every rule: measured on 60–200 harmless pictures per group (about 950 in all), too few to
       show 1 in 1,000 (the check itself is built, §3)
 - [ ] §5 flags stored at install; SFW-only rule; flagged models back in the catalog
 - [ ] §6 licence field everywhere; acceptance for non-commercial, gated and filter-requiring models
@@ -548,9 +547,9 @@ templates, posts and UI.
       "Update and restart" is switched off (`update::SELF_UPDATE = false`, 2026-09-30): "Check for
       updates" only opens the release page and nothing is downloaded or installed in the app
       (SPEC §13 "Updates"). The key is the maintainer's to make; then set `SELF_UPDATE = true`.
-- [x] ~~Releases marked as pre-release / test build~~ Replaced (2026-09-30): v1.0.0 is a normal GitHub
-      release, created as a draft for the maintainer to publish. `release.yml` marks only versions
-      with a suffix (`1.1.0-rc.1`) as pre-releases.
+- [x] ~~Releases marked as pre-release / test build~~ Replaced (2026-09-30): v1.0.0 was published as
+      a normal GitHub release on 2026-10-01. `release.yml` marks only versions with a suffix
+      (`1.1.0-rc.1`) as pre-releases; an existing release can be switched by hand on GitHub.
 - [x] Safety tests in the Release workflow: the installers wait on them, and a check fails the
       release if test-only code (fake checks) would be compiled into the app (2026-10-01)
 - [ ] Release files signed and traceable to the source commit (today: SHA256SUMS.txt next to the
