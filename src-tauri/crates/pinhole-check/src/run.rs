@@ -101,11 +101,7 @@ impl Checker {
         // the child tags.
         let tags = Some(self.tags(&mut l, &img)?);
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
-            let mut found = self.faces(&mut l, &img)?;
-            for f in found.iter_mut().filter(|f| f.0.counts()) {
-                f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
-            }
-            Some(found.into_iter().map(|f| f.0).collect())
+            Some(self.judged_faces(&mut l, &img)?)
         } else {
             None
         };
@@ -124,14 +120,10 @@ impl Checker {
         *self.last_used.lock() = Some(Instant::now());
         let nudity = self.nudity(&mut l, &img)?;
         let tags = Some(self.tags(&mut l, &img)?);
-        let mut found = self.faces(&mut l, &img)?;
-        for f in found.iter_mut().filter(|f| f.0.counts()) {
-            f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
-        }
         Ok(Readings {
             nudity,
             tags,
-            faces: Some(found.into_iter().map(|f| f.0).collect()),
+            faces: Some(self.judged_faces(&mut l, &img)?),
         })
     }
 
@@ -261,6 +253,33 @@ impl Checker {
         Ok(found)
     }
 
+    /// Faces on a result, each big enough one with its age estimate. When none is found
+    /// upright, the picture is also tried turned 90/180/270° (someone lying down).
+    fn judged_faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<Face>, CheckError> {
+        use image::imageops::{rotate180, rotate270, rotate90};
+        let upright = self.faces(l, img)?;
+        let mut pick = (upright, None);
+        if !pick.0.iter().any(|f| f.0.judged()) {
+            for turn in [rotate90, rotate180, rotate270] {
+                let turned = turn(img);
+                let found = self.faces(l, &turned)?;
+                if found.iter().any(|f| f.0.judged()) {
+                    // Small faces seen upright still count (fail closed).
+                    let mut both = found;
+                    both.extend(pick.0.into_iter().filter(|f| f.0.too_small_to_judge()));
+                    pick = (both, Some(turned));
+                    break;
+                }
+            }
+        }
+        let (mut found, turned) = pick;
+        let on = turned.as_ref().unwrap_or(img);
+        for f in found.iter_mut().filter(|f| f.0.judged()) {
+            f.0.child_face = Some(self.child_face(l, on, f.1)?);
+        }
+        Ok(found.into_iter().map(|f| f.0).collect())
+    }
+
     /// Whether a brought-in picture shows a person. Searched harder than a result: a small
     /// face counts (Edit and Upscale enlarge it), the picture is also tried turned on its
     /// side and upside down, and a large picture is also searched in closer sections.
@@ -275,8 +294,8 @@ impl Checker {
         if any(img, 1.0)? || any(img, 0.5)? {
             return Ok(true);
         }
-        for turned in [rotate90(img), rotate180(img), rotate270(img)] {
-            if any(&turned, 1.0)? {
+        for turn in [rotate90, rotate180, rotate270] {
+            if any(&turn(img), 1.0)? {
                 return Ok(true);
             }
         }

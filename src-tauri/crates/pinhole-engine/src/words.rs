@@ -304,8 +304,14 @@ fn views(text: &str) -> Vec<Vec<String>> {
                 .filter(|w| !w.is_empty())
                 .collect();
             out.extend(pieces.iter().map(|w| w.to_string()));
-            // Single letters ("y/o", "l.o.l.i") are left to `join_pieces`.
-            if pieces.len() > 1 && pieces.iter().any(|p| p.chars().count() > 1) {
+            // Only short pieces ("lo-li", "chi.ld"): longer ones are words of their own, and
+            // joining them would glue neighbouring tags ("nude,eighteen"). Single letters
+            // ("y/o", "l.o.l.i") are left to `join_pieces`.
+            let len = |p: &&str| p.chars().count();
+            if pieces.len() > 1
+                && pieces.iter().any(|p| len(p) > 1)
+                && pieces.iter().all(|p| len(p) <= 4)
+            {
                 out.push(pieces.concat());
             }
         }
@@ -696,21 +702,43 @@ const ORDINARY: &[&str] = &[
     "transsexual",
     "pansexual",
     "intersexual",
+    "nonsexual",
+    "metrosexual",
+    "gobetween",
+    "brainchild",
+    "outstripping",
+    "redbreast",
+    "pussycat",
+    "pussywillow",
 ];
 
-/// A word of 4+ letters glued to another word of 3+ letters ("xxxteen", "teenxxx").
+/// A listed word glued to another word of 3+ letters ("xxxteen", "teenxxxs"). Under-18 words
+/// of 4+ letters count; sexual words only from 5 letters, since the short ones start or end
+/// many ordinary words and names.
 fn glued_to_filler(token: &str, word: &str) -> bool {
-    let (t, w) = (token.chars().count(), word.chars().count());
-    w >= 4
-        && t >= w + 3
-        && t <= MAX_GLUED
-        && (token.starts_with(word) || token.ends_with(word))
-        && !ORDINARY
+    let min = if UNDER_18.contains(&word) { 4 } else { 5 };
+    let w = word.chars().count();
+    if w < min
+        || ORDINARY
             .iter()
             .any(|o| token == *o || token.strip_suffix('s') == Some(o))
+    {
+        return false;
+    }
+    [
+        Some(token),
+        token.strip_suffix('s'),
+        token.strip_suffix("es"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|t| {
+        let n = t.chars().count();
+        n >= w + 3 && n <= MAX_GLUED && (t.starts_with(word) || t.ends_with(word))
+    })
 }
 
-/// The word with a common ending ("sexier", "sexiest", "nudeness", "nakedly"); only for
+/// The word with a common ending ("sexier", "sexiest", "nudeness"); only for
 /// words of 4+ letters, so short words don't catch ordinary ones ("kidding").
 fn word_form(token: &str, word: &str) -> bool {
     if word.chars().count() < 4 {
@@ -726,7 +754,7 @@ fn word_form(token: &str, word: &str) -> bool {
     stems.iter().any(|stem| {
         token
             .strip_prefix(stem.as_str())
-            .is_some_and(|end| matches!(end, "er" | "est" | "ness" | "ly" | "ed" | "d"))
+            .is_some_and(|end| matches!(end, "er" | "est" | "ness" | "ed" | "d"))
     })
 }
 
@@ -757,6 +785,13 @@ fn has_phrase(words: &[String], phrase: &str) -> bool {
     })
 }
 
+/// "yearold", "yearsold", "yrsold", "yold" written as one word after a number.
+fn glued_old(rest: &str) -> bool {
+    rest.strip_suffix("olds")
+        .or_else(|| rest.strip_suffix("old"))
+        .is_some_and(|y| matches!(y, "y" | "yr" | "yrs" | "year" | "years"))
+}
+
 /// An age from 1 to 17: "12", "twelve" or "12yo" followed by "yo", "y o", "year old",
 /// "years old", "year olds", "yr old", "yrs old" or "years of age"; or "aged 12", "age of 12".
 /// A bare "age 12" doesn't count ("Bronze Age, 3 statues").
@@ -768,7 +803,7 @@ fn has_young_age(words: &[String]) -> bool {
         // A number word glued to "yo" or "years": "twelveyo", "twelveyears old".
         for n in NUMBER_WORDS {
             if let Some(rest) = w.strip_prefix(n) {
-                if matches!(rest, "yo" | "yos") {
+                if matches!(rest, "yo" | "yos") || glued_old(rest) {
                     return true;
                 }
                 if matches!(rest, "y" | "yr" | "yrs" | "year" | "years")
@@ -783,7 +818,7 @@ fn has_young_age(words: &[String]) -> bool {
         let digits: String = w.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty() && young(&digits) {
             let rest = &w[digits.len()..];
-            if rest == "yo" || rest == "yos" {
+            if rest == "yo" || rest == "yos" || glued_old(rest) {
                 return true;
             }
             if matches!(rest, "y" | "yr" | "yrs") && (at(i + 1) == "old" || at(i + 1) == "o") {
@@ -928,9 +963,12 @@ mod tests {
             "lo\u{2800}li, nu\u{FFF9}de",
             // Glued to another word, CamelCase, split by punctuation, other word forms.
             "cuteteen, nude",
-            "teenmodel, nudebeach",
+            "teenmodel, nakedbeach",
             "LittleGirl, Nude",
             "CuteTeen NudeArt",
+            "cuteteens, nude",
+            "12yearold, nude",
+            "twelveyearsold, nude",
             "lo-li, nu-de",
             "te.en, na.ked",
             "teen, sexier",
@@ -994,6 +1032,15 @@ mod tests {
             "homosexual couple, adults, nude painting",
             "12 years later, a naked tree in winter",
             "rapeseed field at noon, sensual light",
+            "1girl,nude,eighteen",
+            "adult,nsfw,canteen",
+            "woman,nude,in-between",
+            "childhood-friend reunion, adults, nude beach",
+            "analog-style photo of kids playing in a park",
+            "analyzing kids drawings",
+            "The Owl and the Pussycat, children's book illustration",
+            "children explicitly labelled diagram of the water cycle",
+            "a go-between, nude colors",
         ]
         .into_iter()
         .filter(|t| pairs_minor_with_sexual(t))

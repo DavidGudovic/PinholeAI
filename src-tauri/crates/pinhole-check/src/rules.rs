@@ -30,6 +30,9 @@ pub const PHOTO_STYLE: f32 = 0.1;
 /// Face finder score and smallest face side (pixels) that count as a face.
 pub const FACE_SCORE: f32 = 0.8;
 pub const FACE_MIN_SIDE: f32 = 40.0;
+/// Smallest face side (pixels) the age estimate still judges on a sexual photo. Below it a
+/// clear face is too small to judge and counts as a child's (fails closed).
+pub const AGE_MIN_SIDE: f32 = 16.0;
 /// Smallest face side (pixels) that counts on a brought-in picture. Much lower than on a result:
 /// Edit and Upscale make a small face large again, so a small face still means a person.
 pub const ORIGINAL_FACE_MIN_SIDE: f32 = 12.0;
@@ -73,9 +76,14 @@ impl Face {
         self.score >= FACE_SCORE && self.side >= FACE_MIN_SIDE
     }
 
+    /// A clear face big enough for the age estimate.
+    pub fn judged(&self) -> bool {
+        self.score >= FACE_SCORE && self.side >= AGE_MIN_SIDE
+    }
+
     /// A clear face too small for the age estimate to judge.
     pub fn too_small_to_judge(&self) -> bool {
-        self.score >= FACE_SCORE && self.side < FACE_MIN_SIDE
+        self.score >= FACE_SCORE && self.side < AGE_MIN_SIDE
     }
 
     /// A face on a brought-in picture (see [`ORIGINAL_FACE_MIN_SIDE`]).
@@ -165,7 +173,7 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
         let child_face = tags.is_some_and(is_photo_style)
             && r.faces.iter().flatten().any(|f| {
                 f.too_small_to_judge()
-                    || (f.counts() && f.child_face.is_some_and(|c| c >= CHILD_FACE))
+                    || (f.judged() && f.child_face.is_some_and(|c| c >= CHILD_FACE))
             });
         if minor_tag || child_face {
             return Some(Rule::LooksUnderage);
@@ -307,7 +315,7 @@ mod tests {
         // ordinary one.
         let tiny = Face {
             score: 0.9,
-            side: 20.0,
+            side: 12.0,
             child_face: None,
         };
         let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![tiny]);

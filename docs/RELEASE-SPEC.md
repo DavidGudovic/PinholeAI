@@ -160,9 +160,10 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
    brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
-   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 12 px: Edit and Upscale enlarge a
-   small face; the picture is also tried turned 90/180/270° and, above 1280 px, in 3 × 3
-   closer sections) and was **not** intimate when brought in. Comparing with the original import (not the direct input) means a photo can't be
+   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 12 px, since Edit and Upscale enlarge a
+   small face; the smallest face found also depends on the picture's size, as the finder works
+   at 640 px; the picture is also tried turned 90/180/270° and, above 1280 px, in 3 × 3 closer
+   sections) and was **not** intimate when brought in. Comparing with the original import (not the direct input) means a photo can't be
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
    it existed before Pinhole saw it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
@@ -171,8 +172,10 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
      whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6. On 100
-     FairFace photos, adults scored at most 0.05 and ages 3–9 0.77 on average. A clear face
-     (≥ 0.8) under 40 px is too small to judge and counts as a child's (fails closed).
+     FairFace photos, adults scored at most 0.05 and ages 3–9 0.77 on average. The age estimate
+     judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
+     as a child's (fails closed). With no face upright, the result is also tried turned
+     90/180/270° (someone lying down).
 
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
    often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
