@@ -194,6 +194,20 @@ pub fn register_download(
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
+        // A part downloaded again replaces an entry whose file was deleted by hand (it may
+        // have had another name), so the part is found by its new file.
+        if let Some(cid) = entry.component_id.as_deref() {
+            let data = &core.data;
+            let stale: Vec<String> = index
+                .files
+                .iter()
+                .filter(|f| f.id != entry.id && !f.is_linked())
+                .filter(|f| f.component_id.as_deref() == Some(cid))
+                .filter(|f| !index.abs_path(data, f).is_file())
+                .map(|f| f.id.clone())
+                .collect();
+            index.files.retain(|f| !stale.contains(&f.id));
+        }
         // An unreadable entry at this path described the file that was there.
         let replaced = index.remove_unknown_at(&entry.rel_path);
         if let Err(e) = index.save(&core.data) {
@@ -242,11 +256,34 @@ fn snapshot(core: &AppCore) -> pinhole_store::InstalledIndex {
     core.installed.lock().clone()
 }
 
+/// The index without parts (VAE, encoders…) whose file is gone from Pinhole's folders, so a
+/// part deleted by hand shows as missing and "Get missing parts" downloads it again (as
+/// Generate already reports it). Main models and add-ons stay listed so they can be deleted.
+pub(crate) fn snapshot_present(core: &AppCore) -> pinhole_store::InstalledIndex {
+    let mut index = snapshot(core);
+    let data = &core.data;
+    let gone: Vec<String> = index
+        .files
+        .iter()
+        .filter(|f| {
+            !f.is_linked()
+                && !matches!(
+                    f.kind,
+                    ModelKind::Checkpoint | ModelKind::Diffusion | ModelKind::Lora
+                )
+        })
+        .filter(|f| !index.abs_path(data, f).is_file())
+        .map(|f| f.id.clone())
+        .collect();
+    index.files.retain(|f| !gone.contains(&f.id));
+    index
+}
+
 /// Installed main models (checkpoints + diffusion files), by name.
 pub fn list_models(core: &AppCore) -> CoreResult<Vec<InstalledModel>> {
     let registry = core.registry();
     let hw = crate::app::hw_context(core);
-    let index = snapshot(core);
+    let index = snapshot_present(core);
     let mut out: Vec<InstalledModel> = index
         .models()
         .map(|f| inventory::installed_model_view(&registry, &index, f, &hw))
@@ -631,7 +668,7 @@ pub async fn install_missing_parts(
     let (label, files) = {
         let registry = core.registry();
         let hw = crate::app::hw_context(core);
-        let index = snapshot(core);
+        let index = snapshot_present(core);
         let model = index
             .get(model_id)
             .ok_or_else(|| CoreError::not_found("That model isn't installed any more."))?;
@@ -642,6 +679,8 @@ pub async fn install_missing_parts(
             .ok_or_else(|| {
                 CoreError::invalid("Pinhole doesn't know which parts this model needs.")
             })?;
+        // A licensed family's parts download only after its licence was accepted.
+        crate::licence::require_family(core, Some(&family.id))?;
         let files = recommend::parts_to_run(&registry, family, &hw, &index);
         (model.friendly_name.clone(), files)
     };
@@ -1136,6 +1175,14 @@ pub fn confirm_family(core: &AppCore, token: &str, family_id: &str) -> CoreResul
         .inspect_err(|_| remove_copy(&pending))
 }
 
+/// The family question was closed without a pick: the copy made for it is removed.
+pub fn cancel_add(core: &AppCore, token: &str) {
+    let pending = core.models.pending.lock().remove(token);
+    if let Some(p) = pending {
+        remove_copy(&p);
+    }
+}
+
 // ------------------------------------------------------------------ delete
 
 pub fn preview_delete(core: &AppCore, model_id: &str) -> CoreResult<DeletePreview> {
@@ -1434,6 +1481,19 @@ mod tests {
                     confirm_family(&core, "bogus", "sdxl").unwrap_err().code,
                     "not_found"
                 );
+                // Closing the question removes the copy made for it.
+                let other = tmp.path().join("Other.safetensors");
+                std::fs::copy(&src, &other).unwrap();
+                let out2 = add_local_model(&core, other.to_str().unwrap())
+                    .await
+                    .unwrap();
+                let copy = core
+                    .data
+                    .models(ModelKind::Checkpoint)
+                    .join("Other.safetensors");
+                assert!(copy.is_file());
+                cancel_add(&core, &out2.needs_choice.unwrap().token);
+                assert!(!copy.exists() && other.is_file());
                 assert_eq!(
                     confirm_family(&core, &choice.token, "nope")
                         .unwrap_err()

@@ -692,7 +692,9 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: {},
-        create: { ...c, prompt: "", presetId: c.presetId, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
+        // The preset goes with its Fine-tune values (cleared here); its saved "before"
+        // settings can also hold an earlier negative prompt.
+        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
         results: [],
         selectedResultId: null,
         batches: {},

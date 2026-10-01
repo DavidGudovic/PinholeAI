@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
+import type { FineTune, InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
 import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
@@ -244,6 +244,14 @@ describe("requests", () => {
     const req = buildCreateRequest(create, { ui: FAMILY_UI.sdxl, loras: [], model: model("m1", "sdxl"), settings: null });
     expect(req.fineTune).toEqual({ height: 1216, seed: -1, cfg: 4.5 });
     expect(presetFromCreate("P", create, { model: null, loras: [] }).fineTune).toEqual({ height: 1216, seed: -1, cfg: 4.5 });
+  });
+
+  it("keeps Hires Scale/Strength on Auto (Best can still run it) and drops them only when Hires fix is off", () => {
+    const create = { ...withModels().create, prompt: "p", quality: "best" as const, fineTune: { hiresScale: 2, hiresDenoise: 0.3 } as FineTune };
+    const req = (fineTune: FineTune) => buildCreateRequest({ ...create, fineTune }, { ui: FAMILY_UI.sdxl, loras: [], model: model("m1", "sdxl"), settings: null }).fineTune;
+    expect(req(create.fineTune)).toEqual({ hiresScale: 2, hiresDenoise: 0.3 });
+    expect(req({ ...create.fineTune, hires: true })).toEqual({ hires: true, hiresScale: 2, hiresDenoise: 0.3 });
+    expect(req({ ...create.fineTune, hires: false })).toEqual({ hires: false });
   });
 
   it("filters LoRAs that don't match the model's architecture", () => {
@@ -540,6 +548,17 @@ describe("choosing None", () => {
   it("dropping presetId through a plain patch (paste) drops the snapshot too", () => {
     const s = run(apply(withModels()), { type: "patchCreate", patch: { presetId: null } });
     expect(s.create.presetBase).toBeNull();
+  });
+
+  it("Reset drops the preset along with its Fine-tune values", () => {
+    let s = apply(run(withModels(), { type: "setFineTune", patch: { negativePrompt: SENTINEL } }));
+    s = run(s, { type: "setFineTune", patch: { vaeTiling: true } });
+    expect(s.create.fineTune.steps).toBe(50);
+    s = run(s, { type: "clearSession" });
+    expect(s.create.presetId).toBeNull();
+    expect(s.create.presetBase).toBeNull();
+    expect(s.create.fineTune).toEqual({ vaeTiling: true });
+    expect(JSON.stringify(s)).not.toContain(SENTINEL);
   });
 
   it("deleting the active preset drops the snapshot", () => {

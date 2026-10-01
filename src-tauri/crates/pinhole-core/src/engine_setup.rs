@@ -421,7 +421,10 @@ async fn download_and_unpack(
         .wait_detailed(&group)
         .await
         .map_err(|e| CoreError::new(&e.code, e.message))?;
-    unpack_downloaded(core, kind, cfg, sel, files).await
+    // The downloads row says the engine is ready only if it unpacked.
+    unpack_downloaded(core, kind, cfg, sel, files)
+        .await
+        .inspect_err(|e| core.downloads.fail_done(&group, &e.code, &e.message))
 }
 
 pub(crate) fn backend_label(backend: &str) -> &'static str {

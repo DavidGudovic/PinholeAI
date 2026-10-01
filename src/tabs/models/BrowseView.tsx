@@ -52,6 +52,16 @@ const AUTO_LOOK_ROUNDS = 8;
 
 /** Recent pages for this session (RAM only). */
 const pages = new PageStore();
+/**
+ * Cached cards carry an `installed` flag, so an install or delete must empty the cache even
+ * while Browse isn't shown (e.g. a delete in Installed). Subscribed once, for the whole session.
+ */
+let watchingModels: Promise<unknown> | null = null;
+function clearPagesOnModelsChanged() {
+  watchingModels ??= onModelsChanged(() => pages.clear()).catch(() => {
+    watchingModels = null;
+  });
+}
 
 /** Settings that change what cards say (Offline, GPU/VRAM → fit badges). */
 function cardSettingsKey(s: Settings | null): string {
@@ -160,6 +170,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     }
   }, []);
   useEffect(() => {
+    clearPagesOnModelsChanged();
     void refreshInstalled();
   }, [refreshInstalled]);
   useTauriEvent(onModelsChanged, () => {
