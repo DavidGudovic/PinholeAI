@@ -66,7 +66,7 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
         .disable_drag_drop_handler()
         // A link or file dropped on the window must never take it away from the app
         // (unsaved pictures would be lost, and a web page would load outside the Rust client).
-        .on_navigation(|url| app_url_allowed(url))
+        .on_navigation(app_url_allowed)
         .incognito(!under_webdriver());
     if let Some(dir) = webview_dir {
         builder = builder.data_directory(dir);
