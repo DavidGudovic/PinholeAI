@@ -206,7 +206,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
    as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
    the chunk gets a short note saying how to have pictures carry it; other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
-    file or log (see CLAUDE.md).
+    file or log (`scripts/privacy-lint.mjs`).
 11. **The one exception is Styles** (§7): text the user explicitly saves as a named Style is
     stored in `Data/styles/`. That is a deliberate user action, clearly labelled
     ("Saved styles are stored on this computer"). The main prompt is never stored, and

@@ -22,7 +22,7 @@ Last reviewed: 2026-10-01.
 | EU Product Liability Directive, Cyber Resilience Act | Exempt only non-commercial open source (only if monetised) | §10 |
 
 The goal is not a perfect filter. The goal is that Pinhole is clearly general-purpose, blocks the
-few misuse paths the law targets, blocks **nothing else**, and can show it took reasonable steps.
+few uses the law targets, blocks **nothing else**, and can show it took reasonable steps.
 
 Safeguards that fire on normal work drive people away, so every block rule here is narrow, needs
 two signals to agree, and must pass a false-positive bar (§4) before it ships.
@@ -43,7 +43,7 @@ instead of a refactor:
    they are ever turned on, passes through one function before the UI sees it. → image check (§3).
 4. **Export** — Save and Copy to clipboard both go through one function. → AI marker (§2).
 
-**Enforced by type (done).** The two checks can't be skipped by a new code path:
+**Enforced by type (done).** Every code path goes through both checks:
 - Text: `pinhole_engine::sdapi::ImgGenRequest::new` takes only a `CheckedPrompt`, which only the
   word check makes (`pinhole_engine::words`, wrapped by `pinhole_core::text_check`). `prepare`
   in generate.rs checks the final prompt (idea + style + prefix + trigger words) with the
@@ -57,11 +57,18 @@ instead of a refactor:
   turns on the test-only constructors (`test-util`). Release builds build the app package
   alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
   `test-util` in through `tests/`, so never ship a workspace build.
+- Pictures sent to the engine: generate.rs reads them from the session only through `Inputs`,
+  which records each one as an input of the result for the image check (`imagecheck::MadeBy`);
+  a mask is sent as its black-and-white shape only. `one_way.rs` checks that generate.rs reads
+  session pictures no other way.
 - Upscale now needs the check's files and can be blocked like any made picture (so an
   upscale of a brought-in photo can hit a false block on a borderline picture).
 - Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
   output are checked with `text_check::check` in describe.rs; that text only reaches the
   image engine through Create, where the type applies.
+- Describe intake: a brought-in picture passes `imagecheck::check_before_describe` (the result
+  rules, without originals) the first time it is described; Pinhole's own pictures passed result
+  intake already. Describe needs the check's files too.
 
 ---
 
@@ -108,7 +115,7 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
 Built 2026-09-30 (crate `pinhole-check`, wired in `pinhole-core/src/imagecheck.rs`). All local
 and offline: small ONNX classifiers run on the processor through `tract` (pure Rust, no native
 library to download or ship) → **zero VRAM**. Loaded on first use, dropped after 5 minutes idle.
-Scores and verdicts are handled like prompts (CLAUDE.md privacy rules). Safe mode doesn't change any of it.
+Scores and verdicts are handled like prompts (SPEC §4). Safe mode doesn't change any of it.
 
 ### 3.1 Where each image came from
 
@@ -153,8 +160,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    resolution and at half of it in overlapping 640 px windows; with no face upright, a copy shrunk
    to 1280 px is tried turned 90/180/270° and at 45/135/225/315°), whatever it already showed.
    A made picture fed into the request from such a chain (an enlarged or edited step) is
-   measured too: a face that shows up in it counts as a person. Comparing with the original
-   import (not the direct input) means a photo can't be walked towards intimate in small steps.
+   measured too: a face that shows up in it counts as a person. The rule compares with the
+   original import, not the direct input, so it applies across any number of edits.
    A picture that was already intimate when brought in is no exception (2026-10-01): what a
    picture shows says nothing about the consent of the person in it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
@@ -164,34 +171,62 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
      whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6, or whose
      under-20 groups (0–2, 3–9 and 10–19, `under_20_face`) reach ≥ 0.8 (`UNDER_20_FACE`,
-     teenagers). The age estimate
+     teenagers), or whose age in years from the second age estimate (MiVOLO v2, `age`) is under
+     22 (`UNDER_AGE`), or
+   - photo style and a borderline face (second estimate 22 to under 26, `BORDERLINE_AGE`) in a
+     picture where the tagger sees a setting, clothing or object that presents the person as
+     under 18 (`young_context` ≥ 0.35: 13 tags plus the child tags, by id in `run.rs`). A face
+     estimated 26 or older is never judged by the setting. The age estimates
      judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
      as a child's (fails closed). With no face upright, the result is also tried turned
      90/180/270° (someone lying down). A result above 1280 px is also searched in 640 px
      windows at its own resolution and at half of it (upright).
 
-   Drawn images never use the age estimate (it is trained on photos, and adult characters are
+   Drawn images never use the age estimates (they are trained on photos, and adult characters are
    often drawn young). The under-20 threshold was picked on FairFace validation portraits
    (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
    some wrong blocks of young-looking adults, which only matter on sexual photo-style results.
-   The table is the share of ordinary, non-sexual face photos the age half of rule 2 would act on.
-   The 10–19 label includes adults aged 18 and 19, so it is not a count of under-18s, and these
-   are numbers for the age estimate alone, not how often the whole check catches harmful pictures:
+   The second estimate and its line at 22 were added on 2026-10-01 and measured on UTKFace
+   portraits with exact ages (used for measurement only; nothing kept), through the app's own
+   face finder and crops (`falsepos` with `FALSEPOS_AGES=1`, one folder per age). The table is
+   the share of ordinary, non-sexual face photos the age half of rule 2 acts on. These are
+   numbers for the age estimates alone, not how often the whole check catches harmful pictures,
+   and UTKFace ages are themselves sometimes wrong:
+
+   | Age (faces) | 10–12 (351) | 13 (81) | 14–15 (200) | 16–17 (200) | 18–19 (197) | 20–21 (164) | 22–23 (160) | 24–25 (160) | 26–30 (199) |
+   |---|---|---|---|---|---|---|---|---|---|
+   | First estimate's groups only (before) | 85.5 % | 84.0 % | 60.5 % | 22.5 % | 4.6 % | 3.0 % | 1.2 % | 1.9 % | 0.0 % |
+   | + second estimate under 21 | 99.4 % | 100 % | 95.5 % | 79.5 % | 37.6 % | 15.9 % | 8.1 % | 4.4 % | 1.0 % |
+   | **+ second estimate under 22 (shipped)** | **99.4 %** | **100 %** | **96.5 %** | **86.5 %** | **51.3 %** | **27.4 %** | **12.5 %** | **6.9 %** | **2.5 %** |
+   | + second estimate under 23 | 99.7 % | 100 % | 97.5 % | 89.5 % | 65.0 % | 36.0 % | 17.5 % | 10.0 % | 3.0 % |
+
+   Ages 10–17 together: 64.2 % before, 95.7 % with the line at 22; ages 20–25 together: 2.1 %
+   before, 15.4 % after. The line at 22 was picked because 16- and 17-year-olds are the hardest
+   to tell from adults, and it is the lowest line that catches most of them; the cost falls on
+   young-looking adults in sexual photo-style results only. On FairFace children labelled 3–9,
+   the age half catches 99.7 % (94.2 % before); 0–2: 99.0 % (unchanged). Earlier FairFace
+   numbers for the first estimate alone, by its apparent-age labels:
 
    | Faces the age rule acts on | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
    |---|---|---|---|
-   | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % | 1.1 % |
+   | Child groups ≥ 0.6 only | 15.5 % | 1.7 % | 1.1 % |
    | + under 20 ≥ 0.9 | 23.6 % | 1.8 % | 1.4 % |
    | + under 20 ≥ 0.85 | 35.8 % | 2.3 % | 1.6 % |
    | **+ under 20 ≥ 0.8 (shipped)** | **41.6 %** | **2.9 %** | **1.6 %** |
    | + under 20 ≥ 0.7 | 48.5 % | 4.1 % | 1.9 % |
 
+   The setting signal was checked on everyday Flickr30k photos whose captions call the people
+   teenagers (167) or young adults (377): it reached 0.35 on 1.8 % and 0.8 % of them, so it is
+   rare in ordinary pictures and only read for a borderline face in a sexual photo-style result.
    The 10–19 group alone never reached 0.8 on any face, so it can't be used on its own.
    Teenagers the estimate misses are left to the word check, the brought-in photo rule
    (rule 1) and, for drawings, the child tags.
    Any check model output that isn't a finite number is an error, so the picture is dropped.
 3. **Model marked "safe images only".** The model or a LoRA in the request is "safe images only"
-   (`InstalledFile::safe_images_only`) → intimate results are blocked. That is: it carries
+   (`InstalledFile::safe_images_only`), or one was used for a picture this result is made from
+   (Edit, Restyle, Fix details, Extend, a Create reference picture, Upscale) → intimate results
+   are blocked. The image check works this out itself from how the result was made
+   (`imagecheck::MadeBy`); a model that isn't installed any more counts as marked. That is: it carries
    CivitAI's `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`; when the model's data
    can't be fetched, it counts as set), or it was added by hand or found in a linked folder and
    no CivitAI by-hash lookup has cleared it yet (`InstalledFile::lookup`: not looked up yet, or
@@ -203,8 +238,7 @@ If one picture of a batch is blocked, the whole batch is dropped.
 
 Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
 this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
-(§7). It never names the rule, the content or what triggered it, has no retry hint, and never reads
-as an accusation, since a false block can hit an ordinary user (David, 2026-09-30).
+(§7). It is the same for every rule and doesn't name the rule or the content.
 
 ### 3.3 How it runs
 
@@ -230,7 +264,8 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   it keeps finished jobs readable on its local port.
 - **Fixed in code:** the files' URLs (pinned commits), sizes and SHA-256 values and every
   threshold are constants in `pinhole-check`, not config. Tests use a stand-in check.
-- **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
+- **Resources:** ~1.2 GB download; ~2.5 s per result on 4 cores, plus about 1 s per face for the
+  second age estimate on sexual photo-style results; the models take up to ~1.5 GB RAM while
   loaded, 0 VRAM.
 
 ### 3.4 Models (verified by download, 2026-09-30)
@@ -241,9 +276,15 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
 | Rating + child tags + photo style | `SmilingWolf/wd-vit-tagger-v3` + `selected_tags.csv` | Apache 2.0 | 379 MB |
 | Face finder | `opencv/face_detection_yunet` 2023mar | MIT | 0.2 MB |
 | Age estimate (photos only) | `onnx-community/fairface_age_image_detection-ONNX` | Apache 2.0 | 343 MB |
+| Age in years (photos only, 2026-10-01) | `Sam-Apostel/mivolo-v2-age-onnx` (ONNX export of `iitolstykh/mivolo_v2`, face input only; its `Col2Im` steps are rewritten into `Reshape` + `ConvTranspose` as it loads, same output) | Apache 2.0 | 118 MB |
 
 Rejected: `Freepik/nsfw_image_detector` (no ONNX), `AdamCodd/vit-nsfw-stable-diffusion` (CC BY-NC-ND,
 gated), InsightFace (non-commercial), NudeNet (AGPL), the SD safety checker (~1.2 GB, no better).
+Not added for now (2026-10-01): a small vision-language model judging the whole picture
+(Qwen3-VL 2B, Apache 2.0, ~1.5 GB: about 5 s per picture on 4 cores, and on the GPU it competes
+with the image model for VRAM), MiVOLO's body input (no clear gain over the face alone on
+everyday photos), and the larger `wd-eva02-large-tagger-v3` (1.26 GB, several times slower on the
+processor; it is trained on drawings, so it doesn't help with ages in photos).
 The nudity model is weaker on generated pictures (86 % accuracy on its author's test) — one more
 reason for §4's measurement.
 
@@ -278,8 +319,7 @@ prints them for a folder of test pictures.
   rule, §3.4).
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
-- **No details for users:** release builds show only the neutral message (David, 2026-09-30: never
-  say what triggered). Dev builds show the rule and scores for tuning (§3.4). A user can still
+- **Release builds show only the block message.** Dev builds show the rule and scores for tuning (§3.4). A user can still
   report a false positive in a GitHub issue, describing what they tried.
 
 ---
@@ -300,6 +340,18 @@ prints them for a folder of test pictures.
   - `sfwOnly` models show a "Safe images only" badge. The flag is stored in `installed.json` at
     install time (`CivitaiRef.sfw_only`, model metadata, not prompts). While any such resource
     is loaded, §3.2 rule 3 applies.
+  - **Saved lookup results are signed** (`pinhole-store/src/seal.rs`): HMAC-SHA256 over each
+    model's and add-on's lookup result, CivitAI ids and `sfw_only`, with a key made once per
+    computer and kept in the OS keychain; the signatures are in `Data/catalog/model-lookups.json`,
+    by key. An entry that doesn't match at start (`lookup::unsigned`) counts as "safe images only"
+    until it is checked again on this computer: a one-click download or a file Pinhole offers
+    itself by hashing it again in the background, any other by its next lookup, always with the
+    hash of its own file (`lookup::look_up_existing`). A verified download is signed as it is. The entry itself
+    isn't changed, so a Models folder shared with another system keeps what that one found. A save
+    keeps the signatures of entries it doesn't have (a Models folder on a drive that isn't
+    connected). The first start with signing (no signatures file yet) signs what is installed.
+    Without a keychain (a Linux desktop with no Secret Service) nothing is signed or checked, so
+    models keep working as before.
   - **Files added by hand or linked** (built 2026-10-01, `pinhole-core/src/lookup.rs`): every
     main model and add-on gets a CivitAI by-hash lookup (SHA-256 of the file itself; a linked
     folder's notes are not trusted for it), whether or not its family is already known. A
@@ -369,8 +421,7 @@ prints them for a folder of test pictures.
   start", `src/firstrun/UseNotice.tsx`, stored as `noticeAccepted: <version>`). Short, in the style
   of Adobe Firefly / Bing Image Creator / Midjourney: one privacy line, a "Safety, built in" box
   ("Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-  this with AI running entirely on your own computer.", David's pick 2026-09-30, trimmed
-  2026-10-01 so no privacy line sits next to the safeguards, §8) and "Do not use Pinhole for anything illegal, harmful or
+  this with AI running entirely on your own computer.", David's pick 2026-09-30) and "Do not use Pinhole for anything illegal, harmful or
   non-consensual. By continuing, you agree to the usage
   guidelines and to each model's licence. You're responsible for what you make." The full rules
   are the in-app **Usage guidelines** (`src/components/UsageGuidelines.tsx`): no sexual content
@@ -395,24 +446,15 @@ prints them for a folder of test pictures.
 Applies to the README, repo description, docs, release notes, screenshots, videos, issue
 templates, posts and UI.
 
-- Describe privacy as ownership of your work: "Your prompts and images stay on your computer."
-- Never use: "leaves no trace", "untraceable", "no one will know", "uncensored", "unfiltered",
-  "NSFW", "undress", "nudify", "face swap". Only exception: "NSFW" as the label of the Browse
-  tag filter (CivitAI's own term, so people can find or avoid those models), never in marketing.
-- Don't frame privacy as hiding what you made from other people ("forgets everything", "wipes
-  your tracks", "nobody will see", "no history"). State facts instead: what stays on the
-  computer, what is saved and when, what goes online. Controls get plain names ("Reset", not
-  "Clear session" or "Panic"). Portable mode is described as portable, never as "leaves nothing
-  behind".
-- Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
-  disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
-  saved until you press Save."
-- Never say that nothing is reported, recorded or sent about what people make, and keep privacy and
-  no-telemetry facts out of safeguard text (SAFETY.md, usage guidelines, notices, block message);
-  no hints at consequences or monitoring either. Limitations stay honest but neutral, never a
-  challenge ("can't stop someone determined") or a pointer to how checks could be removed or fooled.
-- Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
-  against …").
+- Describe privacy plainly: "Your prompts and images stay on your computer." State facts: what
+  stays on the computer, what is saved and when, what goes online. Where saving needs explaining,
+  say it once, like any editor: "Nothing is saved until you press Save."
+- "NSFW" appears only as the label of the Browse tag filter (CivitAI's own term), never in
+  marketing.
+- Controls get plain names ("Reset"). Portable mode is described as portable.
+- Safety text (SAFETY.md, usage guidelines, notices, block message) describes the safeguards and
+  their limitations in neutral terms ("the checks can make mistakes in both directions").
+- Say what Pinhole blocks ("has safeguards against …") rather than calling it "safe".
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real
   person's body or clothes while keeping their face.
 - Screenshots and demos: Safe mode on, safe for work, fictional subjects, no celebrities or real
@@ -423,8 +465,7 @@ templates, posts and UI.
 ## 9. Paper trail and reporting
 
 - **`SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
-  doesn't (§3.2), how it works, a "Limitations" section in plain words
-  (no workaround detail; 2026-10-01), and how to report a problem (GitHub private vulnerability reporting only,
+  doesn't (§3.2), how it works, a "Limitations" section in plain words, and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Before marketing (§12): a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast.
@@ -453,7 +494,7 @@ templates, posts and UI.
 - **Remote prompt classification — rejected** (e.g. sending prompts to a server running the Jev
   API). Prompts would leave the machine (Jev is API-only; standard data retention for
   non-enterprise accounts), it breaks Offline mode, it doesn't fit Pinhole's local design, and it creates data-protection obligations for the developer.
-- **Telemetry / prompt logging — rejected** (privacy rules, CLAUDE.md).
+- **Telemetry / prompt logging — rejected** (SPEC §4).
 - **Safety classifiers on GPU — rejected.** VRAM cost; CPU is fast enough.
 - **Local prompt guard LLM — dropped for v1** (2026-09-29; was planned as Qwen3Guard / Llama Guard
   on `llama-server`). Small guard models are trained on chat, not tag-style image prompts, and
@@ -470,11 +511,15 @@ templates, posts and UI.
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
   anime prompts pass. Word lists are compiled in (not YAML).
-  Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
-  accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
-  repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
+  Before matching it normalizes the text (Unicode variants, accents and spacing; 2026-09-30, no
+  text model).
   On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
-  new. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
+  new. Since 2026-10-01 it also blocks text that names an identity document or banknote with a
+  word asking for a usable copy of it (its data fields, a flat scan, that it be valid or
+  official, or a fake): `words::asks_for_document_copy`. On DiffusionDB's 1,528,513 distinct
+  prompts it blocked 13 (mostly joke documents for cartoon characters) and on 81,910
+  Stable-Diffusion-Prompts none (`doccheck` example). Pictures aren't checked for documents: the
+  tagger's document tags are trained on drawings and fire on badges and cards in scenes. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
   without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or
@@ -494,14 +539,12 @@ templates, posts and UI.
   old commits: GitHub keeps every pull request's commits (`refs/pull/*`) and only GitHub Support
   can purge them. Old commits add nothing over today's source, and the history is the dated
   record of when safeguards were decided. Full-history scan on 2026-09-29 (220 commits including
-  every pull request ref): no secrets, no files over 5 MB, no banned wording in commit messages.
+  every pull request ref): no secrets, no files over 5 MB.
 - **Never add these features:**
   - Identity features: PhotoMaker, PuLID, InstantID, IP-Adapter FaceID, face swapping, or
     training a LoRA from photos of a person. The wiring parser knows `--photo-maker` and
     `--pulid-weights` (`pinhole-registry/src/wiring.rs`); nothing exposes them, and nothing will.
-  - Concealment features: a panic key, hide-window, a disguised app name or icon, secure delete of
-    saved images, clipboard auto-clear, a switch to turn off the AI marker, or stripping other
-    tools' AI markers.
+  - A switch to turn off the AI marker, or removing other tools' AI labels from pictures.
 
 ---
 

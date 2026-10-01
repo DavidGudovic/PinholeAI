@@ -9,7 +9,7 @@ description = "Workspace-level integration tests: privacy sentinel scan, offline
 [lib]
 path = "lib.rs"
 
-# tests/tests/privacy.rs      — sentinel prompt never reaches disk (CLAUDE.md "Privacy tests")
+# tests/tests/privacy.rs      — sentinel prompt never reaches disk
 # tests/tests/offline.rs      — Offline mode blocks every call before a socket opens
 # tests/tests/engine_smoke.rs — real sd-server + SD 1.5 on CPU (only with PINHOLE_SMOKE=1)
 

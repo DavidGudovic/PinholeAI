@@ -1,6 +1,6 @@
 //! Classify engine failures from the (already redacted) ring-buffer tail and
 //! the exit status, so the core can say what to do next instead of dumping
-//! engine output (CLAUDE.md UX rules).
+//! engine output.
 
 /// What went wrong, in terms the UI can act on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

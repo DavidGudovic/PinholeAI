@@ -1,5 +1,5 @@
-// The usage guidelines, opened again when the safety check stops something. The message is the
-// block message from Rust as is: it never says what triggered the block.
+// The usage guidelines, opened again when the safety check stops something, with the block
+// message from Rust unchanged.
 import { useEffect, useState } from "react";
 import { currentBlocked, dismissBlocked, onBlocked } from "../lib/blocked";
 import { UsageGuidelines } from "./UsageGuidelines";

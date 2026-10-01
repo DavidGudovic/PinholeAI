@@ -2,8 +2,7 @@
 
 The one-page context for anyone (human or Claude) picking up Pinhole. Details live in
 [`SPEC.md`](SPEC.md) (what), [`ARCHITECTURE.md`](ARCHITECTURE.md) (how the code is organised),
-[`RELEASE-SPEC.md`](RELEASE-SPEC.md) (the safeguards and release rules every public build follows) and
-[`../CLAUDE.md`](../CLAUDE.md) (working rules).
+[`RELEASE-SPEC.md`](RELEASE-SPEC.md) (the safeguards and release rules every public build follows).
 
 ## What it is
 A simple, private, offline AI image generator for Windows and Linux: pick a model, type a prompt,
@@ -104,5 +103,3 @@ fine-tune installed to reproduce.
    licence field on every download, signed updates and release files, Windows code signing,
    dependency review).
 5. Optional: our own Ubuntu 22.04 engine build; live preview once sd-server supports it.
-
-Never market Pinhole as "uncensored", "unfiltered" or "no one will know" (CLAUDE.md wording rules).

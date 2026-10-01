@@ -9,7 +9,8 @@ fn blocked() -> CoreError {
     CoreError::new("blocked", BLOCKED_MESSAGE)
 }
 
-/// Blocks text that pairs an under-18 term with a sexual term.
+/// Blocks text that pairs an under-18 term with a sexual term, or that asks for a usable copy
+/// of an identity document or banknote.
 pub fn check(text: &str) -> CoreResult<()> {
     pinhole_engine::words::check(text).map_err(|_| blocked())
 }

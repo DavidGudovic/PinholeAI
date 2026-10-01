@@ -63,7 +63,7 @@ async fn app_e2e() {
     )
     .expect("AppCore::new");
     core.start_background();
-    // This test is about the engine path; the image check's models (1.1 GB) have their own
+    // This test is about the engine path; the image check's models (1.2 GB) have their own
     // tests (pinhole-check, pinhole-core `testing`). A stand-in passes every picture.
     pinhole_core::testing::use_check(&core, pinhole_core::testing::FakeCheck::default());
 

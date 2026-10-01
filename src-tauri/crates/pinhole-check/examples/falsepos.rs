@@ -166,6 +166,7 @@ fn load(p: &Path, scale: f32) -> Option<Vec<u8>> {
 /// numbers for one part of the check, not how often the whole check catches harmful pictures.
 fn ages() {
     const LEVELS: [f32; 6] = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9];
+    const YEARS: [f32; 6] = [18.0, 20.0, 21.0, 22.0, 23.0, 25.0];
     // FALSEPOS_VERBOSE=1 also prints each picture's 0–9 and 0–19 scores.
     let verbose = std::env::var_os("FALSEPOS_VERBOSE").is_some();
     let mut args = std::env::args().skip(1);
@@ -175,6 +176,8 @@ fn ages() {
         let (mut unreadable, mut errors, mut n, mut no_face, mut judged, mut blocked) =
             (0, 0, 0, 0, 0, 0);
         let (mut child, mut teen, mut under_20) = ([0; 6], [0; 6], [0; 6]);
+        let mut younger = [0; YEARS.len()];
+        let mut by_groups = 0;
         for p in &files {
             let Some(png) = load(p, 1.0) else {
                 unreadable += 1;
@@ -200,8 +203,17 @@ fn ages() {
                 continue;
             };
             judged += 1;
+            // The youngest judged face's age in years (second estimate).
+            let years = faces
+                .iter()
+                .filter(|f| f.judged())
+                .filter_map(|f| f.age)
+                .fold(f32::MAX, f32::min);
             if verbose {
-                println!("  {} 0–9 {c0:.4} 0–19 {u:.4}", p.display());
+                println!("  {} 0–9 {c0:.4} 0–19 {u:.4} years {years:.1}", p.display());
+            }
+            for (i, y) in YEARS.iter().enumerate() {
+                younger[i] += (years < *y) as u32;
             }
             for (i, level) in LEVELS.iter().enumerate() {
                 child[i] += (c0 >= *level) as u32;
@@ -210,6 +222,17 @@ fn ages() {
             }
             if faces.iter().any(|f| f.looks_underage()) {
                 blocked += 1;
+            }
+            // The first estimate's groups alone (the rule before the second estimate).
+            if faces.iter().any(|f| {
+                f.judged()
+                    && (f
+                        .child_face
+                        .is_some_and(|c| c >= pinhole_check::rules::CHILD_FACE)
+                        || f.under_20_face
+                            .is_some_and(|u| u >= pinhole_check::rules::UNDER_20_FACE))
+            }) {
+                by_groups += 1;
             }
         }
         let row = |name: &str, v: [u32; 6]| {
@@ -233,9 +256,24 @@ fn ages() {
             "  age half of rule 2 on a sexual photo-style result would block {blocked} of {judged} judged ({:.2}%)",
             100.0 * blocked as f32 / judged.max(1) as f32
         );
+        println!(
+            "  of which the first estimate's groups alone: {by_groups} ({:.2}%)",
+            100.0 * by_groups as f32 / judged.max(1) as f32
+        );
         println!("  share of judged faces (age estimate only):");
         row("0–9", child);
         row("10–19 (includes 18 and 19)", teen);
         row("0–19", under_20);
+        let cells: Vec<String> = YEARS
+            .iter()
+            .zip(younger)
+            .map(|(y, k)| {
+                format!(
+                    "<{y}: {k} ({:.1}%)",
+                    100.0 * k as f32 / judged.max(1) as f32
+                )
+            })
+            .collect();
+        println!("  age in years (second estimate): {}", cells.join(" · "));
     }
 }

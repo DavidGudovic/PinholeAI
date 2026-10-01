@@ -175,11 +175,9 @@ pub fn is_known_flag(flag: &str) -> bool {
 
 /// Flags that load weights or other content, or change where the server listens or what it
 /// logs. Pinhole sets these itself; the free-form `flags` lists in models.yaml (and
-/// Data/config/overrides.yaml) and engine.yaml's launch defaults may not, so an edited file
-/// can't load content past the checks (for example embeddings named by harmless words).
+/// Data/config/overrides.yaml) and engine.yaml's launch defaults carry only tuning flags.
 const CONTENT_FLAGS: &[&str] = &[
-    // Server-wide request defaults: a guidance schedule can undo the CFG floor, and Pinhole
-    // never sets these.
+    // Server-wide request defaults (Pinhole sets these per request).
     "--extra-sample-args",
     "--extra-tiling-args",
     "--ref-image-args",
@@ -736,8 +734,7 @@ pub fn size_multiple(family: &Family) -> u32 {
     family.dials.size_multiple.filter(|m| *m > 0).unwrap_or(64)
 }
 
-/// Lowest CFG resolved (and sent: `pinhole_engine::sdapi::MIN_CFG` matches it). Below 1 the
-/// engine steers towards the negative prompt, which isn't word-checked.
+/// Lowest CFG resolved (and sent: `pinhole_engine::sdapi::MIN_CFG` matches it).
 pub const MIN_CFG: f32 = 1.0;
 
 /// Longest side over shortest side of a made picture.
@@ -865,8 +862,8 @@ pub fn resolve_params(
     let t = if edit { 1.0 - stick } else { stick };
     let target = stick_target(family, edit);
 
-    // Never below 1: lower values steer towards the negative prompt (the engine request
-    // enforces this too; clamping here keeps what Fine-tune shows honest).
+    // Never below 1 (the engine request enforces this too; clamping here keeps what
+    // Fine-tune shows accurate).
     let cfg = fine
         .cfg
         .filter(|c| c.is_finite())

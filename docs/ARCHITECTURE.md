@@ -1,7 +1,7 @@
 # Pinhole — Architecture
 
 `docs/SPEC.md` says *what* Pinhole does; this file says *how the code is organised*
-and is the contract between the modules. Read SPEC.md and CLAUDE.md first.
+and is the contract between the modules. Read SPEC.md first.
 
 ## 1. Layout
 
@@ -59,7 +59,7 @@ Conventions across areas:
   sessions (cloned by `.claude/hooks/session-start.sh`; server API `examples/server/api.md`, flags
   `examples/common/common.cpp`, detection `src/model_loader.cpp`, per-model `docs/*.md`).
 - Session containers can't reach huggingface.co / civitai.com: write code + tests with fixtures, and
-  check live data with the **API probe** workflow (see CLAUDE.md "Working in a Claude Code session").
+  check live data with the **API probe** workflow.
 
 ## 3. Commands & events
 

@@ -74,8 +74,7 @@ scripts/check.sh       # tests, lints and the privacy checks
 
 Start with [docs/PROJECT-BRIEF.md](docs/PROJECT-BRIEF.md) (status and decisions),
 [docs/SPEC.md](docs/SPEC.md) (what Pinhole does) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-(how it's built). Contributors also read [CLAUDE.md](CLAUDE.md), which holds the privacy and
-wording rules.
+(how it's built). The privacy rules the tests enforce are in SPEC §4.
 
 ## License
 

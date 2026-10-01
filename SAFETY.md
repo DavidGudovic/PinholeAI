@@ -15,18 +15,21 @@ change it.
   licence ask you to accept it once first.
 - **Word check.** Prompts, "Improve my prompt" ideas, text written by the Describe helper and
   Browse searches are checked against fixed word lists in the code. Text that combines words about
-  minors with sexual words is refused.
+  minors with sexual words is refused, and so is text that asks for a usable copy of an identity
+  document or a banknote.
 - **Image check.** Every picture Pinhole makes is checked before it is shown, by small open
-  models that run on the processor (about 1.1 GB, downloaded with the engine). A result is not
+  models that run on the processor (about 1.2 GB, downloaded with the engine). A result is not
   shown when:
   - it is sexual and shows someone who looks under 18: a child, or in a photo-style picture a
-    face that looks like a teenager's;
+    face that looks like a teenager's, or a face close to adult age in a setting or clothing that
+    presents the person as under 18;
   - it makes a picture of a person that was brought into Pinhole intimate, whatever that
     picture already showed;
-  - it is intimate and comes from a model or add-on that is "safe images only": its CivitAI
+  - it is intimate and comes from a model or add-on that is "safe images only" (its CivitAI
     author marked it so, or it was added from your computer or another app's folder and CivitAI
-    hasn't confirmed what it is.
+    hasn't confirmed what it is), or from a picture such a model or add-on made.
 
+  A picture you bring in is checked the same way before it is first described.
   It doesn't block adult content of adults. If the check's files are missing or
   damaged, Pinhole makes nothing until they are downloaded again. When a picture is stopped, it
   isn't shown; your prompt and settings stay so you can change them.
@@ -64,7 +67,8 @@ can miss some harmful ones. We keep improving them.
 - **Model flags come from CivitAI.** Flags such as "safe images only" reflect what CivitAI
   records. A model CivitAI doesn't know is treated as "safe images only".
 - **The guidelines cover more than the automatic checks.** Rules such as no deception,
-  harassment, forgery or fraud are part of the usage guidelines everyone agrees to.
+  harassment, forgery or fraud are part of the usage guidelines everyone agrees to; the checks
+  cover only part of them.
 - **Labels aren't proof.** The "made with AI" label and the watermark mark a picture as made with
   AI. They don't prove where a picture came from or who is in it.
 - **How the checks are tested.** With made-up scores and on ordinary pictures. Real harmful

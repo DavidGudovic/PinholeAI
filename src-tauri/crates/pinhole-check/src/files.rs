@@ -68,8 +68,19 @@ pub const AGE: CheckFile = CheckFile {
     license: "Apache-2.0",
 };
 
+/// Age in years from a face (MiVOLO v2, Apache-2.0: an ONNX export of the age output of
+/// `iitolstykh/mivolo_v2`, same weights). One of its steps is rewritten as it loads (`run.rs`).
+pub const AGE_YEARS: CheckFile = CheckFile {
+    id: "mivolo-v2-age-384.onnx",
+    label: "Safety check: age in years",
+    url: "https://huggingface.co/Sam-Apostel/mivolo-v2-age-onnx/resolve/8eb4cd8f5dd4bd28df2c9a43b24bc54d6d139d36/mivolo_v2_age.onnx",
+    size: 117_773_501,
+    sha256: "2db5e05be33b3f120518a86f29a4a65eb0a01c2967219b8787a7dead9b796951",
+    license: "Apache-2.0",
+};
+
 /// Every file the check needs. All must be present and intact, or nothing is made.
-pub const FILES: [CheckFile; 5] = [NUDITY, TAGGER, TAGGER_TAGS, FACES, AGE];
+pub const FILES: [CheckFile; 6] = [NUDITY, TAGGER, TAGGER_TAGS, FACES, AGE, AGE_YEARS];
 
 /// Total download size.
 pub fn total_bytes() -> u64 {

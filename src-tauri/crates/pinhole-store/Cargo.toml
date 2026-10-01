@@ -13,6 +13,10 @@ dirs = { workspace = true }
 chrono = { workspace = true }
 keyring = { workspace = true }
 parking_lot = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
 
 # OS keychain backends (keyring 3 has none enabled by default → it would silently
 # fall back to an in-memory mock).

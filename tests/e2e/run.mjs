@@ -939,7 +939,7 @@ try {
 
     await step("create-generate-real", async (note) => {
       assert(realModelName, "no real model");
-      // Nothing is made without the image check's files (~1.1 GB from Hugging Face). The engine
+      // Nothing is made without the image check's files (~1.2 GB from Hugging Face). The engine
       // step started their download; wait for it (or start it) before generating.
       const t0check = Date.now();
       const check = await invoke("safety_check_status");

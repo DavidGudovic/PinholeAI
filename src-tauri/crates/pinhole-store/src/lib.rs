@@ -8,6 +8,7 @@ pub mod datadir;
 pub mod installed;
 pub mod keychain;
 pub mod presets;
+pub mod seal;
 pub mod settings;
 pub mod styles;
 

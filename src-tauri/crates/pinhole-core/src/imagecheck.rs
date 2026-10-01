@@ -18,7 +18,7 @@ use pinhole_check::{files, CheckError, Checker, Original, Readings, Rule};
 use pinhole_net::download::{DownloadKind, DownloadSpec};
 use serde::Serialize;
 
-use crate::session::Source;
+use crate::session::{SessionImage, Source};
 use crate::text_check::BLOCKED_MESSAGE;
 use crate::{AppCore, CoreError, CoreResult};
 
@@ -125,7 +125,9 @@ pub struct CheckState {
     install_start: tokio::sync::Mutex<()>,
     /// SHA-256 of each exported (saved) picture → the brought-in pictures it was made
     /// from, so opening a saved picture again keeps its chain (memory only, until Reset).
-    exported: Mutex<HashMap<String, Arc<[Source]>>>,
+    exported: Mutex<HashMap<String, Exported>>,
+    /// Brought-in pictures that passed the check before Describe, by session image id.
+    describable: Mutex<std::collections::HashSet<String>>,
 }
 
 impl CheckState {
@@ -136,6 +138,7 @@ impl CheckState {
             install_group: Mutex::new(None),
             install_start: tokio::sync::Mutex::new(()),
             exported: Mutex::new(HashMap::new()),
+            describable: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -147,25 +150,40 @@ impl CheckState {
     pub fn forget(&self) {
         self.originals.lock().clear();
         self.exported.lock().clear();
+        self.describable.lock().clear();
     }
 
     /// Save/Copy: remember what an exported picture was made from.
-    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>) {
-        if made_from.is_empty() {
+    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>, safe_images_only: bool) {
+        if made_from.is_empty() && !safe_images_only {
             return;
         }
         let key = hex_sha256(bytes);
-        self.exported.lock().insert(key, Arc::from(made_from));
+        self.exported.lock().insert(
+            key,
+            Exported {
+                made_from: Arc::from(made_from),
+                safe_images_only,
+            },
+        );
     }
 
     /// Import: a picture Pinhole exported earlier in this session keeps its chain.
-    pub fn exported_from(&self, bytes: &[u8]) -> Option<Arc<[Source]>> {
+    pub fn exported_from(&self, bytes: &[u8]) -> Option<Exported> {
         let map = self.exported.lock();
         if map.is_empty() {
             return None;
         }
         map.get(&hex_sha256(bytes)).cloned()
     }
+}
+
+/// What a saved picture keeps for the check when it is opened again in the same session.
+#[derive(Clone)]
+pub struct Exported {
+    pub made_from: Arc<[Source]>,
+    /// See [`SessionImage::safe_images_only`].
+    pub safe_images_only: bool,
 }
 
 /// `SafetyCheckStatus` in src/lib/types.ts.
@@ -212,7 +230,7 @@ fn missing_error(core: &AppCore) -> CoreError {
     } else {
         CoreError::new(
             MISSING,
-            "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+            "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.2 GB), then try again.",
         )
     }
 }
@@ -227,7 +245,7 @@ fn check_error(core: &AppCore, e: CheckError) -> CoreError {
         .with_details(format!("{f} is damaged")),
         CheckError::Image | CheckError::Run(_) => CoreError::new(
             "check_failed",
-            "The safety check couldn't run, so the picture wasn't shown. Try again.",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
         )
         .with_details(e.to_string()),
     }
@@ -248,22 +266,108 @@ pub fn ensure_ready(core: &AppCore) -> CoreResult<()> {
     Ok(())
 }
 
+/// How a batch of results was made. [`check_results`] works out every rule input from it
+/// (the brought-in pictures behind it, and the flags of every model and add-on involved,
+/// including those that made the pictures fed in), so no caller passes a rule input itself.
+pub enum MadeBy<'a> {
+    /// Drawn by an installed model (file id) with these add-ons (file ids), from these
+    /// pictures (none for a plain Create; the mask isn't one: it is only a shape).
+    Model {
+        model_id: &'a str,
+        addon_ids: &'a [String],
+        inputs: &'a [SessionImage],
+    },
+    /// Enlarged by the upscaler, which adds no model of its own.
+    Upscale(&'a SessionImage),
+}
+
+impl MadeBy<'_> {
+    fn inputs(&self) -> &[SessionImage] {
+        match self {
+            MadeBy::Model { inputs, .. } => inputs,
+            MadeBy::Upscale(img) => std::slice::from_ref(*img),
+        }
+    }
+
+    /// The brought-in pictures behind the inputs (each once), and the made pictures from
+    /// those chains that are fed in: a face can show up in them (enlarged, straightened,
+    /// sharpened) that the brought-in picture didn't show clearly.
+    fn sources(&self) -> (Vec<Source>, Vec<Source>) {
+        let mut sources: Vec<Source> = Vec::new();
+        let mut fed_in = Vec::new();
+        for img in self.inputs() {
+            fed_in.extend(img.fed_in_source());
+            for s in img.sources() {
+                if !sources.iter().any(|k| k.id == s.id) {
+                    sources.push(s);
+                }
+            }
+        }
+        (sources, fed_in)
+    }
+
+    /// Rule 3: a model or add-on of this step, or of any step before it, is marked "safe
+    /// images only". A file that isn't installed any more counts as marked.
+    fn safe_images_only(&self, core: &AppCore) -> bool {
+        let inherited = self.inputs().iter().any(|i| i.safe_images_only);
+        let MadeBy::Model {
+            model_id,
+            addon_ids,
+            ..
+        } = self
+        else {
+            return inherited;
+        };
+        let idx = core.installed.lock();
+        inherited
+            || std::iter::once(*model_id)
+                .chain(addon_ids.iter().map(String::as_str))
+                .any(|id| idx.get(id).is_none_or(|f| f.safe_images_only()))
+    }
+}
+
+/// Describe intake: a brought-in picture is checked the first time it is described, with the
+/// same rules as a result (a person in it can't be made intimate, so rule 1 has nothing to
+/// compare with here). Pictures Pinhole made passed the check when they were made.
+pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<()> {
+    if img.meta.is_some() || core.check.describable.lock().contains(&img.id) {
+        return Ok(());
+    }
+    ensure_ready(core)?;
+    let c = core.clone();
+    let png = img.bytes.clone();
+    let safe = img.safe_images_only;
+    let res = tokio::task::spawn_blocking(move || {
+        let r = c.check.inspector().readings(&png)?;
+        Ok::<_, CheckError>(pinhole_check::rules::decide(&r, &[], safe).map(|rule| (rule, r)))
+    })
+    .await
+    .map_err(|e| {
+        CoreError::new(
+            "check_failed",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
+        )
+        .with_details(e.to_string())
+    })?;
+    if let Some((rule, r)) = res.map_err(|e| check_error(core, e))? {
+        return Err(blocked_error(rule, &r));
+    }
+    core.check.describable.lock().insert(img.id.clone());
+    Ok(())
+}
+
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
 /// when none is blocked; otherwise the whole batch is dropped.
 /// `also_check`: parts of the results measured on their own and judged the same way (a
 /// Fix details box, which is too small to judge in a large whole picture); never kept.
-/// `sources`: the brought-in pictures the batch was made from. `inputs`: made pictures from
-/// those chains fed into this step; a person found in one counts like one in a brought-in
-/// picture. `safe_images_only`: the model or a LoRA in use is marked "safe images only" on
-/// CivitAI.
 pub async fn check_results(
     core: &Arc<AppCore>,
     pngs: Vec<Vec<u8>>,
     also_check: Vec<Vec<u8>>,
-    sources: Vec<Source>,
-    inputs: Vec<Source>,
-    safe_images_only: bool,
+    made_by: MadeBy<'_>,
 ) -> CoreResult<Vec<CheckedPng>> {
+    let (sources, inputs) = made_by.sources();
+    let safe_images_only = made_by.safe_images_only(core);
     let made_from: Arc<[Source]> = Arc::from(sources.clone());
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
@@ -312,6 +416,7 @@ pub async fn check_results(
         .map(|png| CheckedPng {
             png,
             made_from: made_from.clone(),
+            safe_images_only,
         })
         .collect())
 }
@@ -323,6 +428,8 @@ pub async fn check_results(
 pub struct CheckedPng {
     png: Vec<u8>,
     made_from: Arc<[Source]>,
+    /// Checked under rule 3 (see [`MadeBy`]); every picture made from it is too.
+    safe_images_only: bool,
 }
 
 impl CheckedPng {
@@ -330,8 +437,8 @@ impl CheckedPng {
         &self.png
     }
 
-    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>) {
-        (self.png, self.made_from)
+    pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>, bool) {
+        (self.png, self.made_from, self.safe_images_only)
     }
 
     /// Tests that exercise the session without running the check.
@@ -340,14 +447,15 @@ impl CheckedPng {
         Self {
             png,
             made_from: Arc::from(Vec::new()),
+            safe_images_only: false,
         }
     }
 }
 
 fn blocked_error(rule: Rule, r: &Readings) -> CoreError {
     let e = CoreError::new("blocked", BLOCKED_MESSAGE);
-    // Dev builds show which rule fired and the scores, to tune the rules on legal
-    // test pictures. Release builds say nothing more than the message.
+    // Debug builds add the rule and scores to the details for tuning; release builds
+    // return the message only.
     if cfg!(debug_assertions) {
         e.with_details(format!("{}: {}", rule.key(), describe(r)))
     } else {
@@ -382,8 +490,8 @@ pub fn describe(r: &Readings) -> String {
     let mut s = format!("nudity {:.2}", r.nudity);
     if let Some(t) = &r.tags {
         s += &format!(
-            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2}",
-            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic
+            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2} · young setting {:.2}",
+            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic, t.young_context
         );
     }
     if let Some(faces) = &r.faces {
@@ -391,8 +499,12 @@ pub fn describe(r: &Readings) -> String {
             .iter()
             .map(|f| match (f.child_face, f.under_20_face) {
                 (Some(c), Some(u)) => format!(
-                    "{:.2} ({:.0}px) child face {:.2} under 20 {:.2}",
-                    f.score, f.side, c, u
+                    "{:.2} ({:.0}px) child face {:.2} under 20 {:.2} age {:.1}",
+                    f.score,
+                    f.side,
+                    c,
+                    u,
+                    f.age.unwrap_or(f32::NAN)
                 ),
                 _ => format!("{:.2} ({:.0}px)", f.score, f.side),
             })
@@ -403,7 +515,7 @@ pub fn describe(r: &Readings) -> String {
 }
 
 /// Dev builds: every reading of a session picture, measured on request (nothing is
-/// kept). Release builds: always `None`, so ordinary users never see what the check saw.
+/// kept). Release builds: always `None` (a developer tool).
 pub async fn readings_of(core: &Arc<AppCore>, id: &str) -> CoreResult<Option<String>> {
     if !cfg!(debug_assertions) {
         return Ok(None);

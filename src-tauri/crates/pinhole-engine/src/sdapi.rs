@@ -18,8 +18,7 @@ use crate::words::CheckedPrompt;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct Guidance {
-    /// Sent as at least 1 ([`MIN_CFG`]). Below 1, sd.cpp leans towards the negative prompt
-    /// (at 0 it follows only the negative), and the negative prompt isn't word-checked.
+    /// Sent as at least 1 ([`MIN_CFG`]).
     #[serde(serialize_with = "ser_cfg")]
     pub txt_cfg: f32,
     #[serde(
@@ -33,9 +32,8 @@ pub struct Guidance {
 }
 
 /// The lowest CFG the engine is ever sent. At CFG 1 sd.cpp ignores the negative prompt; above
-/// 1 it steers away from it. Enforced where the request is serialized, so no setting, pasted
-/// value or IPC call can send less. Matches `pinhole_registry::wiring::MIN_CFG`, which keeps
-/// what Fine-tune shows honest (the crates don't depend on each other).
+/// 1 it steers away from it. Enforced where the request is serialized. Matches `pinhole_registry::wiring::MIN_CFG`, which keeps
+/// what Fine-tune shows accurate (the crates don't depend on each other).
 pub const MIN_CFG: f32 = 1.0;
 
 /// `cfg` raised to [`MIN_CFG`]; a non-finite value becomes [`MIN_CFG`].
@@ -667,8 +665,7 @@ mod tests {
         assert!(!req.embeds_metadata());
     }
 
-    /// Regression: below CFG 1 the engine follows the negative prompt, which isn't
-    /// word-checked, so the body never carries less than 1, whatever the caller set.
+    /// The body never carries a CFG below 1, whatever the caller set.
     #[test]
     fn cfg_below_one_is_sent_as_one() {
         for cfg in [0.0, 0.5, -3.0, f32::NAN, f32::NEG_INFINITY, f32::INFINITY] {

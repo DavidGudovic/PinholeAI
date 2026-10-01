@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Pinhole privacy lint — the static check required by CLAUDE.md ("Privacy tests")
+// Pinhole privacy lint — the static check required by SPEC §4 rule 10
 // and docs/ARCHITECTURE.md §5. Node ≥ 18, no dependencies.
 //
 //   node scripts/privacy-lint.mjs              lint the repo (exit 1 on findings)
@@ -495,7 +495,7 @@ export function lintRust(file, src, F) {
   // (h) bind-all
   for (const s of strings) {
     if (/\b0\.0\.0\.0\b/.test(s.text) && code[s.start - 1] === '"') {
-      F.add(file, src, starts, s.start, "bind-all", 'Found "0.0.0.0": engines must bind to 127.0.0.1 only (CLAUDE.md privacy rule 6).');
+      F.add(file, src, starts, s.start, "bind-all", 'Found "0.0.0.0": engines must bind to 127.0.0.1 only (SPEC §4).');
     }
   }
   return code;
@@ -523,7 +523,7 @@ function lintEngineMetadata(files, F) {
     if (/embed_image_metadata"?\s*[:=]\s*false\b/.test(unmaskedLive) || /embed_image_metadata\s*:\s*bool/.test(code)) mentionsFalse = true;
   }
   if (sendsImgGen && !mentionsFalse && !sawTrue) {
-    F.addPlain(sendsImgGen.rel, 1, "embed-metadata", 'pinhole-engine talks to /sdcpp/v1/img_gen but never sets "embed_image_metadata": false (CLAUDE.md privacy rule 2).');
+    F.addPlain(sendsImgGen.rel, 1, "embed-metadata", 'pinhole-engine talks to /sdcpp/v1/img_gen but never sets "embed_image_metadata": false (SPEC §4).');
   }
 }
 
@@ -541,7 +541,7 @@ export function lintCargoToml(file, src, F) {
       section = h[1].trim();
       const t = section.match(/^(?:workspace\.)?(?:target\.[^.]+(?:\.[^.]+)*\.)?(?:dependencies|build-dependencies)\.([A-Za-z0-9_-]+)$/);
       if (t && FORBIDDEN_CRATES.some((re) => re.test(t[1])) && !ALLOW_RE.test(raw)) {
-        F.addPlain(file, idx + 1, "forbidden-crate", `Crate \`${t[1]}\` is not allowed (no logging/tracing/telemetry/updater crates — CLAUDE.md privacy rules 1 and 4).`, raw.trim());
+        F.addPlain(file, idx + 1, "forbidden-crate", `Crate \`${t[1]}\` is not allowed (no logging/tracing/telemetry/updater crates — SPEC §4).`, raw.trim());
       }
       return;
     }
@@ -552,7 +552,7 @@ export function lintCargoToml(file, src, F) {
     const pkg = (line.match(/package\s*=\s*"([^"]+)"/) || [])[1];
     for (const name of [d[1], pkg].filter(Boolean)) {
       if (FORBIDDEN_CRATES.some((re) => re.test(name)) && !ALLOW_RE.test(raw)) {
-        F.addPlain(file, idx + 1, "forbidden-crate", `Crate \`${name}\` is not allowed (no logging/tracing/telemetry/updater crates — CLAUDE.md privacy rules 1 and 4).`, raw.trim());
+        F.addPlain(file, idx + 1, "forbidden-crate", `Crate \`${name}\` is not allowed (no logging/tracing/telemetry/updater crates — SPEC §4).`, raw.trim());
       }
     }
   });
@@ -566,7 +566,7 @@ export function lintPackageJson(file, src, F) {
     for (const name of Object.keys(pkg[key] || {})) {
       if (FORBIDDEN_NPM.some((re) => re.test(name))) {
         const ln = lines.findIndex((l) => l.includes(`"${name}"`)) + 1;
-        F.addPlain(file, ln, "forbidden-npm", `Package \`${name}\` is not allowed (no telemetry, analytics, crash reporting or updater packages — CLAUDE.md privacy rule 4).`, (lines[ln - 1] || "").trim());
+        F.addPlain(file, ln, "forbidden-npm", `Package \`${name}\` is not allowed (no telemetry, analytics, crash reporting or updater packages — SPEC §4).`, (lines[ln - 1] || "").trim());
       }
     }
   }
@@ -582,16 +582,16 @@ export function lintTauriConf(file, src, F) {
   // Platform override files (tauri.windows.conf.json …) merge over the main
   // config, so only the main file must define the CSP; overrides may still not weaken it.
   const isMainConf = /(^|\/)tauri\.conf\.json$/.test(file);
-  if (!cspList.length && isMainConf) F.addPlain(file, lineOfText('"security"'), "csp", "No CSP configured: the WebView must be locked to 'self', ipc: and blob:/data: (CLAUDE.md privacy rule 5).");
+  if (!cspList.length && isMainConf) F.addPlain(file, lineOfText('"security"'), "csp", "No CSP configured: the WebView must be locked to 'self', ipc: and blob:/data: (SPEC §4).");
   for (const csp of cspList) {
     for (const tok of csp.split(/[\s;]+/)) {
       if (!tok) continue;
       const remote = /^(https?|wss?):\/\/(?!ipc\.localhost(?:[:/]|$))/i.test(tok) || /^(https?|wss?):$/i.test(tok) || tok === "*" || /^\*\./.test(tok);
-      if (remote) F.addPlain(file, lineOfText("csp"), "csp", `CSP allows remote source \`${tok}\`: the WebView makes no network calls of its own (CLAUDE.md privacy rule 5).`);
+      if (remote) F.addPlain(file, lineOfText("csp"), "csp", `CSP allows remote source \`${tok}\`: the WebView makes no network calls of its own (SPEC §4).`);
     }
   }
   if (conf?.plugins?.updater || conf?.bundle?.createUpdaterArtifacts) {
-    F.addPlain(file, lineOfText("updater"), "csp", "Updater plugin configured: updates only via the user's Check for updates button through the Pinhole HTTP client (CLAUDE.md privacy rule 4).");
+    F.addPlain(file, lineOfText("updater"), "csp", "Updater plugin configured: updates only via the user's Check for updates button through the Pinhole HTTP client (SPEC §4).");
   }
 }
 
@@ -652,7 +652,7 @@ export function lintTs(file, src, F) {
     }
     const hits = promptishIdents(parts.join("\n"), STORAGE_WORDS);
     if (hits.length) {
-      F.add(file, src, starts, m.index, "storage-prompt", `${m[1]} used near prompt-ish ${hits.map((h) => `\`${h}\``).join(", ")} — prompts must never be persisted in the WebView (CLAUDE.md privacy rule 1).`);
+      F.add(file, src, starts, m.index, "storage-prompt", `${m[1]} used near prompt-ish ${hits.map((h) => `\`${h}\``).join(", ")} — prompts must never be persisted in the WebView (SPEC §4).`);
     }
   }
 
@@ -688,7 +688,7 @@ export function lintTs(file, src, F) {
   // [ts-network] direct network APIs
   const netRe = /\b(fetch\s*\(\s*["'`]\s*(?:https?:|wss?:)?\/\/|new\s+WebSocket\b|new\s+EventSource\b|sendBeacon\s*\(|new\s+XMLHttpRequest\b|importScripts\s*\(\s*["'`]https?:)/g;
   while ((m = netRe.exec(withStr))) {
-    F.add(file, src, starts, m.index, "ts-network", `\`${m[1].replace(/\s+/g, " ").slice(0, 40)}\` — the WebView makes no network calls; everything goes through the Rust HttpClient (CLAUDE.md privacy rule 5).`);
+    F.add(file, src, starts, m.index, "ts-network", `\`${m[1].replace(/\s+/g, " ").slice(0, 40)}\` — the WebView makes no network calls; everything goes through the Rust HttpClient (SPEC §4).`);
   }
 }
 
@@ -706,7 +706,7 @@ export function lintHtmlCss(file, src, F) {
   for (const [re, what] of res) {
     let m;
     while ((m = re.exec(noComments))) {
-      F.add(file, src, starts, m.index, "remote-asset", `${what} — no CDN assets or remote fonts (CLAUDE.md privacy rule 4). Bundle it locally.`);
+      F.add(file, src, starts, m.index, "remote-asset", `${what} — no CDN assets or remote fonts (SPEC §4). Bundle it locally.`);
     }
   }
 }

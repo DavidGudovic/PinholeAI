@@ -20,7 +20,7 @@ afterEach(() => {
 
 const MISSING = {
   code: "check_missing",
-  message: "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+  message: "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.2 GB), then try again.",
   details: null,
 };
 

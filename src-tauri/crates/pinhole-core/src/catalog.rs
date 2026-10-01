@@ -23,7 +23,7 @@ pub use pinhole_catalog::view::{BrowsePage, CatalogCard, CatalogFilterOptions, I
 
 use crate::{AppCore, CoreError, CoreResult, InstallStarted};
 
-/// Largest preview image we fetch (CLAUDE.md: previews come through Rust).
+/// Largest preview image we fetch (previews come through Rust).
 pub const MAX_PREVIEW_BYTES: usize = 15 * 1024 * 1024;
 
 /// `catalog-filters.yaml`, loaded once per run.
