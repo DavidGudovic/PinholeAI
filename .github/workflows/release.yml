@@ -77,19 +77,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The keyring crate (pinhole-store) links libdbus on Linux.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libdbus-1-dev libssl-dev pkg-config
+
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
       # A failure here stops the release: the installers wait on this job. These crates hold the
       # word check, the image check rules and their enforcement (one_way.rs), the catalog's model
-      # flags, AI marking and the privacy and offline tests. None of them needs the frontend or
-      # the Linux desktop libraries.
+      # flags, AI marking and the privacy and offline tests (prompts never reach presets, styles or
+      # installed.json: pinhole-store). Only the app crate itself (WebView, no safety logic) is left
+      # out, so the frontend and desktop libraries aren't needed.
       - name: Safety, enforcement and privacy tests
         run: >-
           cargo test --locked --no-fail-fast
           -p pinhole-check -p pinhole-core -p pinhole-engine -p pinhole-catalog
-          -p pinhole-net -p pinhole-tests
+          -p pinhole-net -p pinhole-store -p pinhole-registry -p pinhole-tests
 
       - name: No test-only code in the app build
         run: scripts/check-release-features.sh
