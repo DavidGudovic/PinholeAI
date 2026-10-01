@@ -38,9 +38,9 @@ export const ONLINE_CALLS: Call[] = [
     sent: "Only the model and add-on numbers or file fingerprints, to find them. The prompt stays on this computer. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
   },
   {
-    when: "You add a model file you already have that Pinhole doesn’t recognise",
+    when: "You add a model or add-on file you already have, add another app’s models folder or press Check again on it, or turn Offline mode off while some of those files haven’t been looked up yet",
     where: "civitai.com",
-    sent: "The file’s fingerprint (a SHA-256 hash), to find its name. Not the file. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
+    sent: "Each file’s fingerprint (a SHA-256 hash), to find its name and how its creator marked it. Not the file. Models Pinhole offers itself aren’t looked up. If CivitAI asks for a sign-in (some models are for signed-in users only), the request is sent once more with your CivitAI key, if you added one, in the request header.",
   },
   {
     when: "You press Check for updates in Settings",

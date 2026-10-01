@@ -389,9 +389,12 @@ pub fn describe(r: &Readings) -> String {
     if let Some(faces) = &r.faces {
         let f: Vec<String> = faces
             .iter()
-            .map(|f| match f.child_face {
-                Some(u) => format!("{:.2} ({:.0}px) child face {:.2}", f.score, f.side, u),
-                None => format!("{:.2} ({:.0}px)", f.score, f.side),
+            .map(|f| match (f.child_face, f.under_20_face) {
+                (Some(c), Some(u)) => format!(
+                    "{:.2} ({:.0}px) child face {:.2} under 20 {:.2}",
+                    f.score, f.side, c, u
+                ),
+                _ => format!("{:.2} ({:.0}px)", f.score, f.side),
             })
             .collect();
         s += &format!(" · faces [{}]", f.join(", "));

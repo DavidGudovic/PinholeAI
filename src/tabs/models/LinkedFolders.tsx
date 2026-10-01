@@ -87,7 +87,7 @@ export function LinkedFolders({ version }: { version: number }) {
           <h3 className="text-sm font-semibold">Models from other apps</h3>
           <p className="text-xs text-neutral-500">Used where they are. Pinhole doesn't copy, change or delete anything in these folders.</p>
         </div>
-        <Button size="sm" variant="ghost" onClick={() => void rescanLinkedFolders().catch((e) => setError(asCoreError(e)))} disabled={scanning}>
+        <Button size="sm" variant="ghost" onClick={() => void rescanLinkedFolders(true).catch((e) => setError(asCoreError(e)))} disabled={scanning}>
           <RefreshCw className="h-3.5 w-3.5" /> Check again
         </Button>
       </div>

@@ -21,6 +21,7 @@ pub mod imagecheck;
 pub mod library;
 pub mod licence;
 pub mod linked;
+pub mod lookup;
 pub mod models;
 pub mod models_folder;
 #[cfg(test)]
@@ -111,7 +112,11 @@ impl AppCore {
             &shipped.config_dir,
             overrides.exists().then_some(overrides.as_path()),
         )?;
-        let installed = InstalledIndex::load(&data)?;
+        let mut installed = InstalledIndex::load(&data)?;
+        // Files added by hand or linked before the CivitAI lookup covered them all.
+        if lookup::mark_unchecked(&registry, &mut installed) {
+            let _ = installed.save(&data);
+        }
         let offline = OfflineFlag::new(settings.offline);
         let http = HttpClient::new(offline.clone())?;
         let local = LocalClient::new()?;

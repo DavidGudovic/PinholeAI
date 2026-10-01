@@ -449,6 +449,7 @@ pub async fn install_captioner(
                     component_id: Some(component),
                     civitai: None,
                     dtype: None,
+                    lookup: None,
                 },
             };
             if let Err(e) = register_download(&core2, &file, reg) {

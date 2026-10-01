@@ -119,6 +119,7 @@ pub fn register_fake_model(core: &AppCore, family_id: &str) -> String {
         observed_vram_gb: None,
         dtype: Some("f16".into()),
         trigger_words: None,
+        lookup: None,
     }];
     let required = pinhole_registry::wiring::required_components(&reg, &family, &hw);
     {
@@ -148,6 +149,7 @@ pub fn register_fake_model(core: &AppCore, family_id: &str) -> String {
                 observed_vram_gb: None,
                 dtype: None,
                 trigger_words: None,
+                lookup: None,
             });
         }
     }
@@ -192,6 +194,7 @@ pub fn register_fake_lora(core: &AppCore, family_id: &str, trained_words: &[&str
         observed_vram_gb: None,
         dtype: None,
         trigger_words: None,
+        lookup: None,
     };
     let mut idx = core.installed.lock();
     idx.upsert(file);
@@ -1866,6 +1869,7 @@ mod tests {
                 observed_vram_gb: None,
                 dtype: None,
                 trigger_words: None,
+                lookup: None,
             });
         }
         let mut req = GenerateRequest::txt2img(model, "a cat");
@@ -1995,6 +1999,7 @@ mod tests {
                 score: 0.9,
                 side: 100.0,
                 child_face: Some(0.02),
+                under_20_face: Some(0.05),
             }]),
         }
     }
@@ -2322,6 +2327,7 @@ mod tests {
             component_id: comp.clone(),
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         crate::models::register_download(&core, &file, reg).unwrap();
         let entries = core
@@ -2456,6 +2462,66 @@ mod tests {
         generate::generate(&core, GenerateRequest::txt2img(model, "x"))
             .await
             .unwrap();
+    }
+
+    /// RELEASE-SPEC §5: an add-on or model added by hand or linked counts as "safe images
+    /// only" until a CivitAI lookup clears it (not looked up yet, or no match), and one
+    /// CivitAI marks as a real person or a minor can't be used at all.
+    #[tokio::test]
+    async fn unchecked_hand_added_files_are_safe_images_only() {
+        use pinhole_store::installed::Lookup;
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        let lora = register_fake_lora(&core, "sdxl", &[]);
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                ..Default::default()
+            },
+        );
+        let with_lora = || {
+            let mut req = GenerateRequest::txt2img(model.clone(), "x");
+            req.loras = vec![generate::LoraUse {
+                lora_id: lora.clone(),
+                weight: 0.7,
+                words: None,
+            }];
+            req
+        };
+        let set = |id: &str, l: Option<Lookup>| {
+            core.installed.lock().get_mut(id).unwrap().lookup = l;
+        };
+        generate::generate(&core, with_lora()).await.unwrap();
+        for state in [Lookup::NotYet, Lookup::NoMatch] {
+            set(&lora, Some(state));
+            let e = generate::generate(&core, with_lora()).await.unwrap_err();
+            assert_eq!(e.code, "blocked", "add-on {state:?}");
+            set(&lora, None);
+            set(&model, Some(state));
+            let e = generate::generate(&core, with_lora()).await.unwrap_err();
+            assert_eq!(e.code, "blocked", "model {state:?}");
+            set(&model, None);
+        }
+        // Cleared by a lookup.
+        set(&lora, Some(Lookup::Found));
+        generate::generate(&core, with_lora()).await.unwrap();
+        // Ordinary pictures from an unchecked add-on are fine.
+        set(&lora, Some(Lookup::NotYet));
+        use_check(&core, FakeCheck::default());
+        generate::generate(&core, with_lora()).await.unwrap();
+        // A real person or a minor: refused before anything runs.
+        set(&lora, Some(Lookup::Refused));
+        let e = generate::generate(&core, with_lora()).await.unwrap_err();
+        assert_eq!(e.message, pinhole_catalog::api::PERSON_OR_MINOR_REASON);
+        set(&lora, None);
+        set(&model, Some(Lookup::Refused));
+        let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+            .await
+            .unwrap_err();
+        assert_eq!(e.message, pinhole_catalog::api::PERSON_OR_MINOR_REASON);
     }
 
     #[tokio::test]
@@ -3050,6 +3116,7 @@ mod tests {
             observed_vram_gb: None,
             dtype: None,
             trigger_words: None,
+            lookup: None,
         };
         // No shared components installed: fine for an all-in-one checkpoint…
         let files = crate::generate::model_files(&core, &aio, &fam, &hw, false).unwrap();
@@ -3097,6 +3164,7 @@ mod tests {
             observed_vram_gb: None,
             dtype: None,
             trigger_words: None,
+            lookup: None,
         };
         let err = crate::generate::model_files(&core, &zit, &fam, &hw, false).unwrap_err();
         assert!(
@@ -3126,6 +3194,7 @@ mod tests {
                     observed_vram_gb: None,
                     dtype: None,
                     trigger_words: None,
+                    lookup: None,
                 });
             }
         }
@@ -3506,6 +3575,7 @@ mod tests {
             observed_vram_gb: None,
             dtype: None,
             trigger_words: None,
+            lookup: None,
         });
     }
 
