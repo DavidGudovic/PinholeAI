@@ -31,7 +31,8 @@
     ],
     "resources": {
       "../config/": "config/",
-      "../THIRD_PARTY_LICENSES": "THIRD_PARTY_LICENSES.txt"
+      "../THIRD_PARTY_LICENSES": "THIRD_PARTY_LICENSES.txt",
+      "../SAFEGUARDS.md": "SAFEGUARDS.md"
     },
     "licenseFile": "../LICENSE",
     "shortDescription": "Simple, private, offline AI image generator",
