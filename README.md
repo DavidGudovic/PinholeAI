@@ -56,8 +56,9 @@ Models, settings and saved pictures are in one `Data` folder (**Settings → Ope
 ## Safety
 
 Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-this with AI running entirely on your own computer. [SAFETY.md](SAFETY.md) explains how they work
-and how to report a problem; the usage guidelines are shown when Pinhole first opens.
+this with AI running entirely on your own computer. [SAFETY.md](SAFETY.md) explains how they work,
+their [limitations](SAFETY.md#limitations) and how to report a problem; the usage guidelines are
+shown when Pinhole first opens.
 
 ## Build from source
 
