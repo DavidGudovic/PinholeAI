@@ -28,13 +28,42 @@ always on. Safe mode (a Models setting) doesn't change it.
   damaged, Pinhole makes nothing until they are downloaded again.
 - **Model catalog.** Models that CivitAI marks as showing a real person or a minor can't be
   installed from Browse or from pasted generation data.
-- **Made with AI.** Every saved or copied picture carries a "made with AI" label in its file
-  details and an invisible watermark. Neither contains the prompt or anything about you.
+- **Made with AI.** Every picture Pinhole makes carries an invisible watermark when it is saved or
+  copied, and a "made with AI" label in its file details when it is saved. Neither contains the
+  prompt or anything about you. A picture you bring in loses its other file details, but keeps a
+  "made with AI" label if its file had one.
 - **Nothing is reported.** Pinhole never sends anything about what you make to anyone. A stopped
   picture is dropped from memory; your prompt and settings stay so you can change them.
 
 Like any automatic check, these can sometimes make mistakes.
-The details, thresholds and models are in [docs/RELEASE-SPEC.md](docs/RELEASE-SPEC.md) §3.
+[docs/SAFETY-MATRIX.md](docs/SAFETY-MATRIX.md) lists each thing the usage guidelines don't allow,
+what enforces it and how it is tested. The details and models are in
+[docs/RELEASE-SPEC.md](docs/RELEASE-SPEC.md) §3.
+
+## Limitations
+
+The safeguards make misuse harder. They can't prevent it.
+
+- **Safe mode isn't a filter on results.** It decides which models and previews Pinhole shows
+  and keeps the prompt helper's ideas safe for work. It doesn't check what a model makes, so it
+  isn't a promise that every picture is safe for work.
+- **Age checks have limits.** Judging age from a picture is hard, most of all for teenagers and
+  for drawn characters. The checks are built to stop clear cases and will miss some.
+- **Pinhole doesn't know who anyone is.** It can tell that a brought-in photo shows a person, but
+  it can't recognize a real person's likeness made another way, such as from a name in the
+  prompt or from an add-on model.
+- **Consent can't be seen in a picture.** That is why intimate edits of brought-in pictures of
+  people are blocked in every case.
+- **Model information can be incomplete.** Flags such as "safe images only" come from CivitAI.
+  A model file from somewhere else may not have them.
+- **The guidelines cover more than the checks do.** Deception, harassment, forgery and fraud
+  aren't allowed, but Pinhole has no check that detects them.
+- **Labels aren't proof.** The "made with AI" label can be removed and the watermark doesn't
+  survive every change to a picture. Neither proves where a picture came from or who is in it.
+- **How often the checks miss something hasn't been measured.** They are tested with made-up
+  scores and on ordinary pictures. They can't be tested on real harmful content.
+- **Pinhole runs on your computer and its code is public,** so its safeguards can't stop someone
+  determined to misuse it.
 
 ## Reporting a problem
 
