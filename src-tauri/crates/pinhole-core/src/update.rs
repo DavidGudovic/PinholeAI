@@ -720,12 +720,12 @@ mod tests {
             rel("nightly", false, &[]),
             rel("v0.1.1", false, &[]),
             rel("v0.1.0", false, &[]),
-            rel("v0.10.0-rc.1", false, &[]),
+            rel("v0.10.0", false, &[]),
         ];
         let (r, v) = newest_release(&list, &current).unwrap();
         assert_eq!(
             (r.tag_name.as_str(), v.to_string().as_str()),
-            ("v0.10.0-rc.1", "0.10.0-rc.1")
+            ("v0.10.0", "0.10.0")
         );
         assert!(
             newest_release(&list[4..5], &current).is_none(),
@@ -741,13 +741,13 @@ mod tests {
     fn offers_the_newest_release_this_copy_can_install() {
         let current = semver::Version::parse("0.2.0").unwrap();
         let setup = |v: &str| format!("Pinhole-{v}-windows-x64-setup.exe");
-        let (s3, s4) = (setup("0.3.0"), setup("0.4.0-rc.1"));
+        let (s3, s4) = (setup("0.3.0"), setup("0.4.0"));
         let list = vec![
             rel(
-                "v0.4.0-rc.1",
+                "v0.4.0",
                 false,
                 &[
-                    ("Pinhole-0.4.0-rc.1-linux-x86_64.AppImage", 1),
+                    ("Pinhole-0.4.0-linux-x86_64.AppImage", 1),
                     ("SHA256SUMS.txt", 1),
                 ],
             ),
@@ -762,17 +762,17 @@ mod tests {
             ("0.3.0", InstallMode::Installer, Some(7))
         );
         // No checksum list → not installable, offered by hand.
-        let bare = vec![rel("v0.4.0-rc.1", false, &[(s4.as_str(), 9)])];
+        let bare = vec![rel("v0.4.0", false, &[(s4.as_str(), 9)])];
         let u = pick_update(&bare, &current, &win).unwrap();
         assert_eq!(
             (u.version.as_str(), u.install_mode, u.size_bytes),
-            ("0.4.0-rc.1", InstallMode::Manual, None)
+            ("0.4.0", InstallMode::Manual, None)
         );
         assert_eq!(
             pick_update(&list, &current, &Target::Manual)
                 .unwrap()
                 .version,
-            "0.4.0-rc.1"
+            "0.4.0"
         );
         assert!(pick_update(&list, &semver::Version::parse("0.4.0").unwrap(), &win).is_none());
     }
