@@ -9,8 +9,10 @@
 //! add-on folder when a picture uses them, because sd-server only loads add-ons
 //! from one folder; that folder is emptied at every start.
 //!
-//! PRIVACY: nothing here goes online (no by-hash lookups; only notes other
-//! apps already saved next to their files). No prompt text anywhere.
+//! Every model and add-on found is hashed (SHA-256) and looked up on CivitAI by that hash
+//! (`lookup.rs`, RELEASE-SPEC §5), but only when the user adds the folder or presses "Check
+//! again". Files found by the look at start or when Models opens wait for that, or for Offline
+//! mode to be turned off, and count as "safe images only" until then. No prompt text anywhere.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -34,15 +36,18 @@ pub const LORA_LINKS_DIR: &str = ".pinhole-linked";
 /// RAM-only state of the linked folders.
 #[derive(Default)]
 pub struct LinkedRuntime {
-    scans: Mutex<Scans>,
+    pub(crate) scans: Mutex<Scans>,
 }
 
 #[derive(Default)]
-struct Scans {
+pub(crate) struct Scans {
     /// Folder ids being looked through right now.
-    running: HashSet<String>,
+    pub(crate) running: HashSet<String>,
     /// Another look was asked for while one ran.
     again: HashSet<String>,
+    /// Folder ids whose new files are looked up on CivitAI when their look ends (the user
+    /// added the folder or pressed "Check again").
+    look_up: HashSet<String>,
 }
 
 /// `LinkedFolder` in src/lib/types.ts.
@@ -156,7 +161,11 @@ pub fn add(core: &Arc<AppCore>, path: &str) -> CoreResult<LinkedFolderView> {
         }
         folder
     };
-    core.linked.scans.lock().running.insert(folder.id.clone());
+    {
+        let mut scans = core.linked.scans.lock();
+        scans.running.insert(folder.id.clone());
+        scans.look_up.insert(folder.id.clone());
+    }
     spawn_scan(core, folder.id.clone());
     core.emit(CoreEvent::ModelsChanged);
     Ok(view(core, &folder))
@@ -217,8 +226,10 @@ pub async fn remove(core: &AppCore, id: &str) -> CoreResult<()> {
 }
 
 /// Look through every linked folder again (new or changed files). Unchanged
-/// files aren't read again.
-pub fn rescan_all(core: &Arc<AppCore>) {
+/// files aren't read again. `look_up`: the user pressed "Check again", so files not looked
+/// up on CivitAI yet are looked up afterwards (never for the look at start or when Models
+/// opens).
+pub fn rescan_all(core: &Arc<AppCore>, look_up: bool) {
     let ids: Vec<String> = core
         .installed
         .lock()
@@ -230,6 +241,9 @@ pub fn rescan_all(core: &Arc<AppCore>) {
     for id in ids {
         let fresh = {
             let mut scans = core.linked.scans.lock();
+            if look_up {
+                scans.look_up.insert(id.clone());
+            }
             let fresh = scans.running.insert(id.clone());
             if !fresh {
                 scans.again.insert(id.clone());
@@ -247,24 +261,30 @@ pub fn rescan_all(core: &Arc<AppCore>) {
 pub fn start(core: &Arc<AppCore>) {
     let _ = std::fs::remove_dir_all(lora_links_root(core));
     if !core.installed.lock().linked.folders.is_empty() {
-        rescan_all(core);
+        rescan_all(core, false);
     }
 }
 
 fn spawn_scan(core: &Arc<AppCore>, id: String) {
     let core = core.clone();
+    let rt = tokio::runtime::Handle::try_current().ok();
     std::thread::spawn(move || loop {
         scan_folder(&core, &id);
-        let done = {
+        let (done, look_up) = {
             let mut scans = core.linked.scans.lock();
             let again = scans.again.remove(&id);
             if !again {
                 scans.running.remove(&id);
             }
-            !again
+            let look_up = !again && scans.look_up.remove(&id);
+            (!again, look_up)
         };
         if done {
             core.emit(CoreEvent::ModelsChanged);
+            if let (true, Some(rt)) = (look_up, rt.as_ref()) {
+                let core = core.clone();
+                rt.spawn(async move { crate::lookup::look_up_pending(&core, Some(&id)).await });
+            }
             break;
         }
     });
@@ -335,7 +355,8 @@ fn scan_folder(core: &AppCore, id: &str) {
             mtime: f.mtime,
         };
         let entry = match previous.get(&rel) {
-            Some((prev, s)) if *s == stamp => Ok(prev.clone()),
+            // Entries from before every model and add-on was hashed are read again once.
+            Some((prev, s)) if *s == stamp && !prev.sha256.is_empty() => Ok(prev.clone()),
             _ => match old_skipped.get(&rel) {
                 Some(n) if n.stamp == stamp => Err(if n.flagged {
                     Skipped::PersonOrMinor
@@ -371,6 +392,27 @@ fn scan_folder(core: &AppCore, id: &str) {
             .filter(|f| linked_folder_id(&f.rel_path) == Some(id))
             .map(|f| f.id.clone())
             .collect();
+        // A CivitAI lookup that ran meanwhile (`lookup.rs`) wins over this look's copies:
+        // a file it refused stays out, and what it found is kept for the same bytes.
+        let refused_meanwhile: Vec<(String, NotUsed)> = index
+            .linked
+            .not_used
+            .iter()
+            .filter(|(k, n)| {
+                n.flagged && linked_folder_id(k) == Some(id) && !old_skipped.contains_key(*k)
+            })
+            .map(|(k, n)| (k.clone(), *n))
+            .collect();
+        kept.retain(|(f, _)| !refused_meanwhile.iter().any(|(k, _)| *k == f.rel_path));
+        skipped.extend(refused_meanwhile);
+        for (f, _) in kept.iter_mut() {
+            if let Some(now) = index.get(&f.id) {
+                if now.sha256.eq_ignore_ascii_case(&f.sha256) && now.lookup != f.lookup {
+                    f.lookup = now.lookup;
+                    f.civitai = now.civitai.clone();
+                }
+            }
+        }
         let unchanged = old.len() == kept.len()
             && kept.iter().all(|(f, s)| {
                 index.get(&f.id) == Some(f) && index.linked.stamps.get(&f.id) == Some(s)
@@ -421,6 +463,17 @@ fn recognise(
     let r = scan::recognise(registry, f, &header, note.as_ref(), &mut |p| {
         local::hash_file(p).ok().map(|(h, _)| h)
     })?;
+    // The same bytes keep what the lookup found; a new or changed file is looked up again.
+    let lookup = match previous {
+        Some(p) if p.sha256.eq_ignore_ascii_case(&r.sha256) && p.lookup.is_some() => p.lookup,
+        _ => crate::lookup::initial(registry, r.kind, &r.sha256),
+    };
+    let civitai = match previous {
+        Some(p) if lookup == Some(pinhole_store::installed::Lookup::Found) => {
+            p.civitai.clone().or(r.civitai)
+        }
+        _ => r.civitai,
+    };
     Ok(InstalledFile {
         id: previous
             .map(|p| p.id.clone())
@@ -432,7 +485,7 @@ fn recognise(
         family: r.family,
         component_id: r.component_id,
         friendly_name: r.friendly_name,
-        civitai: r.civitai,
+        civitai,
         added_at: previous
             .map(|p| p.added_at)
             .unwrap_or_else(|| chrono::Utc::now().timestamp()),
@@ -440,6 +493,7 @@ fn recognise(
         observed_vram_gb: None,
         dtype: r.dtype,
         trigger_words: previous.and_then(|p| p.trigger_words.clone()),
+        lookup,
     })
 }
 
@@ -570,7 +624,11 @@ pub(crate) mod fixtures {
                 ("conditioner.embedders.1.model.token_embedding.weight", &[4, 1280]),
                 ("first_stage_model.encoder.conv_in.weight", &[128, 3, 3, 3]),
             ],
-            &[],
+            // Different bytes per file name (models are found by their SHA-256).
+            &[(
+                "name",
+                path.file_stem().and_then(|n| n.to_str()).unwrap_or_default(),
+            )],
         );
     }
 
@@ -720,7 +778,7 @@ mod tests {
         assert!(crate::models::list_models(&unplugged).unwrap().is_empty());
         assert!(!list(&unplugged)[0].available);
         std::fs::rename(&away, &comfy).unwrap();
-        rescan_all(&unplugged);
+        rescan_all(&unplugged, false);
         wait_scans(&unplugged);
         let back = crate::models::list_models(&unplugged).unwrap();
         assert_eq!(back.len(), 1);
@@ -729,7 +787,7 @@ mod tests {
 
         // A new file shows up on the next look; unchanged ones keep their entry.
         fixtures::sdxl(&comfy.join("models/checkpoints/illustrious/mix.safetensors"));
-        rescan_all(&again);
+        rescan_all(&again, false);
         wait_scans(&again);
         let models2 = crate::models::list_models(&again).unwrap();
         assert_eq!(models2.len(), 2);

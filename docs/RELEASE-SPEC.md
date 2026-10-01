@@ -188,11 +188,13 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    adults without blocking many adults. Teenagers are left to the word check, the brought-in
    photo rule (rule 1) and, for drawings, the child tags.
    Any check model output that isn't a finite number is an error, so the picture is dropped.
-3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
-   `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
-   Models flagged `poi` or `minor` can't be installed at all (§5). The flag comes from the
-   model's data at a Browse / paste install and from "Add a file"'s by-hash lookup; when the
-   model's data can't be fetched, the file counts as "safe images only" (fail closed). Rules 1
+3. **Model marked "safe images only".** The model or a LoRA in the request is "safe images only"
+   (`InstalledFile::safe_images_only`) → intimate results are blocked. That is: it carries
+   CivitAI's `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`; when the model's data
+   can't be fetched, it counts as set), or it was added by hand or found in a linked folder and
+   no CivitAI by-hash lookup has cleared it yet (`InstalledFile::lookup`: not looked up yet, or
+   CivitAI doesn't know the file; §5). Models flagged `poi` or `minor` can't be installed or used
+   at all (§5). Installed shows a "Safe images only" badge on such models and add-ons. Rules 1
    and 2 don't depend on it.
 
 If one picture of a batch is blocked, the whole batch is dropped.
@@ -282,15 +284,28 @@ prints them for a folder of test pictures.
 - **CivitAI flags.** `/api/v1/models` returns `poi` (depicts a real person), `minor` (depicts
   someone under 18, usually a child character) and `sfwOnly` (creator asks for no adult content)
   on each model; `/model-versions/*` returns `poi` on its `model` object. The `live_*` catalog test
-  fixtures were trimmed and don't contain them — `models_page.json` does. Today the code parses
-  `poi` only (`pinhole-catalog/src/api.rs`) and uses none of them.
+  fixtures were trimmed and don't contain them — `models_page.json` does. The code reads all
+  three (`pinhole-catalog/src/api.rs`: `version_is_person_or_minor`, `sfw_only_of`).
   - **Level 1:** models with `poi` or `minor` are not offered for install (Browse, model details,
     Paste from CivitAI, Use these settings). `sfwOnly` models show a "Safe images only" badge.
   - **Level 2:** flagged models are shown and installable again. The flags are stored in
-    `installed.json` at install time (model metadata, not prompts). Files added by hand get flags
-    only from the by-hash lookup "Add a file" already does when it can't tell the type (a
-    `poi`/`minor` match is refused there too); no
-    background or folder-wide lookups (privacy, 2026-09-30). While any flagged resource is loaded, §3.2 rule 3 applies.
+    `installed.json` at install time (model metadata, not prompts). While any flagged resource
+    is loaded, §3.2 rule 3 applies.
+  - **Files added by hand or linked** (built 2026-10-01, `pinhole-core/src/lookup.rs`): every
+    main model and add-on gets a CivitAI by-hash lookup (SHA-256 of the file itself; a linked
+    folder's notes are not trusted for it), whether or not its family is already known. A
+    `poi`/`minor` match is refused: "Add a file" refuses it, a linked file is not used, and an
+    already added file that a later lookup flags can't be used in a picture. A file CivitAI
+    doesn't know, or that hasn't been looked up yet, counts as "safe images only" (§3.2 rule 3)
+    until a lookup clears it. Files Pinhole offers itself (known SHA-256 in `models.yaml`) never
+    count as unchecked.
+    - **When lookups run:** only on a user action: "Add a file" (adding the same file again
+      retries), adding a linked folder, **Check again** on linked folders, and once when the user
+      turns Offline mode off (only files not looked up yet; a "no match" is an answer and isn't
+      asked again). Never at start, when Installed opens or in the background. Offline mode
+      blocks them like every other call. The app's **What goes online** list names them.
+    - **Files from before:** at start, files added by hand (no CivitAI data, not a known
+      Pinhole file) or linked before this existed are marked "not looked up yet".
     This mirrors CivitAI's own rule and keeps the legitimate SFW uses (satire of public figures,
     historical figures, an avatar model of yourself, child characters in SFW art).
 - **Recommended models:**

@@ -235,6 +235,10 @@ pub struct InstalledModel {
     /// Pinhole never deletes it). `None` for files Pinhole installed.
     #[serde(default)]
     pub linked_folder: Option<String>,
+    /// Pictures made with it can't be intimate (RELEASE-SPEC §3.2 rule 3): CivitAI marks it
+    /// "safe images only", or it was added by hand or linked and CivitAI hasn't cleared it.
+    #[serde(default)]
+    pub safe_images_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -251,6 +255,9 @@ pub struct InstalledLora {
     /// See [`InstalledModel::linked_folder`].
     #[serde(default)]
     pub linked_folder: Option<String>,
+    /// See [`InstalledModel::safe_images_only`].
+    #[serde(default)]
+    pub safe_images_only: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

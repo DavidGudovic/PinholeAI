@@ -119,9 +119,42 @@ pub struct InstalledFile {
     /// the only source for add-ons added from disk). Add-on metadata, never prompt text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trigger_words: Option<Vec<String>>,
+    /// Hand-added and linked models and add-ons: what Pinhole's CivitAI by-hash lookup found
+    /// (RELEASE-SPEC §5). `None` for files installed from CivitAI or Pinhole's own lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lookup: Option<Lookup>,
+}
+
+/// The CivitAI by-hash lookup of a hand-added or linked model or add-on. Only `Found` with
+/// no "safe images only" flag lets it make intimate pictures (RELEASE-SPEC §3.2 rule 3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Lookup {
+    /// Not looked up yet (Offline mode, or the lookup failed). Retried once when Offline
+    /// mode is turned off.
+    NotYet,
+    /// CivitAI doesn't know the file.
+    NoMatch,
+    /// Found: `civitai` holds the model's data and flags.
+    Found,
+    /// CivitAI marks the model as depicting a real person or a minor: it can't be used.
+    Refused,
 }
 
 impl InstalledFile {
+    /// Pictures made with this file may not be intimate (RELEASE-SPEC §3.2 rule 3): CivitAI
+    /// marks it "safe images only", or it was added by hand or linked and no lookup has
+    /// cleared it.
+    pub fn safe_images_only(&self) -> bool {
+        self.civitai.as_ref().is_some_and(|c| c.sfw_only)
+            || self.lookup.is_some_and(|l| l != Lookup::Found)
+    }
+
+    /// CivitAI marks the model as depicting a real person or a minor.
+    pub fn refused(&self) -> bool {
+        self.lookup == Some(Lookup::Refused)
+    }
+
     /// LoRA trigger words: the user's own list if they set one, else CivitAI's.
     pub fn trigger_words(&self) -> &[String] {
         match (&self.trigger_words, &self.civitai) {
@@ -679,6 +712,7 @@ mod tests {
             observed_vram_gb: Some(7.5),
             dtype: Some("fp16".into()),
             trigger_words: None,
+            lookup: None,
         }
     }
 

@@ -296,6 +296,24 @@ impl Registry {
         &self.file.engine_features
     }
 
+    /// A model file Pinhole offers itself (a family's download or another quant of it, a
+    /// known file, a test model), by SHA-256. Such a file needs no CivitAI lookup when it
+    /// is added by hand or found in a linked folder.
+    pub fn is_shipped_file(&self, sha256: &str) -> bool {
+        let wanted = sha256.trim();
+        if wanted.len() != 64 {
+            return false;
+        }
+        let same = |s: &str| s.trim().eq_ignore_ascii_case(wanted);
+        let in_spec =
+            |d: &DownloadSpec| same(&d.sha256) || d.alt_quants.values().any(|q| same(&q.sha256));
+        self.known_file(wanted).is_some()
+            || self
+                .families()
+                .any(|f| f.download.as_ref().is_some_and(in_spec))
+            || self.file.test_models.values().any(in_spec)
+    }
+
     pub fn known_files(&self) -> &[KnownFile] {
         &self.file.known_files
     }

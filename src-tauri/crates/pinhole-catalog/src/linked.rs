@@ -513,8 +513,9 @@ pub fn component_candidates<'a>(
 }
 
 /// Work out what `found` is from its header, the note next to it and its
-/// name. `hash` returns the file's SHA-256 (it reads the whole file: only
-/// called for a possible part). Blocking only through `hash`.
+/// name. `hash` returns the file's SHA-256 (it reads the whole file). Every usable file is
+/// hashed: parts to match them, models and add-ons for the CivitAI lookup (a note's own hash
+/// isn't trusted for that). Blocking only through `hash`.
 pub fn recognise(
     registry: &Registry,
     found: &FoundFile,
@@ -532,7 +533,6 @@ pub fn recognise(
         .and_then(Note::friendly_name)
         .unwrap_or_else(|| plain_name(file_name));
     let civitai = note.and_then(Note::civitai);
-    let note_sha = note.and_then(|n| n.sha256.clone()).unwrap_or_default();
 
     if detection.is_component.is_some() {
         let candidates = component_candidates(registry, &detection, found.size);
@@ -573,13 +573,14 @@ pub fn recognise(
                 let all: Vec<String> = registry.families_in_order().map(|f| f.id.clone()).collect();
                 groups.iter().find_map(|w| hint_pick(registry, &all, w))
             });
+        let sha256 = hash(&found.abs).ok_or(Skipped::NotUsable)?;
         return Ok(Recognised {
             kind: ModelKind::Lora,
             family,
             component_id: None,
             friendly_name: named,
             dtype,
-            sha256: note_sha,
+            sha256,
             civitai,
         });
     }
@@ -589,9 +590,10 @@ pub fn recognise(
         return Err(Skipped::NotUsable);
     }
     let candidates = detection.candidates.clone();
+    let sha256 = hash(&found.abs).ok_or(Skipped::NotUsable)?;
     let resolution = families::resolve_family(
         registry,
-        Some(note_sha.as_str()).filter(|s| !s.is_empty()),
+        Some(sha256.as_str()),
         note.and_then(|n| n.base_model.as_deref()),
         Some(&candidates),
     );
@@ -611,7 +613,7 @@ pub fn recognise(
         FamilyResolution::Unsupported(_) => return Err(Skipped::NotUsable),
     };
     let friendly_name = registry
-        .known_file(&note_sha)
+        .known_file(&sha256)
         .and_then(|k| k.friendly_name.clone())
         .filter(|_| note.and_then(Note::friendly_name).is_none())
         .unwrap_or(named);
@@ -624,7 +626,7 @@ pub fn recognise(
         component_id: None,
         friendly_name,
         dtype,
-        sha256: note_sha,
+        sha256,
         civitai,
     })
 }

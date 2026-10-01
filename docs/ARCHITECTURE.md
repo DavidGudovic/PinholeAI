@@ -44,7 +44,7 @@ pieces (net, store) are small enough to audit.
 | **store / hardware** | `crates/pinhole-store/**`, `crates/pinhole-hardware/**`, `core/src/{app,library,update}.rs`, `commands/{app,library}.rs`, `config/presets/**`, `config/styles/**` | — |
 | **engine / generate** | `crates/pinhole-engine/**`, `config/engine.yaml`, `core/src/{engine_setup,generate,describe,session,testing}.rs`, `commands/{generate,describe}.rs` | registry, net, store |
 | **image + word check** | `crates/pinhole-check/**`, `core/src/imagecheck.rs` (fail closed at result intake; `CheckedPng`), `crates/pinhole-engine/src/words.rs` + `core/src/text_check.rs` (`CheckedPrompt`), `core/src/one_way.rs` (guards both choke points) | net, store |
-| **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
+| **catalog / models** | `crates/pinhole-catalog/**`, `config/catalog-filters.yaml`, `core/src/{models,catalog,linked,lookup}.rs`, `commands/{models,catalog}.rs` | registry, net, store |
 | **UI shell + Create/Edit/Describe** | `src/App.tsx`, `src/components/**`, `src/tabs/{create,edit,describe}/**`, `src/lib/{paste,state}/**` | api.ts |
 | **UI Models/Settings/First run** | `src/tabs/models/**`, `src/settings/**`, `src/firstrun/**` | api.ts |
 | **IPC contract** | `src/lib/{api,types}.ts` ↔ Rust serde types (camelCase), `src/lib/mock/**` (browser mock backend, must mirror Rust behaviour) | — |
@@ -178,7 +178,7 @@ one download group (model + missing components); on success registers every file
 asks for an API key (keychain). LoRAs store `trainedWords`.
 
 ### Models from another app (catalog agent)
-`add_linked_folder(path)` / `remove_linked_folder(id)` / `rescan_linked_folders()` /
+`add_linked_folder(path)` / `remove_linked_folder(id)` / `rescan_linked_folders(lookUp)` /
 `list_linked_folders()` (`pinhole-core/src/linked.rs`). The pure part is
 `pinhole-catalog/src/linked.rs`: `walk` (every .safetensors/.gguf, links followed, tool and
 unusable-kind folders skipped), `read_note` (CivitAI data other apps saved next to a file),
@@ -191,6 +191,17 @@ Delete refuses them, orphan cleanup and the Models-folder move skip them. A link
 hard-linked / symlinked / copied into `models/loras/.pinhole-linked/` when a picture uses it
 (`lora_path_for_engine`), emptied at start. `install_missing_parts(modelId)` downloads the
 registry parts a model lacks (models without a CivitAI version).
+
+### CivitAI lookup of added and linked files (`core/src/lookup.rs`)
+Every main model and add-on from "Add a file" or a linked folder is looked up on CivitAI by the
+SHA-256 of the file itself (`look_up`, through the one HTTP client, so Offline mode blocks it).
+The result is `InstalledFile::lookup` (`notYet` / `noMatch` / `found` / `refused`);
+`InstalledFile::safe_images_only` (CivitAI `sfwOnly`, or any state but `found`) feeds the image
+check's rule 3 in `generate::prepare`, which also refuses a `refused` file. Lookups run only on a
+user action: Add a file, adding a folder, `rescan_linked_folders(lookUp: true)` ("Check again"),
+and once when `set_settings` turns Offline mode off (`went_online` → `look_up_pending`). Files
+Pinhole offers itself (`Registry::is_shipped_file`) never count as unchecked; `mark_unchecked`
+marks older entries at start.
 
 ### Paste from CivitAI (frontend A + catalog agent)
 CivitAI's image page has a **Copy generation data** button producing A1111-style text:

@@ -143,6 +143,15 @@ impl Checker {
         })
     }
 
+    /// Only the faces of a picture with their age estimates (measurement tools: the
+    /// age half of rule 2 on folders of portraits, without the slower classifiers).
+    pub fn face_readings(&self, png: &[u8]) -> Result<Vec<Face>, CheckError> {
+        let img = decode(png)?;
+        let mut l = self.loaded.lock();
+        *self.last_used.lock() = Some(Instant::now());
+        self.judged_faces(&mut l, &img)
+    }
+
     /// Every step on one picture, whether or not the rules need it (dev builds' readings
     /// view: shows each half of a rule on ordinary pictures).
     pub fn full_readings(&self, png: &[u8]) -> Result<Readings, CheckError> {
@@ -338,7 +347,9 @@ impl Checker {
         let (mut found, turned) = pick;
         let on = turned.as_ref().unwrap_or(img);
         for f in found.iter_mut().filter(|f| f.0.judged()) {
-            f.0.child_face = Some(self.child_face(l, on, f.1)?);
+            let (child, under_20) = self.age_groups(l, on, f.1)?;
+            f.0.child_face = Some(child);
+            f.0.under_20_face = Some(under_20);
         }
         Ok(found.into_iter().map(|f| f.0).collect())
     }
@@ -392,8 +403,14 @@ impl Checker {
         Ok(None)
     }
 
-    /// Confidence that a face is a child's: the age estimate's 0–2 and 3–9 groups together.
-    fn child_face(&self, l: &mut Loaded, img: &RgbImage, b: [f32; 4]) -> Result<f32, CheckError> {
+    /// The age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups
+    /// together) and that it is under 20 (0–2, 3–9 and 10–19 together).
+    fn age_groups(
+        &self,
+        l: &mut Loaded,
+        img: &RgbImage,
+        b: [f32; 4],
+    ) -> Result<(f32, f32), CheckError> {
         if l.age.is_none() {
             l.age = Some(self.load(&files::AGE, &[1, 3, 224, 224])?);
         }
@@ -402,7 +419,9 @@ impl Checker {
         let out = m.run(tvec!(vit_input(&crop, 224).into()))?;
         // Classes: 0–2, 3–9, 10–19, 20–29, …
         let p = softmax(&flat(&out[0])?);
-        Ok(p.first().copied().unwrap_or(0.0) + p.get(1).copied().unwrap_or(0.0))
+        let group = |i: usize| p.get(i).copied().unwrap_or(0.0);
+        let child = group(0) + group(1);
+        Ok((child, child + group(2)))
     }
 }
 
@@ -604,6 +623,7 @@ fn find_faces(m: &Model, img: &RgbImage, fill: f32) -> Result<Vec<(Face, [f32; 4
                     score,
                     side: b[2].min(b[3]),
                     child_face: None,
+                    under_20_face: None,
                 },
                 b,
             )

@@ -187,6 +187,8 @@ export interface InstalledModel {
   lowBit?: string | null;
   /** Name of the other app's models folder the file is in (used in place, never deleted by Pinhole). */
   linkedFolder?: string | null;
+  /** Pictures made with it can't be intimate: CivitAI marks it "safe images only", or it was added by hand or linked and CivitAI hasn't cleared it. */
+  safeImagesOnly?: boolean;
 }
 
 export interface InstalledLora {
@@ -200,6 +202,8 @@ export interface InstalledLora {
   civitaiVersionId: number | null;
   /** See InstalledModel.linkedFolder. */
   linkedFolder?: string | null;
+  /** See InstalledModel.safeImagesOnly. */
+  safeImagesOnly?: boolean;
 }
 
 /** Another app's models folder (ComfyUI, A1111, Forge…) Pinhole uses in place. */

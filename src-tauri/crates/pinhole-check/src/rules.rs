@@ -44,6 +44,10 @@ pub const ORIGINAL_FACE_SCORE: f32 = 0.6;
 /// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
 /// the photo-face rule stops at clear children.
 pub const CHILD_FACE: f32 = 0.6;
+/// Age estimate's confidence that a face is under 20 (its 0–2, 3–9 and 10–19 groups) that
+/// blocks. Catches photoreal teenagers the child groups miss, at the cost of some
+/// young-looking adults (measured on FairFace portraits, see `decide`).
+pub const UNDER_20_FACE: f32 = 0.9;
 
 /// The tagger scores the rules use.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -73,6 +77,9 @@ pub struct Face {
     /// Age estimate's confidence that this is a child's face (its 0–2 and 3–9 groups), when
     /// it ran.
     pub child_face: Option<f32>,
+    /// Age estimate's confidence that this face is under 20 (its 0–2, 3–9 and 10–19
+    /// groups), when it ran.
+    pub under_20_face: Option<f32>,
 }
 
 impl Face {
@@ -93,6 +100,14 @@ impl Face {
     /// A face on a brought-in picture (see [`ORIGINAL_FACE_MIN_SIDE`]).
     pub fn counts_in_original(&self) -> bool {
         self.score >= ORIGINAL_FACE_SCORE && self.side >= ORIGINAL_FACE_MIN_SIDE
+    }
+
+    /// A judged face the age estimate places under 18: confidently a child, or confidently
+    /// under 20.
+    pub fn looks_underage(&self) -> bool {
+        self.judged()
+            && (self.child_face.is_some_and(|c| c >= CHILD_FACE)
+                || self.under_20_face.is_some_and(|u| u >= UNDER_20_FACE))
     }
 }
 
@@ -180,17 +195,16 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
     let tags = r.tags.as_ref();
     if is_sexual(r.nudity, tags) {
         let minor_tag = tags.is_some_and(|t| t.minor >= MINOR_TAG);
-        // Photos: the age estimate only sorts faces into wide groups (0–2, 3–9, 10–19, 20–29…)
-        // and is often off by several years, so it can't tell a teenager from a young adult
-        // without also blocking many adults. This rule therefore only acts on faces it is
-        // confident are children. Teenagers are left to the word check, the brought-in
-        // photo rule (rule 1) and, for drawings, the tagger's tags.
+        // Photos: the age estimate sorts faces into wide groups (0–2, 3–9, 10–19, 20–29…)
+        // and is often off by several years. A face it is confident is a child's blocks, and
+        // so does one it is confident is under 20 (teenagers). The second also blocks some
+        // young-looking adults: accepted, since it only acts on sexual photo-style results.
         // A clear face too small to judge counts as a child's (fails closed).
         let child_face = tags.is_some_and(is_photo_style)
-            && r.faces.iter().flatten().any(|f| {
-                f.too_small_to_judge()
-                    || (f.judged() && f.child_face.is_some_and(|c| c >= CHILD_FACE))
-            });
+            && r.faces
+                .iter()
+                .flatten()
+                .any(|f| f.too_small_to_judge() || f.looks_underage());
         if minor_tag || child_face {
             return Some(Rule::LooksUnderage);
         }
@@ -232,6 +246,15 @@ mod tests {
             score: 0.9,
             side: 120.0,
             child_face: Some(child_face),
+            under_20_face: Some(child_face),
+        }
+    }
+    /// A face the age estimate places in its 10–19 group: `child` for 0–9, `teen` for 10–19.
+    fn aged(child: f32, teen: f32) -> Face {
+        Face {
+            child_face: Some(child),
+            under_20_face: Some(child + teen),
+            ..face(0.0)
         }
     }
     fn readings(nudity: f32, t: Option<Tags>, faces: Vec<Face>) -> Readings {
@@ -333,6 +356,7 @@ mod tests {
             score: 0.9,
             side: 12.0,
             child_face: None,
+            under_20_face: None,
         };
         let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![tiny]);
         assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
@@ -340,6 +364,37 @@ mod tests {
         assert_eq!(decide(&r, &[], false), None);
         // Not a photo: the age estimate is ignored.
         let r = readings(0.95, Some(tags(0.2, 0.7)), vec![face(0.9)]);
+        assert_eq!(decide(&r, &[], false), None);
+    }
+
+    #[test]
+    fn sexual_photos_with_a_teenage_face_are_blocked() {
+        let sexual_photo = || Some(photo(tags(0.2, 0.7)));
+        // Mostly 10–19: the child groups alone stay low, under 20 reaches the threshold.
+        let teen = aged(0.05, UNDER_20_FACE - 0.05);
+        assert!(teen.child_face.unwrap() < CHILD_FACE);
+        let r = readings(0.95, sexual_photo(), vec![face(0.02), teen]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        // Exactly at the threshold blocks; just below passes.
+        let at = aged(0.0, UNDER_20_FACE);
+        let r = readings(0.95, sexual_photo(), vec![at]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        let below = aged(0.1, UNDER_20_FACE - 0.11);
+        let r = readings(0.95, sexual_photo(), vec![below]);
+        assert_eq!(decide(&r, &[], false), None);
+        // A young adult the estimate splits between 10–19 and 20–29 passes.
+        let r = readings(0.95, sexual_photo(), vec![aged(0.02, 0.5)]);
+        assert_eq!(decide(&r, &[], false), None);
+        // Not sexual, not a photo, or an unsure face: the teen group doesn't matter.
+        let r = readings(0.3, Some(photo(tags(0.1, 0.0))), vec![teen]);
+        assert_eq!(decide(&r, &[], false), None);
+        let r = readings(0.95, Some(tags(0.2, 0.7)), vec![teen]);
+        assert_eq!(decide(&r, &[], false), None);
+        let unsure = Face { score: 0.5, ..teen };
+        let r = readings(0.95, sexual_photo(), vec![unsure]);
+        assert_eq!(decide(&r, &[], false), None);
+        // Adult content of adults still passes.
+        let r = readings(0.99, sexual_photo(), vec![aged(0.0, 0.1)]);
         assert_eq!(decide(&r, &[], false), None);
     }
 
@@ -424,6 +479,7 @@ mod tests {
             score: 0.9,
             side: 25.0,
             child_face: None,
+            under_20_face: None,
         };
         assert!(!small.counts());
         assert!(small.counts_in_original());

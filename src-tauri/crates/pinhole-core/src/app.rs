@@ -60,9 +60,10 @@ pub fn get_settings(core: &AppCore) -> Settings {
 }
 
 /// Save `settings.yaml` (values normalised) and apply side effects: the
-/// Offline flag takes effect immediately for every network call; GPU / VRAM /
+/// Offline flag takes effect immediately for every network call (turning it off retries
+/// the CivitAI lookups that couldn't run, once: `lookup.rs`); GPU / VRAM /
 /// backend overrides are read live by [`hw_context`]. Returns what was stored.
-pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> {
+pub fn set_settings(core: &Arc<AppCore>, settings: Settings) -> CoreResult<Settings> {
     let mut settings = settings.normalized();
     // Hold the write lock across save + apply so concurrent calls can't leave
     // memory and settings.yaml disagreeing.
@@ -72,8 +73,13 @@ pub fn set_settings(core: &AppCore, settings: Settings) -> CoreResult<Settings> 
     // Accepted licences only change through `accept_license` (licence.rs).
     settings.accepted_licenses = current.accepted_licenses.clone();
     pinhole_store::settings::save(&core.data, &settings).map_err(crate::library::store_err)?;
+    let went_online = current.offline && !settings.offline;
     core.offline.set(settings.offline);
     *current = settings.clone();
+    drop(current);
+    if went_online {
+        crate::lookup::went_online(core);
+    }
     Ok(settings)
 }
 

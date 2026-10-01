@@ -306,6 +306,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                       {m.styleBadge && <Badge>{m.styleBadge}</Badge>}
                       {m.isEditModel && <Badge tone="blue">Edit</Badge>}
                       {m.linkedFolder && <Badge>In {m.linkedFolder}</Badge>}
+                      {m.safeImagesOnly && <Badge>Safe images only</Badge>}
                     </div>
                     <div className="mt-0.5 text-xs text-neutral-500 lg:hidden">{m.familyLabel ?? "Unknown kind"}</div>
                     {m.licenseNote && <div className="mt-0.5 text-[11px] text-neutral-500">License: {m.licenseNote}</div>}
@@ -377,6 +378,7 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span>{l.friendlyName}</span>
                       {l.linkedFolder && <Badge>In {l.linkedFolder}</Badge>}
+                      {l.safeImagesOnly && <Badge>Safe images only</Badge>}
                     </div>
                   </Td>
                   <Td className="text-neutral-600 dark:text-neutral-400">{l.baseModel ?? l.familyId ?? "Any"}</Td>
