@@ -142,6 +142,31 @@ jobs:
             [ -f "$f" ] || { echo "::error::missing release file matching $f"; exit 1; }
           done
 
+      - uses: actions/checkout@v4
+        with:
+          path: repo
+
+      # In-app updates ("Update and restart") install only a release whose SHA256SUMS.txt is
+      # signed with the key in src-tauri/update-key.pub. The private key is a repository secret
+      # only the maintainer set (`npx tauri signer generate`). No key in the app = nothing to sign.
+      - name: Sign SHA256SUMS.txt (in-app updates)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.PINHOLE_UPDATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PINHOLE_UPDATE_KEY_PASSWORD }}
+        run: |
+          pub=repo/src-tauri/update-key.pub
+          if ! grep -q '[^[:space:]]' "$pub"; then
+            echo "No update key in the app: SHA256SUMS.txt is not signed, in-app updates stay off."
+            exit 0
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::src-tauri/update-key.pub is set but the PINHOLE_UPDATE_KEY secret is missing: the release couldn't be installed from the app."
+            exit 1
+          fi
+          cli=$(node -p "require('./repo/package-lock.json').packages['node_modules/@tauri-apps/cli'].version")
+          npx --yes "@tauri-apps/cli@$cli" signer sign upload/SHA256SUMS.txt
+          node repo/scripts/verify-update-signature.mjs upload/SHA256SUMS.txt upload/SHA256SUMS.txt.sig "$pub"
+
       - name: Create / update release
         uses: softprops/action-gh-release@v2
         with:

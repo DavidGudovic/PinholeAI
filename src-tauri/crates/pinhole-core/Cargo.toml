@@ -27,6 +27,7 @@ rand = { workspace = true }
 base64 = { workspace = true }
 async-trait = { workspace = true }
 semver = { workspace = true }
+minisign-verify = { workspace = true }
 zip = { workspace = true }
 url = { workspace = true }
 

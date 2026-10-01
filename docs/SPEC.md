@@ -777,16 +777,21 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
 - **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` sets the
   rules every public build follows).
-- **Updates** (manual only): **Update and restart** is off (`update::SELF_UPDATE = false`) until
-  release files are signed with a key only the maintainer holds: `SHA256SUMS.txt` comes from the
-  same release, so it can't catch a release someone else uploaded. Until then every copy is offered
+- **Updates** (manual only): **Update and restart** needs a release whose `SHA256SUMS.txt` is
+  signed (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) with the maintainer's key. The
+  public key is built into the app from `src-tauri/update-key.pub`; the private key is only the
+  `PINHOLE_UPDATE_KEY` repository secret, used by the Release workflow (which checks the signature
+  with `scripts/verify-update-signature.mjs` before publishing). `SHA256SUMS.txt` comes from the
+  same release, so only its signature catches a release someone else uploaded. While
+  `update-key.pub` is empty (`update::SELF_UPDATE` false), every copy is offered
   **Open download page** and nothing is downloaded or installed in the app. The rest of this entry
-  describes in-app install for when it is switched on. Settings → Check for updates asks
+  describes in-app install. Settings → Check for updates asks
   `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (a pre-release
   version such as `1.1.0-rc.1` only for a copy that is itself a pre-release). Download URLs are built from the repo, the tag and the
-  expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
-  the release's `SHA256SUMS.txt`, or nothing is installed. The newest release that has this copy's
-  file is offered; one without it is offered as "Open download page". Updating is refused while a
+  expected file name, never taken from the API. The signature must verify, and the file must match GitHub's size and the SHA-256
+  in the signed list, or nothing is installed (the list names files by version, so an older signed
+  list can't vouch for a newer file). The newest release that has this copy's file and a signed list
+  is offered; one without it is offered as "Open download page". Updating is refused while a
   picture is being made or other downloads run (the restart would lose them). Windows installer: the engines stop and the
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
@@ -794,8 +799,8 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   the next start. The check and the downloads are unauthenticated (public release API and
   download URLs). If GitHub answers 404 (releases can't be seen), the app says so and offers the
   release page. Earlier builds could store a GitHub token in the keychain; the first start after
-  the update deletes it (marker `Data/.github-token-cleared`). The checksum list protects against
-  broken or swapped downloads, not against a compromised GitHub account; signed updates belong to `docs/RELEASE-SPEC.md`.
+  the update deletes it (marker `Data/.github-token-cleared`). A copy built before the key existed can't update itself:
+  it installs the first signed version by hand.
 - **Safety checks** (release): local only, image classifiers on CPU (RELEASE-SPEC §3).
   Prompts are never sent to a server for moderation. Already in: a word check
   (`pinhole-core/src/text_check.rs`) blocks text that pairs an under-18 term with a sexual term,

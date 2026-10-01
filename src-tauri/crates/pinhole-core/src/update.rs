@@ -14,12 +14,13 @@
 //!   rename it over it (shortcuts keep working), relaunch.
 //! * Anything else (the .deb, dev builds): the UI opens the release page instead.
 //!
-//! Until release files are signed, [`SELF_UPDATE`] is off: every copy is offered
-//! the release page and nothing is downloaded or installed in the app.
-//!
-//! Integrity: the file must match the size GitHub reports and the SHA-256 listed in
-//! the release's `SHA256SUMS.txt`. That catches corrupted or swapped CDN downloads,
-//! not a compromised GitHub account; signed updates are RELEASE-SPEC work.
+//! Trust: the release's `SHA256SUMS.txt` must carry a valid signature
+//! (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) from the maintainer's
+//! key, whose public half is built into the app (`src-tauri/update-key.pub`). The
+//! downloaded file must then match GitHub's size and the signed SHA-256. A release
+//! someone else uploaded (a compromised GitHub account) has no valid signature and
+//! is never installed. While no key is built in, [`SELF_UPDATE`] is off: every copy
+//! is offered the release page and nothing is downloaded or installed in the app.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +37,9 @@ const RELEASES_API: &str =
     "https://api.github.com/repos/DavidGudovic/PinholeAI/releases?per_page=30";
 const SUMS_FILE: &str = "SHA256SUMS.txt";
 const MAX_SUMS_BYTES: usize = 64 * 1024;
+/// Signature of [`SUMS_FILE`] (base64 of a minisign signature, `tauri signer sign`).
+const SIG_FILE: &str = "SHA256SUMS.txt.sig";
+const MAX_SIG_BYTES: usize = 4 * 1024;
 /// Staging folder name (next to the app for portable / AppImage, in the OS temp
 /// dir for the Windows installer). Removed on the next start.
 pub const STAGING_DIR: &str = ".pinhole-update";
@@ -43,12 +47,16 @@ pub const STAGING_DIR: &str = ".pinhole-update";
 const INSTALLER_STAGING_DIR: &str = "pinhole-update";
 const PRODUCT: &str = "Pinhole";
 
-/// In-app install ("Update and restart"). Off until release files are signed with a
-/// key only the maintainer holds (RELEASE-SPEC §12 "Signed updates"): the SHA-256
-/// list comes from the same release, so it can't catch a release someone else
-/// uploaded. While off, "Check for updates" offers the release page for every copy
-/// and [`install_update`] refuses.
-pub const SELF_UPDATE: bool = false;
+/// The maintainer's update-signing public key: the `.pub` file `tauri signer generate`
+/// writes (base64, one line). Empty = no key, so no in-app install.
+const UPDATE_PUBLIC_KEY: &str = include_str!("../../../update-key.pub");
+
+/// In-app install ("Update and restart"). On once a public key is built in
+/// (RELEASE-SPEC §12 "Signed updates"): the SHA-256 list comes from the same
+/// release, so only its signature can catch a release someone else uploaded. While
+/// off, "Check for updates" offers the release page for every copy and
+/// [`install_update`] refuses.
+pub const SELF_UPDATE: bool = !UPDATE_PUBLIC_KEY.trim_ascii().is_empty();
 
 /// One update per app run: set when an install starts, cleared if it fails (then
 /// nothing was replaced). The UI can be closed and reopened meanwhile.
@@ -261,7 +269,7 @@ fn newest_matching<'a>(
 }
 
 /// The update to offer: the newest release that has this copy's file (and a
-/// checksum list), so a release missing one platform's build doesn't hide an
+/// signed checksum list), so a release missing one platform's build doesn't hide an
 /// installable one; otherwise the newest release, installed by hand.
 fn pick_update(
     releases: &[GhRelease],
@@ -270,7 +278,9 @@ fn pick_update(
 ) -> Option<UpdateInfo> {
     let installable = newest_matching(releases, current, |r, v| {
         let has = |name: &str| r.assets.iter().any(|a| a.name == name);
-        target.asset_name(&v.to_string()).is_some_and(|n| has(&n)) && has(SUMS_FILE)
+        target.asset_name(&v.to_string()).is_some_and(|n| has(&n))
+            && has(SUMS_FILE)
+            && has(SIG_FILE)
     });
     if let Some((r, v)) = installable {
         let name = target.asset_name(&v.to_string()).unwrap_or_default();
@@ -344,6 +354,33 @@ fn sum_for(sums: &str, name: &str) -> Option<String> {
         (file == name && hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()))
             .then(|| hash.to_ascii_lowercase())
     })
+}
+
+/// Check `SHA256SUMS.txt` against its `.sig` (`tauri signer sign` output: base64 of a
+/// minisign signature) with `public_key` (base64 of a minisign public key file).
+pub fn verify_sums(sums: &[u8], sig: &[u8], public_key: &str) -> CoreResult<()> {
+    use base64::Engine as _;
+    let b64 = |s: &[u8]| -> Option<String> {
+        let raw: Vec<u8> = s
+            .iter()
+            .copied()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect();
+        let text = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
+        String::from_utf8(text).ok()
+    };
+    let bad = |details: String| {
+        CoreError::new("hash_mismatch", "This release's signature doesn't match, so Pinhole won't install it. Download it from the release page instead.")
+            .with_details(details)
+    };
+    let key = b64(public_key.as_bytes())
+        .and_then(|t| minisign_verify::PublicKey::decode(&t).ok())
+        .ok_or_else(|| bad("the built-in update key can't be read".into()))?;
+    let signature = b64(sig)
+        .and_then(|t| minisign_verify::Signature::decode(&t).ok())
+        .ok_or_else(|| bad("the signature file can't be read".into()))?;
+    key.verify(sums, &signature, false)
+        .map_err(|e| bad(e.to_string()))
 }
 
 /// The running app's version. The Tauri shell passes its own (tauri.conf.json,
@@ -493,16 +530,29 @@ async fn install_inner(
                 "This release has no download for your system. Open the download page instead.",
             )
         })?;
-    if !release.assets.iter().any(|a| a.name == SUMS_FILE) {
-        return Err(CoreError::new("hash_mismatch", "This release can't be checked (it has no SHA256SUMS.txt), so Pinhole won't install it."));
+    if ![SUMS_FILE, SIG_FILE]
+        .iter()
+        .all(|f| release.assets.iter().any(|a| a.name == *f))
+    {
+        return Err(CoreError::new(
+            "hash_mismatch",
+            "This release can't be checked (it isn't signed), so Pinhole won't install it.",
+        ));
     }
-    let sums_url = asset_url(&wanted, SUMS_FILE);
     let file_url = asset_url(&wanted, &name);
     let sums = core
         .http
-        .get_bytes(&sums_url, &[], MAX_SUMS_BYTES)
+        .get_bytes(&asset_url(&wanted, SUMS_FILE), &[], MAX_SUMS_BYTES)
         .await
         .map_err(asset_error)?;
+    let sig = core
+        .http
+        .get_bytes(&asset_url(&wanted, SIG_FILE), &[], MAX_SIG_BYTES)
+        .await
+        .map_err(asset_error)?;
+    // The signed list names files by version, so an older signed list can't vouch
+    // for this release's file.
+    verify_sums(&sums, &sig, UPDATE_PUBLIC_KEY)?;
     let sha256 = sum_for(&String::from_utf8_lossy(&sums), &name)
         .ok_or_else(|| CoreError::new("hash_mismatch", "This release's checksum list doesn't include your download, so Pinhole won't install it."))?;
 
@@ -751,7 +801,11 @@ mod tests {
                     ("SHA256SUMS.txt", 1),
                 ],
             ),
-            rel("v0.3.0", false, &[(s3.as_str(), 7), ("SHA256SUMS.txt", 1)]),
+            rel(
+                "v0.3.0",
+                false,
+                &[(s3.as_str(), 7), (SUMS_FILE, 1), (SIG_FILE, 1)],
+            ),
         ];
         let win = Target::Installer {
             staging: PathBuf::from("t"),
@@ -761,13 +815,18 @@ mod tests {
             (u.version.as_str(), u.install_mode, u.size_bytes),
             ("0.3.0", InstallMode::Installer, Some(7))
         );
-        // No checksum list → not installable, offered by hand.
-        let bare = vec![rel("v0.4.0", false, &[(s4.as_str(), 9)])];
-        let u = pick_update(&bare, &current, &win).unwrap();
-        assert_eq!(
-            (u.version.as_str(), u.install_mode, u.size_bytes),
-            ("0.4.0", InstallMode::Manual, None)
-        );
+        // No checksum list, or one without a signature → not installable, offered by hand.
+        for assets in [
+            vec![(s4.as_str(), 9)],
+            vec![(s4.as_str(), 9), (SUMS_FILE, 1)],
+        ] {
+            let bare = vec![rel("v0.4.0", false, &assets)];
+            let u = pick_update(&bare, &current, &win).unwrap();
+            assert_eq!(
+                (u.version.as_str(), u.install_mode, u.size_bytes),
+                ("0.4.0", InstallMode::Manual, None)
+            );
+        }
         assert_eq!(
             pick_update(&list, &current, &Target::Manual)
                 .unwrap()
@@ -890,7 +949,10 @@ mod tests {
     }
 
     #[test]
-    fn every_copy_updates_from_the_release_page_until_releases_are_signed() {
+    fn every_copy_updates_from_the_release_page_without_a_built_in_key() {
+        if SELF_UPDATE {
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
@@ -906,6 +968,56 @@ mod tests {
         let info = pick_update(&releases, &current, &update_target(&e)).unwrap();
         assert_eq!(info.install_mode, InstallMode::Manual);
         assert_eq!(info.size_bytes, None);
+    }
+
+    // A throwaway key (`tauri signer generate`) and its signature of SIGNED_SUMS
+    // (`tauri signer sign`). Not the release key.
+    const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgyRkU2NkU4Mzc1N0Y2MEQKUldRTjlsYzM2R2IrZ2lmdFZZY3AzYnh1TUNwTVlMaWgwTmlHd2ZVUXRudW5tUnplT3pUSXJPMlkK";
+    const OTHER_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM3MDc4MDUxREVCNDA2MjAKUldRZ0JyVGVVWUFIeDNkWEpLZC8yME1kZzFmTzMrZUppYWJzenUxT1hMRzhhejJFMm1yaWlva08K";
+    const SIGNED_SUMS: &str = "0f343b0931126a20f133d67c2b018a3b5ed1c2f3c2d4f6d9a8f4e1e9b7c5a3d1  Pinhole-9.0.0-windows-x64-setup.exe\n";
+    const TEST_SIG: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRTjlsYzM2R2IrZ3E5UnFnVkZYdWRoNnNwR0h3UVZQei9lOVVRRWIxVm9JWG84cGswRmJWd0crWWhLOUd4dFRzdHNLanVnaEZnVnpVZHhUZ0tYWHF6Q3Y0bW1FNmtUY3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwODc2OTcwCWZpbGU6U0hBMjU2U1VNUy50eHQKWDVWWXFXUE5XNlRxWC96dFBCWjliMklYdzRYSGl0aWg0K0RJM2JGenlhenVXUGJDODJhQjE2Y1R2Y052ZWVWL1ZmNFZjemJCTW5ZUFhnVEhZdGQvQ1E9PQo=";
+
+    #[test]
+    fn signed_checksum_list_is_accepted() {
+        verify_sums(SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), TEST_KEY).unwrap();
+        // Trailing newlines in the .sig / .pub files are fine.
+        let sig = format!("{TEST_SIG}\n");
+        verify_sums(
+            SIGNED_SUMS.as_bytes(),
+            sig.as_bytes(),
+            &format!("{TEST_KEY}\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn changed_list_other_key_or_garbage_is_refused() {
+        let swapped = SIGNED_SUMS.replace("0f34", "aaaa");
+        let cases: [(&[u8], &[u8], &str); 5] = [
+            (swapped.as_bytes(), TEST_SIG.as_bytes(), TEST_KEY),
+            (SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), OTHER_KEY),
+            (SIGNED_SUMS.as_bytes(), b"not a signature", TEST_KEY),
+            (SIGNED_SUMS.as_bytes(), b"", TEST_KEY),
+            (SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), ""),
+        ];
+        for (sums, sig, key) in cases {
+            let err = verify_sums(sums, sig, key).unwrap_err();
+            assert_eq!(err.code, "hash_mismatch");
+        }
+    }
+
+    #[test]
+    fn built_in_update_key_is_empty_or_valid() {
+        if SELF_UPDATE {
+            use base64::Engine as _;
+            let text = base64::engine::general_purpose::STANDARD
+                .decode(UPDATE_PUBLIC_KEY.trim())
+                .expect("update-key.pub must be the base64 .pub file from `tauri signer generate`");
+            minisign_verify::PublicKey::decode(&String::from_utf8(text).unwrap())
+                .expect("update-key.pub is not a minisign public key");
+        } else {
+            assert!(UPDATE_PUBLIC_KEY.trim().is_empty());
+        }
     }
 
     #[test]
