@@ -22,9 +22,9 @@ describe("Before you start", () => {
     const onAgreed = vi.fn();
     render(<UseNotice onAgreed={onAgreed} />);
     expect(screen.getByText("Safety, built in")).toBeTruthy();
-    expect(screen.getByText(/with AI running entirely on your own computer, so your work never leaves your device/)).toBeTruthy();
+    expect(screen.getByText(/with AI running entirely on your own computer\.$/)).toBeTruthy();
     expect(screen.getByText(/^Do not use Pinhole for anything illegal/)).toBeTruthy();
-    expect(document.body.textContent).not.toMatch(/keeps no record|be turned off/);
+    expect(document.body.textContent).not.toMatch(/keeps no record|be turned off|never leaves|reported|recorded/);
     fireEvent.click(screen.getByRole("button", { name: "usage guidelines" }));
     expect(screen.getByText(/sexualizes minors, or anyone/)).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);

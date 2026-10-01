@@ -46,7 +46,7 @@ export function UseNotice(props: { onAgreed: () => void }) {
           </h2>
           <p className="mt-2 text-neutral-600 dark:text-neutral-400">
             Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does this with AI
-            running entirely on your own computer, so your work never leaves your device.
+            running entirely on your own computer.
           </p>
         </div>
 

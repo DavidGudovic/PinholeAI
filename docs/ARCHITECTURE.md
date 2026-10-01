@@ -1,4 +1,4 @@
-# Pinhole — Architecture & build contract
+# Pinhole — Architecture
 
 `docs/SPEC.md` says *what* Pinhole does; this file says *how the code is organised*
 and is the contract between the modules. Read SPEC.md and CLAUDE.md first.
@@ -92,14 +92,14 @@ engine output goes in `details` (UI shows it behind a "Details" toggle).
 ## 4. Key flows
 
 ### First run
-1. UI: `get_settings` → if `!firstRunDone` show FirstRun (frontend B).
+1. UI: `get_settings` → if `!firstRunDone` show FirstRun.
 2. `get_hardware` (detection runs in background at startup; `hardware-ready` event).
 3. `engine_status` → `install_engine` (backend from hardware: NVIDIA→cuda, AMD/Intel→vulkan,
    none→cpu; Settings override). Progress arrives as `download-progress`.
 4. `get_recommended` → cards per role; **Get** → `install_recommended(role)`; **Get all** =
    realistic + edit. Skippable. `set_settings({firstRunDone:true})`.
 
-### Engine install (engine agent)
+### Engine install
 `config/engine.yaml` pins a release tag + per-platform assets + SHA-256. Install downloads
 through `DownloadManager` into `Data/engine/sd/<version>/<backend>/`, verifies SHA-256,
 unzips (zip-slip safe), marks executables (+x on Linux). Windows CUDA also needs the
@@ -110,7 +110,7 @@ names `sd-<tag>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x6
 `cudart-sd-bin-Linux-Ubuntu-24.04-x86_64-cu12.zip`. Linux CUDA is built for RTX 30/40/50 only
 (compute capability 8.6+); other Linux NVIDIA setups use Vulkan.
 
-### Generate (engine agent)
+### Generate
 `generate(req)`:
 1. Look up the installed model + family; resolve components (`wiring::required_components`),
    error `engine_missing`/`not_found` with a plain message if something's missing.
@@ -123,7 +123,7 @@ names `sd-<tag>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x6
    structured `lora: [{path, multiplier}]`, `seed` (random if not locked; results get seed+i).
 4. Poll `GET /sdcpp/v1/jobs/{id}` every ~300 ms; emit progress; step info parsed from the
    engine ring buffer if present. `cancel_generation` → `POST /sdcpp/v1/jobs/{id}/cancel`.
-   sd-server has no auth and keeps finished jobs (images included) for 600 s, so an engine that
+   sd-server keeps finished jobs (images included) for 600 s, so an engine that
    ran a job is stopped on Reset and `IDLE_STOP_AFTER` (5 min) after the last
    generate/upscale. After `wait_ready`, `capabilities.model.path` must be the file we launched
    and our child must be alive (else "Another program is using Pinhole's engine port").
@@ -148,7 +148,7 @@ names `sd-<tag>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x6
 `savedMetadata == "settings"`, add ONE tEXt chunk `pinhole` with model, seed, steps, cfg,
 sampler, scheduler, size — never prompt/negative/style text.
 
-### Edit (engine agent backend, frontend A UI)
+### Edit
 - Instruction edit: edit family (role `edit`), `ref_images[0]` = source; "Stay close to original"
   → the family's `stay_close_maps_to`; optional mask → `mask_image`.
 - Restyle: current Create model, `init_image` + `strength` (0.35/0.55/0.75).
@@ -168,7 +168,7 @@ frame); `fetch_preview` returns their bytes. UI (`src/tabs/models/lib/`): `pageS
 cache + shared in-flight requests, next page prefetched), `previewQueue.ts` / `preview.ts` (8
 fetches at a time, on-screen first, queued fetches dropped when a card scrolls away, 48 MB RAM LRU).
 
-### Install from CivitAI / registry (catalog agent)
+### Install from CivitAI / registry
 `plan_civitai_install(versionId, fileId?)` → pick file (SafeTensor/GGUF, primary preferred, both
 scans `Success`, else `blockedReason`; a smaller file that Fits when the usual one doesn't, or the
 user's `fileId` from the Size choice, `select::select_file_for_machine`), family via `baseModel` (→ hash/known file → ask), components
@@ -177,7 +177,7 @@ one download group (model + missing components); on success registers every file
 `installed.json` and emits `models-changed`. 401/403 → `CoreError{code:"unauthorized"}` and the UI
 asks for an API key (keychain). LoRAs store `trainedWords`.
 
-### Models from another app (catalog agent)
+### Models from another app
 `add_linked_folder(path)` / `remove_linked_folder(id)` / `rescan_linked_folders(lookUp)` /
 `list_linked_folders()` (`pinhole-core/src/linked.rs`). The pure part is
 `pinhole-catalog/src/linked.rs`: `walk` (every .safetensors/.gguf, links followed, tool and
@@ -204,7 +204,7 @@ Pinhole offers itself (`Registry::is_shipped_file`: SHA-256 from the shipped `mo
 read before `Data/config/overrides.yaml` is merged) never count as unchecked; `mark_unchecked`
 marks older entries at start by hash only (never by file name or family).
 
-### Paste from CivitAI (frontend A + catalog agent)
+### Paste from CivitAI
 CivitAI's image page has a **Copy generation data** button producing A1111-style text:
 ```
 <prompt lines>
@@ -231,7 +231,9 @@ what was skipped.
   `-p`/`prompt` are redacted before storage.
 - `LocalClient` only talks to `127.0.0.1`; `HttpClient` is the only internet client.
 - llama-server gets a random per-launch API key through its environment (`LLAMA_API_KEY`, never
-  argv) and every request sends `Authorization: Bearer <key>`. sd-server has no auth (see §4).
+  argv) and every request sends `Authorization: Bearer <key>`. The pinned sd-server is patched the
+  same way (`SD_API_KEY`) and rejects any request with an `Origin` header (`ENGINE_LOCKDOWN`,
+  SPEC §13 "Local engine API exposure").
 - Downloads: `DownloadSpec.size_bytes` is exact or `None` (rounded `size_mb`/`sizeKB` go in
   `approx_size_bytes`); every download is bounded (exact size + 1 % + 1 MiB, else 64 GiB);
   CivitAI files must pass `content_check` (safetensors/GGUF header parses) or are deleted.
@@ -241,26 +243,26 @@ what was skipped.
 ## 6. Testing expectations
 - Every crate: unit tests for its logic (`cargo test -p <crate>`), no network in unit tests
   (use local mock servers on 127.0.0.1 where a server is needed — e.g. a tiny tokio TCP server).
-- `tests/` (ci agent): privacy sentinel test using a mock sd-server that echoes the prompt into a
+- `tests/`: privacy sentinel test using a mock sd-server that echoes the prompt into a
   PNG tEXt chunk (proves scrubbing + no disk writes), offline-mode test, engine smoke test
   (`PINHOLE_SMOKE=1`, real sd-server + tiny model, 256×256 on CPU) run in CI.
 - Frontend: vitest for `src/lib/**` logic (paste parser, dial math), `npm run build` must pass.
 
-## 7. Cross-area hooks (stubbed in code — implement, don't rename)
-| Function | Implemented by | Used by |
-|---|---|---|
-| `core::app::hw_context(core) -> HwContext` | store | engine, catalog |
-| `core::models::register_download(core, &DownloadedFile, Registration)` | catalog | engine (captioner, upscaler, engine files are NOT registered) |
-| `core::describe::install_captioner(core)` | engine | catalog (recommended "describe" role) |
-| `core::describe::{list_helper_models, install_captioner(core, helper_id)}` | engine | frontend B (Models → Helpers), frontend A (pickers) |
-| `core::describe::improve_prompt(core, prompt, family_id, avoid)` | engine | frontend A (Create prompt box) |
-| `core::generate::unload_model(core, model_id)` | engine | catalog (delete) |
-| `core::testing::{use_external_engine, register_fake_model}` (feature `test-util`) | engine | ci (`tests/`) |
-| `pinhole_engine::testutil::MockSdServer` (feature `test-util`): `start().await`, `base_url()`, `requests()` | engine | ci (`tests/`) |
-| `pinhole_net::HttpClient::new_for_tests(offline, allow_loopback_http)` (feature `test-util`) | net | ci, engine, catalog tests |
-| `src/firstrun/RecommendedCards.tsx` `RecommendedCards({roles, compact, showGetAll})` | frontend B | frontend A |
-| `src/tabs/models/ModelsTab.tsx`, `src/settings/SettingsSheet.tsx`, `src/firstrun/FirstRun.tsx` | frontend B | frontend A (shell) |
-| `src/components/ui/*` primitives | frontend A | frontend B (import only) |
+## 7. Cross-area entry points (keep these names)
+| Entry point | Used by |
+|---|---|
+| `core::app::hw_context(core) -> HwContext` | engine, catalog |
+| `core::models::register_download(core, &DownloadedFile, Registration)` | engine (captioner, upscaler, engine files are NOT registered) |
+| `core::describe::install_captioner(core)` | catalog (recommended "describe" role) |
+| `core::describe::{list_helper_models, install_captioner(core, helper_id)}` | Models → Helpers, UI pickers |
+| `core::describe::improve_prompt(core, prompt, family_id, avoid)` | Create prompt box |
+| `core::generate::unload_model(core, model_id)` | catalog (delete) |
+| `core::testing::{use_external_engine, register_fake_model}` (feature `test-util`) | `tests/` |
+| `pinhole_engine::testutil::MockSdServer` (feature `test-util`): `start().await`, `base_url()`, `requests()` | `tests/` |
+| `pinhole_net::HttpClient::new_for_tests(offline, allow_loopback_http)` (feature `test-util`) | `tests/`, engine and catalog tests |
+| `src/firstrun/RecommendedCards.tsx` `RecommendedCards({roles, compact, showGetAll})` | first run, Installed, Create, Edit, Describe |
+| `src/tabs/models/ModelsTab.tsx`, `src/settings/SettingsSheet.tsx`, `src/firstrun/FirstRun.tsx` | app shell |
+| `src/components/ui/*` primitives | every UI view (import only) |
 
 Core service functions the `tests/` crate calls (names fixed):
 `core::generate::generate(&Arc<AppCore>, GenerateRequest) -> CoreResult<GenerateResult>`,
