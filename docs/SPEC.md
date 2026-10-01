@@ -419,8 +419,9 @@ at request time.
 **Helper models** (Describe and Improve): the language models behind both come from Pinhole's own
 list (`captioner.helpers` in `models.yaml`: Qwen2.5-VL 3B, the default, and 7B, which is also
 Qwen Image Edit's encoder and is not downloaded twice). Settings has **Describe model** and
-**Improve model** (`describeModel` / `improveModel`: `auto` or a helper id), and a small picker
-sits by the Describe button and the Improve button. **Automatic** uses the 7B when it is installed,
+**Improve model** (`describeModel` / `improveModel`: `auto` or a helper id). Describe also has a
+model picker at the top (the same card as Create's, listing the installed helpers and Automatic) that
+reads and saves `describeModel`; Improve has no picker of its own (Settings only). **Automatic** uses the 7B when it is installed,
 else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
@@ -453,8 +454,8 @@ Two sub-views: **Browse** and **Installed**.
 |---|---|---|
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | For (style add-ons only) | Any model · For <installed model> (defaults to the model picked in Create) | `baseModels=` the CivitAI base models of every registry family with the same architecture as that model (`families::lora_base_models`: an SDXL model also gets Pony and Illustrious LoRAs); each card shows the newest version made for them; a tag that narrows `baseModels` (Edit) with nothing in common answers "none" without asking CivitAI. Not a filter "Clear filters" resets |
-| Look | Realistic · Anime · Illustration · 3D · Brand & product | tag sets from `config/catalog-filters.yaml` |
-| Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Look | Realistic · Anime · Illustration · 3D · Painting · Pixel art · Line art · Cinematic · Vintage · Brand & product | tag sets from `config/catalog-filters.yaml`. Look, Tags and the switches row each stay on one line and scroll sideways when the window is too narrow |
+| Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Most liked · Most downloaded (default) · Newest | `sort=Most Liked / Most Downloaded / Newest` |
@@ -715,6 +716,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Show paid (early access) models (off by default)
 - Saved-image metadata (None / Settings without prompt)
 - Show tips (on by default)
+- Helper models: Describe model and Improve model (Automatic by default; §5.2 "Helper models")
+- Safety: **Usage guidelines** and **Licence** (both shown in the app), and **Report a problem**:
+  **Report privately** (GitHub private vulnerability reporting) or **Open a public issue**, both
+  opened in the browser (SAFETY.md → Reporting a problem)
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:

@@ -1,7 +1,7 @@
 // OWNER: frontend B. Settings sheet (SPEC §8). Every change is saved immediately.
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Check, CircleCheck, Download, FolderOpen, Info, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
+import { BookOpen, Bug, Check, CircleCheck, Download, FolderOpen, Info, KeyRound, Scale, ShieldAlert, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   appInfo,
   asCoreError,
@@ -11,6 +11,7 @@ import {
   hasCivitaiKey,
   onHardwareReady,
   openDataFolder,
+  openExternalLink,
   openOutputsFolder,
   setSettings as saveSettings,
 } from "../lib/api";
@@ -18,6 +19,8 @@ import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "..
 import { formatGb } from "../lib/format";
 import { primeSound } from "../lib/state/platform";
 import { ShortcutsList } from "../components/ShortcutsList";
+import { LicenceText } from "../components/LicenceText";
+import { UsageGuidelines } from "../components/UsageGuidelines";
 import { useHelperModels } from "../lib/helpers";
 import { Badge, Button, ErrorNotice, Segmented, Sheet, Spinner, Toggle } from "../components/ui";
 import { ApiKeyDialog, GroupProgress, Select, Skeleton } from "../tabs/models/controls";
@@ -29,6 +32,10 @@ import { emitSettingsChanged } from "./events";
 import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
 import { UpdateSection } from "./UpdateSection";
+
+/** Where "Report a problem" goes (SAFETY.md → Reporting a problem). Opened in the browser. */
+const REPORT_PRIVATELY_URL = "https://github.com/DavidGudovic/PinholeAI/security/advisories/new";
+const REPORT_PUBLICLY_URL = "https://github.com/DavidGudovic/PinholeAI/issues/new/choose";
 
 const VRAM_CHOICES = [4, 6, 8, 12, 16, 24];
 /** Settings `textEncoderOnCpu` (Rust error messages and notes use the same words). */
@@ -150,6 +157,9 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
   }, [refreshEngine, loadHw, onSaveState]);
 
   const helperModels = useHelperModels();
+  const [showGuidelines, setShowGuidelines] = useState(false);
+  const [showLicence, setShowLicence] = useState(false);
+  const report = (url: string) => void openExternalLink(url).catch((e) => setError(asCoreError(e)));
   const update = (patch: Partial<Settings>) => {
     if (!latest.current) return;
     const next = { ...latest.current, ...patch };
@@ -424,7 +434,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         {(["describe", "improve"] as const).map((purpose) => {
           const key = purpose === "improve" ? "improveModel" : "describeModel";
           const label = purpose === "improve" ? "Improve model" : "Describe model";
-          const installed = (helperModels ?? []).filter((m) => m.installed);
+          const installed = (helperModels ?? []).filter((m) => m.installed && !(settings.contentMode !== "all" && m.needsSafeOff));
           const value = installed.some((m) => m.id === settings[key]) ? settings[key] : "auto";
           return (
             <Labeled
@@ -502,6 +512,32 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
 
       <Section title="Keyboard shortcuts">
         <ShortcutsList />
+      </Section>
+
+      <Section title="Safety">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" onClick={() => setShowGuidelines(true)}>
+            <BookOpen className="h-4 w-4" /> Usage guidelines
+          </Button>
+          <Button size="sm" variant="secondary" onClick={() => setShowLicence(true)}>
+            <Scale className="h-4 w-4" /> Licence
+          </Button>
+        </div>
+        <Labeled
+          label="Report a problem"
+          hint="Report privately when a safeguard doesn’t work as described, or for a security issue. Open a public issue for other bugs, or when something harmless was stopped. Both open GitHub in your browser. Please don’t attach the picture or anything private."
+        >
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PRIVATELY_URL)}>
+              <ShieldAlert className="h-4 w-4" /> Report privately
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => report(REPORT_PUBLICLY_URL)}>
+              <Bug className="h-4 w-4" /> Open a public issue
+            </Button>
+          </div>
+        </Labeled>
+        <UsageGuidelines open={showGuidelines} onClose={() => setShowGuidelines(false)} />
+        <LicenceText open={showLicence} onClose={() => setShowLicence(false)} />
       </Section>
 
       <Section title="Appearance">

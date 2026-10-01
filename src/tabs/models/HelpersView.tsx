@@ -11,7 +11,7 @@ import { isActiveDownload } from "../../lib/state/model";
 import { useAppState } from "../../lib/state/store";
 import type { CoreError, Fit, HelperModel } from "../../lib/types";
 
-const FIT_WORDS: Record<Fit, { label: string; tone: "green" | "amber" | "red"; title: string }> = {
+export const FIT_WORDS: Record<Fit, { label: string; tone: "green" | "amber" | "red"; title: string }> = {
   fits: { label: "Fits", tone: "green", title: "Runs on your graphics card." },
   tight: { label: "Tight", tone: "amber", title: "Part of it runs on the processor, so it is slower." },
   tooBig: { label: "Too big", tone: "red", title: "More than this computer's memory. Pick the smaller one." },
