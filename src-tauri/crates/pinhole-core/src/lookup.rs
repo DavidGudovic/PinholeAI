@@ -67,7 +67,9 @@ pub fn initial(registry: &Registry, kind: ModelKind, sha256: &str) -> Option<Loo
 
 /// Files added by hand or linked before lookups existed: mark them "not looked up yet", so
 /// they count as "safe images only" until Offline mode is turned off or they're added again.
-/// A file without CivitAI data that Pinhole doesn't offer itself was added by hand. Linked
+/// A file without CivitAI data whose hash isn't one Pinhole offers was added by hand; only
+/// the hash counts, never the file name or family (a one-click download whose pin changed
+/// keeps its trust because the old hash moves to `known_files` in `models.yaml`). Linked
 /// models and add-ons (also those of a folder whose drive isn't connected) lose the hash they
 /// had, which may have come from another app's note, so the next look hashes the file itself.
 /// Returns whether anything changed.
@@ -82,31 +84,12 @@ pub fn mark_unchecked(registry: &Registry, index: &mut InstalledIndex) -> bool {
             f.sha256.clear();
             f.lookup = Some(Lookup::NotYet);
             changed = true;
-        } else if f.civitai.is_none() && !shipped(registry, f) {
+        } else if f.civitai.is_none() && !registry.is_shipped_file(&f.sha256) {
             f.lookup = Some(Lookup::NotYet);
             changed = true;
         }
     }
     changed
-}
-
-/// A file Pinhole offers itself: its hash, or (a download from an older `models.yaml` whose
-/// pin has changed since) the file name of its family's download.
-fn shipped(registry: &Registry, f: &InstalledFile) -> bool {
-    if registry.is_shipped_file(&f.sha256) {
-        return true;
-    }
-    let name = f.rel_path.rsplit('/').next().unwrap_or_default();
-    f.family
-        .as_deref()
-        .and_then(|id| registry.family(id))
-        .and_then(|fam| fam.download.as_ref())
-        .is_some_and(|d| {
-            d.file == name
-                || d.alt_quants
-                    .values()
-                    .any(|q| q.file.as_deref() == Some(name))
-        })
 }
 
 /// Ask CivitAI about one file by its SHA-256 (and the model's flags, as for a Browse install).
@@ -387,15 +370,14 @@ mod tests {
         let src = tmp.path().join("Known.safetensors");
         fixtures::sdxl(&src);
         let hash = sha(&src);
-        // Pinhole knows this file's family by its hash.
-        let overrides = core.data.overrides_file();
-        std::fs::write(
-            &overrides,
-            format!("known_files:\n  - {{ sha256: {hash}, family: sdxl }}\n"),
-        )
-        .unwrap();
-        *core.registry.write() =
-            Arc::new(Registry::load(&core.shipped.config_dir, Some(overrides.as_path())).unwrap());
+        // Pinhole knows this file's family by its hash (as if the shipped models.yaml listed it).
+        let yaml = std::fs::read_to_string(core.shipped.config_dir.join("models.yaml")).unwrap();
+        let yaml = yaml.replacen(
+            "\nknown_files:\n",
+            &format!("\nknown_files:\n  - {{ sha256: {hash}, family: sdxl }}\n"),
+            1,
+        );
+        *core.registry.write() = Arc::new(Registry::from_yaml(&yaml, None).unwrap());
         assert!(core.registry().is_shipped_file(&hash));
         let srv = civitai(vec![(hash.to_ascii_uppercase(), true)]).await;
         *core.models.test_civitai.lock() = Some(srv.url(""));
@@ -593,8 +575,10 @@ mod tests {
             trigger_words: None,
             lookup: None,
         };
-        // A one-click download from an older models.yaml (its pin changed since).
+        // Regression (Codex audit): a file named like a family's download, with a hash
+        // Pinhole doesn't know, used to be trusted by its name. Only the hash counts now.
         let fam = registry.families().find(|f| f.download.is_some()).unwrap();
+        let dl = fam.download.as_ref().unwrap();
         let mut old_pin = file(
             "old_pin",
             ModelKind::Checkpoint,
@@ -603,7 +587,11 @@ mod tests {
             false,
         );
         old_pin.family = Some(fam.id.clone());
-        old_pin.rel_path = format!("models/checkpoints/{}", fam.download.as_ref().unwrap().file);
+        old_pin.rel_path = format!("models/checkpoints/{}", dl.file);
+        // The same download with its pinned hash stays trusted.
+        let mut download = old_pin.clone();
+        download.id = "download".into();
+        download.sha256 = dl.sha256.clone();
         // Linked, with a hash taken from another app's note: hashed again at the next look.
         let mut linked = file("linked", ModelKind::Lora, &shipped, false, false);
         linked.rel_path = "linked/abc/loras/x.safetensors".into();
@@ -617,6 +605,7 @@ mod tests {
                 file("part", ModelKind::Vae, &"ef".repeat(32), false, true),
                 old_pin,
                 linked,
+                download,
             ],
             ..Default::default()
         };
@@ -630,7 +619,7 @@ mod tests {
         assert!(mark_unchecked(&registry, &mut index));
         let state: Vec<_> = index.files.iter().map(|f| f.lookup).collect();
         let not_yet = Some(Lookup::NotYet);
-        assert_eq!(state, [not_yet, None, None, None, None, not_yet]);
+        assert_eq!(state, [not_yet, None, None, None, not_yet, not_yet, None]);
         assert_eq!(index.files[5].sha256, "");
         assert_eq!(index.linked.parked[0].file.lookup, not_yet);
         assert_eq!(index.linked.parked[0].file.sha256, "");
