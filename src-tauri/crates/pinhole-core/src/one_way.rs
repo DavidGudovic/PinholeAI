@@ -148,6 +148,30 @@ fn rule_inputs_are_worked_out_only_by_the_image_check() {
         .all(|f| f != "generate.rs"));
 }
 
+/// The product code of pinhole-core's generate.rs.
+fn generate_rs() -> String {
+    product_sources()
+        .into_iter()
+        .find(|(p, _)| p.ends_with(Path::new("pinhole-core/src/generate.rs")))
+        .unwrap()
+        .1
+}
+
+/// A job reads session pictures only through `Inputs` in generate.rs, so every picture sent to
+/// the engine is an input of the result for the image check (a mask goes as its shape only);
+/// Upscale reads its one source, which it hands to the check.
+#[test]
+fn a_job_reads_session_pictures_only_as_declared_inputs() {
+    // Without whitespace: a call can be split over lines.
+    let code: String = generate_rs().split_whitespace().collect();
+    // `session_image` and `upscale_image`.
+    assert_eq!(code.matches("session.get(").count(), 2);
+    // Its definition, `Inputs::take` and `Inputs::mask`.
+    assert_eq!(code.matches("session_image(").count(), 3);
+    assert!(!code.contains("session::get("));
+    assert!(!code.contains("session::decode_rgba("));
+}
+
 #[test]
 fn the_app_never_turns_on_test_only_constructors() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

@@ -57,6 +57,10 @@ instead of a refactor:
   turns on the test-only constructors (`test-util`). Release builds build the app package
   alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
   `test-util` in through `tests/`, so never ship a workspace build.
+- Pictures sent to the engine: generate.rs reads them from the session only through `Inputs`,
+  which records each one as an input of the result for the image check (`imagecheck::MadeBy`);
+  a mask is sent as its black-and-white shape only. `one_way.rs` checks that generate.rs reads
+  session pictures no other way.
 - Upscale now needs the check's files and can be blocked like any made picture (so an
   upscale of a brought-in photo can hit a false block on a borderline picture).
 - Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
