@@ -103,6 +103,18 @@ pub struct Readings {
     pub faces: Option<Vec<Face>>,
 }
 
+/// Most people on one brought-in picture measured on their own; with more, the picture
+/// doesn't count as already intimate.
+pub const MAX_PEOPLE_MEASURED: usize = 8;
+
+/// Whether a brought-in picture that reads as intimate as a whole counts as already intimate:
+/// only when every person in it (`people` faces, `each` = their own region intimate) is. A
+/// collage of an ordinary photo of someone next to an intimate picture is not. People found
+/// only with the picture turned, or too many to measure, fail closed.
+pub fn already_intimate(people: usize, each: &[bool]) -> bool {
+    people > 0 && people <= MAX_PEOPLE_MEASURED && each.len() == people && each.iter().all(|&i| i)
+}
+
 /// What the check measured once on a brought-in picture (the start of a chain).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Original {
@@ -432,5 +444,32 @@ mod tests {
         );
         assert!(!is_sexual(1.0, None));
         assert!(!is_intimate(1.0, None));
+    }
+
+    /// Regression: an intimate part elsewhere in a brought-in picture (a collage) used to
+    /// exempt an ordinary photo of someone in it from the real-photo rule.
+    #[test]
+    fn already_intimate_is_per_person() {
+        assert!(already_intimate(1, &[true]));
+        assert!(already_intimate(2, &[true, true]));
+        assert!(!already_intimate(2, &[true, false]), "a collage");
+        assert!(!already_intimate(1, &[false]));
+        assert!(!already_intimate(0, &[]), "found only turned: fail closed");
+        assert!(!already_intimate(
+            MAX_PEOPLE_MEASURED + 1,
+            &[true; MAX_PEOPLE_MEASURED]
+        ));
+        let o = Original {
+            has_face: true,
+            intimate: already_intimate(2, &[true, false]),
+        };
+        let mut r = Readings::default();
+        r.nudity = 1.0;
+        r.tags = Some(Tags {
+            explicit: 1.0,
+            nude: 1.0,
+            ..Default::default()
+        });
+        assert_eq!(decide(&r, &[o], false), Some(Rule::PhotoMadeIntimate));
     }
 }

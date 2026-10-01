@@ -132,15 +132,27 @@ impl Checker {
         let img = decode(png)?;
         let mut l = self.loaded.lock();
         *self.last_used.lock() = Some(Instant::now());
-        let has_face = self.original_has_face(&mut l, &img)?;
-        if !has_face {
+        let Some(people) = self.original_faces(&mut l, &img)? else {
             return Ok(Original::default());
-        }
+        };
         let nudity = self.nudity(&mut l, &img)?;
         let tags = Some(self.tags(&mut l, &img)?);
+        let mut intimate = rules::is_intimate(nudity, tags.as_ref());
+        // Already intimate only counts per person: a picture that is intimate somewhere
+        // (a collage) doesn't exempt a person in it who isn't.
+        if intimate {
+            let mut each = Vec::with_capacity(people.len());
+            for b in people.iter().take(rules::MAX_PEOPLE_MEASURED) {
+                let region = body_region(&img, *b);
+                let n = self.nudity(&mut l, &region)?;
+                let t = self.tags(&mut l, &region)?;
+                each.push(rules::is_intimate(n, Some(&t)));
+            }
+            intimate = rules::already_intimate(people.len(), &each);
+        }
         Ok(Original {
-            has_face,
-            intimate: rules::is_intimate(nudity, tags.as_ref()),
+            has_face: true,
+            intimate,
         })
     }
 
@@ -283,36 +295,55 @@ impl Checker {
     /// Whether a brought-in picture shows a person. Searched harder than a result: a small
     /// face counts (Edit and Upscale enlarge it), the picture is also tried turned on its
     /// side and upside down, and a large picture is also searched in closer sections.
-    fn original_has_face(&self, l: &mut Loaded, img: &RgbImage) -> Result<bool, CheckError> {
+    /// `None` when there's no person; otherwise the upright face boxes found (empty when a
+    /// face was only found with the picture turned).
+    fn original_faces(
+        &self,
+        l: &mut Loaded,
+        img: &RgbImage,
+    ) -> Result<Option<Vec<[f32; 4]>>, CheckError> {
         use image::imageops::{crop_imm, rotate180, rotate270, rotate90};
         let m = self.face_model(l)?;
-        let any = |img: &RgbImage, fill: f32| -> Result<bool, CheckError> {
+        let boxes = |img: &RgbImage, fill: f32| -> Result<Vec<[f32; 4]>, CheckError> {
             Ok(find_faces(&m, img, fill)?
-                .iter()
-                .any(|f| f.0.counts_in_original()))
+                .into_iter()
+                .filter(|f| f.0.counts_in_original())
+                .map(|f| f.1)
+                .collect())
         };
-        if any(img, 1.0)? || any(img, 0.5)? {
-            return Ok(true);
+        for fill in [1.0, 0.5] {
+            let found = boxes(img, fill)?;
+            if !found.is_empty() {
+                return Ok(Some(found));
+            }
         }
         for turn in [rotate90, rotate180, rotate270] {
-            if any(&turn(img), 1.0)? {
-                return Ok(true);
+            if !boxes(&turn(img), 1.0)?.is_empty() {
+                return Ok(Some(Vec::new()));
             }
         }
         let (w, h) = img.dimensions();
         if w.max(h) > 1280 {
             // 3 × 3 overlapping sections, each half the picture's size.
             let (tw, th) = (w / 2, h / 2);
+            let mut found = Vec::new();
             for i in 0..3 {
                 for j in 0..3 {
-                    let tile = crop_imm(img, i * tw / 2, j * th / 2, tw, th).to_image();
-                    if any(&tile, 1.0)? {
-                        return Ok(true);
+                    let (x0, y0) = (i * tw / 2, j * th / 2);
+                    let tile = crop_imm(img, x0, y0, tw, th).to_image();
+                    for b in boxes(&tile, 1.0)? {
+                        let b = [b[0] + x0 as f32, b[1] + y0 as f32, b[2], b[3]];
+                        if found.iter().all(|k| iou(k, &b) < 0.3) {
+                            found.push(b);
+                        }
                     }
                 }
             }
+            if !found.is_empty() {
+                return Ok(Some(found));
+            }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// Confidence that a face is a child's: the age estimate's 0–2 and 3–9 groups together.
@@ -548,6 +579,26 @@ fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
     }
 }
 
+/// The part of the picture that shows the person a face box belongs to: three face widths
+/// wide, from just above the face to about six face heights below it, kept inside the image.
+fn body_region(img: &RgbImage, b: [f32; 4]) -> RgbImage {
+    let (x, y, w, h) = body_box(img.dimensions(), b);
+    image::imageops::crop_imm(img, x, y, w, h).to_image()
+}
+
+fn body_box((iw, ih): (u32, u32), b: [f32; 4]) -> (u32, u32, u32, u32) {
+    let cx = b[0] + b[2] / 2.0;
+    let x0 = (cx - b[2] * 1.5).max(0.0);
+    let x1 = (cx + b[2] * 1.5).min(iw as f32);
+    let y0 = (b[1] - b[3] * 0.5).max(0.0);
+    let y1 = (b[1] + b[3] * 6.5).min(ih as f32);
+    let x = (x0 as u32).min(iw.saturating_sub(1));
+    let y = (y0 as u32).min(ih.saturating_sub(1));
+    let w = ((x1 - x0) as u32).clamp(1, iw - x);
+    let h = ((y1 - y0) as u32).clamp(1, ih - y);
+    (x, y, w, h)
+}
+
 /// Square crop 1.5× the face box, kept inside the image.
 fn face_crop(img: &RgbImage, b: [f32; 4]) -> RgbImage {
     let side = b[2].max(b[3]) * 1.5;
@@ -589,6 +640,19 @@ mod tests {
         assert_eq!(ix.count, end);
         // A list without the tags the rules need is rejected.
         assert!(tag_index(b"tag_id,name,category,count\n1,tag,0,1\n").is_none());
+    }
+
+    #[test]
+    fn body_box_covers_the_person_and_stays_inside() {
+        // A face at (100, 50), 40 × 50: the region runs from above it to well below.
+        let (x, y, w, h) = body_box((1000, 1000), [100.0, 50.0, 40.0, 50.0]);
+        assert_eq!((x, y), (60, 25));
+        assert_eq!((w, h), (120, 350));
+        // Near the edges it is cut to the picture.
+        let (x, y, w, h) = body_box((200, 200), [180.0, 150.0, 40.0, 50.0]);
+        assert!(x + w <= 200 && y + h <= 200 && w >= 1 && h >= 1);
+        let (x, y, w, h) = body_box((10, 10), [-50.0, -50.0, 5.0, 5.0]);
+        assert!(x < 10 && y < 10 && x + w <= 10 && y + h <= 10);
     }
 
     #[test]

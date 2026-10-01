@@ -165,7 +165,10 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    at 640 px; the picture is also tried turned 90/180/270° and, above 1280 px, in 3 × 3 closer
    sections) and was **not** intimate when brought in. Comparing with the original import (not the direct input) means a photo can't be
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
-   it existed before Pinhole saw it.
+   it existed before Pinhole saw it. "Intimate when brought in" is judged per person (each
+   face's own region, up to 8 people), so a collage of an ordinary photo of someone next to an
+   intimate picture doesn't exempt that person; a face found only with the picture turned, or
+   more than 8 people, counts as not intimate.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
    (explicit ≥ 0.35, or nudity ≥ 0.85 with questionable + explicit ≥ 0.5; no tags needed, so
    swimwear can count here) **and** either:
