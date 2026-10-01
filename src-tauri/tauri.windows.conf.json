@@ -3,6 +3,7 @@
     "resources": {
       "../config/": "config/",
       "../THIRD_PARTY_LICENSES": "THIRD_PARTY_LICENSES.txt",
+      "../LICENSE": "LICENSE.txt",
       "../SAFEGUARDS.md": "SAFEGUARDS.md",
       "vcrt/": "vcrt/"
     }
