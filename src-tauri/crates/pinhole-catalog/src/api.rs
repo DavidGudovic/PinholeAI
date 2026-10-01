@@ -160,6 +160,12 @@ pub fn version_is_person_or_minor(version: &ModelVersion, model: Option<&Model>)
         || version.model.as_ref().is_some_and(|m| m.poi || m.minor)
 }
 
+/// Whether the image check treats a version as "safe images only": the model's own flag, or
+/// `true` when the model's details couldn't be fetched (fail closed).
+pub fn sfw_only_of(version: &ModelVersion, model: Option<&Model>) -> bool {
+    model.map_or(version.model_id > 0, |m| m.sfw_only)
+}
+
 /// Why a model CivitAI marks `poi` / `minor` can't be installed (RELEASE-SPEC §5, Level 1).
 pub const PERSON_OR_MINOR_REASON: &str =
     "Pinhole doesn't install models that CivitAI marks as showing a real person or someone under 18.";
@@ -666,6 +672,27 @@ mod tests {
 
     pub(crate) fn page_fixture() -> ModelsPage {
         serde_json::from_str(include_str!("../tests/fixtures/models_page.json")).unwrap()
+    }
+
+    /// Regression: a failed model fetch used to install a "safe images only" model without
+    /// the flag; a hand-added file matched by hash never got it.
+    #[test]
+    fn sfw_only_fails_closed_without_the_model() {
+        let v = ModelVersion {
+            model_id: 7,
+            ..Default::default()
+        };
+        assert!(sfw_only_of(&v, None));
+        assert!(!sfw_only_of(&v, Some(&Model::default())));
+        let flagged = Model {
+            sfw_only: true,
+            ..Default::default()
+        };
+        assert!(sfw_only_of(&v, Some(&flagged)));
+        assert!(
+            !sfw_only_of(&ModelVersion::default(), None),
+            "no model to fetch"
+        );
     }
 
     #[test]

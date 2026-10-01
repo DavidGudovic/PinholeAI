@@ -1036,6 +1036,22 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         let client = crate::catalog::civitai_client(core).await;
         let lookup = tokio::time::timeout(Duration::from_secs(20), client.by_hash(&sha256)).await;
         if let Ok(Ok(Some(v))) = lookup {
+            // The model's flags, as for a Browse install (RELEASE-SPEC §5).
+            let model = if v.model_id > 0 {
+                tokio::time::timeout(Duration::from_secs(20), client.model(v.model_id))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+            } else {
+                None
+            };
+            if pinhole_catalog::api::version_is_person_or_minor(&v, model.as_ref()) {
+                remove_copy(&pending);
+                return Err(CoreError::invalid(
+                    pinhole_catalog::api::PERSON_OR_MINOR_REASON,
+                ));
+            }
+            let sfw_only = pinhole_catalog::api::sfw_only_of(&v, model.as_ref());
             let name = pinhole_catalog::plan::model_name(&v, None);
             pending.friendly_name = pinhole_catalog::plan::friendly_name(&v, None);
             pending.civitai = Some(CivitaiRef {
@@ -1047,7 +1063,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                 trained_words: v.trained_words.clone(),
                 license: None,
                 creator_notes: None,
-                sfw_only: false,
+                sfw_only,
             });
             resolution = families::resolve_family(
                 &registry,

@@ -818,6 +818,13 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
             safe_images_only |= f.civitai.as_ref().is_some_and(|c| c.sfw_only);
             addon_words.push(f.friendly_name.clone());
             addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
+            // CivitAI's own name and trained words too: editing the trigger words changes
+            // what goes into the prompt, not what the add-on was trained on.
+            if let Some(c) = &f.civitai {
+                addon_words.extend(c.model_name.iter().cloned());
+                addon_words.extend(c.version_name.iter().cloned());
+                addon_words.extend(c.trained_words.iter().cloned());
+            }
             if req.add_trigger_words {
                 for w in f.trigger_words() {
                     let w = w.trim();
@@ -1606,7 +1613,17 @@ pub(crate) fn full_sd_args(
         ],
     );
     args.retain(|a| a != sdapi::REJECT_ORIGIN_FLAG);
-    let mut defaults = cfg.stable_diffusion_cpp.launch_defaults.clone();
+    // Only tuning flags from engine.yaml (an editable file in some installs): nothing that
+    // loads content past the checks.
+    let mut defaults = pinhole_registry::wiring::keep_tuning_flags(
+        &cfg.stable_diffusion_cpp.launch_defaults,
+        &[
+            "--listen-ip",
+            "-l",
+            "--log-level",
+            sdapi::REJECT_ORIGIN_FLAG,
+        ],
+    );
     // The key only travels in the environment (a command line is visible to
     // other programs); the lock-down flag only follows `ENGINE_LOCKDOWN`.
     strip_flag(
@@ -2386,6 +2403,7 @@ async fn generate_inner(
     }
     let parent_id = source.as_ref().map(|s| s.id.clone());
     let mut pngs = Vec::with_capacity(images.len());
+    let mut also_check = Vec::new();
     for img in images {
         let raw = base64::engine::general_purpose::STANDARD
             .decode(img.b64_json.as_bytes())
@@ -2403,6 +2421,11 @@ async fn generate_inner(
         })?;
         if let Some(plan) = &fix {
             // Paste the redrawn box back into the whole image (or the source into the canvas).
+            // Fix details: the redraw is also checked on its own, at the size the engine drew
+            // it. Shrunk into a large picture it's too small to judge.
+            if matches!(plan, Redraw::Detail(_)) {
+                also_check.push(png.clone());
+            }
             let plan = plan.clone();
             png = tokio::task::spawn_blocking(move || plan.blend(&png))
                 .await
@@ -2418,9 +2441,10 @@ async fn generate_inner(
         pngs.push(png);
     }
     // Result intake: every picture passes the image check first; if one is blocked,
-    // none is kept.
+    // none is kept. A redrawn box is also checked on its own.
     let checked =
-        crate::imagecheck::check_results(core, pngs, sources, prep.safe_images_only).await?;
+        crate::imagecheck::check_results(core, pngs, also_check, sources, prep.safe_images_only)
+            .await?;
     // Cancel pressed during the check: nothing is kept (as for an upscale).
     if cancel.is_cancelled() {
         return Err(CoreError::new("cancelled", "Cancelled."));
@@ -2903,10 +2927,11 @@ async fn upscale_inner(
     meta.parent_id = Some(src.id.clone());
     // Checked like every made picture (one way in), and it keeps the source's brought-in
     // pictures for later edits.
-    let checked = crate::imagecheck::check_results(core, vec![png], src.sources(), false)
-        .await?
-        .pop()
-        .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
+    let checked =
+        crate::imagecheck::check_results(core, vec![png], Vec::new(), src.sources(), false)
+            .await?
+            .pop()
+            .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
     if cancel.is_cancelled()
         || !core
             .session
