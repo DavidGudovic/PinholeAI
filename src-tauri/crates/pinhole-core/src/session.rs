@@ -69,6 +69,16 @@ impl SessionImage {
                 bytes: self.bytes.clone(),
                 ai_label: self.ai_label,
             }]
+        } else if self.meta.is_none() {
+            // A saved picture opened again: its own file's label (what Pinhole wrote on it)
+            // counts for every picture it came from.
+            self.made_from
+                .iter()
+                .map(|s| Source {
+                    ai_label: provenance::strongest(s.ai_label, self.ai_label),
+                    ..s.clone()
+                })
+                .collect()
         } else {
             self.made_from.to_vec()
         }
@@ -351,14 +361,15 @@ fn label_source(l: AiLabel) -> &'static str {
     match l {
         AiLabel::Generated => SOURCE_GENERATED,
         AiLabel::Composite => SOURCE_COMPOSITE,
+        AiLabel::Enhanced => SOURCE_ENHANCED,
     }
 }
 
 /// The IPTC digital source type a picture leaves with, or `None` for a brought-in picture that
-/// didn't say it was made with AI. A label read from a brought-in file is carried forward: on the
-/// unchanged picture as it was, and on anything made only from pictures labelled as made entirely
-/// with AI as "made with AI" (not "edited photo" or "enhanced photo", which would claim a real
-/// capture behind it).
+/// didn't say it was made with AI. A label read from a brought-in file is carried forward and never
+/// weakened: on the unchanged picture as it was; on anything made only from pictures labelled as
+/// made entirely with AI as "made with AI" (not "edited photo" or "enhanced photo", which would
+/// claim a real capture behind it); on an upscale of a picture with AI-made parts as a composite.
 pub fn source_type(im: &SessionImage) -> Option<&'static str> {
     let Some(m) = &im.meta else {
         return im.ai_label.map(label_source);
@@ -369,9 +380,12 @@ pub fn source_type(im: &SessionImage) -> Option<&'static str> {
     let labels: Vec<Option<AiLabel>> = im.sources().iter().map(|s| s.ai_label).collect();
     let all =
         |want: fn(Option<AiLabel>) -> bool| !labels.is_empty() && labels.iter().all(|l| want(*l));
+    let ai_parts = labels
+        .iter()
+        .any(|l| matches!(l, Some(AiLabel::Generated | AiLabel::Composite)));
     Some(if all(|l| l == Some(AiLabel::Generated)) {
         SOURCE_GENERATED
-    } else if upscaled_import(m) && !all(|l| l.is_some()) {
+    } else if upscaled_import(m) && !ai_parts {
         SOURCE_ENHANCED
     } else {
         SOURCE_COMPOSITE
@@ -887,9 +901,12 @@ mod tests {
         // Never weaker than the input said.
         assert_eq!(t(upscale(), vec![mixed()]), Some(SOURCE_COMPOSITE));
         assert_eq!(t(upscale(), vec![ai(), mixed()]), Some(SOURCE_COMPOSITE));
+        let enhanced = || source("h", Some(AiLabel::Enhanced));
+        assert_eq!(t(upscale(), vec![enhanced()]), Some(SOURCE_ENHANCED));
+        assert_eq!(t(edit(), vec![enhanced()]), Some(SOURCE_COMPOSITE));
         // A photo in the mix: it is a composite with a real capture.
         assert_eq!(t(edit(), vec![ai(), photo()]), Some(SOURCE_COMPOSITE));
-        assert_eq!(t(upscale(), vec![ai(), photo()]), Some(SOURCE_ENHANCED));
+        assert_eq!(t(upscale(), vec![ai(), photo()]), Some(SOURCE_COMPOSITE));
     }
 
     #[test]
@@ -901,6 +918,25 @@ mod tests {
         assert_eq!(im.sources()[0].ai_label, Some(AiLabel::Generated));
         im.ai_label = Some(AiLabel::Composite);
         assert_eq!(source_type(&im), Some(SOURCE_COMPOSITE));
+        im.ai_label = Some(AiLabel::Enhanced);
+        assert_eq!(source_type(&im), Some(SOURCE_ENHANCED));
+    }
+
+    /// Regression: a saved edit of a photo opened again in the same session keeps the photo as
+    /// its source; an upscale of it used to leave as an "enhanced photo", losing the label its
+    /// own file carried.
+    #[test]
+    fn a_saved_picture_opened_again_keeps_its_own_label() {
+        let mut reopened = image(None, Origin::Imported, vec![source("p", None)]);
+        reopened.ai_label = Some(AiLabel::Composite);
+        let from = reopened.sources();
+        assert_eq!(from[0].id, "p");
+        assert_eq!(from[0].ai_label, Some(AiLabel::Composite));
+        let mut m = meta("u");
+        m.kind = crate::generate::ResultKind::Upscaled;
+        m.model_id.clear();
+        let upscaled = image(Some(m), Origin::Imported, from);
+        assert_eq!(source_type(&upscaled), Some(SOURCE_COMPOSITE));
     }
 
     /// A PNG another tool marked as made with AI, with private data next to the label.
@@ -929,6 +965,10 @@ mod tests {
             .id;
         let im = core.session.get(&id).unwrap();
         assert_eq!(im.ai_label, Some(AiLabel::Generated));
+        // The label is never trusted as a sign the picture isn't a real photo (RELEASE-SPEC §3.1):
+        // it stays a brought-in picture, checked as one.
+        assert_eq!(im.origin, Origin::Imported);
+        assert_eq!(im.sources().len(), 1);
         let chunks = exported_xmp(&export_png(&core, &im).unwrap());
         assert_eq!(chunks.len(), 1, "{chunks:?}");
         assert!(chunks[0].contains("digitalsourcetype/trainedAlgorithmicMedia\""));
@@ -946,7 +986,7 @@ mod tests {
     fn a_picture_without_an_ai_label_leaves_as_it_came_in() {
         let (_tmp, core) =
             crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
-        for code in ["digitalCapture", "algorithmicallyEnhanced"] {
+        for code in ["digitalCapture", "compositeSynthetic"] {
             let id = import_image(&core, labelled_png(code)).unwrap().id;
             let im = core.session.get(&id).unwrap();
             assert_eq!(im.ai_label, None, "{code}");

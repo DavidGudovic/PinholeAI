@@ -18,6 +18,18 @@ pub enum AiLabel {
     Generated,
     /// A capture combined with AI-made parts (`compositeWithTrainedAlgorithmicMedia`).
     Composite,
+    /// A capture enhanced with AI (`algorithmicallyEnhanced`).
+    Enhanced,
+}
+
+impl AiLabel {
+    fn rank(self) -> u8 {
+        match self {
+            AiLabel::Enhanced => 1,
+            AiLabel::Composite => 2,
+            AiLabel::Generated => 3,
+        }
+    }
 }
 
 const PREFIX: &[u8] = b"digitalsourcetype/";
@@ -27,17 +39,30 @@ const CODES: &[(&[u8], AiLabel)] = &[
     (b"trainedAlgorithmicMedia", AiLabel::Generated),
     (b"algorithmicMedia", AiLabel::Generated),
     (b"compositeWithTrainedAlgorithmicMedia", AiLabel::Composite),
+    (b"algorithmicallyEnhanced", AiLabel::Enhanced),
 ];
-/// Largest compressed text chunk inflated, and the most it may inflate to.
-const MAX_INFLATE: usize = 16 * 1024 * 1024;
+/// Most text inflated from one file's compressed PNG chunks, all chunks together, and the most
+/// compressed chunks looked at (XMP is a few KB; this bounds a file built to inflate forever).
+const INFLATE_BUDGET: usize = 16 * 1024 * 1024;
+const MAX_COMPRESSED_CHUNKS: usize = 16;
 
-/// The AI label `bytes` (a PNG, JPEG or WebP file) carries, if any. `Generated` wins when a file
-/// names both.
+/// The AI label `bytes` (a PNG, JPEG or WebP file) carries, if any. The strongest one wins when a
+/// file names several (made with AI over composite over enhanced).
 pub fn ai_label(bytes: &[u8]) -> Option<AiLabel> {
     let mut found = scan(bytes);
     if found != Some(AiLabel::Generated) && crate::png::is_png(bytes) {
-        for c in crate::png::chunks(bytes).unwrap_or_default() {
-            if let Some(text) = inflated_text(&c.kind, c.data) {
+        let mut budget = INFLATE_BUDGET;
+        let compressed = crate::png::chunks(bytes)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| is_compressed_text(&c.kind, c.data))
+            .take(MAX_COMPRESSED_CHUNKS);
+        for c in compressed {
+            if budget == 0 || found == Some(AiLabel::Generated) {
+                break;
+            }
+            if let Some(text) = inflated_text(&c.kind, c.data, budget) {
+                budget -= text.len();
                 found = strongest(found, scan(&text));
             }
         }
@@ -45,10 +70,22 @@ pub fn ai_label(bytes: &[u8]) -> Option<AiLabel> {
     found
 }
 
-fn strongest(a: Option<AiLabel>, b: Option<AiLabel>) -> Option<AiLabel> {
+/// The stronger of two labels.
+pub fn strongest(a: Option<AiLabel>, b: Option<AiLabel>) -> Option<AiLabel> {
     match (a, b) {
-        (Some(AiLabel::Generated), _) | (_, Some(AiLabel::Generated)) => Some(AiLabel::Generated),
+        (Some(x), Some(y)) => Some(if y.rank() > x.rank() { y } else { x }),
         (a, b) => a.or(b),
+    }
+}
+
+fn is_compressed_text(kind: &[u8; 4], data: &[u8]) -> bool {
+    match kind {
+        b"zTXt" => true,
+        b"iTXt" => data
+            .iter()
+            .position(|&b| b == 0)
+            .is_some_and(|n| data.get(n + 1) == Some(&1)),
+        _ => false,
     }
 }
 
@@ -74,8 +111,9 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Text of a compressed PNG `zTXt` or `iTXt` chunk (uncompressed ones are already plain bytes).
-fn inflated_text(kind: &[u8; 4], data: &[u8]) -> Option<Vec<u8>> {
+/// Text of a compressed PNG `zTXt` or `iTXt` chunk (uncompressed ones are already plain bytes),
+/// at most `limit` bytes of it.
+fn inflated_text(kind: &[u8; 4], data: &[u8], limit: usize) -> Option<Vec<u8>> {
     let nul = data.iter().position(|&b| b == 0)?;
     let compressed = match kind {
         b"zTXt" => data.get(nul + 2..)?,
@@ -91,12 +129,9 @@ fn inflated_text(kind: &[u8; 4], data: &[u8]) -> Option<Vec<u8>> {
         }
         _ => return None,
     };
-    if compressed.len() > MAX_INFLATE {
-        return None;
-    }
     let mut out = Vec::new();
     flate2::read::ZlibDecoder::new(compressed)
-        .take(MAX_INFLATE as u64)
+        .take(limit as u64)
         .read_to_end(&mut out)
         .ok()?;
     Some(out)
@@ -176,7 +211,6 @@ mod tests {
         assert_eq!(ai_label(&png()), None);
         for code in [
             "digitalCapture",
-            "algorithmicallyEnhanced",
             "compositeSynthetic",
             "trainedAlgorithmicMediaX",
         ] {
@@ -191,9 +225,51 @@ mod tests {
     }
 
     #[test]
-    fn generated_wins_over_composite() {
+    fn the_strongest_label_wins() {
         let both = format!("{} {}", xmp(COMP), xmp(GEN));
         assert_eq!(ai_label(both.as_bytes()), Some(AiLabel::Generated));
+        let enhanced =
+            xmp("http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicallyEnhanced");
+        assert_eq!(ai_label(enhanced.as_bytes()), Some(AiLabel::Enhanced));
+        let both = format!("{enhanced} {}", xmp(COMP));
+        assert_eq!(ai_label(both.as_bytes()), Some(AiLabel::Composite));
+        assert_eq!(
+            strongest(Some(AiLabel::Composite), Some(AiLabel::Enhanced)),
+            Some(AiLabel::Composite)
+        );
+        assert_eq!(
+            strongest(None, Some(AiLabel::Enhanced)),
+            Some(AiLabel::Enhanced)
+        );
+    }
+
+    #[test]
+    fn compressed_text_is_inflated_within_one_budget() {
+        // Many chunks that each inflate to a lot of zeros: reading stops at the budget, and
+        // a label after it isn't looked for.
+        let bomb = zlib(&vec![0u8; 4 * 1024 * 1024]);
+        let mut p = png();
+        for _ in 0..MAX_COMPRESSED_CHUNKS {
+            let mut z = b"k\0\x00".to_vec();
+            z.extend_from_slice(&bomb);
+            p = crate::png::insert_chunk(&p, b"zTXt", &z).unwrap();
+        }
+        let mut late = b"Raw profile\0\x00".to_vec();
+        late.extend(zlib(xmp(GEN).as_bytes()));
+        let p = crate::png::insert_chunk(&p, b"zTXt", &late).unwrap();
+        let start = std::time::Instant::now();
+        assert_eq!(ai_label(&p), None);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+        // One chunk is cut at the limit.
+        let one = crate::png::chunks(&p)
+            .unwrap()
+            .into_iter()
+            .find(|c| &c.kind == b"zTXt")
+            .unwrap();
+        assert_eq!(
+            inflated_text(&one.kind, one.data, 1000).unwrap().len(),
+            1000
+        );
     }
 
     #[test]
