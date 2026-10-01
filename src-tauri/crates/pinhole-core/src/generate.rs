@@ -885,8 +885,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
         apply_prefix,
     );
 
-    // The whole positive prompt (idea + style + trigger words) and the add-ons; the negative
-    // prompt is where people list what to keep out, so it isn't checked.
+    // Word-checked: the whole positive prompt (idea + style + trigger words) and the add-ons.
     let prompt = crate::text_check::checked_with(final_prompt.prompt.clone(), &addon_words)?;
 
     let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
@@ -1592,9 +1591,8 @@ fn add_defaults(args: &mut Vec<String>, defaults: &[String]) {
 
 /// The pinned sd-server is locked down (RELEASE-SPEC §12): it refuses requests
 /// from web pages ([`sdapi::REJECT_ORIGIN_FLAG`]) and requests without this
-/// launch's API key. Compiled in, not a setting: with `true` an engine build
-/// without the patch can't start, so the checks can't be skipped by pointing
-/// engine.yaml at an upstream build. engine.yaml pins the patched build from
+/// launch's API key. Compiled in, not a setting: with `true` only an engine
+/// build with the patch starts. engine.yaml pins the patched build from
 /// Pinhole's fork (`engine/sd-cpp/`).
 pub(crate) const ENGINE_LOCKDOWN: bool = true;
 
@@ -1618,8 +1616,7 @@ pub(crate) fn full_sd_args(
         ],
     );
     args.retain(|a| a != sdapi::REJECT_ORIGIN_FLAG);
-    // Only tuning flags from engine.yaml (an editable file in some installs): nothing that
-    // loads content past the checks.
+    // Only tuning flags are taken from engine.yaml's launch defaults.
     let mut defaults = pinhole_registry::wiring::keep_tuning_flags(
         &cfg.stable_diffusion_cpp.launch_defaults,
         &[
@@ -1649,8 +1646,8 @@ pub(crate) fn full_sd_args(
     add_defaults(&mut args, &defaults);
     args.retain(|a| a != "--verbose" && a != "-v");
     args.extend(["--log-level".into(), level]);
-    // Privacy safeguard #2 (besides `embed_image_metadata: false` per request):
-    // server-wide default off, even if engine.yaml is edited.
+    // Always pass --disable-image-metadata (besides `embed_image_metadata: false` per
+    // request).
     if !args.iter().any(|a| a == "--disable-image-metadata") {
         args.push("--disable-image-metadata".into());
     }

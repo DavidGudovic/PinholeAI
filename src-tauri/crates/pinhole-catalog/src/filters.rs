@@ -394,7 +394,7 @@ pub struct CatalogFilters {
     pub default_sort: String,
     pub default_period: String,
     pub allowed_file_formats: Vec<String>,
-    /// Always true in practice; the YAML can't turn scan checks off (CLAUDE.md).
+    /// Always true in practice; the YAML can't turn scan checks off.
     pub require_scans_success: bool,
     /// Cards per Browse page.
     pub page_size: u32,

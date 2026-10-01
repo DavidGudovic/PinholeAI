@@ -1,4 +1,4 @@
-//! In-memory ring buffer for engine stdout/stderr (CLAUDE.md privacy rule 6).
+//! In-memory ring buffer for engine stdout/stderr (SPEC §4).
 //! Never written to disk. Every line is redacted before it is stored:
 //! * lines containing the current prompt / negative prompt (or a long piece of
 //!   it, or any of its lines / comma-separated parts of 8+ characters) are

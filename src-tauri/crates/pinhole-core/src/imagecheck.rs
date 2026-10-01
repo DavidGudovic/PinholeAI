@@ -454,8 +454,8 @@ impl CheckedPng {
 
 fn blocked_error(rule: Rule, r: &Readings) -> CoreError {
     let e = CoreError::new("blocked", BLOCKED_MESSAGE);
-    // Dev builds show which rule fired and the scores, to tune the rules on legal
-    // test pictures. Release builds say nothing more than the message.
+    // Debug builds add the rule and scores to the details for tuning; release builds
+    // return the message only.
     if cfg!(debug_assertions) {
         e.with_details(format!("{}: {}", rule.key(), describe(r)))
     } else {
@@ -511,7 +511,7 @@ pub fn describe(r: &Readings) -> String {
 }
 
 /// Dev builds: every reading of a session picture, measured on request (nothing is
-/// kept). Release builds: always `None`, so ordinary users never see what the check saw.
+/// kept). Release builds: always `None` (a developer tool).
 pub async fn readings_of(core: &Arc<AppCore>, id: &str) -> CoreResult<Option<String>> {
     if !cfg!(debug_assertions) {
         return Ok(None);

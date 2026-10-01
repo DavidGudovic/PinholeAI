@@ -1,4 +1,4 @@
-//! In-memory image store (CLAUDE.md privacy rule 3): generated and imported
+//! In-memory image store (SPEC §4): generated and imported
 //! images live here until Save or Reset. OWNER: engine agent.
 //!
 //! Nothing here touches disk except [`save_image`] / [`save_image_as`], which
@@ -398,7 +398,7 @@ pub fn source_type(im: &SessionImage) -> Option<&'static str> {
 }
 
 /// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with only
-/// the IPTC digital source type ("made with AI"). No app name (David, 2026-09-30),
+/// the IPTC digital source type ("made with AI"). No app name,
 /// prompt, seed, model, user or machine.
 pub fn ai_marker_xmp(source: &str) -> String {
     format!(

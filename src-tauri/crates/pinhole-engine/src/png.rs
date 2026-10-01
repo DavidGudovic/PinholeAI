@@ -1,4 +1,4 @@
-//! PNG chunk surgery without re-encoding (CLAUDE.md privacy rules 1–2).
+//! PNG chunk surgery without re-encoding (SPEC §4).
 //!
 //! [`scrub`] keeps only an allow-list of chunks needed to display the image
 //! (IHDR, PLTE, IDAT, IEND + colour/transparency/physical-size ancillaries) and

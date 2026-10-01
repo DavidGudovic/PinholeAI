@@ -620,8 +620,8 @@ fn shipped_hashes_stay_trusted() {
     }
 }
 
-/// Regression (Codex audit): a hash added through the user's overrides (a family download,
-/// another quant, a known file or a test model) used to count as one of Pinhole's own files.
+/// Hashes from overrides.yaml (a family download, another quant, a known file or a test
+/// model) are not treated as Pinhole's own files.
 #[test]
 fn hashes_from_overrides_are_not_shipped() {
     let a = "a1".repeat(32);

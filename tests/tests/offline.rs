@@ -1,4 +1,4 @@
-//! Offline mode (CLAUDE.md "Privacy tests"): with Offline on, every network call
+//! Offline mode (SPEC §4 rule 5): with Offline on, every network call
 //! fails with `Offline` BEFORE a socket opens — proven with a local listener that
 //! counts accepted connections. Also: the production client refuses hosts outside
 //! the allow-list without connecting.
