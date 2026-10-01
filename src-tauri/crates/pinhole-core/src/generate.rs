@@ -2104,14 +2104,8 @@ async fn generate_inner(
     // straightened, sharpened) that the brought-in picture didn't show clearly.
     let mut inputs: Vec<crate::session::Source> = Vec::new();
     let mut add_sources = |img: &SessionImage| {
-        let from = img.sources();
-        if !from.is_empty() && !from.iter().any(|s| s.id == img.id) {
-            inputs.push(crate::session::Source {
-                id: img.id.clone(),
-                bytes: img.bytes.clone(),
-            });
-        }
-        for s in from {
+        inputs.extend(img.fed_in_source());
+        for s in img.sources() {
             if !sources.iter().any(|k| k.id == s.id) {
                 sources.push(s);
             }
@@ -2952,14 +2946,7 @@ async fn upscale_inner(
     // Checked like every made picture (one way in), and it keeps the source's brought-in
     // pictures for later edits.
     let from = src.sources();
-    let input = if !from.is_empty() && !from.iter().any(|s| s.id == src.id) {
-        vec![crate::session::Source {
-            id: src.id.clone(),
-            bytes: src.bytes.clone(),
-        }]
-    } else {
-        Vec::new()
-    };
+    let input = src.fed_in_source().into_iter().collect();
     let checked = crate::imagecheck::check_results(core, vec![png], Vec::new(), from, input, false)
         .await?
         .pop()

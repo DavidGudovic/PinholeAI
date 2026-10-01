@@ -102,20 +102,33 @@ impl Checker {
         let mut tags = Some(self.tags(&mut l, &img)?);
         // A large picture is also measured in sections: shrunk whole to the classifiers'
         // size, a part of it can be too small to judge. The first section that reads as
-        // sexual (or else intimate) stands for the picture.
-        if !rules::is_sexual(nudity, tags.as_ref()) {
+        // sexual (or else intimate) stands for the picture, and the child and photo tags
+        // are the highest seen anywhere (a child in one section, sexual content in another).
+        let secs = sections(img.dimensions());
+        if !secs.is_empty() {
+            let mut sexual = rules::is_sexual(nudity, tags.as_ref());
             let mut intimate = rules::is_intimate(nudity, tags.as_ref());
-            for (x, y, w, h) in sections(img.dimensions()) {
+            let mut most = tags.unwrap_or_default();
+            for (x, y, w, h) in secs {
                 let part = image::imageops::crop_imm(&img, x, y, w, h).to_image();
                 let n = self.nudity(&mut l, &part)?;
-                let t = Some(self.tags(&mut l, &part)?);
-                if rules::is_sexual(n, t.as_ref()) {
-                    (nudity, tags) = (n, t);
-                    break;
+                let t = self.tags(&mut l, &part)?;
+                most.minor = most.minor.max(t.minor);
+                most.realistic = most.realistic.max(t.realistic);
+                most.photorealistic = most.photorealistic.max(t.photorealistic);
+                if sexual {
+                    continue;
                 }
-                if !intimate && rules::is_intimate(n, t.as_ref()) {
-                    (nudity, tags, intimate) = (n, t, true);
+                if rules::is_sexual(n, Some(&t)) {
+                    (nudity, tags, sexual) = (n, Some(t), true);
+                } else if !intimate && rules::is_intimate(n, Some(&t)) {
+                    (nudity, tags, intimate) = (n, Some(t), true);
                 }
+            }
+            if let Some(t) = tags.as_mut() {
+                t.minor = most.minor;
+                t.realistic = most.realistic;
+                t.photorealistic = most.photorealistic;
             }
         }
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
@@ -160,11 +173,18 @@ impl Checker {
         // (a collage) doesn't exempt a person in it who isn't.
         if intimate {
             let mut each = Vec::with_capacity(people.len());
-            for b in people.iter().take(rules::MAX_PEOPLE_MEASURED) {
-                let region = body_region(&img, *b);
-                let n = self.nudity(&mut l, &region)?;
-                let t = self.tags(&mut l, &region)?;
-                each.push(rules::is_intimate(n, Some(&t)));
+            if people.len() <= rules::MAX_PEOPLE_MEASURED {
+                for b in &people {
+                    let region = body_region(&img, *b);
+                    let n = self.nudity(&mut l, &region)?;
+                    let t = self.tags(&mut l, &region)?;
+                    let i = rules::is_intimate(n, Some(&t));
+                    each.push(i);
+                    if !i {
+                        // One person who isn't is enough.
+                        break;
+                    }
+                }
             }
             intimate = rules::already_intimate(people.len(), &each);
         }
@@ -270,11 +290,20 @@ impl Checker {
     }
 
     /// Faces with their box (x, y, w, h) in image pixels.
-    fn faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
+    /// `windows`: a large picture is also searched at its own resolution (upright only; the
+    /// turned tries are a fallback and stay quick).
+    fn faces(
+        &self,
+        l: &mut Loaded,
+        img: &RgbImage,
+        windows: bool,
+    ) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
         let m = self.face_model(l)?;
-        if img.width().max(img.height()) > WINDOW * 2 {
-            // A large picture: also searched at its own resolution.
-            return find_faces_everywhere(&m, img);
+        if windows && img.width().max(img.height()) > WINDOW * 2 {
+            let mut all = find_faces(&m, img, 1.0)?;
+            all.extend(find_faces(&m, img, 0.5)?);
+            all.extend(find_faces_in_windows(&m, img)?);
+            return Ok(merge_faces(all));
         }
         let mut found = find_faces(&m, img, 1.0)?;
         if found.iter().any(|f| f.0.counts()) {
@@ -291,12 +320,12 @@ impl Checker {
     /// upright, the picture is also tried turned 90/180/270° (someone lying down).
     fn judged_faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<Face>, CheckError> {
         use image::imageops::{rotate180, rotate270, rotate90};
-        let upright = self.faces(l, img)?;
+        let upright = self.faces(l, img, true)?;
         let mut pick = (upright, None);
         if !pick.0.iter().any(|f| f.0.judged()) {
             for turn in [rotate90, rotate180, rotate270] {
                 let turned = turn(img);
-                let found = self.faces(l, &turned)?;
+                let found = self.faces(l, &turned, false)?;
                 if found.iter().any(|f| f.0.judged()) {
                     // Small faces seen upright still count (fail closed).
                     let mut both = found;
@@ -334,29 +363,34 @@ impl Checker {
                 .collect()
         };
         // The whole picture first (quick); then, for a large picture, its own resolution.
-        let whole = keep(
-            find_faces(&m, img, 1.0)?
-                .into_iter()
-                .chain(find_faces(&m, img, 0.5)?)
-                .collect(),
-        );
+        let mut whole = find_faces(&m, img, 1.0)?;
+        whole.extend(find_faces(&m, img, 0.5)?);
+        let whole = keep(merge_faces(whole));
         if !whole.is_empty() {
             return Ok(Some(whole));
         }
         if img.width().max(img.height()) > WINDOW {
-            let upright = keep(find_faces_everywhere(&m, img)?);
+            let upright = keep(merge_faces(find_faces_in_windows(&m, img)?));
             if !upright.is_empty() {
                 return Ok(Some(upright));
             }
         }
         // Turned on its side, upside down, or at a slant (a face is only found upright).
+        // Each turn is made only when the one before found nobody.
         let small = shrink(img, 1280);
-        let mut turned: Vec<RgbImage> =
-            vec![rotate90(&small), rotate180(&small), rotate270(&small)];
-        turned.extend([45.0, 135.0, 225.0, 315.0].map(|a| rotate_any(&small, a)));
-        for t in &turned {
-            if !keep(find_faces(&m, t, 1.0)?).is_empty()
-                || !keep(find_faces(&m, t, 0.5)?).is_empty()
+        let turns: [&dyn Fn() -> RgbImage; 7] = [
+            &|| rotate90(&small),
+            &|| rotate180(&small),
+            &|| rotate270(&small),
+            &|| rotate_any(&small, 45.0),
+            &|| rotate_any(&small, 135.0),
+            &|| rotate_any(&small, 225.0),
+            &|| rotate_any(&small, 315.0),
+        ];
+        for turn in turns {
+            let t = turn();
+            if !keep(find_faces(&m, &t, 1.0)?).is_empty()
+                || !keep(find_faces(&m, &t, 0.5)?).is_empty()
             {
                 return Ok(Some(Vec::new()));
             }
@@ -601,13 +635,11 @@ fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
 /// face finder's input size.
 const WINDOW: u32 = 640;
 
-/// Faces anywhere in the picture: the whole picture (also with a border, for close-ups), and
-/// for a picture larger than the finder's input, overlapping windows at its own resolution
-/// and at half of it. Shrunk whole, a face in a large picture is too small to find.
-/// Boxes are in picture pixels; overlapping finds are merged.
-fn find_faces_everywhere(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
-    let mut all = find_faces(m, img, 1.0)?;
-    all.extend(find_faces(m, img, 0.5)?);
+/// Faces in overlapping windows of a picture larger than the finder's input, at its own
+/// resolution and at half of it: shrunk whole, a face in a large picture is too small to find.
+/// Boxes are in picture pixels (not merged; see `merge_faces`).
+fn find_faces_in_windows(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
+    let mut all = Vec::new();
     let (w, h) = img.dimensions();
     for win in [WINDOW, WINDOW * 2] {
         if w.max(h) <= win {
@@ -623,6 +655,12 @@ fn find_faces_everywhere(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4
             }
         }
     }
+    Ok(all)
+}
+
+/// One find per face: overlapping boxes from several passes are merged, the most confident
+/// kept.
+fn merge_faces(mut all: Vec<(Face, [f32; 4])>) -> Vec<(Face, [f32; 4])> {
     all.sort_by(|a, b| b.0.score.total_cmp(&a.0.score));
     let mut keep: Vec<(Face, [f32; 4])> = Vec::new();
     for f in all {
@@ -630,7 +668,7 @@ fn find_faces_everywhere(m: &Model, img: &RgbImage) -> Result<Vec<(Face, [f32; 4
             keep.push(f);
         }
     }
-    Ok(keep)
+    keep
 }
 
 /// Window positions along one side: every `step`, the last one flush with the end.

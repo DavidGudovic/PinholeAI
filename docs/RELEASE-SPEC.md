@@ -160,10 +160,13 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
    brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
-   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 12 px, since Edit and Upscale enlarge a
-   small face; the smallest face found also depends on the picture's size, as the finder works
-   at 640 px; the picture is also tried turned 90/180/270° and, above 1280 px, in 3 × 3 closer
-   sections) and was **not** intimate when brought in. Comparing with the original import (not the direct input) means a photo can't be
+   of any chain of edits) has a face (face finder ≥ 0.6, ≥ 12 px, since Edit and Upscale enlarge a
+   small face; the finder works at 640 px, so a picture above 640 px is also searched at its own
+   resolution and at half of it in overlapping 640 px windows; with no face upright, a copy shrunk
+   to 1280 px is tried turned 90/180/270° and at 45/135/225/315°) and was **not** intimate when
+   brought in. A made picture fed into the request from such a chain (an enlarged or edited
+   step) is measured too: a face that shows up in it counts as a person, and it is only exempt
+   when every brought-in picture behind it was intimate with a face. Comparing with the original import (not the direct input) means a photo can't be
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
    it existed before Pinhole saw it. "Intimate when brought in" is judged per person (each
    face's own region, up to 8 people), so a collage of an ordinary photo of someone next to an
@@ -178,7 +181,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
      FairFace photos, adults scored at most 0.05 and ages 3–9 0.77 on average. The age estimate
      judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
      as a child's (fails closed). With no face upright, the result is also tried turned
-     90/180/270° (someone lying down).
+     90/180/270° (someone lying down). A result above 1280 px is also searched in 640 px
+     windows at its own resolution and at half of it (upright).
 
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
    often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
@@ -204,7 +208,12 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
 ### 3.3 How it runs
 
 - **In order:** the nudity classifier and the tagger run on every result (the tagger always, so an
-  explicit picture the nudity model scores low still reaches the child tags); the face finder and
+  explicit picture the nudity model scores low still reaches the child tags). A result above
+  2048 px or longer than 3:1 is also measured in overlapping square sections (about a third of the
+  long side): the first sexual (else intimate) section stands for the picture, and the child and
+  photo-style tags are the highest seen in any section. Made pictures are capped at 3:1 and a
+  hires fix at 4× (`wiring.rs`, `MAX_ASPECT`, `MAX_HIRES_SCALE`), and sampler, tiling and
+  guidance override flags are never passed through from the Fine-tune extra arguments; the face finder and
   age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
   finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
   About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.

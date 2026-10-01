@@ -467,13 +467,15 @@ mod tests {
             has_face: true,
             intimate: already_intimate(2, &[true, false]),
         };
-        let mut r = Readings::default();
-        r.nudity = 1.0;
-        r.tags = Some(Tags {
-            explicit: 1.0,
-            nude: 1.0,
+        let r = Readings {
+            nudity: 1.0,
+            tags: Some(Tags {
+                explicit: 1.0,
+                nude: 1.0,
+                ..Default::default()
+            }),
             ..Default::default()
-        });
+        };
         assert_eq!(decide(&r, &[o], false), Some(Rule::PhotoMadeIntimate));
     }
 }

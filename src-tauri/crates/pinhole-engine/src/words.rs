@@ -940,7 +940,8 @@ fn glued_old(rest: &str) -> bool {
 /// "years old", "year olds", "yr old", "yrs old" or "years of age"; or "aged 12", "age of 12".
 /// A bare "age 12" doesn't count ("Bronze Age, 3 statues"). "year", "years", "yr", "yrs" or "y"
 /// may also be glued to "old", "olds" or "ofage" ("12 yearsold"). A number right after a tens
-/// word is part of an adult age ("twenty-five years old") and doesn't count.
+/// word is part of an adult age ("twenty-five years old") and doesn't count; any other word after
+/// a tens word ("twenty 12 yo", "thirty twelve yo") still does.
 fn has_young_age(words: &[String]) -> bool {
     let young =
         |w: &str| w.parse::<u32>().is_ok_and(|n| (1..18).contains(&n)) || NUMBER_WORDS.contains(&w);
@@ -949,7 +950,16 @@ fn has_young_age(words: &[String]) -> bool {
         matches!(at(i), "old" | "olds" | "o" | "ofage") || (at(i) == "of" && at(i + 1) == "age")
     };
     for (i, w) in words.iter().enumerate() {
-        if i > 0 && TENS.contains(&at(i - 1)) {
+        // Only a spelled unit after a tens word ("twenty five") is part of an adult age.
+        const UNITS: [&str; 9] = [
+            "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        ];
+        if i > 0
+            && TENS.contains(&at(i - 1))
+            && UNITS
+                .iter()
+                .any(|u| w.strip_prefix(u).is_some_and(|r| !r.starts_with("teen")))
+        {
             continue;
         }
         // A number word glued to "yo" or "years": "twelveyo", "twelveyears old".
@@ -1235,6 +1245,10 @@ mod tests {
             "child, seductively",
             "teen, sensually",
             "teen, hornies",
+            // A tens word only excuses a spelled unit right after it.
+            "twenty 12 yo, nude",
+            "thirty twelve years old, nude",
+            "forty seventeen yo, nude",
         ]
         .into_iter()
         .filter(|t| !pairs_minor_with_sexual(t))
