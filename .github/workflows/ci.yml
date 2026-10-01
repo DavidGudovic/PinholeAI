@@ -127,7 +127,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -181,7 +183,9 @@ jobs:
         with:
           node-version: 22
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -234,7 +238,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
       - uses: Swatinem/rust-cache@v2
         with:
           key: e2e

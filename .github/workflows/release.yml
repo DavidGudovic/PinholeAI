@@ -83,7 +83,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libdbus-1-dev libssl-dev pkg-config
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
 
       - uses: Swatinem/rust-cache@v2
 

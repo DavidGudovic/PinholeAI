@@ -53,7 +53,9 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -61,7 +63,9 @@ jobs:
           # A tag's cache is only readable by that same tag, so saving one after a release
           # build costs ~2 min (Windows) and is never used. Release builds restore the
           # cache saved on main instead: run CI on main with "installers" (or Bundle
-          # by hand) after dependency changes to refresh it.
+          # by hand) after dependency changes or a Rust version bump to refresh it.
+          # The cache key includes the compiler version, which is why Rust is pinned
+          # above: with a floating "stable", a new Rust release made every build cold.
           save-if: ${{ github.ref_type != 'tag' }}
 
       - name: Install npm dependencies
