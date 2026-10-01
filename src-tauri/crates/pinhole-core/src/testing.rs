@@ -2752,6 +2752,64 @@ mod tests {
         );
     }
 
+    /// A brought-in picture is checked once, before it is first described.
+    #[tokio::test]
+    async fn describe_checks_a_brought_in_picture_first() {
+        let (_tmp, core, _rec) = new_core();
+        let llama = MockLlamaServer::start("Prompt: a lighthouse at dusk", 0).await;
+        use_external_captioner(&core, &llama.base_url());
+        let img = |c: [u8; 4]| {
+            session::import_image(&core, pinhole_engine::testutil::solid_png(32, 32, c))
+                .unwrap()
+                .id
+        };
+        let fine = img([1, 2, 3, 255]);
+        let fake = FakeCheck::default();
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        for _ in 0..2 {
+            describe::describe_image(&core, &fine, describe::DescribeStyle::Sentence)
+                .await
+                .unwrap();
+        }
+        assert_eq!(counts.lock().0, 1, "checked once");
+
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().minor = 0.9;
+        use_check(
+            &core,
+            FakeCheck {
+                readings,
+                ..Default::default()
+            },
+        );
+        let sent = llama.requests().len();
+        let e =
+            describe::describe_image(&core, &img([4, 5, 6, 255]), describe::DescribeStyle::Tags)
+                .await
+                .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(
+            llama.requests().len(),
+            sent,
+            "the picture isn't sent to the model"
+        );
+
+        // And nothing is described without the check's files.
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["nudity"],
+                ..Default::default()
+            },
+        );
+        let e =
+            describe::describe_image(&core, &img([7, 8, 9, 255]), describe::DescribeStyle::Tags)
+                .await
+                .unwrap_err();
+        assert_eq!(e.code, "check_missing");
+    }
+
     #[tokio::test]
     async fn describe_through_mock_llama() {
         let (_tmp, core, _rec) = new_core();

@@ -597,6 +597,7 @@ pub async fn describe_image(
     let img = core.session.get(image_id).ok_or_else(|| {
         CoreError::not_found("That image isn't in this session anymore. Add it again.")
     })?;
+    crate::imagecheck::check_before_describe(core, &img).await?;
     let reg = core.registry();
     let instruction = reg
         .captioner()

@@ -126,6 +126,8 @@ pub struct CheckState {
     /// SHA-256 of each exported (saved) picture → the brought-in pictures it was made
     /// from, so opening a saved picture again keeps its chain (memory only, until Reset).
     exported: Mutex<HashMap<String, Exported>>,
+    /// Brought-in pictures that passed the check before Describe, by session image id.
+    describable: Mutex<std::collections::HashSet<String>>,
 }
 
 impl CheckState {
@@ -136,6 +138,7 @@ impl CheckState {
             install_group: Mutex::new(None),
             install_start: tokio::sync::Mutex::new(()),
             exported: Mutex::new(HashMap::new()),
+            describable: Mutex::new(std::collections::HashSet::new()),
         }
     }
 
@@ -147,6 +150,7 @@ impl CheckState {
     pub fn forget(&self) {
         self.originals.lock().clear();
         self.exported.lock().clear();
+        self.describable.lock().clear();
     }
 
     /// Save/Copy: remember what an exported picture was made from.
@@ -241,7 +245,7 @@ fn check_error(core: &AppCore, e: CheckError) -> CoreError {
         .with_details(format!("{f} is damaged")),
         CheckError::Image | CheckError::Run(_) => CoreError::new(
             "check_failed",
-            "The safety check couldn't run, so the picture wasn't shown. Try again.",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
         )
         .with_details(e.to_string()),
     }
@@ -320,6 +324,36 @@ impl MadeBy<'_> {
                 .chain(addon_ids.iter().map(String::as_str))
                 .any(|id| idx.get(id).is_none_or(|f| f.safe_images_only()))
     }
+}
+
+/// Describe intake: a brought-in picture is checked the first time it is described, with the
+/// same rules as a result (a person in it can't be made intimate, so rule 1 has nothing to
+/// compare with here). Pictures Pinhole made passed the check when they were made.
+pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<()> {
+    if img.meta.is_some() || core.check.describable.lock().contains(&img.id) {
+        return Ok(());
+    }
+    ensure_ready(core)?;
+    let c = core.clone();
+    let png = img.bytes.clone();
+    let safe = img.safe_images_only;
+    let res = tokio::task::spawn_blocking(move || {
+        let r = c.check.inspector().readings(&png)?;
+        Ok::<_, CheckError>(pinhole_check::rules::decide(&r, &[], safe).map(|rule| (rule, r)))
+    })
+    .await
+    .map_err(|e| {
+        CoreError::new(
+            "check_failed",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
+        )
+        .with_details(e.to_string())
+    })?;
+    if let Some((rule, r)) = res.map_err(|e| check_error(core, e))? {
+        return Err(blocked_error(rule, &r));
+    }
+    core.check.describable.lock().insert(img.id.clone());
+    Ok(())
 }
 
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
