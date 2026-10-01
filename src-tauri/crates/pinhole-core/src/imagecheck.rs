@@ -245,7 +245,7 @@ fn check_error(core: &AppCore, e: CheckError) -> CoreError {
         .with_details(format!("{f} is damaged")),
         CheckError::Image | CheckError::Run(_) => CoreError::new(
             "check_failed",
-            "The safety check couldn't run, so the picture wasn't shown. Try again.",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
         )
         .with_details(e.to_string()),
     }
@@ -336,15 +336,16 @@ pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> C
     ensure_ready(core)?;
     let c = core.clone();
     let png = img.bytes.clone();
+    let safe = img.safe_images_only;
     let res = tokio::task::spawn_blocking(move || {
         let r = c.check.inspector().readings(&png)?;
-        Ok::<_, CheckError>(pinhole_check::rules::decide(&r, &[], false).map(|rule| (rule, r)))
+        Ok::<_, CheckError>(pinhole_check::rules::decide(&r, &[], safe).map(|rule| (rule, r)))
     })
     .await
     .map_err(|e| {
         CoreError::new(
             "check_failed",
-            "The safety check couldn't run, so the picture wasn't described. Try again.",
+            "The safety check couldn't run, so the picture can't be used. Try again.",
         )
         .with_details(e.to_string())
     })?;
