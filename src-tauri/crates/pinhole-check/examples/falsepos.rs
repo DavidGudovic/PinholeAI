@@ -38,6 +38,7 @@ fn main() {
         let (mut create, mut from_photo, mut safe_only) = (0, 0, 0);
         let (mut intimate, mut sexual) = (0, 0);
         let (mut minor_tag, mut young_face, mut with_face, mut small_face) = (0, 0, 0, 0);
+        let (mut diag_n, mut diag_errors) = (0, 0);
         for p in &files {
             let Some(png) = load(p, scale) else {
                 unreadable += 1;
@@ -71,7 +72,12 @@ fn main() {
             }
             for (count, case, originals, safe) in [
                 (&mut create, "create", &[][..], false),
-                (&mut from_photo, "from a photo of a person", &person[..], false),
+                (
+                    &mut from_photo,
+                    "from a photo of a person",
+                    &person[..],
+                    false,
+                ),
                 (&mut safe_only, "safe-images-only model", &[][..], true),
             ] {
                 if let Some(rule) = pinhole_check::rules::decide(&r, originals, safe) {
@@ -81,19 +87,17 @@ fn main() {
             }
             if diag {
                 let Ok(full) = c.full_readings(&png) else {
-                    continue; // already counted by the readings above if it keeps failing
+                    diag_errors += 1;
+                    continue;
                 };
+                diag_n += 1;
                 let t = full.tags.unwrap_or_default();
                 minor_tag += (t.minor >= pinhole_check::rules::MINOR_TAG) as u32;
                 let faces = full.faces.unwrap_or_default();
                 let photo = pinhole_check::rules::is_photo_style(&t);
                 small_face += (photo && faces.iter().any(|f| f.too_small_to_judge())) as u32;
                 with_face += faces.iter().any(|f| f.judged()) as u32;
-                young_face += (photo
-                    && faces.iter().filter(|f| f.judged()).any(|f| {
-                        f.child_face
-                            .is_some_and(|u| u >= pinhole_check::rules::CHILD_FACE)
-                    })) as u32;
+                young_face += (photo && faces.iter().any(|f| f.looks_underage())) as u32;
             }
         }
         let pct = |k: u32| 100.0 * k as f32 / n.max(1) as f32;
@@ -109,9 +113,8 @@ fn main() {
         );
         if diag {
             println!(
-                "  diagnostics (every step on every picture, not the app's decision): minor tag ≥ {:.1}: {minor_tag} · photo-style child face ≥ {:.1}: {young_face} · with a judged face: {with_face} · photo-style face too small to judge: {small_face}",
+                "  diagnostics (every step on every picture, not the app's decision; {diag_n} measured, {diag_errors} check errors): minor tag ≥ {:.1}: {minor_tag} · photo-style face the age rule acts on: {young_face} · with a judged face: {with_face} · photo-style face too small to judge: {small_face}",
                 pinhole_check::rules::MINOR_TAG,
-                pinhole_check::rules::CHILD_FACE,
             );
         }
     }

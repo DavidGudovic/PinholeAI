@@ -596,20 +596,27 @@ families:
     assert_eq!(reg.family("sdxl").unwrap().license_accept, None);
 }
 
-/// Every model file the v1.0.0 release offered or knew stays one of Pinhole's own files, so
-/// copies people already downloaded don't turn "safe images only" after an update.
+/// Every model file a release has offered or known stays one of Pinhole's own files, so copies
+/// people already downloaded don't turn "safe images only" after an update. Every hash the
+/// shipped models.yaml lists must be recorded in the list, so it is guarded from then on.
 #[test]
-fn hashes_shipped_in_v1_0_0_stay_trusted() {
+fn shipped_hashes_stay_trusted() {
     let reg = shipped();
-    let list = include_str!("shipped-v1.0.0.txt");
-    let hashes: Vec<&str> = list
+    let list = include_str!("shipped-hashes.txt");
+    let recorded: std::collections::BTreeSet<&str> = list
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
         .collect();
-    assert!(hashes.len() >= 50, "{}", hashes.len());
-    for h in hashes {
-        assert!(reg.is_shipped_file(h), "{h} is no longer shipped");
+    assert!(recorded.len() >= 60, "{}", recorded.len());
+    for h in &recorded {
+        assert!(reg.is_shipped_file(h), "{h} is no longer in models.yaml");
         assert!(reg.is_shipped_file(&h.to_ascii_uppercase()));
+    }
+    for h in &reg.shipped_hashes {
+        assert!(
+            recorded.contains(h.as_str()),
+            "{h} is in models.yaml but not in src/tests/shipped-hashes.txt"
+        );
     }
 }
 

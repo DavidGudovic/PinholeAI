@@ -203,7 +203,7 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    are numbers for the age estimate alone, not how often the whole check catches harmful pictures:
 
    | Faces the age rule acts on | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
-   |---|---|---|
+   |---|---|---|---|
    | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % | 1.1 % |
    | + under 20 ≥ 0.9 | 23.6 % | 1.8 % | 1.4 % |
    | + under 20 ≥ 0.85 | 35.8 % | 2.3 % | 1.6 % |
@@ -337,7 +337,8 @@ prints them for a folder of test pictures.
     `models.yaml`: a download, another quant of it, `known_files` or a test model) never count as
     unchecked. Only the hash counts, never the file name or family, and hashes added in
     `Data/config/overrides.yaml` don't count (2026-10-01). When a download's pin changes, its old
-    hash moves to `known_files` so copies already downloaded stay trusted; a file Pinhole can't
+    hash moves to `known_files` so copies already downloaded stay trusted (a registry test keeps
+    every hash ever shipped, `src/tests/shipped-hashes.txt`); a file Pinhole can't
     match by hash stays "safe images only" until a lookup clears it.
     - **When lookups run:** only on a user action: "Add a file" (adding the same file again
       retries), adding a linked folder, **Check again** on linked folders, and once when the user

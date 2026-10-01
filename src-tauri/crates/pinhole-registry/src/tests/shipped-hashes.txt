@@ -1,5 +1,7 @@
-# Model-file hashes the v1.0.0 models.yaml offered or knew. Every one must stay trusted
-# (a download or a known_files entry) so copies people already have keep working.
+# Every model-file hash a models.yaml has offered or known since v1.0.0 (downloads, other
+# quants, known_files, test models). Add a hash here when you add it to models.yaml; never remove
+# one: when a pin changes, the old hash moves to known_files so copies people already have stay
+# trusted. Checked by `shipped_hashes_stay_trusted` in loading_tests.rs.
 04431abbc3acd1a5b86a7f77269f8e77e05a6cac3b21f35e1aef7493f6ab4934
 0520134a47e5b2bacea25804b2a6021413eb95945344b5a953aa14170edff1aa
 05ad98bc4a94557697f31b839f6dbf6dba293a353d9e3c52eef7818b5802d206
