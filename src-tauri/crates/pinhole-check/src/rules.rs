@@ -48,6 +48,17 @@ pub const CHILD_FACE: f32 = 0.6;
 /// young-looking adults: on FairFace portraits 42 % of faces labelled 10–19 and 2.9 % labelled
 /// 20–29 reach it with the child groups (RELEASE-SPEC §3.2 rule 2).
 pub const UNDER_20_FACE: f32 = 0.8;
+/// Second age estimate (years) below which a face blocks. Set well above 18 on purpose: the
+/// estimate is off by a few years either way, and the margin is what catches 16- and
+/// 17-year-olds. It also blocks some young adults, which only matters on sexual photo-style
+/// results (RELEASE-SPEC §3.2 rule 2 has the numbers per age).
+pub const UNDER_AGE: f32 = 22.0;
+/// From [`UNDER_AGE`] up to this age a face is borderline: the picture is blocked when the
+/// tagger also sees a setting, clothing or object that presents the person as under 18
+/// (`Tags::young_context`). Older faces are never judged by the setting.
+pub const BORDERLINE_AGE: f32 = 26.0;
+/// `Tags::young_context` that counts.
+pub const YOUNG_CONTEXT_TAG: f32 = 0.35;
 
 /// The tagger scores the rules use.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -66,6 +77,9 @@ pub struct Tags {
     pub nude: f32,
     /// Highest of the tagger's underwear, lingerie and see-through tags (not swimwear).
     pub underwear: f32,
+    /// Highest of the tagger's tags for a setting or clothing that presents someone as under
+    /// 18. Only read for a borderline face ([`Face::borderline`]).
+    pub young_context: f32,
 }
 
 /// One face the face finder saw.
@@ -80,6 +94,8 @@ pub struct Face {
     /// Age estimate's confidence that this face is under 20 (its 0–2, 3–9 and 10–19
     /// groups), when it ran.
     pub under_20_face: Option<f32>,
+    /// Second age estimate: the face's age in years, when it ran.
+    pub age: Option<f32>,
 }
 
 impl Face {
@@ -107,7 +123,17 @@ impl Face {
     pub fn looks_underage(&self) -> bool {
         self.judged()
             && (self.child_face.is_some_and(|c| c >= CHILD_FACE)
-                || self.under_20_face.is_some_and(|u| u >= UNDER_20_FACE))
+                || self.under_20_face.is_some_and(|u| u >= UNDER_20_FACE)
+                || self.age.is_some_and(|a| a < UNDER_AGE))
+    }
+
+    /// A judged face old enough to pass on its own, but young enough that the rest of the
+    /// picture decides (see [`BORDERLINE_AGE`]).
+    pub fn borderline(&self) -> bool {
+        self.judged()
+            && self
+                .age
+                .is_some_and(|a| (UNDER_AGE..BORDERLINE_AGE).contains(&a))
     }
 }
 
@@ -190,10 +216,12 @@ pub fn decide(r: &Readings, originals: &[Original], safe_images_only: bool) -> O
         // young-looking adults: accepted, since it only acts on sexual photo-style results.
         // A clear face too small to judge counts as a child's (fails closed).
         let child_face = tags.is_some_and(is_photo_style)
-            && r.faces
-                .iter()
-                .flatten()
-                .any(|f| f.too_small_to_judge() || f.looks_underage());
+            && r.faces.iter().flatten().any(|f| {
+                f.too_small_to_judge()
+                    || f.looks_underage()
+                    || (f.borderline()
+                        && tags.is_some_and(|t| t.young_context >= YOUNG_CONTEXT_TAG))
+            });
         if minor_tag || child_face {
             return Some(Rule::LooksUnderage);
         }
@@ -236,6 +264,7 @@ mod tests {
             side: 120.0,
             child_face: Some(child_face),
             under_20_face: Some(child_face),
+            age: None,
         }
     }
     /// A face the age estimate places in its 10–19 group: `child` for 0–9, `teen` for 10–19.
@@ -333,6 +362,7 @@ mod tests {
             side: 12.0,
             child_face: None,
             under_20_face: None,
+            age: None,
         };
         let r = readings(0.95, Some(photo(tags(0.2, 0.7))), vec![tiny]);
         assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
@@ -371,6 +401,73 @@ mod tests {
         assert_eq!(decide(&r, &[], false), None);
         // Adult content of adults still passes.
         let r = readings(0.99, sexual_photo(), vec![aged(0.0, 0.1)]);
+        assert_eq!(decide(&r, &[], false), None);
+    }
+
+    #[test]
+    fn sexual_photos_with_a_face_estimated_under_age_are_blocked() {
+        let sexual_photo = || Some(photo(tags(0.2, 0.7)));
+        // The groups read adult; the age in years is under the line.
+        let young = Face {
+            age: Some(UNDER_AGE - 0.5),
+            ..aged(0.0, 0.1)
+        };
+        let r = readings(0.95, sexual_photo(), vec![face(0.02), young]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        // Exactly at the line passes on age alone.
+        let at = Face {
+            age: Some(UNDER_AGE),
+            ..aged(0.0, 0.1)
+        };
+        let r = readings(0.95, sexual_photo(), vec![at]);
+        assert_eq!(decide(&r, &[], false), None);
+        // Not sexual, not a photo, or an unsure face: the age doesn't matter.
+        let r = readings(0.3, Some(photo(tags(0.1, 0.0))), vec![young]);
+        assert_eq!(decide(&r, &[], false), None);
+        let r = readings(0.95, Some(tags(0.2, 0.7)), vec![young]);
+        assert_eq!(decide(&r, &[], false), None);
+        let unsure = Face {
+            score: 0.5,
+            ..young
+        };
+        let r = readings(0.95, sexual_photo(), vec![unsure]);
+        assert_eq!(decide(&r, &[], false), None);
+    }
+
+    #[test]
+    fn borderline_ages_are_judged_with_the_setting() {
+        let with_context = |c: f32| {
+            let mut t = photo(tags(0.2, 0.7));
+            t.young_context = c;
+            Some(t)
+        };
+        let borderline = Face {
+            age: Some(UNDER_AGE + 1.0),
+            ..aged(0.0, 0.1)
+        };
+        assert!(borderline.borderline());
+        // A setting or clothing that presents the person as under 18 blocks.
+        let r = readings(0.95, with_context(YOUNG_CONTEXT_TAG), vec![borderline]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        // Without it the borderline face passes.
+        let r = readings(
+            0.95,
+            with_context(YOUNG_CONTEXT_TAG - 0.01),
+            vec![borderline],
+        );
+        assert_eq!(decide(&r, &[], false), None);
+        // A clearly adult face is never judged by the setting.
+        let adult = Face {
+            age: Some(BORDERLINE_AGE),
+            ..aged(0.0, 0.1)
+        };
+        assert!(!adult.borderline());
+        let r = readings(0.95, with_context(0.99), vec![adult]);
+        assert_eq!(decide(&r, &[], false), None);
+        // Nor is a picture that isn't sexual.
+        let mut t = photo(tags(0.1, 0.0));
+        t.young_context = 0.99;
+        let r = readings(0.3, Some(t), vec![borderline]);
         assert_eq!(decide(&r, &[], false), None);
     }
 
@@ -452,6 +549,7 @@ mod tests {
             side: 25.0,
             child_face: None,
             under_20_face: None,
+            age: None,
         };
         assert!(!small.counts());
         assert!(small.counts_in_original());

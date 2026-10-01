@@ -374,7 +374,7 @@ async function requireCheck() {
       "check_missing",
       check.downloading
         ? "Pinhole's safety check is still downloading (see Downloads). Try again when it's done."
-        : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+        : "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.2 GB), then try again.",
     );
 }
 

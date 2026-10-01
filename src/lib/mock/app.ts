@@ -274,7 +274,7 @@ function downloadEngine(backend: string): Promise<EngineStatus> {
 // the engine or with "Set up safety check".
 let checkReady: boolean | null = null;
 let pendingCheck: Promise<SafetyCheckStatus> | null = null;
-const CHECK_BYTES = 1_067_069_633;
+const CHECK_BYTES = 1_184_843_134;
 
 function checkState(): SafetyCheckStatus {
   if (checkReady == null) checkReady = !mockFlags().noCheck && (mockFlags().skipFirstRun || backends().size > 0);
@@ -298,6 +298,7 @@ function installCheck(): Promise<SafetyCheckStatus> {
         { name: "Safety check: tagger labels", bytes: 308_468 },
         { name: "Safety check: face finder", bytes: 232_589 },
         { name: "Safety check: age estimate", bytes: 343_423_222 },
+        { name: "Safety check: age in years", bytes: 117_773_501 },
       ],
       {
         kind: "safetyCheck",

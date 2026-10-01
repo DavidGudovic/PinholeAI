@@ -230,7 +230,7 @@ fn missing_error(core: &AppCore) -> CoreError {
     } else {
         CoreError::new(
             MISSING,
-            "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.1 GB), then try again.",
+            "Pinhole's safety check isn't set up yet. Click “Set up safety check” to download it (about 1.2 GB), then try again.",
         )
     }
 }
@@ -490,8 +490,8 @@ pub fn describe(r: &Readings) -> String {
     let mut s = format!("nudity {:.2}", r.nudity);
     if let Some(t) = &r.tags {
         s += &format!(
-            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2}",
-            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic
+            " · rating general {:.2} sensitive {:.2} questionable {:.2} explicit {:.2} · minor tag {:.2} · nude tag {:.2} · underwear tag {:.2} · photo {:.2}/{:.2} · young setting {:.2}",
+            t.general, t.sensitive, t.questionable, t.explicit, t.minor, t.nude, t.underwear, t.realistic, t.photorealistic, t.young_context
         );
     }
     if let Some(faces) = &r.faces {
@@ -499,8 +499,12 @@ pub fn describe(r: &Readings) -> String {
             .iter()
             .map(|f| match (f.child_face, f.under_20_face) {
                 (Some(c), Some(u)) => format!(
-                    "{:.2} ({:.0}px) child face {:.2} under 20 {:.2}",
-                    f.score, f.side, c, u
+                    "{:.2} ({:.0}px) child face {:.2} under 20 {:.2} age {:.1}",
+                    f.score,
+                    f.side,
+                    c,
+                    u,
+                    f.age.unwrap_or(f32::NAN)
                 ),
                 _ => format!("{:.2} ({:.0}px)", f.score, f.side),
             })

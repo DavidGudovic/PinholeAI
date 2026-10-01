@@ -1,5 +1,6 @@
-//! Local word check: text that pairs an under-18 term with a sexual term is blocked,
-//! whatever Safe mode says. Runs on the prompt sent to the image engine in Create and every
+//! Local word check: text that pairs an under-18 term with a sexual term is blocked, and so is
+//! text that names an identity document or banknote together with a word asking for a usable
+//! copy of it ([`asks_for_document_copy`]), whatever Safe mode says. Runs on the prompt sent to the image engine in Create and every
 //! Edit mode (after styles, trigger words and add-ons are combined), on the idea sent to
 //! "Improve my prompt", on what the Describe model writes back (Describe and Improve) and on
 //! Browse search text. See RELEASE-SPEC §11.
@@ -8,7 +9,7 @@
 //! (`CheckedPrompt`); `pinhole_core::text_check` wraps it with the app's error.
 //!
 //! Deliberately plain: fixed word lists compiled in (not YAML), whole words (plus common
-//! endings and words glued to another word); both lists must match. Spellings are normalized
+//! endings and words glued to another word); both lists of a pair must match. Spellings are normalized
 //! first (see [`pairs_minor_with_sexual`]). It is a first line; the §3 image check is the main
 //! safeguard. PRIVACY: the text and which words matched are
 //! never logged, stored or put in an error.
@@ -160,6 +161,101 @@ const SEXUAL: &[&str] = &[
     "stripping",
 ];
 
+/// Identity and official documents. Apostrophes are dropped before matching, so "drivers"
+/// also covers the possessive.
+const DOCUMENT: &[&str] = &[
+    "passport",
+    "id card",
+    "identity card",
+    "identification card",
+    "identity document",
+    "national id",
+    "state id",
+    "voter id",
+    "drivers license",
+    "driver license",
+    "driving license",
+    "drivers licence",
+    "driver licence",
+    "driving licence",
+    "residence permit",
+    "work permit",
+    "social security card",
+    "green card",
+    "birth certificate",
+    "bank statement",
+    "pay stub",
+    "payslip",
+    "utility bill",
+];
+
+/// Banknotes and cheques.
+const MONEY: &[&str] = &[
+    "banknote",
+    "bank note",
+    "dollar bill",
+    "euro note",
+    "euro bill",
+    "pound note",
+    "currency note",
+    "paper money",
+    "cheque",
+    "bank check",
+    "money order",
+];
+
+/// Words that ask for a document or banknote as a usable copy: its data fields, a flat scan
+/// of it, or that it be taken as genuine or copied. A document or banknote as part of a
+/// scene, or a made-up one, passes.
+const COPY_OF: &[&str] = &[
+    "date of birth",
+    "dob",
+    "birth date",
+    "id number",
+    "document number",
+    "passport number",
+    "license number",
+    "licence number",
+    "card number",
+    "personal number",
+    "account number",
+    "routing number",
+    "serial number",
+    "expiry",
+    "expiry date",
+    "expiration date",
+    "date of expiry",
+    "date of issue",
+    "issue date",
+    "mrz",
+    "machine readable",
+    "barcode",
+    "scan",
+    "scanned",
+    "photocopy",
+    "front side",
+    "back side",
+    "front and back",
+    "both sides",
+    "flat lay",
+    "flatlay",
+    "printable",
+    "print ready",
+    "official",
+    "valid",
+    "authentic",
+    "genuine",
+    "government issued",
+    "verification",
+    "kyc",
+    "fake",
+    "forged",
+    "forgery",
+    "counterfeit",
+    "replica",
+    "template",
+];
+
 const NUMBER_WORDS: &[&str] = &[
     "one",
     "two",
@@ -184,9 +280,10 @@ const NUMBER_WORDS: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Blocked;
 
-/// Blocks text that pairs an under-18 term with a sexual term.
+/// Blocks text that pairs an under-18 term with a sexual term, or that asks for a usable copy
+/// of an identity document or banknote.
 pub fn check(text: &str) -> Result<(), Blocked> {
-    if pairs_minor_with_sexual(text) {
+    if pairs_minor_with_sexual(text) || asks_for_document_copy(text) {
         Err(Blocked)
     } else {
         Ok(())
@@ -236,17 +333,30 @@ impl std::fmt::Debug for CheckedPrompt {
 pub fn pairs_minor_with_sexual(text: &str) -> bool {
     let views = views(text);
     let lists = lists();
-    let any = |list: &List| {
-        views.iter().any(|v| {
-            v.words.iter().any(|w| list.has_word(w))
-                || list.phrases.iter().any(|p| has_phrase(&v.words, p))
-                || v.joined.iter().any(|w| list.is_listed(w))
-        })
-    };
+    let any = |list: &List| mentions(&views, list);
     // Ages are read from the plain spellings only: numbers-for-letters would turn "18" into
     // something else.
     let minor = any(&lists.under_18) || AGE_VIEWS.iter().any(|&i| has_young_age(&views[i].words));
     minor && any(&lists.sexual)
+}
+
+/// True when `text` names an identity document or a banknote together with a word that asks
+/// for a usable copy of it ([`COPY_OF`]). Read with the same spellings as
+/// [`pairs_minor_with_sexual`].
+pub fn asks_for_document_copy(text: &str) -> bool {
+    let views = views(text);
+    let lists = lists();
+    let any = |list: &List| mentions(&views, list);
+    (any(&lists.document) || any(&lists.money)) && any(&lists.copy_of)
+}
+
+/// Some spelling of the text has a word or phrase of `list`.
+fn mentions(views: &[View], list: &List) -> bool {
+    views.iter().any(|v| {
+        v.words.iter().any(|w| list.has_word(w))
+            || list.phrases.iter().any(|p| has_phrase(&v.words, p))
+            || v.joined.iter().any(|w| list.is_listed(w))
+    })
 }
 
 /// A word list split for speed: single words by their first and by their last letter, and the
@@ -321,6 +431,9 @@ struct Lists {
     under_18: List,
     sexual: List,
     both: List,
+    document: List,
+    money: List,
+    copy_of: List,
 }
 
 fn lists() -> &'static Lists {
@@ -329,6 +442,9 @@ fn lists() -> &'static Lists {
         under_18: List::new(UNDER_18),
         sexual: List::new(SEXUAL),
         both: List::new(&[UNDER_18, SEXUAL].concat()),
+        document: List::new(DOCUMENT),
+        money: List::new(MONEY),
+        copy_of: List::new(COPY_OF),
     })
 }
 
@@ -1034,6 +1150,39 @@ mod tests {
             "\u{FF4C}\u{FF4F}\u{FF4C}\u{FF49}, nude",
         ] {
             assert!(pairs_minor_with_sexual(t), "{t}");
+        }
+    }
+
+    #[test]
+    fn blocks_usable_copies_of_documents_and_banknotes() {
+        for t in [
+            "passport, date of birth, document number, scanned",
+            "a valid driver's license from Ohio",
+            "Drivers-License, front and back",
+            "id card template",
+            "100 dollar bill, serial number, flat lay",
+            "a counterfeit banknote",
+            "bank statement, account number",
+        ] {
+            assert!(asks_for_document_copy(t), "{t}");
+            assert_eq!(check(t), Err(Blocked), "{t}");
+        }
+    }
+
+    #[test]
+    fn documents_and_money_in_a_scene_pass() {
+        for t in [
+            "a tourist holding a passport at the airport, photo",
+            "passport photo of a smiling man, studio lighting",
+            "a letter on a desk, candlelight",
+            "an old map of the city, scanned",
+            "movie prop money on a table",
+            "a pile of dollar bills, cinematic",
+            "a banknote with a cat portrait, engraving style",
+            "official portrait of a knight",
+            "a scanned watercolor of a valid argument",
+        ] {
+            assert!(!asks_for_document_copy(t), "{t}");
         }
     }
 

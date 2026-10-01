@@ -27,6 +27,7 @@ struct TagIndex {
     photorealistic: usize,
     nude: Vec<usize>,
     underwear: Vec<usize>,
+    young: Vec<usize>,
     count: usize,
 }
 
@@ -36,6 +37,7 @@ struct Loaded {
     tagger: Option<(Model, TagIndex)>,
     faces: Option<Model>,
     age: Option<Model>,
+    age_years: Option<Model>,
 }
 
 /// The check for one Data folder. All methods block: call them from
@@ -78,7 +80,11 @@ impl Checker {
             return false; // checking right now
         };
         let stale = self.last_used.lock().is_some_and(|t| t.elapsed() >= idle);
-        let any = l.nudity.is_some() || l.tagger.is_some() || l.faces.is_some() || l.age.is_some();
+        let any = l.nudity.is_some()
+            || l.tagger.is_some()
+            || l.faces.is_some()
+            || l.age.is_some()
+            || l.age_years.is_some();
         if stale && any {
             *l = Loaded::default();
             true
@@ -116,6 +122,7 @@ impl Checker {
                 most.minor = most.minor.max(t.minor);
                 most.realistic = most.realistic.max(t.realistic);
                 most.photorealistic = most.photorealistic.max(t.photorealistic);
+                most.young_context = most.young_context.max(t.young_context);
                 if sexual {
                     continue;
                 }
@@ -129,6 +136,7 @@ impl Checker {
                 t.minor = most.minor;
                 t.realistic = most.realistic;
                 t.photorealistic = most.photorealistic;
+                t.young_context = most.young_context;
             }
         }
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
@@ -256,6 +264,7 @@ impl Checker {
             photorealistic: v[ix.photorealistic],
             nude: highest(&ix.nude),
             underwear: highest(&ix.underwear),
+            young_context: highest(&ix.young),
         })
     }
 
@@ -325,6 +334,7 @@ impl Checker {
             let (child, under_20) = self.age_groups(l, on, f.1)?;
             f.0.child_face = Some(child);
             f.0.under_20_face = Some(under_20);
+            f.0.age = Some(self.age_years(l, on, f.1)?);
         }
         Ok(found.into_iter().map(|f| f.0).collect())
     }
@@ -397,6 +407,43 @@ impl Checker {
         let group = |i: usize| p.get(i).copied().unwrap_or(0.0);
         let child = group(0) + group(1);
         Ok((child, child + group(2)))
+    }
+
+    /// The face's age in years (MiVOLO v2, face only: its body input gets MiVOLO's own
+    /// "no body" image).
+    fn age_years(&self, l: &mut Loaded, img: &RgbImage, b: [f32; 4]) -> Result<f32, CheckError> {
+        if l.age_years.is_none() {
+            l.age_years = Some(self.load_age_years()?);
+        }
+        let m = l.age_years.clone().expect("loaded");
+        let crop = box_crop(img, b);
+        let out = m.run(tvec!(mivolo_input(&crop).into()))?;
+        let v = flat(&out[0])?;
+        v.first()
+            .copied()
+            .ok_or(CheckError::Damaged(files::AGE_YEARS.label))
+    }
+
+    /// MiVOLO uses a step (`Col2Im`) the ONNX runtime doesn't have; it is rewritten into two
+    /// that it has (see [`rewrite_col2im`]) before the graph is built.
+    fn load_age_years(&self) -> Result<Model, CheckError> {
+        use tract_onnx::prelude::Framework;
+        init_threads();
+        let f = &files::AGE_YEARS;
+        let bytes = files::read_verified(&self.dir, f)?;
+        let onnx = tract_onnx::onnx()
+            .with_ignore_output_shapes(true)
+            .with_ignore_value_info(true);
+        let mut proto = onnx.proto_model_for_read(&mut bytes.as_slice())?;
+        let graph = proto.graph.as_mut().ok_or(CheckError::Damaged(f.label))?;
+        if rewrite_col2im(graph).is_none() {
+            return Err(CheckError::Damaged(f.label));
+        }
+        let model = onnx
+            .model_for_proto_model(&proto)?
+            .with_input_fact(0, f32::fact([1, 6, MIVOLO_SIDE, MIVOLO_SIDE]).into())?
+            .into_optimized()?;
+        Ok(model.into_runnable()?)
     }
 }
 
@@ -486,6 +533,12 @@ mod tag_ids {
     ];
     /// Underwear, lingerie and see-through clothing (6 tags; swimwear isn't one of them).
     pub const UNDERWEAR: &[u32] = &[464906, 391, 3796, 319, 451371, 547073];
+    /// A setting, clothing or object that presents someone as under 18 (13 tags), and the
+    /// child tags again at a lower score. Read only for a borderline face in a photo.
+    pub const YOUNG_CONTEXT: &[u32] = &[
+        16509, 268819, 221, 374849, 463399, 3468, 394881, 392008, 4855, 538859, 460404, 379915,
+        9831, 128, 2614, 12667,
+    ];
 }
 
 /// Rows of `selected_tags.csv` (`tag_id,name,category,count`) in output order.
@@ -510,6 +563,7 @@ fn tag_index(csv: &[u8]) -> Option<TagIndex> {
         photorealistic: at(PHOTO_STYLE[1])?,
         nude: all(NUDE)?,
         underwear: all(UNDERWEAR)?,
+        young: all(YOUNG_CONTEXT)?,
         count: ids.len(),
     })
 }
@@ -599,6 +653,7 @@ fn find_faces(m: &Model, img: &RgbImage, fill: f32) -> Result<Vec<(Face, [f32; 4
                     side: b[2].min(b[3]),
                     child_face: None,
                     under_20_face: None,
+                    age: None,
                 },
                 b,
             )
@@ -738,6 +793,175 @@ fn rotate_any(img: &RgbImage, degrees: f32) -> RgbImage {
     })
 }
 
+/// MiVOLO's input side.
+const MIVOLO_SIDE: usize = 384;
+
+/// The face box itself (MiVOLO was trained on face detector boxes), inside the picture.
+fn box_crop(img: &RgbImage, b: [f32; 4]) -> RgbImage {
+    let x0 = (b[0].max(0.0) as u32).min(img.width().saturating_sub(1));
+    let y0 = (b[1].max(0.0) as u32).min(img.height().saturating_sub(1));
+    let w = (b[2].max(1.0) as u32).min(img.width() - x0).max(1);
+    let h = (b[3].max(1.0) as u32).min(img.height() - y0).max(1);
+    image::imageops::crop_imm(img, x0, y0, w, h).to_image()
+}
+
+/// MiVOLO input: the face letterboxed (aspect kept, black bars, centred) to 384×384, RGB,
+/// ImageNet mean/std; channels 3–5 are the body, here an all-black image normalised the same
+/// way (MiVOLO's "no body").
+fn mivolo_input(face: &RgbImage) -> Tensor {
+    const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+    const STD: [f32; 3] = [0.229, 0.224, 0.225];
+    let s = MIVOLO_SIDE as u32;
+    let k = s as f32 / face.width().max(face.height()).max(1) as f32;
+    let w = ((face.width() as f32 * k).round() as u32).clamp(1, s);
+    let h = ((face.height() as f32 * k).round() as u32).clamp(1, s);
+    let r = image::imageops::resize(face, w, h, FilterType::Triangle);
+    let (ox, oy) = ((s - w) / 2, (s - h) / 2);
+    tract_ndarray::Array4::from_shape_fn((1, 6, MIVOLO_SIDE, MIVOLO_SIDE), |(_, c, y, x)| {
+        let (x, y) = (x as u32, y as u32);
+        let v = if c < 3 && x >= ox && y >= oy && x - ox < w && y - oy < h {
+            r.get_pixel(x - ox, y - oy)[c] as f32 / 255.0
+        } else {
+            0.0
+        };
+        (v - MEAN[c % 3]) / STD[c % 3]
+    })
+    .into()
+}
+
+/// Rewrite every `Col2Im` (ONNX opset 18; the ONNX runtime has none) into a `Reshape` and a
+/// grouped `ConvTranspose` whose kernel is one-hot: each of the k×k input channels of a group
+/// lands on its own kernel position, which is exactly what `Col2Im` sums. Needs the input's
+/// shape and the image and block shapes as constants (true for the pinned file; anything
+/// else returns `None` and the file counts as damaged). Checked against the original graph in
+/// `onnxruntime`: same output to 5 digits.
+fn rewrite_col2im(g: &mut tract_onnx::pb::GraphProto) -> Option<()> {
+    use tract_onnx::pb::{attribute_proto::AttributeType, AttributeProto, NodeProto, TensorProto};
+    const INT64: i32 = 7;
+    const FLOAT: i32 = 1;
+    let ints_of = |g: &tract_onnx::pb::GraphProto, name: &str| -> Option<Vec<i64>> {
+        let t = g.initializer.iter().find(|t| t.name == name)?;
+        if t.data_type != INT64 {
+            return None;
+        }
+        if !t.int64_data.is_empty() {
+            return Some(t.int64_data.clone());
+        }
+        let raw = &t.raw_data;
+        (raw.len() % 8 == 0).then(|| {
+            raw.chunks(8)
+                .map(|c| i64::from_le_bytes(c.try_into().expect("8 bytes")))
+                .collect()
+        })
+    };
+    let attr = |n: &NodeProto, name: &str| -> Option<Vec<i64>> {
+        n.attribute
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.ints.clone())
+    };
+    let ints = |name: &str, v: Vec<i64>| AttributeProto {
+        name: name.into(),
+        r#type: AttributeType::Ints as i32,
+        ints: v,
+        ..Default::default()
+    };
+    let mut nodes = Vec::with_capacity(g.node.len() + 4);
+    let mut added = Vec::new();
+    let mut rewritten = 0;
+    for n in std::mem::take(&mut g.node) {
+        if n.op_type != "Col2Im" {
+            nodes.push(n);
+            continue;
+        }
+        // The input's shape [N, C·kh·kw, L] from the Reshape that makes it.
+        let shape_name = nodes
+            .iter()
+            .find(|p: &&NodeProto| p.op_type == "Reshape" && p.output.first() == n.input.first())?
+            .input
+            .get(1)?
+            .clone();
+        let [batch, ck, cols] = ints_of(g, &shape_name)?[..] else {
+            return None;
+        };
+        let [ih, iw] = ints_of(g, n.input.get(1)?)?[..] else {
+            return None;
+        };
+        let [kh, kw] = ints_of(g, n.input.get(2)?)?[..] else {
+            return None;
+        };
+        let strides = attr(&n, "strides").unwrap_or(vec![1, 1]);
+        let pads = attr(&n, "pads").unwrap_or(vec![0, 0, 0, 0]);
+        let dil = attr(&n, "dilations").unwrap_or(vec![1, 1]);
+        if strides.len() != 2 || pads.len() != 4 || dil != [1, 1] || kh < 1 || kw < 1 {
+            return None;
+        }
+        let (sh, sw) = (strides[0], strides[1]);
+        let lh = (ih + pads[0] + pads[2] - kh) / sh + 1;
+        let lw = (iw + pads[1] + pads[3] - kw) / sw + 1;
+        let k = kh * kw;
+        if lh * lw != cols || ck % k != 0 || sh < 1 || sw < 1 {
+            return None;
+        }
+        let groups = ck / k;
+        // ConvTranspose: out = (L − 1)·s − pads + k, plus output_padding to reach the image.
+        let oph = ih - ((lh - 1) * sh - pads[0] - pads[2] + kh);
+        let opw = iw - ((lw - 1) * sw - pads[1] - pads[3] + kw);
+        if !(0..sh).contains(&oph) || !(0..sw).contains(&opw) {
+            return None;
+        }
+        let tag = format!("{}_pinhole", n.name);
+        let mut w = vec![0f32; (ck * k) as usize];
+        for c in 0..ck {
+            w[(c * k + c % k) as usize] = 1.0;
+        }
+        added.push(TensorProto {
+            name: format!("{tag}_weight"),
+            dims: vec![ck, 1, kh, kw],
+            data_type: FLOAT,
+            float_data: w,
+            ..Default::default()
+        });
+        added.push(TensorProto {
+            name: format!("{tag}_shape"),
+            dims: vec![4],
+            data_type: INT64,
+            int64_data: vec![batch, ck, lh, lw],
+            ..Default::default()
+        });
+        nodes.push(NodeProto {
+            name: format!("{tag}_reshape"),
+            op_type: "Reshape".into(),
+            input: vec![n.input[0].clone(), format!("{tag}_shape")],
+            output: vec![format!("{tag}_cols")],
+            ..Default::default()
+        });
+        nodes.push(NodeProto {
+            name: format!("{tag}_deconv"),
+            op_type: "ConvTranspose".into(),
+            input: vec![format!("{tag}_cols"), format!("{tag}_weight")],
+            output: n.output.clone(),
+            attribute: vec![
+                AttributeProto {
+                    name: "group".into(),
+                    r#type: AttributeType::Int as i32,
+                    i: groups,
+                    ..Default::default()
+                },
+                ints("kernel_shape", vec![kh, kw]),
+                ints("strides", strides),
+                ints("pads", pads),
+                ints("output_padding", vec![oph, opw]),
+            ],
+            ..Default::default()
+        });
+        rewritten += 1;
+    }
+    g.node = nodes;
+    g.initializer.extend(added);
+    (rewritten > 0).then_some(())
+}
+
 /// Square crop 1.5× the face box, kept inside the image.
 fn face_crop(img: &RgbImage, b: [f32; 4]) -> RgbImage {
     let side = b[2].max(b[3]) * 1.5;
@@ -764,6 +988,13 @@ mod tests {
         ids.push(1);
         ids.extend(NUDE);
         ids.extend(UNDERWEAR);
+        // The child tags are in both lists; each id is one row.
+        let new_young: Vec<u32> = YOUNG_CONTEXT
+            .iter()
+            .copied()
+            .filter(|id| !ids.contains(id))
+            .collect();
+        ids.extend(&new_young);
         let csv: String = std::iter::once("tag_id,name,category,count\n".to_string())
             .chain(ids.iter().map(|id| format!("{id},tag,0,1\n")))
             .collect();
@@ -776,7 +1007,10 @@ mod tests {
         assert_eq!(ix.nude, (10..nude_end).collect::<Vec<_>>());
         let end = nude_end + UNDERWEAR.len();
         assert_eq!(ix.underwear, (nude_end..end).collect::<Vec<_>>());
-        assert_eq!(ix.count, end);
+        let young_end = end + new_young.len();
+        let row = |id: &u32| ids.iter().position(|i| i == id).unwrap();
+        assert_eq!(ix.young, YOUNG_CONTEXT.iter().map(row).collect::<Vec<_>>());
+        assert_eq!(ix.count, young_end);
         // A list without the tags the rules need is rejected.
         assert!(tag_index(b"tag_id,name,category,count\n1,tag,0,1\n").is_none());
     }
