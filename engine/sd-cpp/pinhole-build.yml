@@ -10,7 +10,7 @@
 # SHA256SUMS.txt. The web UI is left out (the lock-down flag disables it anyway).
 #
 # Build flags follow upstream's .github/workflows/build.yml at master-929-3f8527a.
-# Not run yet: first run needs checking against upstream's own job logs.
+# First published release: master-929-3f8527a-pinhole1 (2026-10-01), pinned in config/engine.yaml.
 
 name: Pinhole engine build
 

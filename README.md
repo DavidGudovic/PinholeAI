@@ -86,11 +86,11 @@ choose **More info → Run anyway**.
 - **AppImage:** `chmod +x Pinhole-<version>-linux-x86_64.AppImage && ./Pinhole-<version>-linux-x86_64.AppImage`
 - **Debian/Ubuntu:** `sudo apt install ./Pinhole-<version>-linux-amd64.deb`
 
-**Ubuntu 24.04 or newer is required for image generation:** the upstream stable-diffusion.cpp
-Linux builds that Pinhole downloads are built on Ubuntu 24.04 and need glibc ≥ 2.38. The app
+**Ubuntu 24.04 or newer is required for image generation:** the stable-diffusion.cpp Linux
+builds that Pinhole downloads are built on Ubuntu 24.04 and need glibc ≥ 2.38. The app
 itself is built on Ubuntu 22.04 and starts there, but the engine will not run on 22.04.
-Upstream ships no Linux CUDA build, so NVIDIA GPUs on Linux use the Vulkan engine
-(install your distribution's Vulkan driver, e.g. `mesa-vulkan-drivers` or the NVIDIA driver).
+NVIDIA RTX 30xx or newer with the NVIDIA driver uses the CUDA engine; other GPUs use the Vulkan
+engine (install your distribution's Vulkan driver, e.g. `mesa-vulkan-drivers`).
 
 ## First run
 

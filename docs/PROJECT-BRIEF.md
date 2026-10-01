@@ -57,7 +57,7 @@ Tests: crate unit tests, `tests/` (privacy, offline, engine smoke, app e2e), `te
 - Hardening: engine stops after Reset / 5 min idle (upstream sd-server has no auth and keeps
   results 600 s), llama-server per-launch API key, engine identity check, CivitAI files content-checked,
   imports re-encoded to PNG, downloads size-bounded, release builds refuse unpinned engines.
-- Linux engine needs Ubuntu 24.04+ (upstream builds use glibc 2.38); Linux NVIDIA uses Vulkan.
+- Linux engine needs Ubuntu 24.04+ (the builds use glibc 2.38); Linux NVIDIA uses CUDA on RTX 30xx+ with the NVIDIA driver, else Vulkan.
 - Windows engines need the VC++ runtime: bundled and copied next to the engine only when missing.
 
 ## Waiting on a real-GPU test (RTX 5070 Ti 16 GB, Windows 11)
