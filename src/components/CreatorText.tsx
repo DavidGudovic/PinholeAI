@@ -2,8 +2,8 @@
 // The HTML is parsed into an inert document (no scripts run, nothing loads) and
 // rebuilt as React elements from a short allow-list: text formatting, lists and
 // https links. Images, video, iframes, styles and everything else are dropped, so
-// the page never contacts another server (and Safe mode can't be bypassed by an
-// embedded picture). Links open in the system browser through Rust.
+// the page never contacts another server (and Safe mode applies to embedded
+// pictures too). Links open in the system browser through Rust.
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Button } from "./ui";
 

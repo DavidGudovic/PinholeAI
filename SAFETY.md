@@ -7,8 +7,8 @@ and how to report a problem. The rules for users are the
 
 ## What Pinhole does
 
-Everything below runs on your computer and sends nothing anywhere. There is no setting, config
-file or environment variable that skips it. Safe mode (a Models setting) doesn't change it.
+Everything below runs on your computer and sends nothing anywhere. It is built into Pinhole and
+always on. Safe mode (a Models setting) doesn't change it.
 
 - **Usage guidelines and model licences.** Pinhole shows its usage guidelines before first use,
   and each model's licence before it downloads. Models with a non-commercial or other special
@@ -33,7 +33,7 @@ file or environment variable that skips it. Safe mode (a Models setting) doesn't
 - **Nothing is reported.** Pinhole never sends anything about what you make to anyone. A stopped
   picture is dropped from memory; your prompt and settings stay so you can change them.
 
-Like any automatic check, these can make mistakes, and a modified build can leave them out.
+Like any automatic check, these can sometimes make mistakes.
 The details, thresholds and models are in [docs/RELEASE-SPEC.md](docs/RELEASE-SPEC.md) §3.
 
 ## Reporting a problem

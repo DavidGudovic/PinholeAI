@@ -1,8 +1,8 @@
 # Pinhole's sd-server patch
 
-Upstream `sd-server` has no authentication and answers any CORS `Origin`, so while Pinhole
-runs, any program on the computer or any web page in the browser could send it jobs and skip
-Pinhole's word and image checks (RELEASE-SPEC §12, SPEC §13 "Local engine API exposure").
+Upstream `sd-server` has no authentication and answers any CORS `Origin`. Pinhole's patch makes
+the local engine accept requests only from Pinhole itself (RELEASE-SPEC §12, SPEC §13 "Local
+engine API exposure").
 Pinhole keeps upstream stable-diffusion.cpp unchanged except for this one small patch.
 
 `0001-server-api-key-and-reject-origin.patch` (against `master-929-3f8527a`, `examples/server`

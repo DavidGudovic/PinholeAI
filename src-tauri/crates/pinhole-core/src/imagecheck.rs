@@ -3,9 +3,9 @@
 //! batch is blocked, the whole batch is dropped with the neutral block message.
 //!
 //! Fail closed: without all check files (or with a damaged one) Create and Edit stop
-//! with `check_missing`, which the UI answers with "Set up safety check". There is no
-//! setting, config key or variable that skips the check; only the `test-util` build
-//! of the core can put a stand-in in its place ([`crate::testing::use_check`]).
+//! with `check_missing`, which the UI answers with "Set up safety check". The check is
+//! always on; tests use a stand-in through the `test-util` feature
+//! ([`crate::testing::use_check`]).
 //!
 //! PRIVACY: scores live in memory only; nothing is logged, counted or written. The
 //! originals' readings are forgotten on Reset.
@@ -64,8 +64,7 @@ impl Inspector for Checker {
     }
 }
 
-/// A stand-in for the image check with fixed readings (test builds only: release
-/// builds have no way to replace the check).
+/// A stand-in for the image check with fixed readings (test builds only).
 #[cfg(any(test, feature = "test-util"))]
 #[derive(Debug, Clone, Default)]
 pub struct FakeCheck {

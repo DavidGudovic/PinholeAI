@@ -1,7 +1,6 @@
 //! The check's model files. Their addresses, sizes and SHA-256 values are compiled
-//! in on purpose (RELEASE-SPEC §4): there is no config file, setting or variable that
-//! points the check at other files. Each file is read, hashed and only then parsed,
-//! so a swapped or damaged file never runs.
+//! in (RELEASE-SPEC §4). Each file is read, hashed and only then parsed, so a damaged
+//! or unexpected file never runs.
 use std::io::Read;
 use std::path::{Path, PathBuf};
 

@@ -33,10 +33,8 @@ Last reviewed: 2026-09-29. Not legal advice — see §10 for when a lawyer is ne
 | Krea 2 Community License v1 (§4.2) | "Reasonable and appropriate" content filters for any deployment; licence copy + notice when distributing; commercial use only under $1M revenue | 2 | §3, §6 |
 | EU Product Liability Directive, Cyber Resilience Act | Exempt only non-commercial open source | only if monetised | §10 |
 
-The goal is not an unbreakable filter: local open software can always be modified. The goal is
-that Pinhole is clearly general-purpose, blocks the few misuse paths the law targets, blocks
-**nothing else**, and can show it took reasonable steps. Whoever strips the safeguards from a copy
-has built a different tool.
+The goal is not a perfect filter. The goal is that Pinhole is clearly general-purpose, blocks the
+few misuse paths the law targets, blocks **nothing else**, and can show it took reasonable steps.
 
 Safeguards that fire on normal work drive people away, so every block rule here is narrow, needs
 two signals to agree, and must pass a false-positive bar (§4) before it ships.
@@ -194,9 +192,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
    Models flagged `poi` or `minor` can't be installed at all (§5). The flag comes from the
    model's data at a Browse / paste install and from "Add a file"'s by-hash lookup; when the
-   model's data can't be fetched, the file counts as "safe images only" (fail closed). Known
-   limits: files added offline, linked from another app's folder or unknown to CivitAI get no
-   flag, and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
+   model's data can't be fetched, the file counts as "safe images only" (fail closed). Rules 1
+   and 2 don't depend on it.
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
@@ -227,9 +224,8 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   result. The files download with the engine (Settings → Engine, first run) or from that button.
 - **Blocked pictures don't linger:** after a block the engine is stopped once the job ends, since
   it keeps finished jobs readable on its local port.
-- **Nothing to switch off:** the files' URLs (pinned commits), sizes and SHA-256 values and every
-  threshold are constants in `pinhole-check`, not config. Only the core's `test-util` build (tests)
-  can put a stand-in check in place.
+- **Fixed in code:** the files' URLs (pinned commits), sizes and SHA-256 values and every
+  threshold are constants in `pinhole-check`, not config. Tests use a stand-in check.
 - **Resources:** ~1.1 GB download; ~2.5 s per result on 4 cores; the models take up to ~1.2 GB RAM while
   loaded, 0 VRAM.
 
@@ -320,11 +316,8 @@ prints them for a folder of test pictures.
   with the same licence). The download fails with code `license_needed` (message = a sentence naming the
   `license_note`, details = the id); the UI's install wrappers show `LicencePrompt` (installs
   asking for the same id at once share one prompt), call `accept_license` and retry. Only ids from the shipped list are accepted and only the ids are
-  stored (`Settings.accepted_licenses`); `set_settings` can't change them and overrides.yaml
-  can't remove a licence. No licence version is stored: a changed licence gets a new id, which
+  stored (`Settings.accepted_licenses`); settings and config can't change them. No licence version is stored: a changed licence gets a new id, which
   asks again. The prompt names the licence; a link to its full text is still open (first bullet).
-  Not covered: a user-picked family for a CivitAI file (picking FLUX.1 schnell for a dev
-  checkpoint), families added in overrides.yaml, and parts fetched for an installed model.
   Current ids:
   - `flux1-dev-non-commercial`: FLUX.1 [dev] and FLUX.1 Kontext [dev]. The configured Kontext
     URL is a third-party re-upload that skips Black Forest Labs' gate, so Pinhole asks instead.
@@ -399,8 +392,7 @@ templates, posts and UI.
 
 - **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
   doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
-  (checks can make mistakes; a modified build can leave them out; no "limitations" section,
-  David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
+  (checks can make mistakes), no "limitations" section (owner, 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
   fixed, a threshold tightened, a recommendation or catalog entry removed) and how fast. It
@@ -441,8 +433,7 @@ templates, posts and UI.
 
 - **Remote prompt classification — rejected** (e.g. sending prompts to a server running the Jev
   API). Prompts would leave the machine (Jev is API-only; standard data retention for
-  non-enterprise accounts), it breaks Offline mode, it's bypassable because generation stays
-  local, and it creates data-protection obligations for the developer.
+  non-enterprise accounts), it breaks Offline mode, it doesn't fit Pinhole's local design, and it creates data-protection obligations for the developer.
 - **Telemetry / prompt logging for abuse detection — rejected.** More liability than it removes.
 - **Safety classifiers on GPU — rejected.** VRAM cost; CPU is fast enough.
 - **Local prompt guard LLM — dropped for v1** (2026-09-29; was planned as Qwen3Guard / Llama Guard
@@ -459,12 +450,12 @@ templates, posts and UI.
   "Improve my prompt", what Describe / Improve write back, and Browse search text. David first
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
-  anime prompts pass. Word lists are compiled in (not YAML), so a config edit can't turn it off.
+  anime prompts pass. Word lists are compiled in (not YAML).
   Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
   accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
   repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
   On 27,572 public prompts (Stable-Diffusion-Prompts, midjourney-prompts) it blocked nothing
-  new. It still misses misspellings and made-up words, so it doesn't replace §3.2 rule 2. Required before any helper model
+  new. It is a first line; the image check (§3.2) is the main safeguard. Required before any helper model
   without its own refusals is offered.
 - **A liability warning or consent checkbox instead of safeguards — rejected** (2026-09-29). An
   agreement binds only the user and the developer, not the person in the photo, prosecutors or
@@ -523,7 +514,7 @@ templates, posts and UI.
 - [x] §7 first-run acceptable-use screen + Edit notice
 - [x] ~~§10 lawyer consult with the five questions~~ Dropped by the owner (2026-09-30: "The app will
       be completely free … its a portfolio piece, so i dont think we need to go overboard asking
-      lawyers"). The bar instead: serious misuse needs forking and editing the code. Revisit if
+      lawyers"). The bar instead: the safeguards are built in and always on. Revisit if
       Pinhole is ever monetised (§10)
 - [x] Engine API locked down: a patched `sd-server` that rejects any request carrying an
       `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").

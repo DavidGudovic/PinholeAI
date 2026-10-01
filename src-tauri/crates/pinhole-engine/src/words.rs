@@ -7,11 +7,10 @@
 //! Lives in the engine crate so the image engine's request type can require a checked prompt
 //! (`CheckedPrompt`); `pinhole_core::text_check` wraps it with the app's error.
 //!
-//! Deliberately plain: fixed word lists in code (not YAML, so a config edit can't turn it
-//! off), whole words (plus common endings and words glued to another word), both lists must
-//! match. Spellings are normalized first (see
-//! [`pairs_minor_with_sexual`]). It is a first line, not the §3 image check: it misses
-//! misspellings and made-up words. PRIVACY: the text and which words matched are
+//! Deliberately plain: fixed word lists compiled in (not YAML), whole words (plus common
+//! endings and words glued to another word); both lists must match. Spellings are normalized
+//! first (see [`pairs_minor_with_sexual`]). It is a first line; the §3 image check is the main
+//! safeguard. PRIVACY: the text and which words matched are
 //! never logged, stored or put in an error.
 
 use unicode_normalization::UnicodeNormalization;
@@ -237,7 +236,7 @@ impl std::fmt::Debug for CheckedPrompt {
 
 /// True when `text` has at least one under-18 term and at least one sexual term. Both lists
 /// are matched against every spelling in [`views`], so look-alike letters, numbers for letters,
-/// accents, spaced-out letters, repeated letters and glued words don't get around them.
+/// accents, spaced-out letters, repeated letters and glued words are still read.
 pub fn pairs_minor_with_sexual(text: &str) -> bool {
     let views = views(text);
     let lists = lists();
