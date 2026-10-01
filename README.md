@@ -1,224 +1,84 @@
 # Pinhole
 
-A simple AI image generator that runs on your own computer. Pick a model, type a prompt, press
-**Generate**.
+A simple AI image generator that runs on your own computer. Pick a model, type what you want to
+see, press **Generate**. No account, no cloud, no node graphs.
 
-Pinhole is for people who want good local image generation without learning ComfyUI:
-no node graphs, no Python, no jargon. Everything is decided for you — and every
-decision can be seen and changed in the **Fine-tune** drawer.
+| | | |
+|---|---|---|
+| ![A mountain lake at dawn](docs/examples/lake.jpg) | ![A ceramic mug on a stone table](docs/examples/mug.jpg) | ![A watercolor street with a bookshop](docs/examples/bookshop.jpg) |
+| ![Floating islands above the clouds](docs/examples/islands.jpg) | ![A tiny isometric house](docs/examples/house.jpg) | ![A red fox in the snow](docs/examples/fox.jpg) |
 
-- **Auto-wiring.** Every model just works: VAE, text encoders and the best settings are picked
-  from a model registry (`config/models.yaml`), not guessed.
-- **Best model for your GPU, one click.** First run detects your GPU and recommends the best
-  Realistic, Anime, Edit and Describe models that fit. Every model shows how much VRAM it needs
-  (**Fits / Tight / Too big**).
-- **Built-in CivitAI browser** with plain-language filters (Realistic · Anime · Illustration · 3D ·
-  Brand & product). Safe mode is on by default, paid/early-access models are hidden by default,
-  and only SafeTensor/GGUF files are offered.
-- **Create** (text → image), **Edit** ("make it evening", "replace the mug with a bottle"),
-  **Describe** (image → prompt), reusable **Styles** and **Presets**.
-- **Paste from CivitAI.** Click *Copy generation data* on any CivitAI image, then *Paste from
-  CivitAI* in Pinhole: prompt, negative, steps, CFG, sampler, seed, size and LoRAs are applied,
-  and missing models/LoRAs are one click away.
-- **Runs on your computer.** No account and no cloud service. Works offline once models are
-  downloaded.
-- **Windows 10/11 and Linux.** Powered by [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)
-  (`sd-server`) and [llama.cpp](https://github.com/ggml-org/llama.cpp) (`llama-server`) —
-  NVIDIA (CUDA, incl. RTX 50xx), AMD/Intel (Vulkan), or CPU.
+<sub>Made with Pinhole's image engine and Z-Image Turbo (Apache 2.0), unedited. Prompts and settings: [docs/examples](docs/examples/README.md).</sub>
 
-## Your data
+## What it does
 
-Pinhole works like any other desktop app: your prompts and pictures stay on your computer.
+- **Create** pictures from a sentence, **Edit** them ("make it evening", "replace the mug with a
+  bottle"), and **Describe** a picture to get a prompt back.
+- **The right model for your GPU, one click.** Pinhole detects your graphics card and recommends
+  models that fit. Everything else (text encoders, VAE, steps, sampler) is set up for you, and
+  every choice can be seen and changed in the **Fine-tune** drawer.
+- **Built-in CivitAI browser** with plain filters and Safe mode on by default.
+- **Your prompts and images stay on your computer.** Pinhole only goes online when you browse
+  models, download something or press **Check for updates**, and **Offline mode** turns that off.
+  Nothing is saved until you press Save.
 
-- **No account, no telemetry, no analytics.** Pinhole does not check for updates on its own and
-  loads no remote fonts or scripts.
-- **Going online only when you ask.** Browsing CivitAI, downloading a model or the engine, and
-  **Check for updates** connect to `civitai.com`, `huggingface.co` or `github.com` (plus their
-  download servers). **Offline mode** in Settings turns all of that off.
-- **Saving is up to you.** Nothing is saved until you press **Save**. Text you save as a named
-  Style is stored in `Data/styles/`.
-- **Local engines.** The image and text engines run as separate programs that only accept
-  connections from your own computer (`127.0.0.1`). The optional CivitAI API key is kept in your
-  system's keychain.
+Windows 10/11 and Linux. NVIDIA, AMD and Intel GPUs, or the processor (slow). Powered by
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) and
+[llama.cpp](https://github.com/ggml-org/llama.cpp).
 
-The image engine (`sd-server`, from stable-diffusion.cpp) keeps recently finished pictures for up
-to 10 minutes and does not yet require a password on its local port, so another program on the
-same computer could ask it for them while it runs. It stops when you click **Reset** and 5
-minutes after your last picture. An engine build that requires a per-launch password is planned.
+![Pinhole's Create tab](docs/screenshots/tab-create-results-light.png)
 
-## Acceptable use
+## Download
+
+Get the latest version from [Releases](../../releases):
+
+| System | File |
+|---|---|
+| Windows 10/11, installer | `Pinhole-<version>-windows-x64-setup.exe` |
+| Windows 10/11, portable | `Pinhole-<version>-windows-x64-portable.zip` (unzip, run `Pinhole.exe`) |
+| Linux (Ubuntu 24.04+ or glibc 2.38+) | `Pinhole-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
+
+Windows may warn that the app is from an unknown publisher (it isn't code-signed yet): choose
+**More info → Run anyway**. On Linux, NVIDIA cards use the Vulkan driver.
+
+## First steps
+
+1. Open Pinhole and read the short usage guidelines.
+2. It downloads the image engine for your GPU once, and shows the recommended models. Click
+   **Get** on one (models are 2 to 25 GB).
+3. Type what you want to see and press **Generate** (Ctrl+Enter).
+
+Models come from Hugging Face and CivitAI and keep their own licences, shown on each model's card.
+Models, settings and saved pictures are in one `Data` folder (**Settings → Open Data folder**).
+
+## Safety
 
 Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
-this with AI running entirely on your own computer, so your work never leaves your device.
+this with AI running entirely on your own computer. [SAFETY.md](SAFETY.md) explains how they work
+and how to report a problem; the usage guidelines are shown when Pinhole first opens.
 
-When you first open Pinhole, you agree to its [usage guidelines](src/components/UsageGuidelines.tsx)
-and to each model's licence. You are responsible for what you make.
-
-[SAFETY.md](SAFETY.md) explains what the safeguards do.
-The safeguards are part of Pinhole. Modified versions are the responsibility of whoever makes and
-distributes them.
-
-To report a problem with the safeguards, use GitHub's private vulnerability reporting
-(**Security → Report a vulnerability** on this repository).
-
-## Install
-
-Download the latest build from the [Releases](../../releases) page (or, for development builds,
-from the **Artifacts** section of a green [CI run](../../actions/workflows/ci.yml)). Check the
-download with `SHA256SUMS.txt` (`sha256sum -c SHA256SUMS.txt`, or `Get-FileHash` on Windows).
-
-### Windows 10 / 11 (64-bit)
-
-- **Installer:** `Pinhole-<version>-windows-x64-setup.exe` — installs for the current user (no
-  admin rights). It also installs the Microsoft Edge **WebView2** runtime if it is missing.
-- **Portable:** `Pinhole-<version>-windows-x64-portable.zip` — unzip into any folder you can write
-  to and run `Pinhole\Pinhole.exe`. The `Data\` folder next to it makes Pinhole
-  portable: models, engine, settings and saved images all stay in that folder.
-  Needs WebView2: Windows 11 already has it; on Windows 10 install the
-  [Evergreen WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) if
-  Pinhole doesn't open.
-
-Windows SmartScreen may warn about an unrecognized app (builds are not code-signed yet):
-choose **More info → Run anyway**.
-
-### Linux (x86_64)
-
-- **AppImage:** `chmod +x Pinhole-<version>-linux-x86_64.AppImage && ./Pinhole-<version>-linux-x86_64.AppImage`
-- **Debian/Ubuntu:** `sudo apt install ./Pinhole-<version>-linux-amd64.deb`
-
-**Ubuntu 24.04 or newer is required for image generation:** the upstream stable-diffusion.cpp
-Linux builds that Pinhole downloads are built on Ubuntu 24.04 and need glibc ≥ 2.38. The app
-itself is built on Ubuntu 22.04 and starts there, but the engine will not run on 22.04.
-Upstream ships no Linux CUDA build, so NVIDIA GPUs on Linux use the Vulkan engine
-(install your distribution's Vulkan driver, e.g. `mesa-vulkan-drivers` or the NVIDIA driver).
-
-## First run
-
-1. Pinhole detects your GPU and VRAM (Settings can override both).
-2. It downloads the matching image engine **once** (CUDA for NVIDIA, Vulkan for AMD/Intel, CPU
-   otherwise — the CPU engine works but is very slow). Every download is SHA-256 verified.
-3. **Recommended for your GPU:** one card per role (Realistic, Anime, Edit, Describe) with
-   download size and VRAM needed. Click **Get** (or **Get all**), or skip and browse CivitAI in
-   the **Models** tab. Models are 2–25 GB each; nothing is bundled with the app.
-4. Type what you want to see and press **Generate** (Ctrl+Enter).
-
-## Where your data lives
-
-Everything Pinhole writes is in one folder called `Data/` (**Settings → Open Data folder**):
-
-| Mode | Location |
-|---|---|
-| Portable (Windows zip) | `Data\` next to `Pinhole.exe` |
-| Installed, Windows | `%LOCALAPPDATA%\Pinhole\Data` |
-| Installed, Linux | `~/.local/share/pinhole/Data` (`$XDG_DATA_HOME`) |
-
-```
-Data/
-  models/      checkpoints, diffusion models, text encoders, VAEs, LoRAs, upscalers, captioners
-  outputs/     images you saved (only when you click Save)
-  styles/      styles you saved (the only user text Pinhole stores)
-  presets/     your presets (model + style reference + settings; never the prompt)
-  config/      settings.yaml, overrides.yaml (your registry overrides)
-  catalog/     installed.json (files, hashes, families — no prompts)
-  engine/      downloaded sd-server / llama-server builds
-```
-
-Uninstalling does not delete `Data/` — remove it yourself to free the disk space.
+One known limitation: while the image engine runs, another program on the same computer could
+send it requests or ask for recently finished pictures. A locked-down engine build that fixes this
+is on the way.
 
 ## Build from source
 
-Prerequisites: [Rust](https://rustup.rs) stable (≥ 1.91), Node.js 22, and the
-[Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/):
-
-- **Windows:** Microsoft C++ Build Tools (MSVC) and WebView2 (preinstalled on Windows 11).
-- **Ubuntu/Debian:**
-  ```sh
-  sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev \
-    libsoup-3.0-dev libssl-dev libxdo-dev libdbus-1-dev pkg-config patchelf build-essential file
-  ```
+You need [Rust](https://rustup.rs), Node.js 22 and the
+[Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/).
 
 ```sh
 npm ci
-npm run tauri dev      # run the app with hot reload
-npm run tauri build    # release build + installers in target/release/bundle/
-npm run dev            # UI only, in a browser, against a mock backend (no Rust needed)
+npm run tauri dev      # run the app
+npm run tauri build    # installers in target/release/bundle/
+scripts/check.sh       # tests, lints and the privacy checks
 ```
 
-To produce the same file names as CI (incl. the Windows portable zip):
-`node scripts/package.mjs --platform windows` (or `linux`) after `npx tauri build`.
-
-## Tests
-
-```sh
-npm test                                  # frontend unit tests (vitest)
-node scripts/privacy-lint.mjs             # static privacy check (CLAUDE.md), --self-test proves each rule
-cargo test --workspace                    # Rust unit tests + tests/ (privacy + offline)
-PINHOLE_SMOKE=1 cargo test -p pinhole-tests --test engine_smoke --release -- --nocapture
-                                          # real engine: downloads sd-server + SD 1.5 (~2.2 GB,
-                                          # cached in target/smoke-cache), one 256×256 image on CPU
-```
-
-- `tests/tests/privacy.rs` — generates with a sentinel prompt, negative prompt and a saved style
-  (against a mock engine that bakes the prompt into PNG metadata, like sd-server's default), saves
-  images and a preset, then scans every byte of `Data/` and Pinhole's temp files, including
-  compressed PNG text chunks: the prompt must appear nowhere, the style only in `Data/styles/`.
-- `tests/tests/offline.rs` — with Offline mode on, every network call fails before a socket
-  opens (a local listener counts zero connections); non-allow-listed hosts are refused.
-- `tests/tests/engine_smoke.rs` — the real pinned engine end to end (Linux smoke runs on Ubuntu 24.04).
-- `scripts/privacy-lint.mjs` — fails CI if logging macros see prompt fields, prompt types reach
-  file-writing code, `log`/`tracing`/telemetry/updater dependencies appear, the UI uses
-  `console.*`, browser storage near prompts, remote assets, or the CSP allows remote origins.
-
-## CI and releases
-
-GitHub Actions only run when started by hand (the repo is private and minutes are limited).
-Before merging, run `scripts/check.sh` locally: privacy lint, frontend tests, build, `cargo fmt`,
-`cargo test` and `clippy`.
-
-- **CI**: Actions → **CI** → Run workflow. Without options it runs the fast checks; tick *full*
-  for Windows tests, the engine smoke (Linux + Windows) and the real-app WebDriver e2e.
-- **Installers on demand**: Actions → **Bundle** → Run workflow (installers only), or Actions →
-  **CI** → Run workflow with *installers* ticked. Downloads appear on the run's Summary page:
-  `pinhole-windows-x64` (setup exe + portable zip + SHA256SUMS), `pinhole-windows-x64-portable`,
-  `pinhole-linux-x64` (AppImage + deb + SHA256SUMS).
-- **Release** (`release.yml`): Actions → **Release** → Run workflow (tag `v<version>` matching
-  `src-tauri/tauri.conf.json`; untick *draft* to publish), or push that tag. Publishes a
-  **pre-release** (personal test build, see `docs/RELEASE-SPEC.md`) with all files and
-  `SHA256SUMS.txt`.
-- **Verify pins** (`verify-pins.yml`, by hand): checks every model and
-  engine URL + SHA-256 in `config/*.yaml` against Hugging Face / GitHub, CivitAI `baseModel`
-  strings against the live API, and suggests values for remaining `TODO`s.
-
-## Project layout
-
-```
-src-tauri/        Tauri app + Rust crates (registry, net, store, hardware, engine, catalog, core)
-src/              React + TypeScript UI
-config/           shipped YAML: models.yaml, engine.yaml, catalog-filters.yaml, styles/, presets/
-tests/            workspace integration tests (privacy, offline, engine smoke)
-scripts/          check.sh, privacy lint, pin verification, packaging (Node, no dependencies)
-docs/             PROJECT-BRIEF.md (status), SPEC.md (what), ARCHITECTURE.md (how),
-                  RELEASE-SPEC.md (what must be done before any build is shared)
-```
-
-| Create | Paste from CivitAI | Models |
-|---|---|---|
-| ![Create tab](docs/screenshots/tab-create-results-light.png) | ![Paste summary](docs/screenshots/paste-summary-light.png) | ![Models browser](docs/screenshots/models-browse-dark.png) |
-
-Contributing: read [`CLAUDE.md`](CLAUDE.md) and [`docs/SPEC.md`](docs/SPEC.md) first.
-Model knowledge belongs in `config/models.yaml`, not in code.
-
-## Status
-
-Version 0.2 — in active development (milestones M0–M5 in [`docs/SPEC.md`](docs/SPEC.md#11-milestones)).
-Expect rough edges; model recommendations and VRAM numbers are still being measured.
-
-This is a personal test build. No build is shared until everything in
-[`docs/RELEASE-SPEC.md`](docs/RELEASE-SPEC.md) is done, including its safeguards against misuse.
+Start with [docs/PROJECT-BRIEF.md](docs/PROJECT-BRIEF.md) (status and decisions),
+[docs/SPEC.md](docs/SPEC.md) (what Pinhole does) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+(how it's built). Contributors also read [CLAUDE.md](CLAUDE.md), which holds the privacy and
+wording rules.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Third-party licenses (stable-diffusion.cpp, ggml, llama.cpp and the
-libraries compiled into Pinhole) are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES).
-Model weights are not part of Pinhole; each model's license is shown on its card
-(e.g. FLUX.1-dev is non-commercial).
+MIT, see [LICENSE](LICENSE). Third-party licences are in
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Models are not part of Pinhole.

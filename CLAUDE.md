@@ -6,8 +6,7 @@ drives stable-diffusion.cpp (`sd-server`) and llama.cpp (`llama-server`) as side
 **Read `docs/SPEC.md` before any work.** It is the source of truth. If you need to deviate,
 update the spec in the same PR and explain why.
 
-Pinhole is a **personal test build** for now. No build is shared with anyone until everything in
-`docs/RELEASE-SPEC.md` is done.
+Pinhole is released on GitHub from v1.0.0. Public releases follow `docs/RELEASE-SPEC.md`.
 
 ## Repo layout (target)
 ```
