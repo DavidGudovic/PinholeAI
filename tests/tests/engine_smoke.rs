@@ -1,4 +1,4 @@
-//! Engine smoke test (CLAUDE.md "Engine rules"): download the pinned CPU sd-server
+//! Engine smoke test: download the pinned CPU sd-server
 //! for this OS and the smallest registered model (`test_models.sd15`, SD 1.5 fp16),
 //! launch sd-server on 127.0.0.1, generate one 256×256 image with 4 steps, and
 //! check the PNG (magic, size, not blank, no prompt in text chunks).
