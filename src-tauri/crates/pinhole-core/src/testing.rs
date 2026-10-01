@@ -618,7 +618,8 @@ mod tests {
         };
 
         let fake = FakeCheck::default();
-        let sizes = fake.sizes.clone();
+        let checked = fake.sizes.clone();
+        let sizes = checked.clone();
         use_check(&core, fake);
         let res = generate::generate(&core, fix_req(Some(mask.id.clone())))
             .await
@@ -668,8 +669,37 @@ mod tests {
         assert_eq!(at(10, 10), &[10, 20, 30, 255]);
         assert_ne!(at(630, 340), &[10, 20, 30, 255]);
 
-        // Without a mask there is nothing to fix.
-        let err = generate::generate(&core, fix_req(None)).await.unwrap_err();
+        // Nothing painted: the whole picture is drawn larger, without a mask, and comes back
+        // at its own size.
+        let n = mock.requests().len();
+        let res = generate::generate(&core, fix_req(None)).await.unwrap();
+        let out = &res.images[0];
+        assert_eq!((out.width, out.height), (1200, 900));
+        assert_eq!(out.parent_id.as_deref(), Some(src.id.as_str()));
+        let body = &mock.requests()[n];
+        assert!(body.get("mask_image").is_none_or(|v| v.is_null()));
+        assert_eq!(body["batch_count"], 1);
+        assert!(body.get("hires").is_none_or(|v| v.is_null()));
+        assert_eq!(body["strength"], 0.45);
+        let (w, h) = (
+            body["width"].as_u64().unwrap(),
+            body["height"].as_u64().unwrap(),
+        );
+        assert!(w * h > 1200 * 900, "drawn larger than the picture: {w}x{h}");
+        assert!(w % 64 == 0 && h % 64 == 0 && w > h, "{w}x{h}");
+        let sizes = checked.lock().clone();
+        assert_eq!(sizes.len(), 4, "{sizes:?}");
+        assert_eq!(sizes[2], (1200, 900), "the result is checked: {sizes:?}");
+
+        // Too big to redraw whole: asked to paint over a part instead.
+        let big = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(4000, 3000, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let mut req = fix_req(None);
+        req.init_image_id = Some(big.id);
+        let err = generate::generate(&core, req).await.unwrap_err();
         assert!(err.message.contains("Paint over"), "{}", err.message);
     }
 
@@ -2292,6 +2322,8 @@ mod tests {
         fix.init_image_id = Some(photo.clone());
         fix.mask_image_id = Some(mask);
         fix.fix_details = true;
+        let mut fix_whole = fix.clone();
+        fix_whole.mask_image_id = None;
         let mut extend = GenerateRequest::txt2img(sdxl, "y");
         extend.mode = GenMode::Img2img;
         extend.init_image_id = Some(photo.clone());
@@ -2305,6 +2337,7 @@ mod tests {
             ("reference", reference),
             ("edit", edit),
             ("fix details", fix),
+            ("fix details, whole picture", fix_whole),
             ("extend", extend),
         ] {
             let e = generate::generate(&core, req).await.unwrap_err();

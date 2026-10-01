@@ -1,7 +1,9 @@
 //! "Fix details" (Edit, SPEC §5.2): redraw a small painted spot at the model's
 //! native size, then blend it back. Crop a padded box around the mask, scale it
 //! up, inpaint only that box (the caller runs the engine), scale the result back
-//! down and paste it over the original with a feathered edge. All in memory.
+//! down and paste it over the original with a feathered edge. With nothing
+//! painted, the whole picture is redrawn larger and scaled back to its own size
+//! ([`DetailPlan::whole`]). All in memory.
 
 use image::imageops::{self, FilterType};
 use image::{GrayImage, ImageBuffer, Luma, Rgba, RgbaImage};
@@ -35,7 +37,8 @@ pub struct DetailPlan {
     /// Crop scaled to `work` (PNG): the engine's `init_image`.
     pub init_png: Vec<u8>,
     /// Mask for the crop scaled to `work` (PNG, white = redraw): the engine's `mask_image`.
-    pub mask_png: Vec<u8>,
+    /// `None` for the whole picture: everything is redrawn.
+    pub mask_png: Option<Vec<u8>>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -87,10 +90,31 @@ impl DetailPlan {
 
         Ok(Self {
             init_png: encode_png_rgba(init.as_raw(), work.0, work.1)?,
-            mask_png: encode_png_rgba(mask_rgba.as_raw(), work.0, work.1)?,
+            mask_png: Some(encode_png_rgba(mask_rgba.as_raw(), work.0, work.1)?),
             src,
             crop,
             alpha,
+            work,
+        })
+    }
+
+    /// Redraw the whole picture: `work_size` turns the picture's size into the size the
+    /// engine draws at (larger than the picture, so the model adds finer detail); the
+    /// redraw is scaled back to the picture's own size.
+    pub fn whole(
+        src: &[u8],
+        work_size: impl FnOnce(u32, u32) -> (u32, u32),
+    ) -> Result<Self, DetailError> {
+        let (px, w, h) = decode_rgba(src)?;
+        let src = RgbaImage::from_raw(w, h, px).ok_or(ImageError::Corrupt("pixels".into()))?;
+        let work = work_size(w, h);
+        let init = imageops::resize(&src, work.0, work.1, FilterType::Lanczos3);
+        Ok(Self {
+            init_png: encode_png_rgba(init.as_raw(), work.0, work.1)?,
+            mask_png: None,
+            crop: Rect { x: 0, y: 0, w, h },
+            alpha: GrayImage::from_pixel(w, h, Luma([255])),
+            src,
             work,
         })
     }
@@ -319,7 +343,7 @@ mod tests {
         );
         assert_eq!(plan.work, (512, 512));
         assert_eq!(crate::image::sniff(&plan.init_png).unwrap().width, 512);
-        let (m, mw, _) = decode_rgba(&plan.mask_png).unwrap();
+        let (m, mw, _) = decode_rgba(plan.mask_png.as_ref().unwrap()).unwrap();
         // Painted spot at (44..84) in the crop → (176..336) in the work mask.
         let at = |x: u32, y: u32| m[((y * mw + x) * 4) as usize];
         assert_eq!(at(256, 256), 255);
@@ -355,6 +379,26 @@ mod tests {
         assert_eq!((ow, oh), (w, h));
         for p in out.chunks(4) {
             assert!(p[0] == p[1] && p[1] == p[2] && matches!(p[0], 0 | 255) && p[3] == 255);
+        }
+    }
+
+    #[test]
+    fn whole_picture_is_drawn_larger_and_comes_back_at_its_own_size() {
+        let (w, h) = (300, 200);
+        let src = png(w, h, |x, _| [(x % 256) as u8, 40, 90, 128]);
+        let plan = DetailPlan::whole(&src, |pw, ph| (pw * 2, ph * 2)).unwrap();
+        assert_eq!(plan.work, (600, 400));
+        assert!(plan.mask_png.is_none());
+        let info = crate::image::sniff(&plan.init_png).unwrap();
+        assert_eq!((info.width, info.height), (600, 400));
+
+        let red = png(600, 400, |_, _| [255, 0, 0, 255]);
+        let out = plan.blend(&red).unwrap();
+        let (px, ow, oh) = decode_rgba(&out).unwrap();
+        assert_eq!((ow, oh), (w, h));
+        // Every pixel is the redraw's colour, edges included; alpha stays the source's.
+        for p in px.chunks(4) {
+            assert_eq!(p, &[255, 0, 0, 128]);
         }
     }
 

@@ -2017,6 +2017,24 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
     (r(w), r(h))
 }
 
+/// "Fix details" on the whole picture: the area (pixels) the engine draws at, 1.5× the
+/// model's area per side (as a hires fix does) or the picture's own area if that is larger,
+/// and at most what keeps the longer side within 2048 px (the largest side [`size_like`]
+/// gives, so the picture keeps its shape). `None` when the picture is over 2× the model's
+/// area per side or over 2048 px on a side: drawn whole at that size the model repeats parts
+/// of the scene, and drawn smaller the result would lose detail.
+fn whole_detail_area(src_w: u32, src_h: u32, model_area: u64) -> Option<u64> {
+    const MAX_SIDE: u64 = 2048;
+    let (long, short) = (
+        u64::from(src_w.max(src_h)),
+        u64::from(src_w.min(src_h).max(1)),
+    );
+    let src_area = long * short;
+    let fits = MAX_SIDE * MAX_SIDE * short / long;
+    (src_area <= model_area * 4 && long <= MAX_SIDE)
+        .then(|| src_area.max(model_area * 9 / 4).min(fits))
+}
+
 /// The pictures a job sends to the engine, read from the session only through here: every
 /// one taken is an input of the result for the image check ([`crate::imagecheck::MadeBy`]),
 /// and a mask goes as its shape only.
@@ -2183,10 +2201,11 @@ async fn generate_inner(
             "Extend works on its own: switch off the brush and pick Extend again.",
         ));
     }
+    // "Fix details" with nothing painted redraws the whole picture.
     let fix_source = if req.fix_details {
-        match (req.mode, &source, mask_src) {
-            (GenMode::Img2img, Some(src), Some(mask)) => Some((src, mask)),
-            _ => return Err(CoreError::invalid("Paint over the spot to fix first.")),
+        match (req.mode, &source) {
+            (GenMode::Img2img, Some(src)) => Some((src, mask_src)),
+            _ => return Err(CoreError::invalid("Add an image to fix first.")),
         }
     } else {
         None
@@ -2230,16 +2249,31 @@ async fn generate_inner(
     }
     // "Fix details": the engine only draws the box around the mask, scaled to
     // about the dial's area (so a small face is redrawn at the model's size).
+    // With nothing painted it draws the whole picture larger (see `whole_detail_area`).
     let fix = match fix_source {
         Some((src, mask)) => {
             let area = u64::from(params.width) * u64::from(params.height);
             let multiple = wiring::size_multiple(&prep.family);
+            let whole_area = match mask {
+                Some(_) => None,
+                None => Some(
+                    whole_detail_area(src.width, src.height, area).ok_or_else(|| {
+                        CoreError::invalid(
+                            "This picture is too big to redraw whole. Paint over the part to fix.",
+                        )
+                    })?,
+                ),
+            };
             // Decode, resize, blur and encode: off the async workers.
-            let (src_bytes, mask_bytes) = (src.bytes.clone(), mask.bytes.clone());
-            let plan = tokio::task::spawn_blocking(move || {
-                DetailPlan::new(&src_bytes, &mask_bytes, |w, h| {
+            let src_bytes = src.bytes.clone();
+            let mask_bytes = mask.map(|m| m.bytes.clone());
+            let plan = tokio::task::spawn_blocking(move || match (mask_bytes, whole_area) {
+                (Some(mask_bytes), _) => DetailPlan::new(&src_bytes, &mask_bytes, |w, h| {
                     size_like(w, h, area, multiple)
-                })
+                }),
+                (None, whole) => DetailPlan::whole(&src_bytes, |w, h| {
+                    size_like(w, h, whole.unwrap_or(area), multiple)
+                }),
             })
             .await
             .map_err(|_| CoreError::internal("Fixing details stopped unexpectedly."))?
@@ -2251,7 +2285,10 @@ async fn generate_inner(
             })?;
             (width, height) = plan.work;
             init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
-            mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
+            mask_image = plan
+                .mask_png
+                .as_ref()
+                .map(|m| base64::engine::general_purpose::STANDARD.encode(m));
             Some(Redraw::Detail(Arc::new(plan)))
         }
         None => None,
@@ -3237,6 +3274,26 @@ mod tests {
         let (w, h) = size_like(1920, 1080, 1024 * 1024, 64);
         assert_eq!((w % 64, h % 64), (0, 0));
         assert_eq!(size_like(10, 10, 1, 64), (256, 256));
+    }
+
+    #[test]
+    fn whole_picture_detail_is_drawn_larger_up_to_twice_per_side() {
+        let model = 1024 * 1024;
+        // At the model's size or smaller: 1.5× per side.
+        assert_eq!(whole_detail_area(1024, 1024, model), Some(1536 * 1536));
+        assert_eq!(whole_detail_area(512, 512, model), Some(1536 * 1536));
+        // Between 1.5× and 2× per side: drawn at its own size.
+        assert_eq!(whole_detail_area(1800, 1800, model), Some(1800 * 1800));
+        assert_eq!(whole_detail_area(2048, 2048, model), Some(2048 * 2048));
+        // Larger than that (a 4× upscale): too big to redraw whole.
+        assert_eq!(whole_detail_area(4096, 4096, model), None);
+        assert_eq!(whole_detail_area(3000, 1000, model), None);
+        // Wide: drawn no wider than 2048 px, so it keeps its shape.
+        let area = whole_detail_area(1920, 800, model).unwrap();
+        let (w, h) = size_like(1920, 800, area, 64);
+        assert!(w <= 2048, "{w}x{h}");
+        let ratio = f64::from(w) / f64::from(h);
+        assert!((ratio - 2.4).abs() < 0.1, "{w}x{h}");
     }
 
     #[test]

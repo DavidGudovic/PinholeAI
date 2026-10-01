@@ -121,6 +121,8 @@ export function EditTab() {
   const mask = useRef<MaskHandle>(null);
   // The mask each edit was made with (by result image), so "Try again" repaints the same area.
   const masks = useRef(new Map<string, Blob | null>());
+  // Steps made by Add detail (Fix details with nothing painted): Try again redoes the whole picture.
+  const wholeDetail = useRef(new Set<string>());
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
 
@@ -222,6 +224,7 @@ export function EditTab() {
   const originalId = e.chain[0]?.imageId;
   useEffect(() => {
     masks.current.clear();
+    wholeDetail.current.clear();
     setCompare(false);
     setError(null);
   }, [originalId]);
@@ -251,14 +254,6 @@ export function EditTab() {
         : maskOn && painted && !twoImages
           ? ((await mask.current?.exportPng()) ?? null)
           : null;
-      if (fixing && !m) {
-        setError({
-          code: "invalid",
-          message: "Paint over the spot to fix first.",
-          details: null,
-        });
-        return;
-      }
       const outFrom = editOutputSize(
         source.width,
         source.height,
@@ -282,6 +277,7 @@ export function EditTab() {
       const made = now.chain[now.index];
       if (now.index === from + 1 && made && made.imageId !== current.id) {
         masks.current.set(made.imageId, m);
+        if (fixing && !m) wholeDetail.current.add(made.imageId);
         setCompare(true);
         setCompareWith("previous");
       }
@@ -357,13 +353,11 @@ export function EditTab() {
   const ready = !!current && !!model && !importing && !needsEditModel;
   const canRun =
     ready &&
-    (fixing
-      ? painted
-      : extending
-        ? !!canvas
-        : text.trim().length > 0 || !!e.styleId);
+    (fixing ||
+      (extending ? !!canvas : text.trim().length > 0 || !!e.styleId));
   // An upscale step has nothing to redo; the original has no step before it.
-  // Fix details redoes the step with the spot painted for it. Not while edits run or wait:
+  // Fix details redoes the step with the spot painted for it, or the whole picture again
+  // after Add detail. Not while edits run or wait:
   // redoing a step drops the steps after it, which could be their results.
   // Extend redoes from the step before, which is smaller than the shown result.
   const prevImg =
@@ -375,7 +369,9 @@ export function EditTab() {
     !!extendCanvas(prevImg.width, prevImg.height, e.extendTo, e.extendSide, ui);
   const canTryAgain =
     (fixing
-      ? ready && !!masks.current.get(current?.id ?? "")
+      ? ready &&
+        (!!masks.current.get(current?.id ?? "") ||
+          wholeDetail.current.has(current?.id ?? ""))
       : extending
         ? canExtendAgain
         : canRun) &&
@@ -507,7 +503,7 @@ export function EditTab() {
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."
                   : fixing
-                    ? "Paint over a small spot, like a face or hand. It's redrawn larger, then blended back in."
+                    ? "Paint over a small spot, like a face or hand, to redraw it larger and blend it back in. Paint nothing to add detail to the whole picture."
                     : extending
                       ? "Pick a new shape. Pinhole adds space around your picture and draws what fits there."
                       : "Redraws the whole picture with your description."}
@@ -807,7 +803,7 @@ export function EditTab() {
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {painted
                       ? "Paint a little past the edges so it blends in."
-                      : "Paint over the face, hand or detail to redraw."}
+                      : "Paint over the face, hand or detail to redraw. Paint nothing to add detail to the whole picture."}
                   </p>
                 </div>
               ) : (
@@ -982,7 +978,9 @@ export function EditTab() {
                 </div>
                 <p className="text-[11px] text-neutral-400">
                   {fixing
-                    ? "The picture keeps its size; only the painted spot changes. "
+                    ? painted
+                      ? "The picture keeps its size; only the painted spot changes. "
+                      : "The picture keeps its size; it's drawn larger, then scaled back down. "
                     : extending
                       ? "The picture keeps its detail; the new space is drawn at the model's size and scaled to fit. "
                       : "Size keeps your image’s shape. "}
@@ -1025,7 +1023,9 @@ export function EditTab() {
                 : mode === "instruction"
                   ? "Apply edit"
                   : fixing
-                    ? "Fix details"
+                    ? painted
+                      ? "Fix details"
+                      : "Add detail"
                     : extending
                       ? "Extend"
                       : "Restyle"}
