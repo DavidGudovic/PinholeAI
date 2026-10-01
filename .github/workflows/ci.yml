@@ -26,7 +26,12 @@ concurrency:
 permissions:
   contents: read
 
+# Pinned Rust version. The Rust build cache key includes it (prefix-key below) instead of the
+# runner's installed toolchains, which change with every runner image and new Rust release and
+# made every installer build compile from scratch. To upgrade: change it in bundle.yml, ci.yml and
+# release.yml, then run Bundle on main once so the next release finds a warm cache.
 env:
+  RUST_TOOLCHAIN: "1.99.0"
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
@@ -127,9 +132,14 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ env.RUST_TOOLCHAIN }}
+          add-rust-environment-hash-key: false
 
       # tauri::generate_context!() embeds ../dist, so the frontend must exist first.
       - name: Build frontend
@@ -181,10 +191,14 @@ jobs:
         with:
           node-version: 22
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v0-rust-${{ env.RUST_TOOLCHAIN }}
+          add-rust-environment-hash-key: false
           key: smoke
 
       - name: Smoke cache key
@@ -234,9 +248,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v0-rust-${{ env.RUST_TOOLCHAIN }}
+          add-rust-environment-hash-key: false
           key: e2e
       - name: Build the app (debug, embedded frontend)
         run: npm ci && npm run build && cargo build -p pinhole --features tauri/custom-protocol --locked
