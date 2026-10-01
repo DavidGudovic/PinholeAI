@@ -64,8 +64,7 @@ impl Inspector for Checker {
     }
 }
 
-/// A stand-in for the image check with fixed readings (test builds only: release
-/// builds have no way to replace the check).
+/// A stand-in for the image check with fixed readings (test builds only).
 #[cfg(any(test, feature = "test-util"))]
 #[derive(Debug, Clone, Default)]
 pub struct FakeCheck {

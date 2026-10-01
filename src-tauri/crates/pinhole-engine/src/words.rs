@@ -7,10 +7,10 @@
 //! Lives in the engine crate so the image engine's request type can require a checked prompt
 //! (`CheckedPrompt`); `pinhole_core::text_check` wraps it with the app's error.
 //!
-//! Deliberately plain: fixed word lists compiled in (not YAML), whole words (plus common endings and words glued to another word), both lists must
-//! match. Spellings are normalized first (see
-//! [`pairs_minor_with_sexual`]). It is a first line, not the §3 image check: it misses
-//! misspellings and made-up words. PRIVACY: the text and which words matched are
+//! Deliberately plain: fixed word lists compiled in (not YAML), whole words (plus common
+//! endings and words glued to another word); both lists must match. Spellings are normalized
+//! first (see [`pairs_minor_with_sexual`]). It is a first line; the §3 image check is the main
+//! safeguard. PRIVACY: the text and which words matched are
 //! never logged, stored or put in an error.
 
 use unicode_normalization::UnicodeNormalization;
