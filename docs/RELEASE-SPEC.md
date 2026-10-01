@@ -160,8 +160,10 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 1. **Brought-in photo of a person made intimate.** The result is intimate, and one of the
    brought-in pictures it comes from (image 1, image 2, a Create reference picture, at the start
-   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 40 px) and was **not** intimate when
-   brought in. Comparing with the original import (not the direct input) means a photo can't be
+   of any chain of edits) has a face (face finder ≥ 0.8, ≥ 12 px, since Edit and Upscale enlarge a
+   small face; the smallest face found also depends on the picture's size, as the finder works
+   at 640 px; the picture is also tried turned 90/180/270° and, above 1280 px, in 3 × 3 closer
+   sections) and was **not** intimate when brought in. Comparing with the original import (not the direct input) means a photo can't be
    walked towards intimate in small steps. An intimate picture brought in that way can be edited:
    it existed before Pinhole saw it.
 2. **Anyone who looks like a child, sexual.** Every mode, every source. The result is sexual
@@ -170,14 +172,17 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
      whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6. On 100
-     FairFace photos, adults scored at most
-     0.05 and ages 3–9 0.77 on average.
+     FairFace photos, adults scored at most 0.05 and ages 3–9 0.77 on average. The age estimate
+     judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
+     as a child's (fails closed). With no face upright, the result is also tried turned
+     90/180/270° (someone lying down).
 
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
    often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
    10–19, 20–29…) and it is off by several years, so it can't separate teenagers from young
    adults without blocking many adults. Teenagers are left to the word check, the brought-in
    photo rule (rule 1) and, for drawings, the child tags.
+   Any check model output that isn't a finite number is an error, so the picture is dropped.
 3. **Model marked "safe images only".** The model or a LoRA in the request carries CivitAI's
    `sfwOnly` flag (stored at install as `CivitaiRef.sfw_only`) → intimate results are blocked.
    Models flagged `poi` or `minor` can't be installed at all (§5). The flag comes from the
@@ -396,6 +401,8 @@ templates, posts and UI.
 
 ## 10. Legal and business
 
+- **Dropped by the owner for the free app** (2026-09-30): no lawyer step. The questions below are
+  kept for if Pinhole is ever monetised.
 - **Level 2: a short lawyer consult** before the first build is supplied, with these questions:
   1. Is Pinhole a "provider" under EU AI Act Art. 50 when it runs third-party models?
   2. Does one-click install from the catalog make the developer a "supplier" of those models
@@ -493,30 +500,40 @@ templates, posts and UI.
 
 ### 12.2 Level 2 — GitHub release + testers
 
-- [ ] §1 choke points exist and every path goes through them
-- [ ] §2 AI marker: metadata + C2PA + watermark, always on, tests pass (or the documented fallback)
+- [x] §1 choke points exist and every path goes through them (enforced by type, `one_way.rs`)
+- [x] §2 AI marker: metadata + watermark, always on, tests pass. C2PA dropped (2026-09-30, plan trimmed
+      for a free app after the owner's ruling below; a self-signed manifest only shows "unknown
+      signer", and the XMP marker + watermark already give the two layers §2 asks for)
 - [ ] §3 origin tracking, the three block rules, fail-closed, coverage of every mode
 - [ ] §4 false-positive bar met for every rule (the check itself is built, §3)
 - [ ] §5 flags stored at install; SFW-only rule; flagged models back in the catalog
 - [ ] §6 licence field everywhere; acceptance for non-commercial, gated and filter-requiring models
-- [ ] §7 first-run acceptable-use screen + Edit notice
-- [ ] §10 lawyer consult with the five questions
-- [ ] Engine API locked down: ship a patched `sd-server` that rejects any request carrying an
+- [x] §7 first-run acceptable-use screen + Edit notice
+- [x] ~~§10 lawyer consult with the five questions~~ Dropped by the owner (2026-09-30: "The app will
+      be completely free … its a portfolio piece, so i dont think we need to go overboard asking
+      lawyers"). The bar instead: serious misuse needs forking and editing the code. Revisit if
+      Pinhole is ever monetised (§10)
+- [x] Engine API locked down: a patched `sd-server` that rejects any request carrying an
       `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").
-      Today any web page open in the user's browser that finds the port can send it jobs or read
-      recent images. Decided 2026-09-28: fix before any shared build.
-      Pinhole side done (per-launch key + bearer); left: pin the patched build and set
-      `ENGINE_LOCKDOWN = true` (SPEC §13).
+      Done 2026-10-01: `config/engine.yaml` pins `master-929-3f8527a-pinhole1` from Pinhole's fork
+      (upstream code + `engine/sd-cpp/` patch), `ENGINE_LOCKDOWN = true`; the engine smoke test
+      checks 401 without the key and 403 with an `Origin`. GPU builds untested on real hardware.
 - [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign),
-      and "Update and restart" refuses a file whose signature doesn't verify. Today it only checks
-      `SHA256SUMS.txt` from the same release (SPEC §13 "Updates").
-- [ ] Releases marked as pre-release / test build
-- [ ] SPEC.md, CLAUDE.md and the privacy tests updated to match (the AI marker exception)
+      and "Update and restart" refuses a file whose signature doesn't verify. Until then
+      "Update and restart" is switched off (`update::SELF_UPDATE = false`, 2026-09-30): "Check for
+      updates" only opens the release page and nothing is downloaded or installed in the app
+      (SPEC §13 "Updates"). The key is the maintainer's to make; then set `SELF_UPDATE = true`.
+- [x] ~~Releases marked as pre-release / test build~~ Replaced (2026-09-30): v1.0.0 is a normal GitHub
+      release, created as a draft for the maintainer to publish. `release.yml` marks only versions
+      with a suffix (`1.1.0-rc.1`) as pre-releases.
+- [x] SPEC.md, CLAUDE.md and the privacy tests updated to match (the AI marker exception: SPEC §4
+      rule 9, CLAUDE.md privacy rule 2, `tests/tests/privacy.rs`)
 
 ### 12.3 Level 3 — marketing
 
-- [ ] §10 full lawyer review
-- [ ] §2 watermark shipped (if Level 2 used the fallback)
+- [x] ~~§10 full lawyer review~~ Dropped with the Level 2 consult (owner, 2026-09-30); revisit if
+      Pinhole is ever monetised
+- [x] §2 watermark shipped (2026-09-30; no fallback was needed)
 - [ ] §4 false positives re-measured on a larger set
 - [ ] §8 wording pass over every public channel: website, listings, screenshots, videos, posts
 - [ ] §9 monitored abuse contact + written process

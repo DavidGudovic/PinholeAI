@@ -701,8 +701,8 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - CivitAI API key (set / remove; keychain)
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
-  **Update and restart** (Windows installer, Windows portable, Linux AppImage) or **Open download
-  page** (the .deb and dev builds, which can't replace themselves). See §13.
+  **Open download page**. **Update and restart** (Windows installer, Windows portable, Linux
+  AppImage) is built but switched off until release files are signed. See §13.
 
 ---
 
@@ -779,11 +779,15 @@ build is shared.
 - **Paid (early access) models**: hidden by default.
 - **Content filter**: Safe mode On (default) · Off. No "adult only" mode; the NSFW tag in the
   Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
-- **Distribution**: personal testing only for now. Any shared build is gated by
-  `docs/RELEASE-SPEC.md`.
-- **Updates** (manual only): Settings → Check for updates asks
-  `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (pre-releases
-  included while every build is a test build). Download URLs are built from the repo, the tag and the
+- **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` §12 lists what
+  was done first).
+- **Updates** (manual only): **Update and restart** is off (`update::SELF_UPDATE = false`) until
+  release files are signed with a key only the maintainer holds: `SHA256SUMS.txt` comes from the
+  same release, so it can't catch a release someone else uploaded. Until then every copy is offered
+  **Open download page** and nothing is downloaded or installed in the app. The rest of this entry
+  describes in-app install for when it is switched on. Settings → Check for updates asks
+  `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (a pre-release
+  version such as `1.1.0-rc.1` only for a copy that is itself a pre-release). Download URLs are built from the repo, the tag and the
   expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
   the release's `SHA256SUMS.txt`, or nothing is installed. The newest release that has this copy's
   file is offered; one without it is offered as "Open download page". Updating is refused while a
@@ -864,15 +868,13 @@ build is shared.
   5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
   after start-up Pinhole checks that the server on the port is its own child reporting the model
   it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via
-  `LLAMA_API_KEY` and only `/health` stays public. **Real fix (follow-up):** ship a patched
-  `sd-server` build that rejects any request carrying an `Origin` header and requires a
-  per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
-  Pinhole's side is in place: every launch gets a random key in `SD_API_KEY` and every request
-  sends it as `Authorization: Bearer` (upstream ignores both). The patch (`--api-key` / env
-  `SD_API_KEY`, `--reject-origin`) lives in `engine/sd-cpp/` and is built by a workflow in a
-  separate public repo (`engine/sd-cpp/README.md`). When `engine.yaml` pins that build, set
-  `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` to `true`: it is compiled in (not a
-  setting), adds `--reject-origin`, and an unpatched engine then can't start.
+  `LLAMA_API_KEY` and only `/health` stays public. **Fix (2026-10-01):** `engine.yaml` pins a patched
+  `sd-server` from Pinhole's fork (upstream code + `engine/sd-cpp/` patch, built by the fork's
+  workflow, `engine/sd-cpp/README.md`). Every launch gets a random key in `SD_API_KEY` (never on
+  the command line) and every request sends it as `Authorization: Bearer`; requests without it
+  get 401, and any request carrying an `Origin` header gets 403 (`--reject-origin`, added by the
+  compiled-in `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs`, not a setting, so an unpatched
+  engine can't start). The idle stop stays (it also frees memory).
 
 ## 14. Open questions
 

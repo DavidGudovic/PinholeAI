@@ -8,7 +8,8 @@
 //! (`CheckedPrompt`); `pinhole_core::text_check` wraps it with the app's error.
 //!
 //! Deliberately plain: fixed word lists in code (not YAML, so a config edit can't turn it
-//! off), whole words only, both lists must match. Spellings are normalized first (see
+//! off), whole words (plus common endings and words glued to another word), both lists must
+//! match. Spellings are normalized first (see
 //! [`pairs_minor_with_sexual`]). It is a first line, not the §3 image check: it misses
 //! misspellings and made-up words. PRIVACY: the text and which words matched are
 //! never logged, stored or put in an error.
@@ -237,7 +238,7 @@ pub fn pairs_minor_with_sexual(text: &str) -> bool {
     let any = |list: &[&str]| views.iter().any(|w| list.iter().any(|p| has_phrase(w, p)));
     // Ages are read from the plain spellings only: numbers-for-letters would turn "18" into
     // something else.
-    let minor = any(UNDER_18) || views[..2].iter().any(|w| has_young_age(w));
+    let minor = any(UNDER_18) || AGE_VIEWS.iter().any(|&i| has_young_age(&views[i]));
     minor && any(SEXUAL)
 }
 
@@ -267,6 +268,10 @@ fn views(text: &str) -> Vec<Vec<String>> {
                     vec![c]
                 }
                 'ŀ' | 'Ŀ' => vec!['l'],
+                // Digits from other scripts.
+                '\u{0660}'..='\u{0669}' => vec![char::from(b'0' + (c as u32 - 0x0660) as u8)],
+                '\u{06F0}'..='\u{06F9}' => vec![char::from(b'0' + (c as u32 - 0x06F0) as u8)],
+                '\u{0966}'..='\u{096F}' => vec![char::from(b'0' + (c as u32 - 0x0966) as u8)],
                 _ => {
                     let d: Vec<char> = std::iter::once(c).nfkd().collect();
                     if d.len() > 4 {
@@ -289,11 +294,28 @@ fn views(text: &str) -> Vec<Vec<String>> {
             None => c.to_lowercase().flat_map(fold).collect(),
         })
         .collect();
+    // Words are split on spaces and punctuation. A chunk with punctuation inside it
+    // ("lo-li", "l.o.l.i") is also kept joined, right after its pieces.
     let words = |text: &str, keep: &dyn Fn(char) -> bool| -> Vec<String> {
-        text.split(|c: char| !keep(c))
-            .filter(|w| !w.is_empty())
-            .map(str::to_string)
-            .collect()
+        let mut out = Vec::new();
+        for chunk in text.split(char::is_whitespace) {
+            let pieces: Vec<&str> = chunk
+                .split(|c: char| !keep(c))
+                .filter(|w| !w.is_empty())
+                .collect();
+            out.extend(pieces.iter().map(|w| w.to_string()));
+            // Only short pieces ("lo-li", "chi.ld"): longer ones are words of their own, and
+            // joining them would glue neighbouring tags ("nude,eighteen"). Single letters
+            // ("y/o", "l.o.l.i") are left to `join_pieces`.
+            let len = |p: &&str| p.chars().count();
+            if pieces.len() > 1
+                && pieces.iter().any(|p| len(p) > 1)
+                && pieces.iter().all(|p| len(p) <= 4)
+            {
+                out.push(pieces.concat());
+            }
+        }
+        out
     };
     let alnum = |c: char| c.is_alphanumeric();
     let leet_chars = |c: char| c.is_alphanumeric() || matches!(c, '@' | '$' | '!' | '|');
@@ -303,10 +325,38 @@ fn views(text: &str) -> Vec<Vec<String>> {
         words(&folded, &alnum),
         leet_words.iter().map(|w| leet(w, 'i')).collect(),
         leet_words.iter().map(|w| leet(w, 'l')).collect(),
+        words(&split_case(&plain), &alnum),
     ];
     raw.into_iter()
         .map(|w| split_glued(join_pieces(without_naked_eye(w))))
         .collect()
+}
+
+/// Views ages are read from: as written, folded, and split at case and digit changes (not the
+/// numbers-for-letters views, which would turn "18" into something else).
+const AGE_VIEWS: [usize; 3] = [0, 1, 4];
+
+/// The folded text with a space wherever a lowercase letter meets a capital or a letter meets a
+/// digit ("LittleGirl" → "little girl", "12years" → "12 years").
+fn split_case(plain: &str) -> String {
+    let mut out = String::with_capacity(plain.len() + 8);
+    let mut prev: Option<char> = None;
+    for c in plain.chars() {
+        if let Some(p) = prev {
+            let case = p.is_lowercase() && c.is_uppercase();
+            let digit = (p.is_ascii_digit() && c.is_alphabetic())
+                || (p.is_alphabetic() && c.is_ascii_digit());
+            if case || digit {
+                out.push(' ');
+            }
+        }
+        out.extend(match fold_capital(c) {
+            Some(l) => vec![l],
+            None => c.to_lowercase().flat_map(fold).collect::<Vec<_>>(),
+        });
+        prev = Some(c);
+    }
+    out
 }
 
 /// Characters that show nothing: soft hyphen, zero-width and joiner characters, direction
@@ -599,13 +649,128 @@ fn has_triple_letter(w: &str) -> bool {
     c.windows(3).any(|t| t[0] == t[1] && t[1] == t[2])
 }
 
-/// The phrase word by word, or glued into one word ("littlegirls").
+/// Ordinary words that start or end with a listed word ([`glued_to_filler`] skips them).
+const ORDINARY: &[&str] = &[
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "canteen",
+    "velveteen",
+    "umpteen",
+    "inbetween",
+    "childhood",
+    "childbirth",
+    "childcare",
+    "childless",
+    "childproof",
+    "childbearing",
+    "childminder",
+    "infantry",
+    "infantryman",
+    "analysis",
+    "analyses",
+    "analyst",
+    "analysts",
+    "analog",
+    "analogue",
+    "analogous",
+    "analytic",
+    "analytics",
+    "analytical",
+    "analgesic",
+    "analyze",
+    "analyse",
+    "analyzed",
+    "analysed",
+    "minority",
+    "minorities",
+    "rapeseed",
+    "lolipop",
+    "boobytrap",
+    "boobytrapped",
+    "pantyhose",
+    "breaststroke",
+    "congenital",
+    "homosexual",
+    "heterosexual",
+    "bisexual",
+    "asexual",
+    "transsexual",
+    "pansexual",
+    "intersexual",
+    "nonsexual",
+    "metrosexual",
+    "gobetween",
+    "brainchild",
+    "outstripping",
+    "redbreast",
+    "pussycat",
+    "pussywillow",
+];
+
+/// A listed word glued to another word of 3+ letters ("xxxteen", "teenxxxs"). Under-18 words
+/// of 4+ letters count; sexual words only from 5 letters, since the short ones start or end
+/// many ordinary words and names.
+fn glued_to_filler(token: &str, word: &str) -> bool {
+    let min = if UNDER_18.contains(&word) { 4 } else { 5 };
+    let w = word.chars().count();
+    if w < min
+        || ORDINARY
+            .iter()
+            .any(|o| token == *o || token.strip_suffix('s') == Some(o))
+    {
+        return false;
+    }
+    [
+        Some(token),
+        token.strip_suffix('s'),
+        token.strip_suffix("es"),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|t| {
+        let n = t.chars().count();
+        n >= w + 3 && n <= MAX_GLUED && (t.starts_with(word) || t.ends_with(word))
+    })
+}
+
+/// The word with a common ending ("sexier", "sexiest", "nudeness"); only for
+/// words of 4+ letters, so short words don't catch ordinary ones ("kidding").
+fn word_form(token: &str, word: &str) -> bool {
+    if word.chars().count() < 4 {
+        return false;
+    }
+    let mut stems = vec![word.to_string()];
+    if let Some(s) = word.strip_suffix('y') {
+        stems.push(format!("{s}i"));
+    }
+    if let Some(s) = word.strip_suffix('e') {
+        stems.push(s.to_string());
+    }
+    stems.iter().any(|stem| {
+        token
+            .strip_prefix(stem.as_str())
+            .is_some_and(|end| matches!(end, "er" | "est" | "ness" | "ed" | "d"))
+    })
+}
+
+/// The phrase word by word, or glued into one word ("littlegirls"). A single word also
+/// matches with a common ending, or glued to another word.
 fn has_phrase(words: &[String], phrase: &str) -> bool {
     if phrase.contains(' ') {
         let glued = phrase.replace(' ', "");
         if words.iter().any(|w| word_matches(w, &glued)) {
             return true;
         }
+    } else if words
+        .iter()
+        .any(|w| word_form(w, phrase) || glued_to_filler(w, phrase))
+    {
+        return true;
     }
     let parts: Vec<&str> = phrase.split(' ').collect();
     let last = parts.len() - 1;
@@ -620,6 +785,13 @@ fn has_phrase(words: &[String], phrase: &str) -> bool {
     })
 }
 
+/// "yearold", "yearsold", "yrsold", "yold" written as one word after a number.
+fn glued_old(rest: &str) -> bool {
+    rest.strip_suffix("olds")
+        .or_else(|| rest.strip_suffix("old"))
+        .is_some_and(|y| matches!(y, "y" | "yr" | "yrs" | "year" | "years"))
+}
+
 /// An age from 1 to 17: "12", "twelve" or "12yo" followed by "yo", "y o", "year old",
 /// "years old", "year olds", "yr old", "yrs old" or "years of age"; or "aged 12", "age of 12".
 /// A bare "age 12" doesn't count ("Bronze Age, 3 statues").
@@ -628,11 +800,25 @@ fn has_young_age(words: &[String]) -> bool {
         |w: &str| w.parse::<u32>().is_ok_and(|n| (1..18).contains(&n)) || NUMBER_WORDS.contains(&w);
     let at = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
     for (i, w) in words.iter().enumerate() {
+        // A number word glued to "yo" or "years": "twelveyo", "twelveyears old".
+        for n in NUMBER_WORDS {
+            if let Some(rest) = w.strip_prefix(n) {
+                if matches!(rest, "yo" | "yos") || glued_old(rest) {
+                    return true;
+                }
+                if matches!(rest, "y" | "yr" | "yrs" | "year" | "years")
+                    && (matches!(at(i + 1), "old" | "olds" | "o")
+                        || (at(i + 1) == "of" && at(i + 2) == "age"))
+                {
+                    return true;
+                }
+            }
+        }
         // Joined forms: "12yo", "12yr", "12yrs", "12y".
         let digits: String = w.chars().take_while(char::is_ascii_digit).collect();
         if !digits.is_empty() && young(&digits) {
             let rest = &w[digits.len()..];
-            if rest == "yo" {
+            if rest == "yo" || rest == "yos" || glued_old(rest) {
                 return true;
             }
             if matches!(rest, "y" | "yr" | "yrs") && (at(i + 1) == "old" || at(i + 1) == "o") {
@@ -641,7 +827,7 @@ fn has_young_age(words: &[String]) -> bool {
         }
         if young(w) {
             let next = at(i + 1);
-            if next == "yo" || (next == "y" && at(i + 1 + 1) == "o") {
+            if next == "yo" || next == "yos" || (next == "y" && at(i + 1 + 1) == "o") {
                 return true;
             }
             if matches!(next, "year" | "years" | "yr" | "yrs")
@@ -775,6 +961,24 @@ mod tests {
             "\u{FF4C}\u{FF4F}\u{FF4C}\u{FF49}, nude",
             // More invisible characters.
             "lo\u{2800}li, nu\u{FFF9}de",
+            // Glued to another word, CamelCase, split by punctuation, other word forms.
+            "cuteteen, nude",
+            "teenmodel, nakedbeach",
+            "LittleGirl, Nude",
+            "CuteTeen NudeArt",
+            "cuteteens, nude",
+            "12yearold, nude",
+            "twelveyearsold, nude",
+            "lo-li, nu-de",
+            "te.en, na.ked",
+            "teen, sexier",
+            "teen, nakedness",
+            // Ages written together or with other digits.
+            "12years old, nude",
+            "12year-old, nude",
+            "twelveyo, nude",
+            "12 yos, nude",
+            "\u{0661}\u{0662} year old, nude",
             // A "!" leading a word is a letter; a middle-dot "l".
             "!nfant, nude",
             "lo\u{0140}i, nude",
@@ -822,6 +1026,21 @@ mod tests {
             "18\u{00BD} year old whisky, naked flame of a candle",
             "cheese aged 1\u{00BD} years, naked flame",
             "\u{00BD} year old cheese, naked flame",
+            "eighteen year old whisky, nude lipstick, 18years old",
+            "the canteen analysis of a minority, nude colors",
+            "congenital heart study, sexual health leaflet for adults",
+            "homosexual couple, adults, nude painting",
+            "12 years later, a naked tree in winter",
+            "rapeseed field at noon, sensual light",
+            "1girl,nude,eighteen",
+            "adult,nsfw,canteen",
+            "woman,nude,in-between",
+            "childhood-friend reunion, adults, nude beach",
+            "analog-style photo of kids playing in a park",
+            "analyzing kids drawings",
+            "The Owl and the Pussycat, children's book illustration",
+            "children explicitly labelled diagram of the water cycle",
+            "a go-between, nude colors",
         ]
         .into_iter()
         .filter(|t| pairs_minor_with_sexual(t))
