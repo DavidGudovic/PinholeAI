@@ -1,6 +1,6 @@
 // Small building blocks used by the Models tab, Settings and First run (frontend B).
 // The shared primitives live in src/components/ui (frontend A) and are only imported here.
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { asCoreError, setCivitaiKey } from "../../lib/api";
 import type { CoreError, FamilyChoice, Fit, GroupStatus, VramNeed } from "../../lib/types";
@@ -61,7 +61,7 @@ export function Chip({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-medium transition-colors ${focusRing} ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-3 whitespace-nowrap text-xs font-medium transition-colors ${focusRing} ${
         disabled
           ? "cursor-not-allowed border-neutral-200 bg-white text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-600"
           : active
@@ -71,6 +71,56 @@ export function Chip({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * One filter-bar row that never wraps: when its items don't fit, the row scrolls sideways
+ * (a mouse wheel scrolls it too while it can still move; at either end the page scrolls).
+ */
+export function ScrollRow({ label, className = "", children }: { label?: string; className?: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  // Which ends have more to scroll to: those edges fade out, so a cut-off row reads as one.
+  const [more, setMore] = useState({ left: false, right: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const max = el.scrollWidth - el.clientWidth;
+      const left = el.scrollLeft > 1;
+      const right = max > 1 && el.scrollLeft < max - 1;
+      setMore((m) => (m.left === left && m.right === right ? m : { left, right }));
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaX !== 0 || e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return;
+      const max = el.scrollWidth - el.clientWidth;
+      if ((e.deltaY < 0 && el.scrollLeft <= 0) || (e.deltaY > 0 && el.scrollLeft >= max - 1)) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+    measure();
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("scroll", measure, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("scroll", measure);
+      ro?.disconnect();
+    };
+  }, []);
+  const mask =
+    more.left || more.right
+      ? `linear-gradient(to right, ${more.left ? "transparent, black 32px" : "black"}, ${more.right ? "black calc(100% - 32px), transparent" : "black"})`
+      : undefined;
+  return (
+    <div className="flex items-center gap-2" role={label ? "group" : undefined} aria-label={label}>
+      {label && <span className="shrink-0 text-xs font-medium text-neutral-500 dark:text-neutral-400">{label}</span>}
+      <div ref={ref} style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined} className={cx("flex min-w-0 flex-1 items-center overflow-x-auto [&>*]:shrink-0", className)}>
+        {children}
+      </div>
+    </div>
   );
 }
 

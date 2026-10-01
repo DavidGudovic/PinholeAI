@@ -77,7 +77,7 @@ export function ModelsTab() {
   return (
     <div ref={rootRef} className="h-full overflow-y-auto">
       <ScrollRootContext.Provider value={scroller}>
-        <div className="mx-auto max-w-7xl space-y-4 px-6 py-5">
+        <div className="mx-auto max-w-[1600px] space-y-4 px-6 py-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="text-xl font-semibold tracking-tight">Models</h1>

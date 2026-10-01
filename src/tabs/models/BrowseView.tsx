@@ -13,7 +13,7 @@ import { emitSettingsChanged, onSettingsChanged } from "../../settings/events";
 import { createModels } from "../../lib/state/model";
 import { useAppState } from "../../lib/state/store";
 import { CatalogCardView } from "./CatalogCardView";
-import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, Select, Skeleton } from "./controls";
+import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, ScrollRow, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
@@ -361,8 +361,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
           <Select label="Time" value={filters.period} onChange={(period) => update({ period })} options={options.periods.map((p) => ({ value: p.api, label: p.label }))} />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Look">
-          <span className="mr-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">Look</span>
+        <ScrollRow label="Look" className="gap-1.5 py-0.5">
           <Chip active={filters.look === null} onClick={() => update({ look: null })}>
             Any
           </Chip>
@@ -377,10 +376,9 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               {l.label}
             </Chip>
           ))}
-        </div>
+        </ScrollRow>
 
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Tags">
-          <span className="mr-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">Tags</span>
+        <ScrollRow label="Tags" className="gap-1.5 py-0.5">
           {options.tags.map((t) => {
             const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
             return (
@@ -395,37 +393,40 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               </Chip>
             );
           })}
-        </div>
+        </ScrollRow>
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-neutral-100 pt-3 dark:border-neutral-800">
-          <FilterGroup label="Safe mode">
-            <Segmented ariaLabel="Safe mode" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
-          </FilterGroup>
-          <FilterGroup label="Price">
-            <Select<PriceMode> label="Price" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
-          </FilterGroup>
-          <FilterGroup label="Commercial use">
-            <Segmented
-              ariaLabel="Commercial use"
-              options={COMMERCIAL_OPTIONS}
-              value={filters.commercialOnly ? "ok" : "any"}
-              onChange={(v) => update({ commercialOnly: v === "ok" })}
-            />
-          </FilterGroup>
-          <Toggle checked={filters.compatibleOnly} onChange={(v) => update({ compatibleOnly: v })} label={<span className="text-sm">Works with Pinhole</span>} />
-          <Toggle checked={filters.hideAnime} onChange={setHideAnime} label={<span className="text-sm">Hide anime</span>} />
-          {filters.kind === "models" && (
-            <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm">Runs on my card</span>} />
-          )}
-          {changed > 0 && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className={cx("ml-auto inline-flex items-center gap-1 rounded text-xs text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100", focusRing)}
-            >
-              <X className="h-3.5 w-3.5" /> Clear filters
-            </button>
-          )}
+        {/* One line: scrolls sideways in a narrow window instead of folding. */}
+        <div className="border-t border-neutral-100 pt-3 dark:border-neutral-800">
+          <ScrollRow className="gap-x-4 py-0.5">
+            <FilterGroup label="Safe mode">
+              <Segmented ariaLabel="Safe mode" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
+            </FilterGroup>
+            <FilterGroup label="Price">
+              <Select<PriceMode> label="Price" className="[&>select]:[field-sizing:content]" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
+            </FilterGroup>
+            <FilterGroup label="Commercial use">
+              <Segmented
+                ariaLabel="Commercial use"
+                options={COMMERCIAL_OPTIONS}
+                value={filters.commercialOnly ? "ok" : "any"}
+                onChange={(v) => update({ commercialOnly: v === "ok" })}
+              />
+            </FilterGroup>
+            <Toggle checked={filters.compatibleOnly} onChange={(v) => update({ compatibleOnly: v })} label={<span className="text-sm whitespace-nowrap">Works with Pinhole</span>} />
+            <Toggle checked={filters.hideAnime} onChange={setHideAnime} label={<span className="text-sm whitespace-nowrap">Hide anime</span>} />
+            {filters.kind === "models" && (
+              <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm whitespace-nowrap">Runs on my card</span>} />
+            )}
+            {changed > 0 && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className={cx("ml-auto inline-flex items-center gap-1 rounded text-xs whitespace-nowrap text-neutral-500 hover:text-neutral-900 hover:underline dark:hover:text-neutral-100", focusRing)}
+              >
+                <X className="h-3.5 w-3.5" /> Clear filters
+              </button>
+            )}
+          </ScrollRow>
         </div>
       </div>
 
@@ -550,7 +551,7 @@ function SkeletonCards({ count }: { count: number }) {
   return (
     <>
       {Array.from({ length: count }, (_, i) => (
-        <div key={`skeleton-${i}`} aria-hidden className="overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
+        <div key={`skeleton-${i}`} aria-hidden className="pinhole-card overflow-hidden rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
           <Skeleton className="aspect-[4/5] rounded-none" />
           <div className="space-y-2 p-3">
             <Skeleton className="h-4 w-3/4" />

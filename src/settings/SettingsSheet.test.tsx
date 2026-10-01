@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { installMocks } from "../lib/mock";
-import { getSettings } from "../lib/api";
-import { SettingsSheet } from "./SettingsSheet";
+
+vi.mock("../lib/api", async (orig) => ({ ...(await orig<typeof import("../lib/api")>()), openExternalLink: vi.fn(async () => undefined) }));
+
+const { installMocks } = await import("../lib/mock");
+const { getSettings, openExternalLink } = await import("../lib/api");
+const { SettingsSheet } = await import("./SettingsSheet");
 
 beforeAll(async () => {
   await installMocks();
@@ -47,5 +50,19 @@ describe("SettingsSheet", () => {
     // Put the setting back for the other tests.
     fireEvent.click(screen.getByRole("switch", { name: "Show paid models" }));
     await screen.findByText("Saved");
+  });
+
+  it("shows the usage guidelines and the licence in the app, and opens GitHub to report a problem", async () => {
+    render(<SettingsSheet open onClose={() => undefined} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Licence" }));
+    expect(await screen.findByText(/Pinhole Licence 1\.0/)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Usage guidelines" }));
+    expect(await screen.findByText("Not allowed")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Close" }).at(-1)!);
+    fireEvent.click(screen.getByRole("button", { name: "Report privately" }));
+    expect(openExternalLink).toHaveBeenLastCalledWith("https://github.com/DavidGudovic/PinholeAI/security/advisories/new");
+    fireEvent.click(screen.getByRole("button", { name: "Open a public issue" }));
+    expect(openExternalLink).toHaveBeenLastCalledWith("https://github.com/DavidGudovic/PinholeAI/issues/new/choose");
   });
 });

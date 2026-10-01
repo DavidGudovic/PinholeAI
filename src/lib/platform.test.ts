@@ -12,13 +12,15 @@ describe("platform", () => {
     expect(isWebKitGtk("Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0")).toBe(false);
   });
 
-  it("turns off backdrop blur and hover zoom on Linux", () => {
+  it("turns off backdrop blur, hover zoom and Browse card shadows on Linux", () => {
     const doc = document.implementation.createHTMLDocument();
     markPlatform(doc, LINUX);
     expect(doc.documentElement.classList.contains("webkitgtk")).toBe(true);
     expect(doc.head.querySelector("style")?.textContent).toBe(WEBKITGTK_CSS);
     expect(WEBKITGTK_CSS).toMatch(/backdrop-filter: none/);
     expect(WEBKITGTK_CSS).toMatch(/\.pinhole-hover-zoom \{[^}]*scale: none/);
+    expect(WEBKITGTK_CSS).toMatch(/\.pinhole-card \{[^}]*box-shadow: none/);
+    expect(WEBKITGTK_CSS).toMatch(/\.pinhole-card \.animate-pulse \{[^}]*animation: none/);
   });
 
   it("leaves Windows alone", () => {
