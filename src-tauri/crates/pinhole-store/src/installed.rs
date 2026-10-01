@@ -139,6 +139,10 @@ pub enum Lookup {
     Found,
     /// CivitAI marks the model as depicting a real person or a minor: it can't be used.
     Refused,
+    /// A file Pinhole offers itself (its own hash is in the shipped `models.yaml`): trusted
+    /// like a one-click download and not looked up. Recorded so a linked copy isn't hashed
+    /// again at every start.
+    Shipped,
 }
 
 impl InstalledFile {
@@ -147,7 +151,9 @@ impl InstalledFile {
     /// cleared it.
     pub fn safe_images_only(&self) -> bool {
         self.civitai.as_ref().is_some_and(|c| c.sfw_only)
-            || self.lookup.is_some_and(|l| l != Lookup::Found)
+            || self
+                .lookup
+                .is_some_and(|l| !matches!(l, Lookup::Found | Lookup::Shipped))
     }
 
     /// CivitAI marks the model as depicting a real person or a minor.
