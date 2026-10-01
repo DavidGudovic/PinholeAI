@@ -1127,7 +1127,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
                         Some(&detection.candidates),
                     );
                 }
-                pending.civitai = Some(civitai);
+                pending.civitai = Some(*civitai);
             }
             Outcome::NoMatch | Outcome::Failed => {}
         }

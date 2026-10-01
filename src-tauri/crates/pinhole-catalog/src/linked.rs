@@ -823,15 +823,16 @@ mod tests {
         }
     }
 
-    fn no_hash(_: &Path) -> Option<String> {
-        panic!("only parts are hashed")
+    /// Models and add-ons are hashed for the CivitAI lookup (the file itself, never a note's hash).
+    fn fake_hash(_: &Path) -> Option<String> {
+        Some("ee".repeat(32))
     }
 
     #[test]
     fn main_models_get_a_family_from_notes_and_names() {
         let reg = crate::testkit::registry();
         let family = |rel: &str, note: Option<&Note>| {
-            recognise(&reg, &found(rel, 1), &sdxl(), note, &mut no_hash)
+            recognise(&reg, &found(rel, 1), &sdxl(), note, &mut fake_hash)
                 .unwrap()
                 .family
                 .unwrap()
@@ -872,12 +873,12 @@ mod tests {
             &found("checkpoints/a_b.safetensors", 1),
             &sdxl(),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.kind, ModelKind::Checkpoint);
         assert_eq!(r.friendly_name, "a b");
-        assert!(r.sha256.is_empty());
+        assert_eq!(r.sha256, "ee".repeat(32), "the file itself is hashed");
 
         let flux_dev = header(
             &[
@@ -890,7 +891,7 @@ mod tests {
             &[],
         );
         let pick = |rel: &str| {
-            let r = recognise(&reg, &found(rel, 1), &flux_dev, None, &mut no_hash).unwrap();
+            let r = recognise(&reg, &found(rel, 1), &flux_dev, None, &mut fake_hash).unwrap();
             assert_eq!(r.kind, ModelKind::Diffusion);
             r.family.unwrap()
         };
@@ -924,7 +925,7 @@ mod tests {
             &found("loras/x.safetensors", 1),
             &lora(&[("ss_base_model_version", "sdxl_base_v1-0")]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.kind, ModelKind::Lora);
@@ -934,7 +935,7 @@ mod tests {
             &found("Lora/pony/y.safetensors", 1),
             &lora(&[]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family.as_deref(), Some("sdxl_pony"));
@@ -943,7 +944,7 @@ mod tests {
             &found("Lora/z.safetensors", 1),
             &lora(&[]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family, None);
@@ -960,7 +961,7 @@ mod tests {
             &found("Lora/z.safetensors", 1),
             &lora(&[]),
             Some(&note),
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family.as_deref(), Some("sd15"));
@@ -977,7 +978,7 @@ mod tests {
                 &found("Lora/z.safetensors", 1),
                 &lora(&[]),
                 Some(&flagged),
-                &mut no_hash
+                &mut fake_hash
             ),
             Err(Skipped::PersonOrMinor)
         );
@@ -1036,14 +1037,20 @@ mod tests {
                 &found("vae/other.safetensors", 123),
                 &vae,
                 None,
-                &mut no_hash
+                &mut fake_hash
             ),
             Err(Skipped::NotUsable)
         );
         // Not a model at all (unknown tensors).
         let junk = header(&[("foo.bar", "F16", &[4])], &[]);
         assert_eq!(
-            recognise(&reg, &found("x.safetensors", 1), &junk, None, &mut no_hash),
+            recognise(
+                &reg,
+                &found("x.safetensors", 1),
+                &junk,
+                None,
+                &mut fake_hash
+            ),
             Err(Skipped::NotUsable)
         );
     }

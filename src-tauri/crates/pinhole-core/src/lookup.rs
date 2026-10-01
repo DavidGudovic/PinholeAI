@@ -28,7 +28,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 pub enum Outcome {
     /// Known: the model's data and flags, and the name to show.
     Found {
-        civitai: CivitaiRef,
+        civitai: Box<CivitaiRef>,
         friendly_name: String,
     },
     /// Marked as showing a real person or someone under 18.
@@ -129,7 +129,7 @@ pub async fn look_up_with(client: &CivitaiClient, sha256: &str) -> Outcome {
     }
     Outcome::Found {
         friendly_name: pinhole_catalog::plan::friendly_name(&v, None),
-        civitai: CivitaiRef {
+        civitai: Box::new(CivitaiRef {
             model_id: v.model_id,
             version_id: v.id,
             model_name: Some(pinhole_catalog::plan::model_name(&v, None)),
@@ -140,7 +140,7 @@ pub async fn look_up_with(client: &CivitaiClient, sha256: &str) -> Outcome {
             creator_notes: None,
             // Fails closed when the model's data couldn't be fetched.
             sfw_only: pinhole_catalog::api::sfw_only_of(&v, model.as_ref()),
-        },
+        }),
     }
 }
 
@@ -190,12 +190,12 @@ pub fn apply(index: &mut InstalledIndex, id: &str, sha256: &str, outcome: &Outco
         if f.trigger_words.is_none() && c.trained_words.is_empty() {
             // Keep a linked note's trigger words when CivitAI lists none.
             let kept = f.civitai.as_ref().map(|old| old.trained_words.clone());
-            f.civitai = Some(c.clone());
+            f.civitai = Some((**c).clone());
             if let (Some(words), Some(new)) = (kept, f.civitai.as_mut()) {
                 new.trained_words = words;
             }
         } else {
-            f.civitai = Some(c.clone());
+            f.civitai = Some((**c).clone());
         }
     }
     *f != before
