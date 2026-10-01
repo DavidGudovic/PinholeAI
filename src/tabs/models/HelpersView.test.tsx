@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { HelperModel } from "../../lib/types";
 
 const helper = (over: Partial<HelperModel>): HelperModel => ({
@@ -66,14 +66,23 @@ describe("Helpers view", () => {
   });
 });
 
-describe("Helper picker", () => {
+describe("Describe model picker", () => {
   it("offers Automatic and installed helpers only, and saves the choice", async () => {
-    list = [helper({ installed: true, downloadBytes: 0 }), helper({ id: "qwen25_vl_7b", title: "Qwen2.5-VL 7B" })];
-    render(<AppProvider store={createStore()}><HelperPicker purpose="improve" /></AppProvider>);
-    const select = (await screen.findByLabelText("Model for Improve")) as HTMLSelectElement;
-    const labels = Array.from(select.options).map((o) => o.text);
-    expect(labels).toEqual(["Model: Automatic", "Qwen2.5-VL 3B", "Get more models…"]);
-    fireEvent.change(select, { target: { value: "describe" } });
-    await waitFor(async () => expect((await api.getSettings()).improveModel).toBe("describe"));
+    list = [
+      helper({ installed: true, downloadBytes: 0 }),
+      helper({ id: "qwen25_vl_7b", title: "Qwen2.5-VL 7B" }),
+      helper({ id: "qwen25_vl_7b_safe_off", title: "Qwen2.5-VL 7B abliterated", installed: true, downloadBytes: 0, needsSafeOff: true }),
+    ];
+    render(<AppProvider store={createStore()}><HelperPicker purpose="describe" /></AppProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Model: Automatic" }));
+    const menu = within(screen.getByRole("listbox", { name: "Model" }));
+    expect(menu.getAllByRole("menuitem")).toHaveLength(3);
+    expect(menu.getByText("Automatic")).toBeTruthy();
+    expect(menu.getByText("Get more models…")).toBeTruthy();
+    expect(menu.queryByText("Qwen2.5-VL 7B")).toBeNull();
+    // Safe mode is On (the default): the Safe-mode-Off helper is never offered.
+    expect(menu.queryByText("Qwen2.5-VL 7B abliterated")).toBeNull();
+    fireEvent.click(screen.getByText("Qwen2.5-VL 3B"));
+    await waitFor(async () => expect((await api.getSettings()).describeModel).toBe("describe"));
   });
 });

@@ -567,7 +567,7 @@ export type PriceMode = "free" | "include" | "paid_only";
 
 export interface BrowseQuery {
   kind: CatalogKind;
-  /** Look key from catalog-filters.yaml (realistic | anime | illustration | three_d | brand) or null. */
+  /** Look key from catalog-filters.yaml `looks` (e.g. realistic, anime) or null. */
   look: string | null;
   /** Tag keys from catalog-filters.yaml → tags; a model must match every one. */
   tags: string[];

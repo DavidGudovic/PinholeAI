@@ -15,6 +15,11 @@ on:
         required: false
         type: string
         default: "."
+      user_agent:
+        description: "User-Agent header to send (default: curl's)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
         env:
           URLS: ${{ inputs.urls }}
           JQ: ${{ inputs.jq }}
+          UA: ${{ inputs.user_agent }}
         run: |
           for u in $URLS; do
             case "$u" in
@@ -36,7 +42,7 @@ jobs:
             esac
             echo "===== GET $u"
             out=$(mktemp)
-            code=$(curl -sS -L --max-time 60 -o "$out" -w '%{http_code}' "$u" || echo "000")
+            code=$(curl -sS -L --max-time 120 ${UA:+-A "$UA"} -o "$out" -w '%{http_code} in %{time_total}s (connect %{time_connect}s, first byte %{time_starttransfer}s)' "$u" || echo "000")
             echo "HTTP $code"
             if jq -e . "$out" >/dev/null 2>&1; then
               jq -c "${JQ:-.}" "$out" 2>&1 | head -c 60000

@@ -3,6 +3,8 @@
 //! `max_extra_requests` extra requests per scroll, then `partial: true`
 //! ("Load more"). Each CivitAI request asks for `api_limit` models; every
 //! card they yield is returned (a page can hold more than `page_size`).
+//! A request that times out or loses its connection is asked once more; when a
+//! later request fails, the cards already found are shown with "Load more".
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -81,12 +83,28 @@ pub async fn browse<S: PageSource>(
     };
     let mut seen = HashSet::new();
     let mut requests = 0usize;
+    let mut retried = false;
     loop {
         if requests > 0 && !keep_going() {
             return Err(BrowseError::Superseded);
         }
         let params = filters.query_params(query, base_models, cursor.as_deref());
-        let page = source.fetch(params).await?;
+        let mut fetched = source.fetch(params.clone()).await;
+        // CivitAI sometimes takes a long time on one uncached page: ask once more.
+        if !retried && fetched.as_ref().is_err_and(is_slow_or_dropped) && keep_going() {
+            retried = true;
+            fetched = source.fetch(params).await;
+        }
+        let page = match fetched {
+            Ok(page) => page,
+            // A later request failed: show what was found; "Load more" asks for the rest.
+            Err(_) if requests > 0 && !out.items.is_empty() => {
+                out.next_cursor = cursor;
+                out.partial = true;
+                return Ok(out);
+            }
+            Err(e) => return Err(e.into()),
+        };
         requests += 1;
         for m in &page.items {
             if !seen.insert(m.id) {
@@ -114,6 +132,11 @@ pub async fn browse<S: PageSource>(
             return Ok(out);
         }
     }
+}
+
+/// A request that timed out or lost its connection (worth one more try).
+fn is_slow_or_dropped(e: &NetError) -> bool {
+    matches!(e, NetError::Timeout | NetError::Transport(_))
 }
 
 #[cfg(test)]
@@ -576,5 +599,128 @@ mod tests {
         // Safe + Free + Checkpoint + compatible: SD 3.5 dropped (incompatible),
         // the LoRA dropped (kind), pickle/pending ones kept but blocked.
         assert_eq!(ids, vec![139562, 5000, 618692, 777001, 800002]);
+    }
+
+    /// Answers each request with the next scripted result.
+    struct ScriptedSource {
+        answers: Mutex<Vec<Result<ModelsPage, NetError>>>,
+        calls: Mutex<Vec<Vec<(String, String)>>>,
+    }
+
+    impl ScriptedSource {
+        fn new(answers: Vec<Result<ModelsPage, NetError>>) -> Self {
+            Self {
+                answers: Mutex::new(answers.into_iter().rev().collect()),
+                calls: Mutex::new(vec![]),
+            }
+        }
+    }
+
+    impl PageSource for ScriptedSource {
+        fn fetch(
+            &self,
+            params: Vec<(String, String)>,
+        ) -> impl Future<Output = Result<Arc<ModelsPage>, NetError>> + Send {
+            self.calls.lock().unwrap().push(params);
+            let answer = self
+                .answers
+                .lock()
+                .unwrap()
+                .pop()
+                .unwrap_or(Err(NetError::Status(429)))
+                .map(Arc::new);
+            async move { answer }
+        }
+    }
+
+    async fn browse_nsfw(src: &ScriptedSource) -> Result<BrowsePage, BrowseError> {
+        let q = BrowseQuery {
+            content: ContentMode::All,
+            tags: vec!["nsfw".into()],
+            ..Default::default()
+        };
+        browse(src, &filters(), &q, &[], &env(), now(), go).await
+    }
+
+    #[tokio::test]
+    async fn a_timed_out_request_is_asked_once_more() {
+        let src = ScriptedSource::new(vec![Err(NetError::Timeout), Ok(page(1..25, 0, Some("c1")))]);
+        let out = browse(
+            &src,
+            &filters(),
+            &BrowseQuery::default(),
+            &[],
+            &env(),
+            now(),
+            go,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.items.len(), 24);
+        assert_eq!(out.next_cursor.as_deref(), Some("c1"));
+        let calls = src.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0], calls[1], "the same request again");
+    }
+
+    #[tokio::test]
+    async fn a_first_request_that_keeps_timing_out_is_an_error() {
+        let src = ScriptedSource::new(vec![Err(NetError::Timeout), Err(NetError::Timeout)]);
+        let out = browse_nsfw(&src).await;
+        assert!(matches!(out, Err(BrowseError::Net(NetError::Timeout))));
+        assert_eq!(src.calls.lock().unwrap().len(), 2, "one retry only");
+    }
+
+    #[tokio::test]
+    async fn busy_or_missing_answers_are_not_asked_again() {
+        for e in [NetError::Status(429), NetError::Status(500)] {
+            let src = ScriptedSource::new(vec![Err(e.clone())]);
+            let out = browse_nsfw(&src).await;
+            assert!(matches!(out, Err(BrowseError::Net(got)) if got == e));
+            assert_eq!(src.calls.lock().unwrap().len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_later_request_that_fails_keeps_the_cards_found() {
+        // 1 in 4 is NSFW → 6 cards from the first page, then CivitAI stops answering.
+        let src = ScriptedSource::new(vec![
+            Ok(page(1..25, 4, Some("c1"))),
+            Err(NetError::Timeout),
+            Err(NetError::Timeout),
+        ]);
+        let out = browse_nsfw(&src).await.unwrap();
+        assert_eq!(out.items.len(), 6);
+        assert!(out.partial, "Load more asks for the rest");
+        assert_eq!(out.next_cursor.as_deref(), Some("c1"));
+        assert_eq!(src.calls.lock().unwrap().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_later_failure_with_nothing_found_is_an_error() {
+        // Nothing matched on the first page: an empty "Load more" would hide the problem.
+        let src = ScriptedSource::new(vec![
+            Ok(page(1..25, 0, Some("c1"))),
+            Err(NetError::Status(429)),
+        ]);
+        let out = browse_nsfw(&src).await;
+        assert!(matches!(out, Err(BrowseError::Net(NetError::Status(429)))));
+    }
+
+    #[tokio::test]
+    async fn no_retry_once_a_newer_search_replaced_this_one() {
+        let src = ScriptedSource::new(vec![Err(NetError::Timeout), Ok(page(1..25, 0, None))]);
+        let out = browse(
+            &src,
+            &filters(),
+            &BrowseQuery::default(),
+            &[],
+            &env(),
+            now(),
+            || false,
+        )
+        .await;
+        assert!(matches!(out, Err(BrowseError::Net(NetError::Timeout))));
+        assert_eq!(src.calls.lock().unwrap().len(), 1);
     }
 }

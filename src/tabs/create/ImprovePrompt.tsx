@@ -3,7 +3,6 @@
 // PRIVACY: the prompt only travels to the local helper and back, through React state.
 import { useEffect, useRef, useState } from "react";
 import { Download, Undo2, WandSparkles } from "lucide-react";
-import { HelperPicker } from "../../components/HelperPicker";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { Button, Spinner, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
@@ -113,7 +112,6 @@ export function useImprovePrompt(familyId: string | null | undefined) {
   const undoable = undo && prompt === undo.after ? undo : null;
   const empty = !prompt.trim();
 
-  const picker = <HelperPicker purpose="improve" />;
   const button = undoable ? (
     <button
       type="button"
@@ -175,5 +173,5 @@ export function useImprovePrompt(familyId: string | null | undefined) {
       </p>
     ) : null;
 
-  return { button, picker, notice };
+  return { button, notice };
 }

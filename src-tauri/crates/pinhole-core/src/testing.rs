@@ -2243,6 +2243,79 @@ mod tests {
         generate::generate(&core, restyle(&room)).await.unwrap();
     }
 
+    /// Same character (a Create reference picture, or Edit), Fix details and Extend run through
+    /// the same result intake: made intimate from a brought-in photo of someone, each is blocked.
+    #[tokio::test]
+    async fn reference_fix_details_and_extend_of_a_brought_in_photo_cant_be_made_intimate() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let sdxl = register_fake_model(&core, "sdxl");
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(512, 512, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut px = Vec::new();
+        for y in 0..512u32 {
+            for x in 0..512u32 {
+                let on = (200..260).contains(&x) && (200..260).contains(&y);
+                px.extend_from_slice(if on { &[255u8; 4] } else { &[0, 0, 0, 255] });
+            }
+        }
+        let mask = session::import_image(
+            &core,
+            pinhole_engine::image::encode_png_rgba(&px, 512, 512).unwrap(),
+        )
+        .unwrap()
+        .id;
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                original: pinhole_check::Original { has_face: true },
+                ..Default::default()
+            },
+        );
+
+        let mut reference = GenerateRequest::txt2img(klein.clone(), "y");
+        reference.ref_image_ids = vec![photo.clone()];
+        let mut edit = GenerateRequest::txt2img(klein, "y");
+        edit.mode = GenMode::Edit;
+        edit.ref_image_ids = vec![photo.clone()];
+        let mut fix = GenerateRequest::txt2img(sdxl.clone(), "");
+        fix.mode = GenMode::Img2img;
+        fix.init_image_id = Some(photo.clone());
+        fix.mask_image_id = Some(mask);
+        fix.fix_details = true;
+        let mut extend = GenerateRequest::txt2img(sdxl, "y");
+        extend.mode = GenMode::Img2img;
+        extend.init_image_id = Some(photo.clone());
+        extend.extend = Some(generate::ExtendCanvas {
+            width: 900,
+            height: 512,
+            left: 0,
+            top: 0,
+        });
+        for (name, req) in [
+            ("reference", reference),
+            ("edit", edit),
+            ("fix details", fix),
+            ("extend", extend),
+        ] {
+            let e = generate::generate(&core, req).await.unwrap_err();
+            assert_eq!(e.code, "blocked", "{name}");
+            if cfg!(debug_assertions) {
+                assert!(
+                    e.details.unwrap().starts_with("photo_made_intimate"),
+                    "{name}"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn a_reopened_save_keeps_the_photo_it_was_made_from() {
         let (_tmp, core, _rec) = new_core();

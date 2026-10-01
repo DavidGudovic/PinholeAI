@@ -516,7 +516,7 @@ mod tests {
     async fn offline_browse_and_preview_guard() {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
         let opts = catalog_filters(&core).unwrap();
-        assert_eq!(opts.looks.len(), 5);
+        assert_eq!(opts.looks.len(), 10);
         core.offline.set(true);
         let page = browse(&core, BrowseQuery::default(), None).await.unwrap();
         assert!(page.offline && page.items.is_empty());

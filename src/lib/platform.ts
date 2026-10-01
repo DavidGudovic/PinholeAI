@@ -1,7 +1,9 @@
 // The Linux WebView is WebKitGTK. With NVIDIA drivers it repaints `backdrop-filter` on
 // every scroll frame (laggy Models list and details page) and draws an image that zooms
 // inside a CSS column layout as a gray box on hover. On Linux only, these rules switch
-// both off; Windows (WebView2) keeps them.
+// both off; Windows (WebView2) keeps them. Browse cards also drop their shadow and their
+// pulsing placeholders there: repainting ~100 shadows and pulses per scroll frame made
+// scrolling the grid lag (measured in WebKitGTK 2.52: average frame 57 ms → 22 ms).
 export const WEBKITGTK_CSS = `
 html.webkitgtk *, html.webkitgtk *::before, html.webkitgtk *::after {
   -webkit-backdrop-filter: none !important;
@@ -11,6 +13,13 @@ html.webkitgtk .pinhole-hover-zoom {
   scale: none !important;
   transform: none !important;
   transition: none !important;
+}
+html.webkitgtk .pinhole-card {
+  box-shadow: none !important;
+  transition: none !important;
+}
+html.webkitgtk .pinhole-card .animate-pulse {
+  animation: none !important;
 }`;
 
 /** True for the Linux WebView (WebKitGTK). */

@@ -26,6 +26,21 @@ looks:
   three_d:
     label: "3D"
     tags: ["3d", render, "3d render"]
+  painting:
+    label: "Painting"
+    tags: [painting, "oil painting", watercolor, "traditional art", impressionism]
+  pixel_art:
+    label: "Pixel art"
+    tags: ["pixel art", pixelart, "8-bit", "16-bit"]
+  line_art:
+    label: "Line art"
+    tags: [lineart, "line art", sketch, "ink drawing", drawing]
+  cinematic:
+    label: "Cinematic"
+    tags: [cinematic, "film still", movie, "film grain"]
+  vintage:
+    label: "Vintage"
+    tags: [vintage, retro, analog, "analog photography", "film photography"]
   brand:
     label: "Brand & product"
     tags: [product, "product photography", logo, advertising, packaging, commercial]
@@ -103,6 +118,30 @@ tags:
   scifi:
     label: "Sci-fi"
     tags: [sci-fi, "science fiction", scifi, cyberpunk, futuristic, space]
+  vehicles:
+    label: "Vehicles"
+    tags: [vehicle, vehicles, car, cars, motorcycle, spaceship, aircraft]
+  robots:
+    label: "Robots"
+    tags: [robot, robots, mecha, android, cyborg]
+  food:
+    label: "Food"
+    tags: [food, "food photography", dessert, drink]
+  fashion:
+    label: "Fashion"
+    tags: [fashion, "fashion design", outfit, "fashion photography"]
+  objects:
+    label: "Objects"
+    tags: [object, objects, item, items, props, "game item"]
+  backgrounds:
+    label: "Backgrounds"
+    tags: [background, backgrounds, wallpaper, environment, "environment art"]
+  textures:
+    label: "Textures"
+    tags: [texture, textures, pattern, patterns, seamless]
+  horror:
+    label: "Horror"
+    tags: [horror, creepy, eerie, "dark art"]
   nsfw:
     label: "NSFW"
     rule: made_for_adults

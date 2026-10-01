@@ -164,6 +164,8 @@ export function DescribeTab() {
             <p className="mt-0.5 text-sm text-neutral-500">Turn a picture into a prompt you can reuse. Runs on this computer.</p>
           </div>
 
+          {!unavailable && <HelperPicker purpose="describe" />}
+
           <div>
             <div className="mb-1.5 text-sm text-neutral-600 dark:text-neutral-400">Write it as</div>
             <Segmented
@@ -245,7 +247,6 @@ export function DescribeTab() {
         </div>
 
         <div className="shrink-0 space-y-2 border-t border-neutral-200 px-5 py-4 dark:border-neutral-800">
-          <HelperPicker purpose="describe" className="flex justify-end" />
           <Button variant="primary" size="lg" className="w-full" disabled={!img || !!busy || !!unavailable} onClick={() => void describe()}>
             <ScanText className="h-4 w-4" /> Describe
             <span className="ml-1 inline-flex gap-0.5 opacity-70">
