@@ -219,7 +219,7 @@ as an accusation, since a false block can hit an ordinary user (David, 2026-09-3
   hires fix at 4× (`wiring.rs`, `MAX_ASPECT`, `MAX_HIRES_SCALE`), and sampler, tiling and
   guidance override flags are never passed through from the Fine-tune extra arguments; the face finder and
   age estimate only on sexual photo-style results. Brought-in pictures are measured once (face
-  finder, then nudity + tagger if there is a face), only when a result made from them is intimate.
+  finder only), only when a result made from them is intimate.
   About 2.5 s per result on 4 cores, less on more; both models preload when a job starts.
 - **Coverage:** every result of Create, Variations, Restyle, Edit, Fix details and Extend is checked
   before it enters the session (result intake, `generate_inner`), so nothing unchecked reaches the

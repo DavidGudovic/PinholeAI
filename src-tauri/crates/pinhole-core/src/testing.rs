@@ -2200,7 +2200,7 @@ mod tests {
             "the original's readings were kept; only the fed-in step is measured"
         );
 
-        // Reset forgets the originals.
+        // After Reset, a new brought-in picture.
         session::clear(&core).await;
         let photo = session::import_image(
             &core,
