@@ -53,6 +53,10 @@ step "Rust tests (cargo test --workspace, includes the privacy + offline tests)"
 cargo test --workspace --locked --no-fail-fast
 done_
 
+step "No test-only code in the app build"
+scripts/check-release-features.sh
+done_
+
 step "Clippy (warnings are errors)"
 cargo clippy --workspace --all-targets --locked -- -D warnings
 done_

@@ -69,9 +69,34 @@ jobs:
             exit 1
           fi
 
+  safety:
+    name: Safety tests
+    needs: check
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # A failure here stops the release: the installers wait on this job. These crates hold the
+      # word check, the image check rules and their enforcement (one_way.rs), the catalog's model
+      # flags, AI marking and the privacy and offline tests. None of them needs the frontend or
+      # the Linux desktop libraries.
+      - name: Safety, enforcement and privacy tests
+        run: >-
+          cargo test --locked --no-fail-fast
+          -p pinhole-check -p pinhole-core -p pinhole-engine -p pinhole-catalog
+          -p pinhole-net -p pinhole-tests
+
+      - name: No test-only code in the app build
+        run: scripts/check-release-features.sh
+
   bundle:
     name: Installers
-    needs: check
+    needs: [check, safety]
     uses: ./.github/workflows/bundle.yml
 
   publish:
