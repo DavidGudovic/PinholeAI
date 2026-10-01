@@ -56,6 +56,9 @@ pub struct Registry {
     pub(crate) families: BTreeMap<String, Family>,
     /// Family ids in YAML order (shipped order, then ids added by overrides).
     pub(crate) family_order: Vec<String>,
+    /// SHA-256 (lowercase) of every model file the shipped `models.yaml` offers or knows,
+    /// read before the user's overrides are merged: what Pinhole trusts as its own files.
+    pub(crate) shipped_hashes: BTreeSet<String>,
 }
 
 /// Keys a child family never takes from its `inherits:` parent: they describe
@@ -63,6 +66,47 @@ pub struct Registry {
 /// `license_accept` is set on each family that needs it, so a permissively licensed
 /// child (FLUX.1 schnell) doesn't pick up its parent's licence.
 const NON_INHERITED_KEYS: &[&str] = &["download", "civitai_base_models", "license_accept"];
+
+/// The SHA-256 of every model file in the shipped document: family downloads and their other
+/// quants, `known_files` and `test_models`. Values that aren't a 64-digit hex hash (`TODO`)
+/// are skipped.
+fn shipped_file_hashes(shipped: &Value) -> BTreeSet<String> {
+    fn add(out: &mut BTreeSet<String>, v: Option<&Value>) {
+        if let Some(s) = v.and_then(Value::as_str).map(str::trim) {
+            if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
+                out.insert(s.to_ascii_lowercase());
+            }
+        }
+    }
+    fn add_download(out: &mut BTreeSet<String>, d: Option<&Value>) {
+        let Some(d) = d else { return };
+        add(out, d.get("sha256"));
+        if let Some(Value::Mapping(quants)) = d.get("alt_quants") {
+            for q in quants.values() {
+                add(out, q.get("sha256"));
+            }
+        }
+    }
+    let mut out = BTreeSet::new();
+    for section in ["families", "test_models"] {
+        if let Some(Value::Mapping(m)) = shipped.get(section) {
+            for entry in m.values() {
+                let d = if section == "families" {
+                    entry.get("download")
+                } else {
+                    Some(entry)
+                };
+                add_download(&mut out, d);
+            }
+        }
+    }
+    if let Some(Value::Sequence(known)) = shipped.get("known_files") {
+        for k in known {
+            add(&mut out, k.get("sha256"));
+        }
+    }
+    out
+}
 
 /// Licence acceptance (RELEASE-SPEC §6) comes from the shipped models.yaml only:
 /// `overrides.yaml` can neither drop nor change a `license_accept`.
@@ -149,6 +193,7 @@ impl Registry {
                 "models.yaml: the top level must be a mapping".into(),
             ));
         }
+        let shipped_hashes = shipped_file_hashes(&root);
         if let Some(over) = overrides_yaml {
             let over = parse_doc(over, "overrides.yaml")?;
             match over {
@@ -192,6 +237,7 @@ impl Registry {
             file,
             families,
             family_order,
+            shipped_hashes,
         })
     }
 
@@ -298,20 +344,11 @@ impl Registry {
 
     /// A model file Pinhole offers itself (a family's download or another quant of it, a
     /// known file, a test model), by SHA-256. Such a file needs no CivitAI lookup when it
-    /// is added by hand or found in a linked folder.
+    /// is added by hand or found in a linked folder. Only the shipped `models.yaml` counts:
+    /// a hash added through `Data/config/overrides.yaml` is not one of Pinhole's own files.
     pub fn is_shipped_file(&self, sha256: &str) -> bool {
-        let wanted = sha256.trim();
-        if wanted.len() != 64 {
-            return false;
-        }
-        let same = |s: &str| s.trim().eq_ignore_ascii_case(wanted);
-        let in_spec =
-            |d: &DownloadSpec| same(&d.sha256) || d.alt_quants.values().any(|q| same(&q.sha256));
-        self.known_file(wanted).is_some()
-            || self
-                .families()
-                .any(|f| f.download.as_ref().is_some_and(in_spec))
-            || self.file.test_models.values().any(in_spec)
+        self.shipped_hashes
+            .contains(&sha256.trim().to_ascii_lowercase())
     }
 
     pub fn known_files(&self) -> &[KnownFile] {

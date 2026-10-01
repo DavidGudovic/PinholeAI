@@ -1306,7 +1306,11 @@ hardware_profiles:
     flags: []
     prefer_quant: bf16
 
-# Exact files we recognise by hash (lowercase sha256).
+# Exact files we recognise by hash (lowercase sha256). Together with the downloads above,
+# these hashes are the files Pinhole trusts as its own (no "safe images only" badge). When a
+# download's pin changes, move the old hash here so copies already downloaded stay trusted;
+# a file is never trusted by its name. Hashes added in Data/config/overrides.yaml don't count.
+# Every model hash in this file is also recorded in pinhole-registry/src/tests/shipped-hashes.txt.
 known_files:
   - { sha256: 2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6, family: z_image_turbo, friendly_name: "Z-Image Turbo (bf16)" }   # also CivitAI model 2168935
   - { sha256: df1c5baa86d1398c979495a6072dbcee79444fdb884a2445582ba0769c44e9a1, family: z_image_turbo, friendly_name: "Z-Image Turbo (Q8_0)" }
