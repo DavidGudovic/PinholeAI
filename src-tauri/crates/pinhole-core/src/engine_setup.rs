@@ -54,7 +54,7 @@ pub fn selected_build(
     let cfg = engine_config(core)?;
     let backend = desired_backend(core);
     let sel = cfg.select_build(kind.pin(&cfg), pins::current_os(), &backend).map_err(|_| {
-        // Not `engine_missing`: the UI answers that code with "Set up engine", which can't help here.
+        // Not `engine_missing`: the UI answers that code with "Get the engine", which can't help here.
         CoreError::new("engine_failed", "Pinhole's engine isn't available for this system (Windows 10/11 and Ubuntu 24.04+ are supported).")
     })?;
     Ok((cfg, sel))

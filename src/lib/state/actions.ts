@@ -13,11 +13,13 @@ import {
   loraCompatible,
   referenceModel,
   takesReference,
+  unsavedEditIds,
   unsavedIds,
   willQueue,
   type EditMode,
   type ImgRef,
   type JobKind,
+  type LeaveKind,
   type QueuedJob,
   type TabId,
   type Toast,
@@ -280,6 +282,10 @@ export function makeActions(store: Store) {
   }
 
   async function upscale(resultId: string, factor: 2 | 4) {
+    // Read before the job: the source (and with it its batch) may be removed while it runs.
+    // The job holds the batch's reference picture, so Variations of the upscale still work.
+    const batchId = get().resultBatch[resultId];
+    const batch = batchId ? get().batches[batchId] : undefined;
     try {
       await withJob("upscale", async () => {
         const nonce = get().sessionNonce;
@@ -291,10 +297,8 @@ export function makeActions(store: Store) {
           throw cancelledError();
         }
         const refs = await jobRefs([im], nonce);
-        const batchId = get().resultBatch[resultId];
-        const batch = batchId ? get().batches[batchId] : undefined;
         dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
-      }, 1);
+      }, 1, [resultId, ...(batch?.request.refImageIds ?? [])]);
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
@@ -343,13 +347,36 @@ export function makeActions(store: Store) {
   /** The window is closing (or Reset was pressed): true = go ahead; false = unsaved pictures, the question dialog is now showing. */
   function requestLeave(what: "close" | "clear"): boolean {
     if (!unsavedIds(get()).length) return true;
+    afterEditReplaced = null;
     dispatch({ type: "askLeave", what });
     return false;
   }
 
-  async function finishLeave(what: "close" | "clear") {
+  // What runs when the user goes ahead with replacing Edit's history ("edit" in the dialog).
+  let afterEditReplaced: (() => Promise<void> | void) | null = null;
+
+  /**
+   * Another image is about to replace Edit's history: true = go ahead. With unsaved edit
+   * results, the unsaved-pictures dialog asks first and `then` runs if the user goes ahead.
+   */
+  function confirmReplaceEdit(then: () => Promise<void> | void): boolean {
+    if (!unsavedEditIds(get()).length) return true;
+    afterEditReplaced = then;
+    dispatch({ type: "askLeave", what: "edit" });
+    return false;
+  }
+
+  async function finishLeave(what: LeaveKind) {
     dispatch({ type: "askLeave", what: null });
-    if (what === "close") await closeWindow();
+    if (what === "edit") {
+      const then = afterEditReplaced;
+      afterEditReplaced = null;
+      try {
+        await then?.();
+      } catch (e) {
+        toast(api.asCoreError(e).message);
+      }
+    } else if (what === "close") await closeWindow();
     else await clearSession();
   }
 
@@ -397,13 +424,14 @@ export function makeActions(store: Store) {
     if (edit) dispatch({ type: "patchEdit", patch: { loras: edit } });
   }
 
-  function sendToEdit(id: string) {
+  function sendToEdit(id: string, confirmed = false) {
     const ref = get().images[id];
     if (!ref) return;
     if (editBusy(get())) {
       toast("Wait for the edits in progress to finish first.");
       return;
     }
+    if (!confirmed && !confirmReplaceEdit(() => sendToEdit(id, true))) return;
     dispatch({ type: "editLoad", ref });
     setTab("edit");
   }
@@ -438,7 +466,7 @@ export function makeActions(store: Store) {
    * one, else "Describe a change" in Edit, which offers a one-click edit model when none is
    * installed. The image keeps its id, so its origin follows every result made from it.
    */
-  function sameCharacter(id: string) {
+  function sameCharacter(id: string, confirmed = false) {
     const s = get();
     const ref = s.images[id];
     if (!ref) return;
@@ -465,6 +493,7 @@ export function makeActions(store: Store) {
       toast("Wait for the edits in progress to finish first.");
       return;
     }
+    if (!confirmed && !confirmReplaceEdit(() => sameCharacter(id, true))) return;
     dispatch({ type: "editLoad", ref });
     dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
     // One picture in, not a two-image combine with a leftover image 2.
@@ -492,11 +521,22 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- import
-  async function importToEdit(blob: Blob) {
+  /** Reset pressed while an image was being read: it belongs to the cleared session. */
+  function importOutlived(ref: ImgRef, nonce: number) {
+    if (!resetting && get().sessionNonce === nonce) return false;
+    releaseRefs([ref], true);
+    return true;
+  }
+
+  /** Resolves without loading when the user is first asked about unsaved edits (it loads if they go ahead). */
+  async function importToEdit(blob: Blob, confirmed = false) {
     if (editBusy(get())) throw busyError();
+    if (!confirmed && !confirmReplaceEdit(() => importToEdit(blob, true))) return;
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return;
     // An edit started while the image was being read: keep its history.
     if (editBusy(get())) {
       releaseRefs([ref], true);
@@ -511,19 +551,17 @@ export function makeActions(store: Store) {
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
-    // Reset pressed while it was being read: it belongs to the cleared session.
-    if (resetting || get().sessionNonce !== nonce) {
-      releaseRefs([ref], true);
-      return;
-    }
+    if (importOutlived(ref, nonce)) return;
     dispatch({ type: "createSetRef", ref });
   }
   /** The optional second image for "Describe a change". */
   async function importSecondToEdit(blob: Blob) {
     if (editBusy(get())) throw busyError();
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return;
     if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
@@ -534,9 +572,11 @@ export function makeActions(store: Store) {
 
 
   async function importToDescribe(blob: Blob) {
+    const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
+    if (importOutlived(ref, nonce)) return;
     dispatch({ type: "describeLoad", ref });
   }
 
@@ -670,6 +710,7 @@ export function makeActions(store: Store) {
 
   async function clearSession() {
     resetting = true;
+    afterEditReplaced = null;
     try {
       clearQueue();
       if (get().job) await cancel();

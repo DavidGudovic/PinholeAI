@@ -1758,7 +1758,7 @@ async fn ensure_engine(
     engine_setup::emit_status(core);
 
     let installed = installed.ok_or_else(|| {
-        CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Set up engine” (Settings → Engine) to download it, then try again.")
+        CoreError::new("engine_missing", "The image engine isn't set up yet. Click “Get the engine” (Settings → Engine) to download it, then try again.")
     })?;
 
     engine_setup::ensure_runtime(core, &installed)?;

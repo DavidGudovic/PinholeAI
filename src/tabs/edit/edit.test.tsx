@@ -345,6 +345,69 @@ describe("Edit tab", () => {
     expect(req.fineTune.seed).toBeUndefined();
   });
 
+  it("adds an edit queued behind another after its result instead of replacing it", async () => {
+    const results: ((r: unknown) => void)[] = [];
+    vi.mocked(api.generate).mockImplementation(() => new Promise((res) => results.push(res as (r: unknown) => void)) as never);
+    const getImage = vi.spyOn(api, "getImage").mockResolvedValue(new ArrayBuffer(8));
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle", restylePrompt: "watercolor" } });
+    });
+    await flush();
+    act(() => void runPrimaryAction("edit"));
+    await waitFor(() => expect(results).toHaveLength(1));
+    act(() => store.dispatch({ type: "patchEdit", patch: { restylePrompt: "oil paint" } }));
+    await flush();
+    act(() => void runPrimaryAction("edit"));
+    await waitFor(() => expect(store.getState().queue).toHaveLength(1));
+    const meta = (id: string) => ({ id, width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "Test model", familyId: "", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: "a" });
+    await act(async () => results[0]({ images: [meta("r1")] }));
+    await waitFor(() => expect(results).toHaveLength(2));
+    await act(async () => results[1]({ images: [meta("r2")] }));
+    await waitFor(() => expect(store.getState().job).toBeNull());
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r1", "r2"]);
+    getImage.mockRestore();
+    vi.mocked(api.generate).mockImplementation(() => new Promise(() => undefined));
+  });
+
+  it("Ctrl+Z doesn't move the history behind an open dialog", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+        <div role="dialog">
+          <button type="button">In the dialog</button>
+        </div>
+      </AppProvider>,
+    );
+    const meta = { id: "r", width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "Test model", familyId: "", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: "a" };
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "editPush", ref: ref("r"), meta });
+    });
+    await flush();
+    fireEvent.keyDown(screen.getByRole("button", { name: "In the dialog" }), { key: "z", ctrlKey: true });
+    expect(store.getState().edit.index).toBe(1);
+    cleanup();
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(store.getState().edit.index).toBe(0);
+  });
+
   it("offers Upscale and shows the final prompt in Fine-tune", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

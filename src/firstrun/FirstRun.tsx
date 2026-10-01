@@ -127,9 +127,6 @@ export function FirstRun(props: { onDone: () => void }) {
       <>
         <BackButton onClick={() => go(-1)} />
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={finish} disabled={finishing}>
-            Skip
-          </Button>
           <Button variant="primary" size="lg" onClick={finish} disabled={finishing}>
             {finishing ? <Spinner className="h-4 w-4" /> : <Check className="h-4 w-4" />} Done
           </Button>
@@ -207,7 +204,7 @@ export function FirstRun(props: { onDone: () => void }) {
 
           {step === "models" && (
             <section className="w-full">
-              <StepHeading refObj={headingRef} title={vramLabel ? `Recommended for your GPU (${vramLabel})` : "Recommended for your computer"}>
+              <StepHeading refObj={headingRef} title={vramLabel ? `Recommended for your graphics card (${vramLabel})` : "Recommended for your computer"}>
                 Each pick is the best model that fits {machinePlain(hw)}.{" "}
                 {hw?.detected && cpuOnly ? "Without a graphics card, pictures are made by the processor and take a few minutes each. " : ""}Downloads keep going in the
                 background, so you can start right away. You can always find more in the Models tab.
@@ -323,7 +320,7 @@ function HardwareSummary({ hw }: { hw: HardwareView }) {
               <TriangleAlert className="h-6 w-6" />
             </span>
             <div className="text-sm text-amber-900 dark:text-amber-200">
-              <div className="text-lg font-semibold">No GPU found — images will be slow</div>
+              <div className="text-lg font-semibold">No graphics card found — pictures will be slow</div>
               <p className="mt-1">
                 Pinhole will use your processor, which can take a few minutes per picture. If you have a graphics card, update its driver and restart Pinhole.
               </p>
@@ -383,7 +380,7 @@ export function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine
             }}
           >
             {error ? <RotateCw className="h-4 w-4" /> : <Download className="h-4 w-4" />}
-            {error ? "Try again" : "Download engine"}
+            {error ? "Try again" : "Get the engine"}
           </Button>
         ) : !status ? (
           <Spinner className="h-5 w-5 text-neutral-400" />
@@ -408,7 +405,7 @@ export function EngineStep({ engine, hw }: { engine: ReturnType<typeof useEngine
       )}
       {!status?.installed && !busy && (
         <p className="mt-4 text-xs text-neutral-500">
-          The app needs the engine to make pictures. If you skip this, you can download it later in Settings → Engine.
+          The app needs the engine to make pictures. If you skip this, you can get it later in Settings → Engine.
         </p>
       )}
     </div>
