@@ -2937,7 +2937,7 @@ async fn upscale_inner(
         core,
         vec![png],
         Vec::new(),
-        crate::imagecheck::MadeBy::Upscale(&src),
+        crate::imagecheck::MadeBy::Upscale(src),
     )
     .await?
     .pop()
