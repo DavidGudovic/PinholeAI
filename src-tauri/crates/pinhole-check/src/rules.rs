@@ -6,7 +6,7 @@
 //! 2. a sexual image of someone who looks like a child;
 //! 3. an intimate image from a model CivitAI marks "safe images only".
 //!
-//! The thresholds are constants on purpose: nothing outside the code can change them.
+//! The thresholds are compile-time constants.
 
 /// Tagger `explicit` rating that counts as sexual on its own.
 pub const EXPLICIT: f32 = 0.35;
@@ -155,7 +155,7 @@ pub struct Original {
     pub has_face: bool,
 }
 
-/// Which rule blocked (shown only in dev builds; users see one neutral message).
+/// Which rule blocked (included in the error details in debug builds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Rule {
     PhotoMadeIntimate,
@@ -575,8 +575,7 @@ mod tests {
         assert!(!is_intimate(1.0, None));
     }
 
-    /// Regression: a brought-in picture of a person that already looked intimate used to be
-    /// exempt from rule 1. What a picture shows says nothing about consent, so it never is.
+    /// Rule 1 applies to every brought-in picture of a person, whatever it already shows.
     #[test]
     fn an_intimate_brought_in_picture_of_a_person_cant_be_edited_intimate() {
         let r = Readings {

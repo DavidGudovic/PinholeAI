@@ -243,9 +243,9 @@ components:
     url: https://huggingface.co/mradermacher/Qwen2.5-VL-7B-Instruct-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct.mmproj-Q8_0.gguf
     sha256: 2185ca0adf339f96845318c7b666f5d242f86bbace5657a89cb834785d0cea57
     size_mb: 853
-  # "Abliterated" Qwen2.5-VL 7B Instruct: the stock model with its refusals removed from the
-  # text part (https://huggingface.co/huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated, Apache-2.0),
-  # GGUF by mradermacher. Offered only with Safe mode Off; the word check still runs on its
+  # Qwen2.5-VL 7B Instruct, "abliterated" variant (upstream name;
+  # https://huggingface.co/huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated, Apache-2.0),
+  # GGUF by mradermacher. Offered only with Safe mode Off; the word check runs on its
   # output and the image check on every picture made. Its vision file is not needed:
   # all 519 tensors of this repo's mmproj-Q8_0 are byte-identical to qwen25_vl_7b_mmproj (only the
   # GGUF name metadata differs, checked 2026-09-30), so it shares that one.
@@ -1229,7 +1229,7 @@ captioner:
       components: [qwen25_vl_7b_q8, qwen25_vl_7b_mmproj]
     - id: qwen25_vl_7b_safe_off
       title: "Qwen2.5-VL 7B abliterated"
-      note: "Qwen2.5-VL 7B with its refusals removed (\"abliterated\"), so Describe and Improve also handle adult requests. Only while Safe mode is Off. The word check and the image check still apply."
+      note: "A Qwen2.5-VL 7B variant that also handles adult themes in Describe and Improve. Only while Safe mode is Off. The word check and the image check still apply."
       components: [qwen25_vl_7b_safe_off_q4km, qwen25_vl_7b_mmproj]
       needs_safe_off: true
   prompts:

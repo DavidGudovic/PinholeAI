@@ -16,10 +16,8 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-/// Shown when the check stops something (the text check here, the image check too). Neutral on
-/// purpose: no details (they would have to quote the text), no retry hint (it read like an
-/// invitation to reword around the check) and no naming of harmful content, so a false block
-/// never reads as an accusation (David, 2026-09-30). The UI shows the usage guidelines with it.
+/// Message shown when the word check or the image check blocks a request. It includes no
+/// details about the text. The UI shows the usage guidelines with it.
 pub const BLOCKED_MESSAGE: &str = "Pinhole can't help with this. See the usage guidelines.";
 
 /// Terms that point at someone under 18. The last word of each also matches with a trailing
@@ -85,8 +83,7 @@ const TENS: &[&str] = &[
     "twenty", "thirty", "forty", "fourty", "fifty", "sixty", "seventy", "eighty", "ninety",
 ];
 
-/// Clearly sexual terms, same plural rule. Words with common harmless meanings ("cock",
-/// "tit", "thong") are left out.
+/// Sexual terms, same plural rule. Words with common non-sexual meanings are left out.
 const SEXUAL: &[&str] = &[
     "sex",
     "sexual",
@@ -332,8 +329,7 @@ impl std::fmt::Debug for CheckedPrompt {
 }
 
 /// True when `text` has at least one under-18 term and at least one sexual term. Both lists
-/// are matched against every spelling in [`views`], so look-alike letters, numbers for letters,
-/// accents, spaced-out letters, repeated letters and glued words are still read.
+/// are matched against every normalized spelling in [`views`].
 pub fn pairs_minor_with_sexual(text: &str) -> bool {
     let views = views(text);
     let lists = lists();
@@ -1216,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn blocks_spellings_that_hide_the_words() {
+    fn blocks_normalized_spellings() {
         let missed = [
             // Look-alike letters (Cyrillic о, Greek ο), accents, styled letters.
             "l\u{043E}li, nude",
@@ -1463,8 +1459,7 @@ mod tests {
 
     #[test]
     fn matches_whole_words_even_inside_hyphenated_words() {
-        // "kid" in "kid-friendly" is a whole word, so this is blocked. Accepted: rare, and
-        // the message says to change the words.
+        // "kid" in "kid-friendly" is a whole word, so this is blocked (known false positive).
         assert!(pairs_minor_with_sexual(
             "sexy sports car, kid-friendly cabin"
         ));

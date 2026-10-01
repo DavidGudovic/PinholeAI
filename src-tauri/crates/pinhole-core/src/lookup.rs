@@ -374,8 +374,7 @@ mod tests {
         idx.files[0].clone()
     }
 
-    /// Regression: the lookup used to run only when the family wasn't known locally, so a
-    /// file whose family Pinhole knew by its hash was never checked for a real person.
+    /// Files whose family Pinhole knows by its hash are still looked up.
     #[tokio::test]
     async fn a_resolved_family_is_still_looked_up_and_a_person_match_refused() {
         let (tmp, core) = test_core(Arc::new(Recorder::default()));
@@ -404,8 +403,8 @@ mod tests {
         assert_eq!(copies.count(), 0, "the copy is removed");
     }
 
-    /// Regression: Offline mode used to skip the lookup and leave the file unmarked. It now
-    /// counts as "safe images only" until the one retry when Offline mode is turned off.
+    /// In Offline mode a file counts as "safe images only" until the one retry when Offline
+    /// mode is turned off.
     #[tokio::test]
     async fn an_offline_add_is_safe_images_only_until_going_online() {
         let (tmp, core) = test_core(Arc::new(Recorder::default()));
@@ -464,8 +463,8 @@ mod tests {
         assert_eq!(by_hash_requests(&srv), 1);
     }
 
-    /// Regression: linked files used to be screened only when another app left a
-    /// `.civitai.info` note next to them.
+    /// Linked files are looked up whether or not another app left a `.civitai.info` note
+    /// next to them.
     #[tokio::test]
     async fn linked_files_without_a_note_are_looked_up() {
         let (tmp, core) = test_core(Arc::new(Recorder::default()));
@@ -643,8 +642,7 @@ mod tests {
             trigger_words: None,
             lookup: None,
         };
-        // Regression (Codex audit): a file named like a family's download, with a hash
-        // Pinhole doesn't know, used to be trusted by its name. Only the hash counts now.
+        // Only the hash decides whether a file is a shipped download, not its name.
         let fam = registry.families().find(|f| f.download.is_some()).unwrap();
         let dl = fam.download.as_ref().unwrap();
         let mut old_pin = file(

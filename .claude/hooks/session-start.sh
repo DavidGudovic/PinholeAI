@@ -9,7 +9,7 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
-# Run in the background so the session can start answering at once (David, 2026-09-28).
+# Run in the background so the session can start answering at once.
 # Builds and tests may have to wait until this finishes; 15 min covers a cold Rust compile.
 echo '{"async": true, "asyncTimeout": 900000}'
 
@@ -42,7 +42,7 @@ cargo test --workspace --locked --no-run --quiet >/dev/null 2>&1 \
   || log "workspace doesn't compile yet — run 'cargo test --workspace --no-run' to see why (continuing)"
 
 # 4. Read-only checkout of the pinned upstream engine source (server API docs, CLI flags,
-#    get_sd_version() for registry detection rules) — see CLAUDE.md "Engine rules".
+#    get_sd_version() for registry detection rules).
 # engine.yaml pins Pinhole's fork build; its `commit` is the upstream commit the build is made from.
 SD_COMMIT="$(sed -n '/^stable_diffusion_cpp:/,/^[^ #]/{s/^  commit: *//p}' config/engine.yaml | head -1)"
 SD_SRC="${HOME}/leejet/stable-diffusion.cpp"

@@ -1844,34 +1844,35 @@ mod tests {
         let _ = leftover.wait();
     }
 
+    /// Pretend the upscaler component is installed.
+    fn install_fake_upscaler(core: &Arc<AppCore>) {
+        let (rel, size) = write_dummy(core, ModelKind::Upscaler, "RealESRGAN_x4plus.pth");
+        core.installed.lock().upsert(InstalledFile {
+            id: "up".into(),
+            rel_path: rel,
+            kind: ModelKind::Upscaler,
+            sha256: "0".repeat(64),
+            size_bytes: size,
+            family: None,
+            component_id: Some(generate::UPSCALER_COMPONENT.into()),
+            friendly_name: "ESRGAN".into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+            trigger_words: None,
+            lookup: None,
+        });
+    }
+
     #[tokio::test]
     async fn upscale_uses_installed_esrgan() {
         let (_tmp, core, rec) = new_core();
         let mock = MockSdServer::start().await;
         use_external_engine(&core, &mock.base_url());
         let model = register_fake_model(&core, "sdxl");
-        // Pretend the upscaler component is installed.
-        {
-            let (rel, size) = write_dummy(&core, ModelKind::Upscaler, "RealESRGAN_x4plus.pth");
-            let mut idx = core.installed.lock();
-            idx.upsert(InstalledFile {
-                id: "up".into(),
-                rel_path: rel,
-                kind: ModelKind::Upscaler,
-                sha256: "0".repeat(64),
-                size_bytes: size,
-                family: None,
-                component_id: Some(generate::UPSCALER_COMPONENT.into()),
-                friendly_name: "ESRGAN".into(),
-                civitai: None,
-                added_at: 0,
-                last_used: None,
-                observed_vram_gb: None,
-                dtype: None,
-                trigger_words: None,
-                lookup: None,
-            });
-        }
+        install_fake_upscaler(&core);
         let mut req = GenerateRequest::txt2img(model, "a cat");
         req.fine_tune.width = Some(64);
         req.fine_tune.height = Some(48);
@@ -2082,8 +2083,8 @@ mod tests {
         }
     }
 
-    /// Regression: a face the brought-in picture didn't show clearly (too small, blurred,
-    /// turned) but a later step does used to stay unseen for the whole chain.
+    /// A face the brought-in picture didn't show clearly (too small, blurred, turned) counts
+    /// once a later step of the chain shows it.
     #[tokio::test]
     async fn a_face_that_shows_up_later_in_a_brought_in_chain_counts() {
         let (_tmp, core, _rec) = new_core();
@@ -2242,6 +2243,79 @@ mod tests {
             },
         );
         generate::generate(&core, restyle(&room)).await.unwrap();
+    }
+
+    /// Same character (a Create reference picture, or Edit), Fix details and Extend run through
+    /// the same result intake: made intimate from a brought-in photo of someone, each is blocked.
+    #[tokio::test]
+    async fn reference_fix_details_and_extend_of_a_brought_in_photo_cant_be_made_intimate() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let sdxl = register_fake_model(&core, "sdxl");
+        let klein = register_fake_model(&core, "flux2_klein_4b");
+        let photo = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(512, 512, [1, 2, 3, 255]),
+        )
+        .unwrap()
+        .id;
+        let mut px = Vec::new();
+        for y in 0..512u32 {
+            for x in 0..512u32 {
+                let on = (200..260).contains(&x) && (200..260).contains(&y);
+                px.extend_from_slice(if on { &[255u8; 4] } else { &[0, 0, 0, 255] });
+            }
+        }
+        let mask = session::import_image(
+            &core,
+            pinhole_engine::image::encode_png_rgba(&px, 512, 512).unwrap(),
+        )
+        .unwrap()
+        .id;
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                original: pinhole_check::Original { has_face: true },
+                ..Default::default()
+            },
+        );
+
+        let mut reference = GenerateRequest::txt2img(klein.clone(), "y");
+        reference.ref_image_ids = vec![photo.clone()];
+        let mut edit = GenerateRequest::txt2img(klein, "y");
+        edit.mode = GenMode::Edit;
+        edit.ref_image_ids = vec![photo.clone()];
+        let mut fix = GenerateRequest::txt2img(sdxl.clone(), "");
+        fix.mode = GenMode::Img2img;
+        fix.init_image_id = Some(photo.clone());
+        fix.mask_image_id = Some(mask);
+        fix.fix_details = true;
+        let mut extend = GenerateRequest::txt2img(sdxl, "y");
+        extend.mode = GenMode::Img2img;
+        extend.init_image_id = Some(photo.clone());
+        extend.extend = Some(generate::ExtendCanvas {
+            width: 900,
+            height: 512,
+            left: 0,
+            top: 0,
+        });
+        for (name, req) in [
+            ("reference", reference),
+            ("edit", edit),
+            ("fix details", fix),
+            ("extend", extend),
+        ] {
+            let e = generate::generate(&core, req).await.unwrap_err();
+            assert_eq!(e.code, "blocked", "{name}");
+            if cfg!(debug_assertions) {
+                assert!(
+                    e.details.unwrap().starts_with("photo_made_intimate"),
+                    "{name}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -2460,9 +2534,49 @@ mod tests {
         assert_eq!(e.code, "blocked");
         // Ordinary pictures from it are fine.
         use_check(&core, FakeCheck::default());
-        generate::generate(&core, GenerateRequest::txt2img(model, "x"))
+        let ordinary = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
             .await
-            .unwrap();
+            .unwrap()
+            .images[0]
+            .id
+            .clone();
+        // An upscale of one stays under the rule: the upscaler adds no model of its own.
+        install_fake_upscaler(&core);
+        use_check(
+            &core,
+            FakeCheck {
+                readings: intimate_adult(),
+                ..Default::default()
+            },
+        );
+        let e = generate::upscale_image(&core, &ordinary, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        if cfg!(debug_assertions) {
+            assert!(e.details.unwrap().starts_with("safe_images_only"));
+        }
+        // Nor does restyling it with another, unmarked model lift the rule.
+        let other = register_fake_model(&core, "sdxl");
+        assert_ne!(other, model);
+        let mut restyle = GenerateRequest::txt2img(other.clone(), "y");
+        restyle.mode = GenMode::Img2img;
+        restyle.init_image_id = Some(ordinary.clone());
+        let e = generate::generate(&core, restyle).await.unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // Nor does saving it and opening the file again.
+        let saved = session::export_png(&core, &core.session.get(&ordinary).unwrap()).unwrap();
+        let reopened = session::import_image(&core, saved).unwrap().id;
+        let e = generate::upscale_image(&core, &reopened, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        // An upscale or restyle of a picture from an unmarked model isn't under it.
+        generate::upscale_image(&core, &made, 4).await.unwrap();
+        let mut restyle = GenerateRequest::txt2img(other, "y");
+        restyle.mode = GenMode::Img2img;
+        restyle.init_image_id = Some(made);
+        generate::generate(&core, restyle).await.unwrap();
     }
 
     /// RELEASE-SPEC §5: an add-on or model added by hand or linked counts as "safe images
@@ -2586,21 +2700,20 @@ mod tests {
         let e = generate::generate(&core, req.clone()).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
-        // Regression: clearing the add-on's trigger words doesn't take CivitAI's words out
-        // of the check; the add-on still steers the picture.
+        // CivitAI's trigger words stay part of the word check when the user clears the
+        // add-on's own trigger words.
         crate::models::set_lora_trigger_words(&core, &req.loras[0].lora_id, vec![]).unwrap();
         let e = generate::generate(&core, req).await.unwrap_err();
         assert_eq!(e.code, "blocked");
         assert!(mock.requests().is_empty());
 
-        // Under-18 terms in the negative prompt are how people keep them out.
+        // The negative prompt is not part of the word check.
         let mut req = GenerateRequest::txt2img(model.clone(), "a nude woman, oil painting");
-        req.fine_tune.negative_prompt = Some("child, loli".into());
+        req.fine_tune.negative_prompt = Some("child".into());
         generate::generate(&core, req).await.unwrap();
         assert_eq!(mock.requests().len(), 1);
 
-        // Regression: below CFG 1 the engine follows the negative prompt, so the request
-        // never carries less than 1, whatever Fine-tune or a pasted setting says.
+        // The request never carries a CFG below 1, whatever Fine-tune or a pasted setting says.
         for cfg in [0.0, 0.5, -3.0] {
             let mut req = GenerateRequest::txt2img(model.clone(), "a boat");
             req.fine_tune.cfg = Some(cfg);
@@ -2638,6 +2751,64 @@ mod tests {
             sent,
             "the idea isn't sent to the model"
         );
+    }
+
+    /// A brought-in picture is checked once, before it is first described.
+    #[tokio::test]
+    async fn describe_checks_a_brought_in_picture_first() {
+        let (_tmp, core, _rec) = new_core();
+        let llama = MockLlamaServer::start("Prompt: a lighthouse at dusk", 0).await;
+        use_external_captioner(&core, &llama.base_url());
+        let img = |c: [u8; 4]| {
+            session::import_image(&core, pinhole_engine::testutil::solid_png(32, 32, c))
+                .unwrap()
+                .id
+        };
+        let fine = img([1, 2, 3, 255]);
+        let fake = FakeCheck::default();
+        let counts = fake.counts.clone();
+        use_check(&core, fake);
+        for _ in 0..2 {
+            describe::describe_image(&core, &fine, describe::DescribeStyle::Sentence)
+                .await
+                .unwrap();
+        }
+        assert_eq!(counts.lock().0, 1, "checked once");
+
+        let mut readings = intimate_adult();
+        readings.tags.as_mut().unwrap().minor = 0.9;
+        use_check(
+            &core,
+            FakeCheck {
+                readings,
+                ..Default::default()
+            },
+        );
+        let sent = llama.requests().len();
+        let e =
+            describe::describe_image(&core, &img([4, 5, 6, 255]), describe::DescribeStyle::Tags)
+                .await
+                .unwrap_err();
+        assert_eq!(e.code, "blocked");
+        assert_eq!(
+            llama.requests().len(),
+            sent,
+            "the picture isn't sent to the model"
+        );
+
+        // And nothing is described without the check's files.
+        use_check(
+            &core,
+            FakeCheck {
+                missing: vec!["nudity"],
+                ..Default::default()
+            },
+        );
+        let e =
+            describe::describe_image(&core, &img([7, 8, 9, 255]), describe::DescribeStyle::Tags)
+                .await
+                .unwrap_err();
+        assert_eq!(e.code, "check_missing");
     }
 
     #[tokio::test]
@@ -2742,8 +2913,7 @@ mod tests {
         assert!(body["max_tokens"].as_u64().unwrap() <= 200);
     }
 
-    /// Regression: engine.yaml's launch defaults (editable in some installs) can't load
-    /// content past the checks.
+    /// engine.yaml's launch defaults are filtered to tuning flags.
     #[tokio::test]
     async fn sd_args_keep_only_tuning_launch_defaults() {
         let (_tmp, core, _) = new_core();
@@ -3462,7 +3632,7 @@ mod tests {
                 m.contains("digitalsourcetype/trainedAlgorithmicMedia"),
                 "{m}"
             );
-            assert!(!m.contains("Pinhole"), "no app name (David): {m}");
+            assert!(!m.contains("Pinhole"), "no app name: {m}");
             assert!(!m.contains("a boat"));
             let path = tmp.path().join(format!("as_{with_settings}.png"));
             let saved = std::fs::read(

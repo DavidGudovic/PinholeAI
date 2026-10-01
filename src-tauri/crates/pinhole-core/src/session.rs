@@ -1,4 +1,4 @@
-//! In-memory image store (CLAUDE.md privacy rule 3): generated and imported
+//! In-memory image store (SPEC §4): generated and imported
 //! images live here until Save or Reset. OWNER: engine agent.
 //!
 //! Nothing here touches disk except [`save_image`] / [`save_image_as`], which
@@ -43,6 +43,9 @@ pub struct SessionImage {
     /// XMP or a C2PA manifest), read before its metadata was dropped. Written back on export;
     /// never used by the image check (anyone can write such a label onto a real photo).
     pub ai_label: Option<AiLabel>,
+    /// Made with a model or add-on marked "safe images only" (RELEASE-SPEC §3.2 rule 3), or
+    /// from a picture that was. A saved one opened again in the same session keeps it.
+    pub safe_images_only: bool,
 }
 
 /// A brought-in picture at the start of a chain of edits. Its bytes stay with every
@@ -113,7 +116,7 @@ impl Session {
     /// stored. The only way a made picture gets into the session: it takes nothing but a
     /// [`CheckedPng`].
     pub fn insert_generated(&self, epoch: u64, checked: CheckedPng, meta: ResultImage) -> bool {
-        let (png, made_from) = checked.into_parts();
+        let (png, made_from, safe_images_only) = checked.into_parts();
         let mut images = self.images.write();
         if self.epoch.load(Ordering::SeqCst) != epoch {
             return false;
@@ -128,6 +131,7 @@ impl Session {
             meta: Some(meta),
             made_from,
             ai_label: None,
+            safe_images_only,
         };
         images.insert(img.id.clone(), img);
         true
@@ -184,10 +188,10 @@ impl Session {
 pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage> {
     let info = img::sniff(&bytes).map_err(|e| CoreError::invalid(e.to_string()))?;
     let ai_label = provenance::ai_label(&bytes);
-    let made_from = core
-        .check
-        .exported_from(&bytes)
-        .unwrap_or_else(|| Arc::from(Vec::new()));
+    let (made_from, safe_images_only) = core.check.exported_from(&bytes).map_or_else(
+        || (Arc::from(Vec::new()), false),
+        |e| (e.made_from, e.safe_images_only),
+    );
     let (bytes, width, height) = if info.kind == Kind::Png {
         (
             pinhole_engine::png::scrub(&bytes)
@@ -212,6 +216,7 @@ pub fn import_image(core: &AppCore, bytes: Vec<u8>) -> CoreResult<ImportedImage>
         origin: Origin::Imported,
         made_from,
         ai_label,
+        safe_images_only,
     });
     Ok(ImportedImage { id, width, height })
 }
@@ -393,7 +398,7 @@ pub fn source_type(im: &SessionImage) -> Option<&'static str> {
 }
 
 /// The AI-generated marker (RELEASE-SPEC §2, EU AI Act Art. 50): XMP with only
-/// the IPTC digital source type ("made with AI"). No app name (David, 2026-09-30),
+/// the IPTC digital source type ("made with AI"). No app name,
 /// prompt, seed, model, user or machine.
 pub fn ai_marker_xmp(source: &str) -> String {
     format!(
@@ -432,7 +437,8 @@ fn marked_pixels(im: &SessionImage) -> CoreResult<(Vec<u8>, u32, u32)> {
 /// leaves as it came in (already scrubbed at import).
 pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     let bytes = export_bytes(core, im)?;
-    core.check.note_export(&bytes, im.sources());
+    core.check
+        .note_export(&bytes, im.sources(), im.safe_images_only);
     Ok(bytes)
 }
 
@@ -872,6 +878,7 @@ mod tests {
             origin,
             made_from: Arc::from(from),
             ai_label: None,
+            safe_images_only: false,
         }
     }
 

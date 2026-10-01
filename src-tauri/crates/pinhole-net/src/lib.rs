@@ -1,4 +1,4 @@
-//! The ONE HTTP client wrapper (CLAUDE.md privacy rule 5). Every outbound
+//! The ONE HTTP client wrapper (SPEC §4). Every outbound
 //! request in Pinhole goes through [`HttpClient`]. It enforces:
 //! * Offline mode — every call fails with [`NetError::Offline`] before a socket opens
 //!   (checked in [`HttpClient::check_url`], again in [`HttpClient::send`], on every

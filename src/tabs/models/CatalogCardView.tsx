@@ -93,7 +93,8 @@ export const CatalogCardView = memo(function CatalogCardView({
 
   return (
     // content-visibility: the browser skips layout/paint for cards far off screen.
-    <article className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+    // pinhole-card: no shadow or pulse on Linux (lib/platform.ts).
+    <article className="pinhole-card flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
       <button
         ref={ref}
         type="button"

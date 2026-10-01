@@ -597,6 +597,7 @@ pub async fn describe_image(
     let img = core.session.get(image_id).ok_or_else(|| {
         CoreError::not_found("That image isn't in this session anymore. Add it again.")
     })?;
+    crate::imagecheck::check_before_describe(core, &img).await?;
     let reg = core.registry();
     let instruction = reg
         .captioner()
@@ -888,8 +889,8 @@ pub async fn improve_prompt(
     })?;
     let (text, degenerate) =
         collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
-    // Before the fallbacks: text that would be blocked never comes back, even when short. A
-    // refusal that names what it declines is blocked too, on purpose: the check always runs.
+    // Before the fallbacks: the word check runs on every answer, including short ones and
+    // refusals.
     crate::text_check::check(&text)?;
     if is_refusal(&text) {
         return Ok(ImprovedPrompt {

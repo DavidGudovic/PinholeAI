@@ -23,7 +23,7 @@ pub use pinhole_catalog::view::{BrowsePage, CatalogCard, CatalogFilterOptions, I
 
 use crate::{AppCore, CoreError, CoreResult, InstallStarted};
 
-/// Largest preview image we fetch (CLAUDE.md: previews come through Rust).
+/// Largest preview image we fetch (previews come through Rust).
 pub const MAX_PREVIEW_BYTES: usize = 15 * 1024 * 1024;
 
 /// `catalog-filters.yaml`, loaded once per run.
@@ -516,7 +516,7 @@ mod tests {
     async fn offline_browse_and_preview_guard() {
         let (_t, core) = test_core(Arc::new(Recorder::default()));
         let opts = catalog_filters(&core).unwrap();
-        assert_eq!(opts.looks.len(), 5);
+        assert_eq!(opts.looks.len(), 10);
         core.offline.set(true);
         let page = browse(&core, BrowseQuery::default(), None).await.unwrap();
         assert!(page.offline && page.items.is_empty());

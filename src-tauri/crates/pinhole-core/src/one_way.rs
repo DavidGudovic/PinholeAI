@@ -1,8 +1,8 @@
-//! Guards the two choke points (RELEASE-SPEC §1) against a new path that skips them. The types
-//! do most of the work: `ImgGenRequest::new` takes only a word-checked `CheckedPrompt`, and
-//! `Session::insert_generated` takes only an image-checked `CheckedPng`. These tests catch the
-//! ways around the types: building a session picture or a checked picture by hand, calling
-//! the image engine from somewhere new, or turning on the test-only constructors in the app.
+//! Checks that the two choke points (RELEASE-SPEC §1) are the only paths. The types do most of
+//! the work: `ImgGenRequest::new` takes only a word-checked `CheckedPrompt`, and
+//! `Session::insert_generated` takes only an image-checked `CheckedPng`. These tests check that
+//! only the owning modules build those values, that only generate.rs calls the image engine,
+//! and that the app doesn't enable the test-only constructors.
 
 use std::path::{Path, PathBuf};
 
@@ -130,6 +130,22 @@ fn the_image_engine_is_asked_for_pictures_only_by_generate() {
         files_with("check_results("),
         ["generate.rs", "imagecheck.rs"]
     );
+}
+
+/// The image check works out every rule input itself from how a result was made
+/// (`imagecheck::MadeBy`): no feature passes or picks one.
+#[test]
+fn rule_inputs_are_worked_out_only_by_the_image_check() {
+    assert_eq!(files_with("rules::decide("), ["imagecheck.rs"]);
+    // The "safe images only" flag of files and pictures is read for the check only there
+    // (the session keeps it with a saved picture; the model lists show it as a badge).
+    assert_eq!(
+        files_with(".safe_images_only"),
+        ["imagecheck.rs", "inventory.rs", "session.rs"]
+    );
+    assert!(files_with("safe_images_only")
+        .iter()
+        .all(|f| f != "generate.rs"));
 }
 
 #[test]

@@ -66,7 +66,7 @@ impl PriceMode {
 #[serde(rename_all = "camelCase", default)]
 pub struct BrowseQuery {
     pub kind: CatalogKind,
-    /// Look key (`realistic` | `anime` | `illustration` | `three_d` | `brand`) or null.
+    /// Look key from `looks` (e.g. `realistic`, `anime`) or null.
     pub look: Option<String>,
     /// Tag keys (`catalog-filters.yaml → tags`); a model must match every one.
     pub tags: Vec<String>,
@@ -394,7 +394,7 @@ pub struct CatalogFilters {
     pub default_sort: String,
     pub default_period: String,
     pub allowed_file_formats: Vec<String>,
-    /// Always true in practice; the YAML can't turn scan checks off (CLAUDE.md).
+    /// Always true in practice; the YAML can't turn scan checks off.
     pub require_scans_success: bool,
     /// Cards per Browse page.
     pub page_size: u32,
@@ -856,7 +856,18 @@ pub(crate) mod tests {
         let f = filters();
         assert_eq!(
             f.looks.iter().map(|l| l.key.as_str()).collect::<Vec<_>>(),
-            ["realistic", "anime", "illustration", "three_d", "brand"]
+            [
+                "realistic",
+                "anime",
+                "illustration",
+                "three_d",
+                "painting",
+                "pixel_art",
+                "line_art",
+                "cinematic",
+                "vintage",
+                "brand"
+            ]
         );
         assert_eq!(f.page_size, 24);
         assert_eq!(f.api_limit, 50);

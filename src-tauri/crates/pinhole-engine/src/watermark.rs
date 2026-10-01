@@ -1,14 +1,13 @@
 //! Invisible "made with AI" watermark (RELEASE-SPEC §2, the second marking layer next to the
 //! XMP marker). It says one thing only, "made with AI": a fixed pattern that is the same for
-//! every copy of Pinhole, with no ID for the install, user, machine or picture (David,
-//! 2026-09-30: no app name either).
+//! every copy of Pinhole, with no ID for the install, user, machine or picture, and no app name.
 //!
 //! How: the picture's brightness is shrunk to a 256×256 grid, and a fixed ±1 pattern is added
 //! to five low/mid-frequency DCT coefficients of every 8×8 block of that grid (spread
 //! spectrum). The change is made smooth by scaling it back up to the picture's size, so it
 //! lives in coarse, low-contrast ripples of 1–3 levels (PSNR ~52 dB) that survive JPEG, resizing (the grid
-//! is relative to the picture, not to pixels) and screenshots. Crops and heavy filters remove
-//! it; that's accepted (the law asks for marking, not for an unremovable mark).
+//! is relative to the picture, not to pixels) and screenshots. It is not designed to survive
+//! heavy cropping or filtering.
 //!
 //! [`detect`] correlates the same coefficients with the pattern: unmarked pictures score
 //! about N(0, 1); marked ones score far above [`DETECT_THRESHOLD`].
