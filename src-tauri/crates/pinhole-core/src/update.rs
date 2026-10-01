@@ -18,8 +18,9 @@
 //! (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) from the maintainer's
 //! key, whose public half is built into the app (`src-tauri/update-key.pub`). The
 //! downloaded file must then match GitHub's size and the signed SHA-256. A release
-//! someone else uploaded (a compromised GitHub account) has no valid signature and
-//! is never installed. While no key is built in, [`SELF_UPDATE`] is off: every copy
+//! uploaded without that key (by someone who can change releases but can't run the
+//! Release workflow from `main` or a `v*` tag) has no valid signature and is never
+//! installed. While no key is built in, [`SELF_UPDATE`] is off: every copy
 //! is offered the release page and nothing is downloaded or installed in the app.
 
 use std::path::{Path, PathBuf};

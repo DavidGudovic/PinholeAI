@@ -122,6 +122,9 @@ jobs:
     name: Publish GitHub Release
     needs: [check, bundle]
     runs-on: ubuntu-22.04
+    # The update-signing key is a secret of this environment, which only `main` and `v*` tags
+    # may use (Settings → Environments → release → Deployment branches and tags).
+    environment: release
     steps:
       - name: Download installers
         uses: actions/download-artifact@v4
@@ -145,10 +148,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: repo
+          persist-credentials: false
 
       # In-app updates ("Update and restart") install only a release whose SHA256SUMS.txt is
-      # signed with the key in src-tauri/update-key.pub. The private key is a repository secret
-      # only the maintainer set (`npx tauri signer generate`). No key in the app = nothing to sign.
+      # signed with the key in src-tauri/update-key.pub. The private key is a secret of the
+      # `release` environment (`npx tauri signer generate`). No key in the app = nothing to sign.
       - name: Sign SHA256SUMS.txt (in-app updates)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.PINHOLE_UPDATE_KEY }}
@@ -163,8 +167,9 @@ jobs:
             echo "::error::src-tauri/update-key.pub is set but the PINHOLE_UPDATE_KEY secret is missing: the release couldn't be installed from the app."
             exit 1
           fi
-          cli=$(node -p "require('./repo/package-lock.json').packages['node_modules/@tauri-apps/cli'].version")
-          npx --yes "@tauri-apps/cli@$cli" signer sign upload/SHA256SUMS.txt
+          # The locked CLI from package-lock.json, not whatever npm serves today.
+          (cd repo && npm ci --ignore-scripts --no-audit --no-fund)
+          repo/node_modules/.bin/tauri signer sign upload/SHA256SUMS.txt
           node repo/scripts/verify-update-signature.mjs upload/SHA256SUMS.txt upload/SHA256SUMS.txt.sig "$pub"
 
       - name: Create / update release

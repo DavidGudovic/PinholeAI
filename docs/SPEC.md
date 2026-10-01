@@ -780,9 +780,11 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
 - **Updates** (manual only): **Update and restart** needs a release whose `SHA256SUMS.txt` is
   signed (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) with the maintainer's key. The
   public key is built into the app from `src-tauri/update-key.pub`; the private key is only the
-  `PINHOLE_UPDATE_KEY` repository secret, used by the Release workflow (which checks the signature
+  `PINHOLE_UPDATE_KEY` secret of the `release` environment (usable only from `main` and `v*`
+  tags), used by the Release workflow (which checks the signature
   with `scripts/verify-update-signature.mjs` before publishing). `SHA256SUMS.txt` comes from the
-  same release, so only its signature catches a release someone else uploaded. While
+  same release, so only its signature catches a release uploaded without the key (it doesn't help
+  if the maintainer's GitHub account itself is taken over). While
   `update-key.pub` is empty (`update::SELF_UPDATE` false), every copy is offered
   **Open download page** and nothing is downloaded or installed in the app. The rest of this entry
   describes in-app install. Settings → Check for updates asks

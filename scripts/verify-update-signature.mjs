@@ -41,8 +41,9 @@ const publicKey = createPublicKey({
 });
 const alg = sig.subarray(0, 2).toString();
 const data = readFileSync(file);
-const message = alg === "ED" ? createHash("blake2b512").update(data).digest() : data;
-if (alg !== "ED" && alg !== "Ed") fail(`unknown signature algorithm ${alg}`);
+// The app accepts only prehashed signatures (minisign "ED"), so the release gate does too.
+if (alg !== "ED") fail(`signature algorithm ${alg} isn't accepted by the app (expected ED)`);
+const message = createHash("blake2b512").update(data).digest();
 if (!verify(null, message, publicKey, sig.subarray(10))) fail(`${file}: signature does not match`);
 const comment = Buffer.from(trusted.slice("trusted comment: ".length));
 if (!verify(null, Buffer.concat([sig.subarray(10), comment]), publicKey, global)) {
