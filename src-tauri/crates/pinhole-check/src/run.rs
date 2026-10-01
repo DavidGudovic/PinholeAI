@@ -101,11 +101,7 @@ impl Checker {
         // the child tags.
         let tags = Some(self.tags(&mut l, &img)?);
         let faces = if rules::needs_faces(nudity, tags.as_ref()) {
-            let mut found = self.faces(&mut l, &img)?;
-            for f in found.iter_mut().filter(|f| f.0.counts()) {
-                f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
-            }
-            Some(found.into_iter().map(|f| f.0).collect())
+            Some(self.judged_faces(&mut l, &img)?)
         } else {
             None
         };
@@ -124,14 +120,10 @@ impl Checker {
         *self.last_used.lock() = Some(Instant::now());
         let nudity = self.nudity(&mut l, &img)?;
         let tags = Some(self.tags(&mut l, &img)?);
-        let mut found = self.faces(&mut l, &img)?;
-        for f in found.iter_mut().filter(|f| f.0.counts()) {
-            f.0.child_face = Some(self.child_face(&mut l, &img, f.1)?);
-        }
         Ok(Readings {
             nudity,
             tags,
-            faces: Some(found.into_iter().map(|f| f.0).collect()),
+            faces: Some(self.judged_faces(&mut l, &img)?),
         })
     }
 
@@ -140,7 +132,7 @@ impl Checker {
         let img = decode(png)?;
         let mut l = self.loaded.lock();
         *self.last_used.lock() = Some(Instant::now());
-        let has_face = self.faces(&mut l, &img)?.iter().any(|f| f.0.counts());
+        let has_face = self.original_has_face(&mut l, &img)?;
         if !has_face {
             return Ok(Original::default());
         }
@@ -233,8 +225,7 @@ impl Checker {
         })
     }
 
-    /// Faces with their box (x, y, w, h) in image pixels.
-    fn faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
+    fn face_model(&self, l: &mut Loaded) -> Result<Model, CheckError> {
         if l.faces.is_none() {
             l.faces = Some(self.load_checked(
                 &files::FACES,
@@ -245,14 +236,83 @@ impl Checker {
                 ],
             )?);
         }
-        let m = l.faces.clone().expect("loaded");
-        let found = find_faces(&m, img, 1.0)?;
+        Ok(l.faces.clone().expect("loaded"))
+    }
+
+    /// Faces with their box (x, y, w, h) in image pixels.
+    fn faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<(Face, [f32; 4])>, CheckError> {
+        let m = self.face_model(l)?;
+        let mut found = find_faces(&m, img, 1.0)?;
         if found.iter().any(|f| f.0.counts()) {
             return Ok(found);
         }
         // A face filling the whole picture (a close-up) is found more easily with a
-        // border around it.
-        find_faces(&m, img, 0.5)
+        // border around it. Small faces from the first pass are kept (a sexual photo with
+        // a face too small to judge is blocked).
+        found.extend(find_faces(&m, img, 0.5)?);
+        Ok(found)
+    }
+
+    /// Faces on a result, each big enough one with its age estimate. When none is found
+    /// upright, the picture is also tried turned 90/180/270° (someone lying down).
+    fn judged_faces(&self, l: &mut Loaded, img: &RgbImage) -> Result<Vec<Face>, CheckError> {
+        use image::imageops::{rotate180, rotate270, rotate90};
+        let upright = self.faces(l, img)?;
+        let mut pick = (upright, None);
+        if !pick.0.iter().any(|f| f.0.judged()) {
+            for turn in [rotate90, rotate180, rotate270] {
+                let turned = turn(img);
+                let found = self.faces(l, &turned)?;
+                if found.iter().any(|f| f.0.judged()) {
+                    // Small faces seen upright still count (fail closed).
+                    let mut both = found;
+                    both.extend(pick.0.into_iter().filter(|f| f.0.too_small_to_judge()));
+                    pick = (both, Some(turned));
+                    break;
+                }
+            }
+        }
+        let (mut found, turned) = pick;
+        let on = turned.as_ref().unwrap_or(img);
+        for f in found.iter_mut().filter(|f| f.0.judged()) {
+            f.0.child_face = Some(self.child_face(l, on, f.1)?);
+        }
+        Ok(found.into_iter().map(|f| f.0).collect())
+    }
+
+    /// Whether a brought-in picture shows a person. Searched harder than a result: a small
+    /// face counts (Edit and Upscale enlarge it), the picture is also tried turned on its
+    /// side and upside down, and a large picture is also searched in closer sections.
+    fn original_has_face(&self, l: &mut Loaded, img: &RgbImage) -> Result<bool, CheckError> {
+        use image::imageops::{crop_imm, rotate180, rotate270, rotate90};
+        let m = self.face_model(l)?;
+        let any = |img: &RgbImage, fill: f32| -> Result<bool, CheckError> {
+            Ok(find_faces(&m, img, fill)?
+                .iter()
+                .any(|f| f.0.counts_in_original()))
+        };
+        if any(img, 1.0)? || any(img, 0.5)? {
+            return Ok(true);
+        }
+        for turn in [rotate90, rotate180, rotate270] {
+            if any(&turn(img), 1.0)? {
+                return Ok(true);
+            }
+        }
+        let (w, h) = img.dimensions();
+        if w.max(h) > 1280 {
+            // 3 × 3 overlapping sections, each half the picture's size.
+            let (tw, th) = (w / 2, h / 2);
+            for i in 0..3 {
+                for j in 0..3 {
+                    let tile = crop_imm(img, i * tw / 2, j * th / 2, tw, th).to_image();
+                    if any(&tile, 1.0)? {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Confidence that a face is a child's: the age estimate's 0–2 and 3–9 groups together.
@@ -289,8 +349,21 @@ pub fn decode(png: &[u8]) -> Result<RgbImage, CheckError> {
         .map_err(|_| CheckError::Image)
 }
 
+/// A model's output as numbers. Anything not a finite number is an error, so the picture is
+/// dropped (fails closed) instead of every threshold reading as "not met".
 fn flat(t: &TValue) -> Result<Vec<f32>, CheckError> {
-    Ok(t.to_plain_array_view::<f32>()?.iter().copied().collect())
+    let v: Vec<f32> = t.to_plain_array_view::<f32>()?.iter().copied().collect();
+    finite(v)
+}
+
+fn finite(v: Vec<f32>) -> Result<Vec<f32>, CheckError> {
+    if v.iter().all(|x| x.is_finite()) {
+        Ok(v)
+    } else {
+        Err(CheckError::Run(
+            "a check model returned an invalid number".into(),
+        ))
+    }
 }
 
 fn softmax(v: &[f32]) -> Vec<f32> {
@@ -406,6 +479,19 @@ fn find_faces(m: &Model, img: &RgbImage, fill: f32) -> Result<Vec<(Face, [f32; 4
         }
         let s = stride as f32;
         for k in 0..n {
+            let raw = [
+                cls[[0, k, 0]],
+                obj[[0, k, 0]],
+                bbox[[0, k, 0]],
+                bbox[[0, k, 1]],
+                bbox[[0, k, 2]],
+                bbox[[0, k, 3]],
+            ];
+            if raw.iter().any(|x| !x.is_finite()) {
+                return Err(CheckError::Run(
+                    "a check model returned an invalid number".into(),
+                ));
+            }
             let score = (cls[[0, k, 0]].clamp(0.0, 1.0) * obj[[0, k, 0]].clamp(0.0, 1.0)).sqrt();
             if score < 0.5 {
                 continue;

@@ -5,10 +5,15 @@
 //! "safe images only" model), and how often each half of rule 2 fires on its own. A picture
 //! that would be blocked is deleted after it is measured.
 //! `FALSEPOS_VERBOSE=1` prints the scores behind each intimate or sexual count.
+//! `FALSEPOS_SCALE=0.2` shrinks every picture first (how the face rules behave on small faces).
 fn main() {
     let mut args = std::env::args().skip(1);
     // FALSEPOS_VERBOSE=1 also prints the scores of pictures counted as intimate or sexual.
     let verbose = std::env::var_os("FALSEPOS_VERBOSE").is_some();
+    let scale: f32 = std::env::var("FALSEPOS_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
     let c = pinhole_check::Checker::new(args.next().expect("check dir").into());
     for dir in args {
         let mut files: Vec<_> = std::fs::read_dir(&dir)
@@ -25,9 +30,20 @@ fn main() {
             mut minor_tag,
             mut young_face,
             mut adult_faces,
-        ) = (0, 0, 0, 0, 0, 0, 0);
+            mut small_face,
+        ) = (0, 0, 0, 0, 0, 0, 0, 0);
         for p in files {
             let Ok(img) = image::open(&p) else { continue };
+            let img = if scale < 1.0 {
+                let (w, h) = (img.width() as f32 * scale, img.height() as f32 * scale);
+                img.resize_exact(
+                    (w as u32).max(1),
+                    (h as u32).max(1),
+                    image::imageops::FilterType::Triangle,
+                )
+            } else {
+                img
+            };
             let mut png = Vec::new();
             img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
                 .unwrap();
@@ -58,7 +74,12 @@ fn main() {
             if t.minor >= pinhole_check::rules::MINOR_TAG {
                 minor_tag += 1;
             }
-            let faces: Vec<_> = r.faces.iter().flatten().filter(|f| f.counts()).collect();
+            let faces: Vec<_> = r.faces.iter().flatten().filter(|f| f.judged()).collect();
+            if pinhole_check::rules::is_photo_style(&t)
+                && r.faces.iter().flatten().any(|f| f.too_small_to_judge())
+            {
+                small_face += 1;
+            }
             if !faces.is_empty() {
                 adult_faces += 1;
             }
@@ -73,11 +94,13 @@ fn main() {
             if let Some(rule) = pinhole_check::rules::decide(&r, &[], false) {
                 blocked += 1;
                 println!("  BLOCK {} ({})", p.display(), rule.key());
-                let _ = std::fs::remove_file(&p);
+                if scale >= 1.0 {
+                    let _ = std::fs::remove_file(&p);
+                }
             }
         }
         println!(
-            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · minor tag ≥ {:.1}: {minor_tag} · photo-style child face ≥ {:.1}: {young_face} · with a face: {adult_faces}",
+            "{dir}: {n} pictures · rule 2 blocks {blocked} · intimate {intimate} · sexual {sexual} · minor tag ≥ {:.1}: {minor_tag} · photo-style child face ≥ {:.1}: {young_face} · with a face: {adult_faces} · photo-style face too small to judge: {small_face}",
             pinhole_check::rules::MINOR_TAG,
             pinhole_check::rules::CHILD_FACE,
         );
