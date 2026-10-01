@@ -107,7 +107,8 @@ jobs:
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           # A version with a suffix (1.1.0-rc.1) is a pre-release.
           prerelease: ${{ contains(needs.check.outputs.version, '-') }}
-          generate_release_notes: true
+          # The body below is the whole release note (no automatic list of pull requests).
+          generate_release_notes: false
           fail_on_unmatched_files: true
           files: upload/*
           body: |

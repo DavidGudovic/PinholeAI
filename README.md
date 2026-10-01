@@ -26,7 +26,9 @@ Windows 10/11 and Linux. NVIDIA, AMD and Intel GPUs, or the processor (slow). Po
 [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) and
 [llama.cpp](https://github.com/ggml-org/llama.cpp).
 
-![Pinhole's Create tab](docs/screenshots/tab-create-results-light.png)
+| Create | Pick a model that fits | Edit |
+|---|---|---|
+| ![The Create tab with a picture of a mountain lake](docs/screenshots/readme-create.jpg) | ![The model picker showing which models fit the graphics card](docs/screenshots/readme-models.jpg) | ![The Edit tab with Restyle and a picture of a small cottage](docs/screenshots/readme-edit.jpg) |
 
 ## Download
 
