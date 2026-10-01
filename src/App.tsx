@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Logo } from "./components/Logo";
 import { Toasts } from "./components/Toasts";
 import { UnsavedDialog } from "./components/UnsavedDialog";
+import { PasteChooser } from "./components/PasteChooser";
 import { onCloseRequested } from "./lib/state/platform";
 import { BlockedNotice } from "./components/BlockedNotice";
 import { LicencePrompt } from "./components/LicencePrompt";
@@ -172,6 +173,7 @@ function Shell() {
       >
         <ShortcutsList />
       </Dialog>
+      <PasteChooser />
       <UnsavedDialog />
       <Toasts />
       <BlockedNotice />

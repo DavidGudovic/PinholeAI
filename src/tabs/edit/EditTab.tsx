@@ -24,7 +24,6 @@ import {
   DropTarget,
   DropZone,
   useFilePicker,
-  useImagePaste,
 } from "../../components/ImageDrop";
 import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
@@ -201,7 +200,6 @@ export function EditTab() {
       setImporting(false);
     }
   };
-  useImagePaste(tab === "edit", (f) => void load(f));
   const picker = useFilePicker((f) => void load(f));
 
   const loadSecond = async (f: File) => {
@@ -227,6 +225,8 @@ export function EditTab() {
   useEffect(() => {
     masks.current.clear();
     wholeDetail.current.clear();
+    setCompare(false);
+    setError(null);
   }, [originalId]);
 
   // Set before the first await (the mask export), so a second click or Ctrl+Enter
