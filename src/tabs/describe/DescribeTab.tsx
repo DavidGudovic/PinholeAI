@@ -61,6 +61,9 @@ export function DescribeTab() {
     if (dl?.state === "done") void refreshStatus();
   }, [dl?.state, refreshStatus]);
 
+  // A new picture (from here, paste or another tab) starts without the last one's error.
+  useEffect(() => setError(null), [d.imageId]);
+
   const load = async (f: File) => {
     setError(null);
     setImporting(true);

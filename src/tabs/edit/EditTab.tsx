@@ -223,6 +223,7 @@ export function EditTab() {
   useEffect(() => {
     masks.current.clear();
     setCompare(false);
+    setError(null);
   }, [originalId]);
 
   // Set before the first await (the mask export), so a second click or Ctrl+Enter

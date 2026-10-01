@@ -4,8 +4,8 @@ import { useState } from "react";
 import { ImagePlus, ScanText, WandSparkles } from "lucide-react";
 import * as api from "../lib/api";
 import { useActions } from "../lib/state/AppProvider";
-import { takesReference, type TabId } from "../lib/state/model";
-import { useAppState } from "../lib/state/store";
+import { editBusy, takesReference, unsavedEditIds, type TabId } from "../lib/state/model";
+import { useAppState, useStore } from "../lib/state/store";
 import type { CoreError } from "../lib/types";
 import { useImagePaste } from "./ImageDrop";
 import { Dialog, ErrorNotice, Spinner, cx, focusRing } from "./ui";
@@ -39,6 +39,7 @@ export function PasteChooser() {
   const tab = useAppState((s) => s.tab);
   const referenceShown = useAppState((s) => !!s.create.refImageId || takesReference((s.models ?? []).find((m) => m.id === s.create.modelId)));
   const actions = useActions();
+  const store = useStore();
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState<PasteTarget | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
@@ -58,11 +59,19 @@ export function PasteChooser() {
 
   const use = async (target: PasteTarget) => {
     if (!file || busy) return;
+    if (target === "edit") {
+      const s = store.getState();
+      if (!editBusy(s) && unsavedEditIds(s).length) {
+        // Edit first asks about its unsaved pictures, and opens itself if the user goes ahead.
+        setFile(null);
+        void actions.importToEdit(file).catch(() => undefined);
+        return;
+      }
+    }
     setBusy(target);
     setError(null);
     try {
       if (target === "edit") {
-        // False: Edit asks about unsaved edits first, and opens itself if the user goes ahead.
         if (await actions.importToEdit(file)) actions.setTab("edit");
       } else if (target === "describe") {
         await actions.importToDescribe(file);
