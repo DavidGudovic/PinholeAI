@@ -2018,14 +2018,21 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
 }
 
 /// "Fix details" on the whole picture: the area (pixels) the engine draws at, 1.5× the
-/// model's area per side (as a hires fix does) or the picture's own area if that is larger.
-/// `None` when the picture is over 2× the model's area per side or over 2048 px on a side
-/// (the largest size the engine is asked to draw): drawn whole at that size the model
-/// repeats parts of the scene, and drawn smaller the result would lose detail.
+/// model's area per side (as a hires fix does) or the picture's own area if that is larger,
+/// and at most what keeps the longer side within 2048 px (the largest side [`size_like`]
+/// gives, so the picture keeps its shape). `None` when the picture is over 2× the model's
+/// area per side or over 2048 px on a side: drawn whole at that size the model repeats parts
+/// of the scene, and drawn smaller the result would lose detail.
 fn whole_detail_area(src_w: u32, src_h: u32, model_area: u64) -> Option<u64> {
-    let src_area = u64::from(src_w) * u64::from(src_h);
-    (src_area <= model_area * 4 && src_w.max(src_h) <= 2048)
-        .then(|| src_area.max(model_area * 9 / 4))
+    const MAX_SIDE: u64 = 2048;
+    let (long, short) = (
+        u64::from(src_w.max(src_h)),
+        u64::from(src_w.min(src_h).max(1)),
+    );
+    let src_area = long * short;
+    let fits = MAX_SIDE * MAX_SIDE * short / long;
+    (src_area <= model_area * 4 && long <= MAX_SIDE)
+        .then(|| src_area.max(model_area * 9 / 4).min(fits))
 }
 
 /// The pictures a job sends to the engine, read from the session only through here: every
@@ -3281,6 +3288,12 @@ mod tests {
         // Larger than that (a 4× upscale): too big to redraw whole.
         assert_eq!(whole_detail_area(4096, 4096, model), None);
         assert_eq!(whole_detail_area(3000, 1000, model), None);
+        // Wide: drawn no wider than 2048 px, so it keeps its shape.
+        let area = whole_detail_area(1920, 800, model).unwrap();
+        let (w, h) = size_like(1920, 800, area, 64);
+        assert!(w <= 2048, "{w}x{h}");
+        let ratio = f64::from(w) / f64::from(h);
+        assert!((ratio - 2.4).abs() < 0.1, "{w}x{h}");
     }
 
     #[test]

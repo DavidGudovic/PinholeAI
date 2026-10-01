@@ -122,6 +122,8 @@ export function EditTab() {
   const mask = useRef<MaskHandle>(null);
   // The mask each edit was made with (by result image), so "Try again" repaints the same area.
   const masks = useRef(new Map<string, Blob | null>());
+  // Steps made by Add detail (Fix details with nothing painted): Try again redoes the whole picture.
+  const wholeDetail = useRef(new Set<string>());
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
 
@@ -224,6 +226,7 @@ export function EditTab() {
   const originalId = e.chain[0]?.imageId;
   useEffect(() => {
     masks.current.clear();
+    wholeDetail.current.clear();
   }, [originalId]);
 
   // Set before the first await (the mask export), so a second click or Ctrl+Enter
@@ -274,6 +277,7 @@ export function EditTab() {
       const made = now.chain[now.index];
       if (now.index === from + 1 && made && made.imageId !== current.id) {
         masks.current.set(made.imageId, m);
+        if (fixing && !m) wholeDetail.current.add(made.imageId);
         setCompare(true);
         setCompareWith("previous");
       }
@@ -352,8 +356,8 @@ export function EditTab() {
     (fixing ||
       (extending ? !!canvas : text.trim().length > 0 || !!e.styleId));
   // An upscale step has nothing to redo; the original has no step before it.
-  // Fix details redoes the step with the spot painted for it (or the whole picture if none
-  // was). Not while edits run or wait:
+  // Fix details redoes the step with the spot painted for it, or the whole picture again
+  // after Add detail. Not while edits run or wait:
   // redoing a step drops the steps after it, which could be their results.
   // Extend redoes from the step before, which is smaller than the shown result.
   const prevImg =
@@ -364,7 +368,13 @@ export function EditTab() {
     !!prevImg &&
     !!extendCanvas(prevImg.width, prevImg.height, e.extendTo, e.extendSide, ui);
   const canTryAgain =
-    (extending ? canExtendAgain : canRun) &&
+    (fixing
+      ? ready &&
+        (!!masks.current.get(current?.id ?? "") ||
+          wholeDetail.current.has(current?.id ?? ""))
+      : extending
+        ? canExtendAgain
+        : canRun) &&
     !locked &&
     e.index > 0 &&
     !!node?.meta &&

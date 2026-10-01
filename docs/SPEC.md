@@ -381,7 +381,8 @@ Four modes; Describe a change or Restyle is picked automatically:
    All of it happens in memory. **How much to change** maps to `strength` 0.3/0.45/0.6.
    With nothing painted, the button reads **Add detail** and the whole picture is redrawn
    (img2img, no mask, one image, no hires fix) at 1.5× the Quality dial's area per side, or at
-   the picture's own size if that is larger, then scaled back to the picture's size, so it
+   the picture's own size if that is larger (longer side at most 2048 px), then scaled back
+   to the picture's size, so it
    keeps its size and gets finer detail. A picture over 2× the dial's area per side or over
    2048 px on a side is refused with "Paint over the part to fix".
 4. **Extend** (same models as Restyle): make the picture wider or taller and let the model
