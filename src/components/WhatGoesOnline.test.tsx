@@ -41,6 +41,14 @@ describe("Offline / Online badge", () => {
     expect(dialog.textContent).toMatch(/civitai\.com, huggingface\.co and github\.com/);
   });
 
+  it("says when the CivitAI key is sent: never for browsing, for CivitAI downloads, and on a sign-in retry for lookups", () => {
+    const sent = (when: RegExp) => ONLINE_CALLS.find((c) => when.test(c.when))!.sent;
+    expect(sent(/browse or search/)).toMatch(/Never your CivitAI key/);
+    expect(sent(/start a download/)).toMatch(/For a file on CivitAI, your CivitAI key, if you added one, goes in the request header \(to civitai\.com only\)/);
+    for (const row of [/model’s page/, /paste generation data/, /doesn’t recognise/]) expect(sent(row)).toMatch(/asks for a sign-in.*sent once more with your CivitAI key/);
+    expect(ONLINE_CALLS.filter((c) => /CivitAI key/.test(c.sent))).toHaveLength(5);
+  });
+
   it("can switch Offline mode from the sheet", async () => {
     await show(false);
     const seen: boolean[] = [];

@@ -835,6 +835,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_create_reference_picture_needs_the_vision_encoder() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let qwen = register_fake_model(&core, "qwen_image_21");
+        core.installed
+            .lock()
+            .files
+            .retain(|f| f.component_id.as_deref() != Some("qwen3vl_8b_mmproj"));
+        let mut req = GenerateRequest::txt2img(qwen, "a lighthouse in the style of the picture");
+        req.ref_image_ids = vec![reference.id.clone()];
+        let err = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(err.code, "not_found");
+        assert!(err.message.contains("Get"), "{}", err.message);
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
     async fn edit_add_ons_go_only_to_the_model_they_were_picked_for() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;
@@ -2202,6 +2225,54 @@ mod tests {
             generate::generate(&core, req).await.unwrap_err().code,
             "blocked"
         );
+    }
+
+    #[tokio::test]
+    async fn a_part_deleted_by_hand_shows_as_missing_and_asks_for_its_licence() {
+        let (_tmp, core, _rec) = new_core();
+        core.offline.set(true); // nothing leaves the machine
+        let id = register_fake_model(&core, "flux1_dev");
+        let model = |core: &AppCore| crate::models::list_models(core).unwrap().remove(0);
+        assert!(model(&core).missing_components.is_empty());
+        let (part, comp, kind) = {
+            let idx = core.installed.lock();
+            let f = idx.files.iter().find(|f| f.component_id.is_some()).unwrap();
+            (idx.abs_path(&core.data, f), f.component_id.clone(), f.kind)
+        };
+        std::fs::remove_file(&part).unwrap();
+        assert_eq!(model(&core).missing_components.len(), 1);
+        // FLUX.1 dev's parts download only after its licence was accepted.
+        let e = crate::models::install_missing_parts(&core, &id)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, crate::licence::LICENSE_NEEDED);
+
+        // Downloaded again under another name: it replaces the stale entry.
+        let again = part.with_file_name("again.safetensors");
+        std::fs::write(&again, b"1234").unwrap();
+        let file = pinhole_net::download::DownloadedFile {
+            path: again,
+            sha256: "ab".repeat(32),
+            size_bytes: 4,
+        };
+        let reg = crate::models::Registration {
+            kind,
+            friendly_name: "part".into(),
+            family: None,
+            component_id: comp.clone(),
+            civitai: None,
+            dtype: None,
+        };
+        crate::models::register_download(&core, &file, reg).unwrap();
+        let entries = core
+            .installed
+            .lock()
+            .files
+            .iter()
+            .filter(|f| f.component_id == comp)
+            .count();
+        assert_eq!(entries, 1);
+        assert!(model(&core).missing_components.is_empty());
     }
 
     #[tokio::test]

@@ -227,8 +227,8 @@ fn settings_text(m: &ResultImage) -> String {
         "guidance": m.guidance,
         "sampler": m.sampler,
         "scheduler": m.scheduler,
-        "width": m.width,
-        "height": m.height,
+        "width": m.base_size.map_or(m.width, |s| s.0),
+        "height": m.base_size.map_or(m.height, |s| s.1),
     })
     .to_string()
 }
@@ -499,6 +499,13 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
         let mut name = path.file_name().unwrap_or_default().to_os_string();
         name.push(format!(".{}", im.kind.ext()));
         path.set_file_name(name);
+        // The save dialog only asked about the name as typed, not this one.
+        if path.exists() {
+            return Err(CoreError::invalid(format!(
+                "A file named “{}” is already there. Pick another name.",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )));
+        }
     }
     let bytes = export_png(core, &im)?;
     write_file(&path, &bytes)?;
@@ -570,6 +577,7 @@ mod tests {
             scheduler: None,
             parent_id: Some("p".into()),
             origin: Origin::Generated,
+            base_size: None,
         }
     }
 
@@ -683,6 +691,34 @@ mod tests {
         assert_eq!(s.sampler.as_deref(), Some("euler_a"));
         assert_eq!(s.scheduler, None);
         assert_eq!((s.width, s.height), (Some(m.width), Some(m.height)));
+
+        // After hires fix or an upscale: the size it was made at, not the final size.
+        (m.width, m.height) = (2048, 2048);
+        m.base_size = Some((1024, 1024));
+        let s = read_picture_settings(&saved_with_settings(&m)).expect("settings");
+        assert_eq!((s.width, s.height), (Some(1024), Some(1024)));
+    }
+
+    #[test]
+    fn save_as_never_replaces_a_file_under_an_added_extension() {
+        let (tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let png = img::encode_png_rgba(&[9; 64], 4, 4).unwrap();
+        let epoch = core.session.epoch();
+        assert!(core.session.insert_generated(
+            epoch,
+            CheckedPng::unchecked_for_tests(png),
+            meta("a")
+        ));
+        let existing = tmp.path().join("cat.png");
+        fs::write(&existing, b"earlier picture").unwrap();
+        let typed = tmp.path().join("cat");
+        let err = save_image_as(&core, "a", typed.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code, "invalid");
+        assert_eq!(fs::read(&existing).unwrap(), b"earlier picture");
+        // The name as picked (the dialog asked about it) is replaced.
+        save_image_as(&core, "a", existing.to_str().unwrap()).unwrap();
+        assert_ne!(fs::read(&existing).unwrap(), b"earlier picture");
     }
 
     #[test]

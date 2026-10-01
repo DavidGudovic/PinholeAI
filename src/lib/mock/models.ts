@@ -822,6 +822,9 @@ const table: MockTable = {
     pendingChoices.delete(String(a.token));
     return registerLocal(p.path, String(a.familyId));
   },
+  cancel_add: async (a) => {
+    pendingChoices.delete(String(a.token));
+  },
   install_missing_parts: async (a) => {
     await sleep(200);
     const s = state();
