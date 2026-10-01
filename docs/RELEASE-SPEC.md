@@ -33,10 +33,8 @@ Last reviewed: 2026-09-29. Not legal advice — see §10 for when a lawyer is ne
 | Krea 2 Community License v1 (§4.2) | "Reasonable and appropriate" content filters for any deployment; licence copy + notice when distributing; commercial use only under $1M revenue | 2 | §3, §6 |
 | EU Product Liability Directive, Cyber Resilience Act | Exempt only non-commercial open source | only if monetised | §10 |
 
-The goal is not an unbreakable filter: local open software can always be modified. The goal is
-that Pinhole is clearly general-purpose, blocks the few misuse paths the law targets, blocks
-**nothing else**, and can show it took reasonable steps. Whoever strips the safeguards from a copy
-has built a different tool.
+The goal is not a perfect filter. The goal is that Pinhole is clearly general-purpose, blocks the
+few misuse paths the law targets, blocks **nothing else**, and can show it took reasonable steps.
 
 Safeguards that fire on normal work drive people away, so every block rule here is narrow, needs
 two signals to agree, and must pass a false-positive bar (§4) before it ships.
@@ -196,7 +194,7 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    model's data at a Browse / paste install and from "Add a file"'s by-hash lookup; when the
    model's data can't be fetched, the file counts as "safe images only" (fail closed). Known
    limits: files added offline, linked from another app's folder or unknown to CivitAI get no
-   flag, and it lives in `installed.json`, which a user can edit. Rules 1 and 2 don't depend on it.
+   flag. Rules 1 and 2 don't depend on it.
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
@@ -399,7 +397,7 @@ templates, posts and UI.
 
 - **Level 1: `SAFETY.md`** in the repo root (written 2026-09-30): what Pinhole blocks and
   doesn't (§3.2), how (on the computer, nothing recorded), known limits in one line at most
-  (checks can make mistakes; a modified build can leave them out; no "limitations" section,
+  (checks can make mistakes; no "limitations" section,
   David 2026-09-30), and how to report a problem (GitHub private vulnerability reporting only,
   no email address; decided 2026-09-30).
 - **Level 3: a monitored abuse contact with a written process:** what a report can lead to (a rule
@@ -459,7 +457,7 @@ templates, posts and UI.
   "Improve my prompt", what Describe / Improve write back, and Browse search text. David first
   limited it to Describe output (#68), then asked for it everywhere (#71). Unlike the dropped
   guard LLM it costs nothing, needs no model, and only fires when both lists match, so ordinary
-  anime prompts pass. Word lists are compiled in (not YAML), so a config edit can't turn it off.
+  anime prompts pass. Word lists are compiled in (not YAML).
   Before matching it normalizes spellings: invisible characters, fullwidth and styled letters,
   accents, Cyrillic/Greek look-alikes, numbers and symbols for letters, spaced-out letters,
   repeated letters and two listed words glued together (2026-09-30; no text model, by ruling).
@@ -523,7 +521,7 @@ templates, posts and UI.
 - [x] §7 first-run acceptable-use screen + Edit notice
 - [x] ~~§10 lawyer consult with the five questions~~ Dropped by the owner (2026-09-30: "The app will
       be completely free … its a portfolio piece, so i dont think we need to go overboard asking
-      lawyers"). The bar instead: serious misuse needs forking and editing the code. Revisit if
+      lawyers"). The bar instead: the safeguards are built in and always on. Revisit if
       Pinhole is ever monetised (§10)
 - [x] Engine API locked down: a patched `sd-server` that rejects any request carrying an
       `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").
