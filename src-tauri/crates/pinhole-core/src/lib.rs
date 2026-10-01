@@ -40,7 +40,7 @@ use pinhole_hardware::HardwareInfo;
 use pinhole_net::download::DownloadManager;
 use pinhole_net::{HttpClient, LocalClient, OfflineFlag};
 use pinhole_registry::Registry;
-use pinhole_store::{DataDir, InstalledIndex, Settings};
+use pinhole_store::{seal, DataDir, InstalledIndex, Settings};
 
 pub use error::{CoreError, CoreResult};
 pub use events::{CoreEvent, EventSink, InstallStarted, NullSink};
@@ -113,9 +113,32 @@ impl AppCore {
             overrides.exists().then_some(overrides.as_path()),
         )?;
         let mut installed = InstalledIndex::load(&data)?;
+        // Saved lookup results are signed with a key in the OS keychain (not in tests).
+        let key = if cfg!(any(test, feature = "test-util")) {
+            seal::KeyState::Unavailable
+        } else {
+            seal::load_or_create_key()
+        };
+        let sign_all = match key {
+            // First start with signing: what is installed is signed as it is.
+            seal::KeyState::Created(key) if !seal::seals_file(&data).exists() => {
+                seal::activate(seal::Signer::new(key, Default::default(), Vec::new()));
+                true
+            }
+            seal::KeyState::Created(key) | seal::KeyState::Existing(key) => {
+                let seals = seal::read(&data, &key);
+                let unsigned = lookup::unsigned(&installed, &key, &seals);
+                seal::activate(seal::Signer::new(key, seals, unsigned));
+                false
+            }
+            seal::KeyState::Unavailable => false,
+        };
         // Files added by hand or linked before the CivitAI lookup covered them all.
         if lookup::mark_unchecked(&registry, &mut installed) {
             let _ = installed.save(&data);
+        }
+        if sign_all {
+            let _ = installed.save_seals(&data);
         }
         let offline = OfflineFlag::new(settings.offline);
         let http = HttpClient::new(offline.clone())?;
@@ -153,6 +176,7 @@ impl AppCore {
         describe::start_idle_watchdog(self);
         linked::start(self);
         imagecheck::start_idle_unload(self);
+        lookup::start_recheck(self);
     }
 
     /// Stop engines (app exit).

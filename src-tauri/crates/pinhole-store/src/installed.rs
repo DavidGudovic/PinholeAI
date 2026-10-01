@@ -147,10 +147,11 @@ pub enum Lookup {
 
 impl InstalledFile {
     /// Pictures made with this file may not be intimate (RELEASE-SPEC §3.2 rule 3): CivitAI
-    /// marks it "safe images only", or it was added by hand or linked and no lookup has
-    /// cleared it.
+    /// marks it "safe images only", it was added by hand or linked and no lookup has cleared
+    /// it, or its saved lookup result doesn't match its signature ([`crate::seal`]).
     pub fn safe_images_only(&self) -> bool {
-        self.civitai.as_ref().is_some_and(|c| c.sfw_only)
+        !crate::seal::trusted(&self.id)
+            || self.civitai.as_ref().is_some_and(|c| c.sfw_only)
             || self
                 .lookup
                 .is_some_and(|l| !matches!(l, Lookup::Found | Lookup::Shipped))
@@ -441,6 +442,20 @@ impl InstalledIndex {
 
     /// Save the linked folders and their files (`Data/catalog/linked-folders.json`).
     pub fn save_linked(&self, dir: &DataDir) -> Result<(), StoreError> {
+        self.save_linked_file(dir)?;
+        self.save_seals(dir)
+    }
+
+    /// Sign what the lookups found for every file ([`crate::seal`]), when signing is on.
+    pub fn save_seals(&self, dir: &DataDir) -> Result<(), StoreError> {
+        let Some(signer) = crate::seal::active() else {
+            return Ok(());
+        };
+        let parked = self.linked.parked.iter().map(|e| &e.file);
+        signer.write(dir, self.files.iter().chain(parked))
+    }
+
+    fn save_linked_file(&self, dir: &DataDir) -> Result<(), StoreError> {
         let path = linked_file(dir);
         if self.linked.folders.is_empty() && !path.exists() {
             return Ok(());
@@ -504,7 +519,8 @@ impl InstalledIndex {
     /// Also saves the linked folders ([`InstalledIndex::save_linked`]).
     pub fn save(&self, dir: &DataDir) -> Result<(), StoreError> {
         self.save_to(dir, &dir.installed_file())?;
-        self.save_linked(dir)
+        self.save_linked_file(dir)?;
+        self.save_seals(dir)
     }
 
     /// Save to an explicit index file (moving the Models folder). Never creates

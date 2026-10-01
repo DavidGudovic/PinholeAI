@@ -104,6 +104,121 @@ pub fn mark_unchecked(registry: &Registry, index: &mut InstalledIndex) -> bool {
     changed
 }
 
+/// At start, with signing on (`pinhole_store::seal`): the models and add-ons whose saved lookup
+/// result doesn't match its signature. They count as "safe images only" until checked again
+/// on this computer: a file Pinhole offers itself by hashing it again ([`start_recheck`]), any
+/// other by the next lookup ([`look_up_pending`]).
+pub fn unsigned(
+    index: &InstalledIndex,
+    key: &pinhole_store::seal::SealKey,
+    seals: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
+    let parked = index.linked.parked.iter().map(|e| &e.file);
+    index
+        .files
+        .iter()
+        .chain(parked)
+        .filter(|f| looked_up_kind(f.kind))
+        .filter(|f| !seals.get(&f.id).is_some_and(|s| key.verify(f, s)))
+        .map(|f| f.id.clone())
+        .collect()
+}
+
+/// Hash again, in the background, the unsigned entries ([`unsigned`]) of files that weren't
+/// looked up (one-click downloads and files Pinhole offers). Local only: nothing is looked up.
+pub fn start_recheck(core: &Arc<AppCore>) {
+    let ids: Vec<String> = {
+        let index = core.installed.lock();
+        index
+            .files
+            .iter()
+            .filter(|f| {
+                matches!(f.lookup, None | Some(Lookup::Shipped))
+                    && looked_up_kind(f.kind)
+                    && !pinhole_store::seal::trusted(&f.id)
+            })
+            .map(|f| f.id.clone())
+            .collect()
+    };
+    if ids.is_empty() {
+        return;
+    }
+    let Ok(rt) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    let core = core.clone();
+    rt.spawn(async move {
+        for id in ids {
+            recheck(&core, &id).await;
+        }
+        core.emit(CoreEvent::ModelsChanged);
+    });
+}
+
+/// What hashing an unsigned entry's file again showed ([`recheck`]).
+enum Recheck {
+    /// The file can't be read now (a drive that isn't connected): it stays unsigned.
+    Unreadable,
+    /// Signed again: the hash matches and the entry holds only what Pinhole sets without a
+    /// lookup (a file Pinhole offers itself, with no CivitAI data).
+    Signed,
+    /// The entry is signed again as "not looked up yet" (the file changed, or it wasn't looked
+    /// up), or its lookup result needs a lookup: look it up with this hash, its file's own.
+    NeedsLookup(String),
+}
+
+async fn recheck(core: &AppCore, id: &str) -> Recheck {
+    let abs = {
+        let index = core.installed.lock();
+        let Some(f) = index.get(id) else {
+            return Recheck::Unreadable;
+        };
+        index.abs_path(&core.data, f)
+    };
+    let hashed = tokio::task::spawn_blocking(move || pinhole_catalog::local::hash_file(&abs))
+        .await
+        .ok()
+        .and_then(Result::ok);
+    let Some((sha256, _)) = hashed else {
+        return Recheck::Unreadable;
+    };
+    let registry = core.registry();
+    let mut index = core.installed.lock();
+    let Some(f) = index.get_mut(id) else {
+        return Recheck::Unreadable;
+    };
+    let fresh = initial(&registry, f.kind, &sha256);
+    if f.sha256.eq_ignore_ascii_case(&sha256) {
+        let offered = fresh == Some(Lookup::Shipped)
+            && matches!(f.lookup, None | Some(Lookup::Shipped))
+            && f.civitai.is_none();
+        let not_yet = fresh == Some(Lookup::NotYet) && f.lookup == fresh;
+        if !(offered || not_yet) {
+            return Recheck::NeedsLookup(sha256);
+        }
+        pinhole_store::seal::trust(id);
+        let _ = index.save_seals(&core.data);
+        if offered {
+            return Recheck::Signed;
+        }
+    } else {
+        f.sha256.clone_from(&sha256);
+        f.lookup = fresh;
+        f.civitai = None;
+        let linked = f.is_linked();
+        pinhole_store::seal::trust(id);
+        let _ = if linked {
+            index.save_linked(&core.data)
+        } else {
+            index.save(&core.data)
+        };
+        if fresh != Some(Lookup::NotYet) {
+            return Recheck::Signed;
+        }
+    }
+    Recheck::NeedsLookup(sha256)
+}
+
 /// Ask CivitAI about one file by its SHA-256 (and the model's flags, as for a Browse install).
 pub async fn look_up_with(client: &CivitaiClient, sha256: &str) -> Outcome {
     let v = match tokio::time::timeout(TIMEOUT, client.by_hash(sha256)).await {
@@ -180,7 +295,10 @@ pub fn apply(index: &mut InstalledIndex, id: &str, sha256: &str, outcome: &Outco
         return false;
     };
     let before = f.clone();
-    f.lookup = Some(outcome.lookup());
+    // A file that isn't looked up (a one-click download, a file Pinhole offers) keeps that.
+    if *outcome == Outcome::PersonOrMinor || !matches!(f.lookup, None | Some(Lookup::Shipped)) {
+        f.lookup = Some(outcome.lookup());
+    }
     if let Outcome::Found { civitai: c, .. } = outcome {
         if f.trigger_words.is_none() && c.trained_words.is_empty() {
             // Keep a linked note's trigger words when CivitAI lists none.
@@ -205,7 +323,11 @@ pub async fn look_up_pending(core: &Arc<AppCore>, folder: Option<&str>) {
         index
             .files
             .iter()
-            .filter(|f| f.lookup == Some(Lookup::NotYet) && !f.sha256.is_empty())
+            .filter(|f| {
+                (f.lookup == Some(Lookup::NotYet) || !pinhole_store::seal::trusted(&f.id))
+                    && looked_up_kind(f.kind)
+                    && !f.sha256.is_empty()
+            })
             .filter(|f| folder.is_none() || linked_folder_id(&f.rel_path) == folder)
             .map(|f| (f.id.clone(), f.sha256.clone()))
             .collect()
@@ -225,19 +347,54 @@ pub async fn look_up_pending(core: &Arc<AppCore>, folder: Option<&str>) {
         if core.offline.get() {
             break;
         }
-        look_up_one(core, id, sha).await;
+        look_up_existing(core, id, sha).await;
+    }
+}
+
+/// Look up an installed or linked file again. An unsigned entry ([`unsigned`]) is looked up
+/// with its file's own hash, never the one it holds.
+pub async fn look_up_existing(core: &AppCore, id: &str, sha256: &str) -> Outcome {
+    if pinhole_store::seal::trusted(id) {
+        return look_up_one(core, id, sha256).await;
+    }
+    match recheck(core, id).await {
+        Recheck::NeedsLookup(sha) => look_up_hashed(core, id, &sha, true).await,
+        Recheck::Signed | Recheck::Unreadable => Outcome::Failed,
     }
 }
 
 /// Look up one installed or linked file and store what CivitAI said.
 pub async fn look_up_one(core: &AppCore, id: &str, sha256: &str) -> Outcome {
+    look_up_hashed(core, id, sha256, false).await
+}
+
+/// `fresh_hash`: `sha256` was just read from the entry's own file, so the result can sign an
+/// unsigned entry. Without it, an unsigned entry is left as it is (it counts as "safe images
+/// only").
+async fn look_up_hashed(core: &AppCore, id: &str, sha256: &str, fresh_hash: bool) -> Outcome {
+    let unsigned = !pinhole_store::seal::trusted(id);
+    if unsigned && !fresh_hash {
+        return Outcome::Failed;
+    }
     let outcome = look_up(core, sha256).await;
+    if unsigned && outcome == Outcome::Failed {
+        // Keep what the entry says until a lookup answers.
+        return outcome;
+    }
     let saved = {
         let mut index = core.installed.lock();
         let before = index.clone();
         let linked = index.get(id).is_some_and(InstalledFile::is_linked);
-        if !apply(&mut index, id, sha256, &outcome) {
+        let changed = apply(&mut index, id, sha256, &outcome);
+        let signs = unsigned
+            && index
+                .get(id)
+                .is_some_and(|f| f.sha256.eq_ignore_ascii_case(sha256));
+        if !changed && !signs {
             return outcome;
+        }
+        if signs {
+            pinhole_store::seal::trust(id);
         }
         // A linked file's result goes to the linked list only (the Models folder may be
         // on a drive that isn't connected).
@@ -248,6 +405,9 @@ pub async fn look_up_one(core: &AppCore, id: &str, sha256: &str) -> Outcome {
         };
         if saved.is_err() {
             *index = before;
+            if signs {
+                pinhole_store::seal::distrust(id);
+            }
         }
         saved.is_ok()
     };
@@ -608,6 +768,141 @@ mod tests {
         );
         assert_eq!(index.files[1].lookup, Some(Lookup::NotYet));
         assert!(index.files.iter().all(InstalledFile::safe_images_only));
+    }
+
+    /// The models and add-ons whose saved lookup result doesn't match its signature (parts
+    /// aren't looked up, so they aren't signed).
+    #[test]
+    fn entries_that_dont_match_their_signature_are_found() {
+        let key = pinhole_store::seal::SealKey::from_bytes([3; 32]);
+        let file = |id: &str, kind: ModelKind, lookup| InstalledFile {
+            id: id.into(),
+            rel_path: format!("models/x/{id}.safetensors"),
+            kind,
+            sha256: "aa".repeat(32),
+            size_bytes: 1,
+            family: None,
+            component_id: None,
+            friendly_name: id.into(),
+            civitai: None,
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+            trigger_words: None,
+            lookup,
+        };
+        let mut index = InstalledIndex {
+            files: vec![
+                file("ok", ModelKind::Lora, Some(Lookup::Found)),
+                file("edited", ModelKind::Lora, Some(Lookup::NoMatch)),
+                file("new", ModelKind::Diffusion, Some(Lookup::Shipped)),
+                file("vae", ModelKind::Vae, None),
+            ],
+            ..Default::default()
+        };
+        let seals: std::collections::BTreeMap<String, String> = index
+            .files
+            .iter()
+            .filter(|f| f.id != "new")
+            .map(|f| (f.id.clone(), key.seal(f)))
+            .collect();
+        index.files[1].lookup = Some(Lookup::Found);
+        index.files[3].sha256 = "bb".repeat(32);
+        assert_eq!(unsigned(&index, &key, &seals), ["edited", "new"]);
+        let other = pinhole_store::seal::SealKey::from_bytes([4; 32]);
+        assert_eq!(unsigned(&index, &other, &seals), ["ok", "edited", "new"]);
+    }
+
+    /// With signing on (the only test that turns it on; its ids are its own): an unsigned
+    /// entry is checked against its file's own hash, never the one it holds.
+    #[tokio::test]
+    async fn an_unsigned_entry_is_checked_with_its_files_own_hash() {
+        use pinhole_store::seal;
+        let (_tmp, core) = test_core(Arc::new(Recorder::default()));
+        let ids = ["sig-same", "sig-changed", "sig-other"];
+        seal::activate(seal::Signer::new(
+            seal::SealKey::from_bytes([9; 32]),
+            Default::default(),
+            ids.iter().map(|s| s.to_string()).collect(),
+        ));
+        let lora_dir = core.data.models(ModelKind::Lora);
+        std::fs::create_dir_all(&lora_dir).unwrap();
+        let sha = |b: &[u8]| {
+            use sha2::Digest;
+            hex::encode(sha2::Sha256::digest(b))
+        };
+        let civitai = CivitaiRef {
+            model_id: 1,
+            version_id: 2,
+            model_name: None,
+            version_name: None,
+            base_model: None,
+            trained_words: vec![],
+            license: None,
+            creator_notes: None,
+            sfw_only: false,
+        };
+        let entry = |id: &str, stored_sha: String| InstalledFile {
+            id: id.into(),
+            rel_path: format!("models/loras/{id}.safetensors"),
+            kind: ModelKind::Lora,
+            sha256: stored_sha,
+            size_bytes: 1,
+            family: None,
+            component_id: None,
+            friendly_name: id.into(),
+            civitai: Some(civitai.clone()),
+            added_at: 0,
+            last_used: None,
+            observed_vram_gb: None,
+            dtype: None,
+            trigger_words: None,
+            lookup: Some(Lookup::Found),
+        };
+        for id in ids {
+            std::fs::write(lora_dir.join(format!("{id}.safetensors")), id).unwrap();
+        }
+        {
+            let mut index = core.installed.lock();
+            index.files = vec![
+                entry("sig-same", sha(b"sig-same")),
+                entry("sig-changed", "aa".repeat(32)),
+                // Holds another file's hash.
+                entry("sig-other", sha(b"sig-same")),
+            ];
+        }
+        let get = |id: &str| core.installed.lock().get(id).unwrap().clone();
+        for id in ids {
+            assert!(get(id).safe_images_only());
+        }
+
+        // Looked up with the hash it holds: left as it is.
+        let held = get("sig-other").sha256;
+        assert_eq!(
+            look_up_one(&core, "sig-other", &held).await,
+            Outcome::Failed
+        );
+        assert!(!seal::trusted("sig-other"));
+
+        // Same file, lookup result needs a lookup (none answers here): left unsigned.
+        look_up_existing(&core, "sig-same", &get("sig-same").sha256).await;
+        assert!(get("sig-same").safe_images_only());
+        assert_eq!(get("sig-same").lookup, Some(Lookup::Found));
+
+        // The file changed: it starts over as "not looked up yet", signed.
+        look_up_existing(&core, "sig-changed", &"aa".repeat(32)).await;
+        let f = get("sig-changed");
+        assert_eq!(f.sha256, sha(b"sig-changed"));
+        assert_eq!(
+            (f.lookup, f.civitai.is_none()),
+            (Some(Lookup::NotYet), true)
+        );
+        assert!(seal::trusted("sig-changed") && f.safe_images_only());
+
+        // The entry holding another file's hash is checked with its own.
+        look_up_existing(&core, "sig-other", &held).await;
+        assert_eq!(get("sig-other").sha256, sha(b"sig-other"));
     }
 
     #[test]

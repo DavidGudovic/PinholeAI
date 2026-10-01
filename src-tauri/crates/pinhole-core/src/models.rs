@@ -221,9 +221,15 @@ pub fn register_download(
         }
         // An unreadable entry at this path described the file that was there.
         let replaced = index.remove_unknown_at(&entry.rel_path);
+        // Made from the download just verified: signed as it is.
+        let was_trusted = pinhole_store::seal::trusted(&entry.id);
+        pinhole_store::seal::trust(&entry.id);
         if let Err(e) = index.save(&core.data) {
             index.files = before;
             index.unknown.extend(replaced);
+            if !was_trusted {
+                pinhole_store::seal::distrust(&entry.id);
+            }
             return Err(e.into());
         }
         entry
@@ -1077,8 +1083,9 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         {
             remove_copy(&pending);
         }
-        if existing.lookup == Some(Lookup::NotYet) {
-            let outcome = crate::lookup::look_up_one(core, &existing.id, &existing.sha256).await;
+        if existing.lookup == Some(Lookup::NotYet) || !pinhole_store::seal::trusted(&existing.id) {
+            let outcome =
+                crate::lookup::look_up_existing(core, &existing.id, &existing.sha256).await;
             if outcome == Outcome::PersonOrMinor {
                 return Err(CoreError::invalid(
                     pinhole_catalog::api::PERSON_OR_MINOR_REASON,
