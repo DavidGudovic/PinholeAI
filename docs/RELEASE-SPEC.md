@@ -2,8 +2,8 @@
 
 The safeguards and release rules every public build follows: AI-generated marking, the local
 image check, the catalog rules, licences, notices and wording. Pinhole is released on GitHub
-(v1.0.0 on 2026-10-01). The section numbers are cited from code, tests and `SAFETY.md`; keep them
-stable. What is still open is in §12.
+(v1.0.0 on 2026-10-01; v1.0.1 the same day under the Pinhole Licence 1.0). The section numbers are
+cited from code, tests and `SAFETY.md`; keep them stable. What is still open is in §12.
 
 Last reviewed: 2026-10-01.
 
@@ -386,7 +386,7 @@ prints them for a folder of test pictures.
   people who have agreed to it. Making sexual or humiliating images of real people without consent
   is a crime in many countries."
 - These notices support the safeguards; they don't replace them (§11).
-- MIT licence and its disclaimer stay.
+- The Pinhole Licence (MIT text plus the Safeguards condition) and its disclaimer stay.
 
 ---
 

@@ -12,11 +12,11 @@ press Generate. Tauri 2 + Rust core + React/TS UI. Images are made by
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. Both are pinned, SHA-256-verified
 downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on your computer.
 
-## Status (v1.1.0)
+## Status (v1.0.1)
 - The app is feature-complete (milestones M0–M6 done). v1.0.0 is the first GitHub release
-  (2026-10-01); v1.1.0 (safety and model-trust fixes) is the next one, started and published by
-  the maintainer. `RELEASE-SPEC.md` §12 lists what is still open. In-app updates open the release
-  page until release files are signed (`update::SELF_UPDATE`).
+  (2026-10-01); v1.0.1 followed the same day (safety and model-trust fixes; Pinhole Licence 1.0).
+  `RELEASE-SPEC.md` §12 lists what is still open. In-app updates open the release page until
+  release files are signed (`update::SELF_UPDATE`).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
   Ubuntu 24.04 (CPU), the app's own install → add model → wire → generate → save path, a
   WebDriver test that drives the real app, the privacy sentinel scan, Offline mode, installers.
