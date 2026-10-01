@@ -85,8 +85,8 @@ fine-tune installed to reproduce.
   nothing. The required pre-merge check is `scripts/check.sh` (~2 min: privacy lint, vitest, tsc +
   build, cargo test, clippy). Actions → CI → Run workflow ("full") still covers Windows tests, engine
   smoke, app e2e, WebDriver e2e; installers on demand (Actions → Bundle) or via Release.
-- Release: Actions → Release → Run workflow (tag `v<version>`, untick draft) — publishes a
-  **pre-release** marked "personal test build". Must be started by a person: Claude sessions can't
+- Release: Actions → Release → Run workflow (tag `v<version>`, untick draft) — publishes a normal
+  release (a pre-release only for versions like `1.1.0-rc.1`). Must be started by a person: Claude sessions can't
   create releases, push tags or delete branches.
 - `main` is the only long-lived branch; branches are deleted as soon as their PR merges.
 - Actions → API probe fetches CivitAI / Hugging Face URLs on a runner (sessions' containers can't

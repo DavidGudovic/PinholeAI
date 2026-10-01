@@ -237,8 +237,8 @@ fn tag_version(tag: &str) -> Option<semver::Version> {
     semver::Version::parse(tag.strip_prefix('v')?).ok()
 }
 
-/// Newest published (non-draft) release newer than `current`. Pre-releases count:
-/// every build is a pre-release until RELEASE-SPEC is done.
+/// Newest published (non-draft) release newer than `current`. Pre-release versions
+/// (`1.1.0-rc.1`) are offered only to a copy that is itself a pre-release.
 fn newest_release<'a>(
     releases: &'a [GhRelease],
     current: &semver::Version,
@@ -255,6 +255,7 @@ fn newest_matching<'a>(
         .iter()
         .filter(|r| !r.draft)
         .filter_map(|r| tag_version(&r.tag_name).map(|v| (r, v)))
+        .filter(|(_, v)| v.pre.is_empty() || !current.pre.is_empty())
         .filter(|(r, v)| v > current && ok(r, v))
         .max_by(|a, b| a.1.cmp(&b.1))
 }
@@ -905,6 +906,22 @@ mod tests {
         let info = pick_update(&releases, &current, &update_target(&e)).unwrap();
         assert_eq!(info.install_mode, InstallMode::Manual);
         assert_eq!(info.size_bytes, None);
+    }
+
+    #[test]
+    fn stable_copies_are_not_offered_pre_releases() {
+        let releases = vec![
+            rel("v1.1.0-rc.1", false, &[]),
+            rel("v1.0.1", false, &[]),
+        ];
+        let stable = semver::Version::new(1, 0, 0);
+        let info = pick_update(&releases, &stable, &Target::Manual).unwrap();
+        assert_eq!(info.version, "1.0.1");
+        let only_rc = vec![rel("v1.1.0-rc.1", false, &[])];
+        assert!(pick_update(&only_rc, &stable, &Target::Manual).is_none());
+        let rc = semver::Version::parse("1.1.0-rc.0").unwrap();
+        let info = pick_update(&releases, &rc, &Target::Manual).unwrap();
+        assert_eq!(info.version, "1.1.0-rc.1");
     }
 
     fn write_zip(path: &Path, files: &[(&str, &[u8])]) {

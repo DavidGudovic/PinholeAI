@@ -785,8 +785,8 @@ build is shared.
   same release, so it can't catch a release someone else uploaded. Until then every copy is offered
   **Open download page** and nothing is downloaded or installed in the app. The rest of this entry
   describes in-app install for when it is switched on. Settings → Check for updates asks
-  `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (pre-releases
-  included while every build is a test build). Download URLs are built from the repo, the tag and the
+  `api.github.com/repos/DavidGudovic/PinholeAI/releases` for the newest non-draft release (a pre-release
+  version such as `1.1.0-rc.1` only for a copy that is itself a pre-release). Download URLs are built from the repo, the tag and the
   expected file name, never taken from the API. The file must match GitHub's size and the SHA-256 in
   the release's `SHA256SUMS.txt`, or nothing is installed. The newest release that has this copy's
   file is offered; one without it is offered as "Open download page". Updating is refused while a
