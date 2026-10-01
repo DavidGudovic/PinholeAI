@@ -473,7 +473,8 @@ Two sub-views: **Browse** and **Installed**.
 - Safe mode is **On** by default. While it is on, also blur any preview image flagged NSFW.
 - Safe mode, Look, Tags and Price are partly client-side filters: keep fetching pages until the grid page
   (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
-  stops the older one's extra requests.
+  stops the older one's extra requests. A request that times out is asked once more; if a later
+  request still fails, the cards found so far are shown with "Load more" instead of an error.
 - **Safe mode** (`catalog-filters.yaml → safe_filter`, tuned on live data; the public API has
   nothing stricter than `nsfw=false`, which only hides models CivitAI flags, and rejects
   `browsingLevel`): a model is hidden when CivitAI flags it NSFW, its `nsfwLevel` bitmask has
