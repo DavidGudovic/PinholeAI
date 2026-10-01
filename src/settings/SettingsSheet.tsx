@@ -520,7 +520,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
         </Labeled>
       </Section>
 
-      <div className="pt-5 pb-2 text-center text-xs text-neutral-400">Pinhole {info ? `v${info.version}` : ""} · MIT license · No telemetry</div>
+      <div className="pt-5 pb-2 text-center text-xs text-neutral-400">Pinhole {info ? `v${info.version}` : ""} · Pinhole Licence · No telemetry</div>
 
       <ApiKeyDialog
         open={keyDialog}

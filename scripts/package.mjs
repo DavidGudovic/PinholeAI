@@ -203,7 +203,7 @@ This is the portable build: everything is kept in the "Data" folder next to
 Pinhole.exe (see Data\\README.txt). The "config" folder holds Pinhole's
 built-in model registry — don't delete it.
 
-Licenses: LICENSE.txt (Pinhole, MIT) and THIRD_PARTY_LICENSES.txt.
+Licenses: LICENSE.txt (Pinhole Licence 1.0) and THIRD_PARTY_LICENSES.txt.
 `;
 
 // ---------------------------------------------------------------- main

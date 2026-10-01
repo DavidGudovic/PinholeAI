@@ -392,7 +392,7 @@ prints them for a folder of test pictures.
   people who have agreed to it. Making sexual or humiliating images of real people without consent
   is a crime in many countries."
 - These notices support the safeguards; they don't replace them (§11).
-- MIT licence and its disclaimer stay.
+- The Pinhole Licence (MIT text plus the Safeguards condition) and its disclaimer stay.
 
 ---
 

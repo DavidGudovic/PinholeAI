@@ -3,7 +3,7 @@ name = "pinhole-check"
 description = "Local image check: small classifiers run on the processor before a result is shown"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 
 [dependencies]
 # Pure-Rust ONNX runtime: no native library to download or ship.

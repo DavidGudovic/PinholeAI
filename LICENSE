@@ -1,6 +1,10 @@
-MIT License
+Pinhole Licence 1.0
 
-Copyright (c) 2026 Pinhole contributors
+Copyright (c) 2026 DavidGudovic (https://github.com/DavidGudovic)
+
+This licence is the MIT License with two added conditions (2 and 3). Because of
+them it is not the MIT License and not an open-source licence. Pinhole v1.0.0 and
+earlier versions were released under the MIT License and stay under it.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -9,8 +13,34 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+2. Safeguards. The Software contains safeguards. They are listed in the file
+   SAFEGUARDS.md that comes with the Software, and the list in the copy you
+   received is the one that applies to you.
+
+   You may not distribute, or otherwise make available to others, a copy of
+   the Software or any work based on it in which a safeguard is removed,
+   disabled, bypassed, made optional, or changed so that it blocks less than
+   it does in the copy you received.
+
+   The one exception: you may change a safeguard so that it wrongly blocks
+   less, if the changed version meets the reference-test rule in
+   SAFEGUARDS.md and you publish those test results together with your
+   changes.
+
+   Every copy and every work based on the Software that you distribute must
+   include SAFEGUARDS.md. You may add safeguards to it but not remove any.
+
+   This condition applies to copies and works that make or change pictures.
+   Parts of the Software that don't make or change pictures (for example the
+   hardware detection or the download code) may be reused in other projects
+   without it.
+
+3. If you break condition 2, your permission continues if you fix the problem
+   within 32 days of being told about it in writing, the first time this
+   happens. Otherwise your permission under this licence ends.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,

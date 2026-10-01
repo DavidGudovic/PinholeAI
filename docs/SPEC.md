@@ -738,8 +738,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Windows: NSIS installer + portable zip (with an empty `Data/` folder → portable mode).
 - Linux: AppImage + .deb (built on Ubuntu 22.04; engine needs 24.04+, see §13).
 - GitHub Actions matrix build for both; release artifacts with SHA-256 sums.
-- License: MIT (compatible with stable-diffusion.cpp and llama.cpp). Include their license
-  files in `THIRD_PARTY_LICENSES`.
+- License: Pinhole Licence 1.0 (`LICENSE`): the MIT License plus a Safeguards condition
+  (`SAFEGUARDS.md`), so source-available, not open source. v1.0.0 and earlier stay MIT. The
+  engines (stable-diffusion.cpp, llama.cpp) keep their MIT licences; include their license files
+  in `THIRD_PARTY_LICENSES`.
 - Model licenses are the user's concern, but show the license name on the model card
   (e.g. FLUX.1-dev is non-commercial). Release adds licence acceptance (`docs/RELEASE-SPEC.md` §6).
 - **No build is shared with anyone** (public release, zip for a friend, store listing) until
