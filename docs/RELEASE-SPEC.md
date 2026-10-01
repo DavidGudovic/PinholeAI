@@ -95,6 +95,16 @@ The EU Code of Practice on marking (final, June 2026) expects **at least two lay
   (candidates: Adobe TrustMark — verify licence and ONNX export — or a DWT-DCT watermark ported to Rust).
 - **Contents:** "made with AI" only (David, 2026-09-30: no app name or version either). **No prompt, negative prompt, style
   text, seed, user name or machine identifier.** This keeps the privacy rules intact.
+- **Labels from other tools are carried forward** (2026-10-01, `pinhole-engine/src/provenance.rs`).
+  Import drops all metadata (location, camera, prompts), but first reads whether the file says it
+  was made with AI: an IPTC digital source type of `trainedAlgorithmicMedia`, `algorithmicMedia`,
+  `compositeWithTrainedAlgorithmicMedia` or `algorithmicallyEnhanced`, in XMP (PNG, JPEG, WebP; compressed PNG text too) or in
+  a C2PA manifest's actions. Only that label is kept, in memory. On export the unchanged picture
+  gets it back as XMP; a picture made only from pictures labelled as made entirely with AI is
+  marked `trainedAlgorithmicMedia` (not "edited photo" or "enhanced photo"), and a label is never
+  weakened (an upscale of a picture with AI-made parts stays a composite). The label is unsigned
+  and says what the file claimed; it is never used by the image check (§3.1). A signed C2PA
+  manifest can't be carried over: any edit invalidates it.
 - **Always on.** Not a setting, and no switch to turn it off. The existing "Include generation
   settings (no prompt)" setting stays separate and optional.
 - It never blocks anything and costs nothing at generation time (it runs at Save / Copy only).
