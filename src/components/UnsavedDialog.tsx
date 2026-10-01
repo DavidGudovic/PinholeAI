@@ -3,20 +3,22 @@ import { Save } from "lucide-react";
 import * as api from "../lib/api";
 import { canSaveAs } from "../lib/state/platform";
 import { useActions } from "../lib/state/AppProvider";
-import { unsavedIds } from "../lib/state/model";
+import { unsavedEditIds, unsavedIds } from "../lib/state/model";
 import { useAppState, useDispatch } from "../lib/state/store";
 import type { CoreError } from "../lib/types";
 import { Button, Dialog, ErrorNotice } from "./ui";
 
-/** Shown before closing the window while some pictures were never saved. */
+/** Shown before closing the window, Reset, or replacing Edit's history while some pictures were never saved. */
 export function UnsavedDialog() {
   const what = useAppState((s) => s.leave);
-  const count = useAppState((s) => unsavedIds(s).length);
+  // Loading another image into Edit only drops the edit results.
+  const count = useAppState((s) => (s.leave === "edit" ? unsavedEditIds(s) : unsavedIds(s)).length);
   const actions = useActions();
   const dispatch = useDispatch();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CoreError | null>(null);
   const closing = what === "close";
+  const replacing = what === "edit";
   const cancel = () => {
     setError(null);
     dispatch({ type: "askLeave", what: null });
@@ -40,14 +42,14 @@ export function UnsavedDialog() {
       open={what !== null}
       onClose={() => !busy && cancel()}
       title={count === 1 ? "You have 1 picture that isn't saved" : `You have ${count} pictures that aren't saved`}
-      description={`Pictures only live in memory until you save them. ${closing ? "Closing Pinhole" : "Clearing the session"} removes them for good.`}
+      description={`Nothing is saved until you press Save. ${closing ? "Closing Pinhole" : replacing ? "Editing another image" : "Reset"} removes them for good.`}
       footer={
         <>
           <Button variant="ghost" disabled={busy} onClick={cancel}>
             Go back
           </Button>
           <Button variant="secondary" disabled={busy} onClick={() => void actions.finishLeave(what!)}>
-            {closing ? "Close without saving" : "Clear without saving"}
+            {closing ? "Close without saving" : replacing ? "Continue without saving" : "Reset without saving"}
           </Button>
           {canSaveAs() && (
             <Button variant="primary" disabled={busy} onClick={() => void saveAllThenLeave()}>
@@ -58,7 +60,7 @@ export function UnsavedDialog() {
       }
     >
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        {canSaveAs() ? "Save all puts every unsaved picture into a folder you choose." : "Save pictures one by one with the Save button first, or leave without saving."}
+        {canSaveAs() ? "Save all puts every unsaved picture into a folder you choose." : `Save pictures one by one with the Save button first, or ${replacing ? "continue" : "leave"} without saving.`}
       </p>
       {error && (
         <div className="mt-3">

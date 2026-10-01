@@ -225,7 +225,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     // Like Rust: the check's files first (ensure_ready), then the engine.
     await requireCheck();
     const engine = await invoke<EngineStatus>("engine_status").catch(() => null);
-    if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Set up engine”.");
+    if (engine && !engine.installed) throw err("engine_missing", "The image engine isn't set up yet. It's a one-time download — click “Get the engine”.");
     const models = await invoke<InstalledModel[]>("list_models");
     const model = models.find((m) => m.id === req.modelId);
     if (!model) throw err("not_found", "That model isn't installed any more. Pick another one.");

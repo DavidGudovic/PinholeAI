@@ -36,6 +36,7 @@ import { StylePicker } from "../../components/StylePicker";
 import { ImageViewer } from "../../components/ImageViewer";
 import {
   AutoTextarea,
+  Badge,
   Button,
   IconButton,
   Kbd,
@@ -60,6 +61,7 @@ import {
   createModels,
   editBusy,
   editModels,
+  initialEdit,
   isEditJob,
   willQueue,
   type ChangeAmount,
@@ -269,7 +271,9 @@ export function EditTab() {
         model,
         mask: m,
         size: outFrom,
-        from,
+        // Only Try again names the step: a normal edit uses the step shown when it runs, so
+        // one queued behind another is added after its result instead of replacing it.
+        from: again ? from : undefined,
         newSeed: again,
       });
       running.current = false;
@@ -319,9 +323,12 @@ export function EditTab() {
         t &&
         (t.tagName === "TEXTAREA" ||
           t.tagName === "INPUT" ||
+          t.tagName === "SELECT" ||
           t.isContentEditable)
       )
         return;
+      // Not behind a dialog, sheet or the viewer.
+      if (document.querySelector('[role="dialog"]')) return;
       ev.preventDefault();
       if (editBusy(store.getState())) return;
       const s = store.getState().edit;
@@ -330,6 +337,13 @@ export function EditTab() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [tab, dispatch, store]);
+
+  // Shown on the closed Fine-tune header, as in Create, so a fixed seed or size isn't hidden.
+  const fineTuneChanged =
+    (e.seed != null ? 1 : 0) +
+    (e.loras.length ? 1 : 0) +
+    (e.quality !== initialEdit().quality ? 1 : 0) +
+    (size !== "normal" && !fixing && !extending ? 1 : 0);
 
   const needsEditModel = mode === "instruction" && !autoEdit;
   const text =
@@ -509,7 +523,7 @@ export function EditTab() {
                       ? "Describing a change needs a graphics card"
                       : twoImages
                         ? "Combining two images needs another edit model"
-                        : "Get the best edit model for your GPU"}
+                        : "Get the best edit model for your graphics card"}
                   </div>
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {noGpu
@@ -875,6 +889,9 @@ export function EditTab() {
             >
               <SlidersHorizontal className="h-4 w-4 text-neutral-500" />{" "}
               Fine-tune
+              {fineTuneChanged > 0 && (
+                <Badge tone="amber">{fineTuneChanged} changed</Badge>
+              )}
               <ChevronDown
                 className={cx(
                   "ml-auto h-4 w-4 text-neutral-400 transition-transform",
@@ -1131,11 +1148,11 @@ export function EditTab() {
                   variant="ghost"
                   disabled={locked}
                   onClick={picker.open}
-                  title="Edit a different image"
-                  aria-label="New image"
+                  title="Pick another image to edit"
+                  aria-label="Another image"
                 >
                   <ImagePlus className="h-3.5 w-3.5" />{" "}
-                  <span className="hidden xl:inline">New image</span>
+                  <span className="hidden xl:inline">Another image</span>
                 </Button>
                 <UpscaleMenu
                   size="sm"

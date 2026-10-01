@@ -492,7 +492,7 @@ try {
   await step("firstrun-hardware", async (note) => {
     await clickButton("Get started");
     await waitText("Your computer");
-    await waitText(/No GPU found|Good to go/, 30000);
+    await waitText(/No graphics card found|Good to go/, 30000);
     const hw = await invoke("get_hardware");
     note(`get_hardware: backend=${hw.backend} tier=${hw.tier} gpu=${hw.gpu ? hw.gpu.name : "none"} ram=${hw.detected?.ramGb}GB threads=${hw.detected?.cpuThreads}`);
     await shot("02-firstrun-hardware");
@@ -508,7 +508,7 @@ try {
       note("PINHOLE_E2E_ENGINE=0: engine download skipped");
       return;
     }
-    await clickButton("Download engine");
+    await clickButton("Get the engine");
     // Watch progress events render: sample the progress bar + label.
     const seen = new Set();
     const labels = new Set();

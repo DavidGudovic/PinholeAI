@@ -617,6 +617,48 @@ describe("queue", () => {
     expect(discarded).toContain("late");
   });
 
+  it("drops Edit and Describe images that finish loading after Reset", async () => {
+    const { store, actions } = setup();
+    const late = (id: string) => vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id, width: 8, height: 8 } as never);
+    late("e1");
+    const edit = actions.importToEdit(new Blob([new Uint8Array(4)]));
+    await actions.clearSession();
+    await edit;
+    late("e2");
+    const second = actions.importSecondToEdit(new Blob([new Uint8Array(4)]));
+    await actions.clearSession();
+    await second;
+    late("d");
+    const describe = actions.importToDescribe(new Blob([new Uint8Array(4)]));
+    await actions.clearSession();
+    await describe;
+    await tick();
+    expect(store.getState().edit.chain).toEqual([]);
+    expect(store.getState().edit.secondImageId).toBeNull();
+    expect(store.getState().describe.imageId).toBeNull();
+    expect(discarded).toEqual(expect.arrayContaining(["e1", "e2", "d"]));
+  });
+
+  it("holds an upscale's source so its result keeps the settings for Variations when the source is removed meanwhile", async () => {
+    const { store, actions } = setup();
+    const gen = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await gen;
+    const run = actions.upscale("a", 2);
+    actions.removeResult("a");
+    await tick();
+    pendingUpscale!(img("u"));
+    await run;
+    expect(store.getState().results.map((r) => r.id)).toEqual(["u"]);
+    expect(store.getState().resultBatch.u).toBeDefined();
+    const again = actions.variations("u");
+    await tick();
+    expect(vi.mocked(apiMod.generate).mock.calls[1][0].prompt).toBe("a lighthouse");
+    pending!({ images: [img("v")] } as GenerateResult);
+    await again;
+  });
+
   it("ignores a Generate pressed while Reset is clearing the session", async () => {
     const { store, actions } = setup();
     const first = actions.generateCreate();
@@ -644,6 +686,39 @@ describe("unsaved pictures", () => {
     store.dispatch({ type: "markSaved", entries: [{ id: "a", path: "/x/a.png" }] });
     expect(actions.requestLeave("clear")).toBe(true);
     expect(store.getState().leave).toBeNull();
+  });
+
+  it("asks before another image replaces unsaved edits, and loads it when the user goes ahead", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editPush", ref: ref("r"), meta: img("r") });
+    store.dispatch({ type: "addResults", batch: null, images: [img("c")], refs: [ref("c")] });
+    vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "pasted", width: 8, height: 8 } as never);
+    await actions.importToEdit(new Blob([new Uint8Array(4)]));
+    expect(store.getState().leave).toBe("edit");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
+    expect(apiMod.importImage).not.toHaveBeenCalled();
+    // "Go back" keeps the edits.
+    store.dispatch({ type: "askLeave", what: null });
+    // Other ways into Edit ask too.
+    actions.sendToEdit("c");
+    expect(store.getState().leave).toBe("edit");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
+    await actions.finishLeave("edit");
+    expect(store.getState().leave).toBeNull();
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["c"]);
+    expect(store.getState().images.r).toBeUndefined();
+  });
+
+  it("replaces the Edit history without asking when its edits are saved", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editPush", ref: ref("r"), meta: img("r") });
+    store.dispatch({ type: "markSaved", entries: [{ id: "r", path: "/x/r.png" }] });
+    vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "pasted", width: 8, height: 8 } as never);
+    await actions.importToEdit(new Blob([new Uint8Array(4)]));
+    expect(store.getState().leave).toBeNull();
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["pasted"]);
   });
 
   it("remembers the prompt of each Generate for Up/Down recall", async () => {

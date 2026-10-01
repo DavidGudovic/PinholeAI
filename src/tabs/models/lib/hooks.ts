@@ -129,7 +129,7 @@ export function useEngine() {
 
   let group: GroupStatus | null = null;
   if (busy && before.current) group = newestGroupSince(before.current, isEngineGroup);
-  // Started elsewhere (Top bar, error "Set up engine" button, another screen).
+  // Started elsewhere (Top bar, error "Get the engine" button, another screen).
   if (!group && status?.installing) group = newestActiveOfKind("engine");
   if (!group) {
     const tagged = getTagged("engine");
