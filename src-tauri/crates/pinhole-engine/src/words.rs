@@ -1,7 +1,8 @@
 //! Local word check: text that pairs an under-18 term with a sexual term is blocked, and so is
 //! text that names an identity document or banknote together with a word asking for a usable
 //! copy of it ([`asks_for_document_copy`]), whatever Safe mode says. Runs on the prompt sent to the image engine in Create and every
-//! Edit mode (after styles, trigger words and add-ons are combined), on the idea sent to
+//! Edit mode (after styles, trigger words and add-ons are combined; together with the prompts
+//! that made the pictures fed in, when Pinhole made them in this session), on the idea sent to
 //! "Improve my prompt", on what the Describe model writes back (Describe and Improve) and on
 //! Browse search text. See RELEASE-SPEC §11.
 //!

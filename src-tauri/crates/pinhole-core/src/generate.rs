@@ -738,6 +738,8 @@ struct Prepared {
     final_prompt: FinalPrompt,
     /// `final_prompt.prompt` after the word check: the only prompt the engine request takes.
     prompt: CheckedPrompt,
+    /// The checked prompt with the add-on names and trigger words (memory only).
+    words: String,
     /// User texts for log redaction (memory only).
     secrets: Vec<String>,
     loras: Vec<LoraRef>,
@@ -887,6 +889,10 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
 
     // Word-checked: the whole positive prompt (idea + style + trigger words) and the add-ons.
     let prompt = crate::text_check::checked_with(final_prompt.prompt.clone(), &addon_words)?;
+    let words = std::iter::once(prompt.as_str())
+        .chain(addon_words.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     let mut secrets = vec![req.prompt.clone(), final_prompt.prompt.clone()];
     if let Some(n) = &final_prompt.negative {
@@ -903,6 +909,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
         family,
         final_prompt,
         prompt,
+        words,
         secrets,
         loras,
         addon_ids,
@@ -2186,6 +2193,8 @@ async fn generate_inner(
             }
         }
     }
+    // Pictures made in this session bring the prompts that made them into the word check.
+    crate::text_check::check_with_inputs(&prep.words, inputs.pictures())?;
     let mut mask_src = None;
     if req.mode != GenMode::Txt2img {
         if let Some(mid) = req.mask_image_id.as_deref() {
@@ -2505,6 +2514,7 @@ async fn generate_inner(
             model_id: &prep.model.id,
             addon_ids: &prep.addon_ids,
             inputs: inputs.pictures(),
+            prompt: &prep.words,
         },
     )
     .await?;
