@@ -100,8 +100,11 @@ pub async fn remove_linked_folder(
 }
 
 #[tauri::command]
-pub async fn rescan_linked_folders(core: State<'_, Arc<AppCore>>) -> Result<(), CoreError> {
-    pinhole_core::linked::rescan_all(core.inner());
+pub async fn rescan_linked_folders(
+    core: State<'_, Arc<AppCore>>,
+    look_up: Option<bool>,
+) -> Result<(), CoreError> {
+    pinhole_core::linked::rescan_all(core.inner(), look_up.unwrap_or(false));
     Ok(())
 }
 

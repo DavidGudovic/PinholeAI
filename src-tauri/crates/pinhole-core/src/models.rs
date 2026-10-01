@@ -22,7 +22,7 @@ use pinhole_catalog::{inventory, local, paste, CatalogFilters};
 use pinhole_net::download::{check_free_space, ContentCheck, DownloadSpec, DownloadedFile};
 use pinhole_registry::detect;
 use pinhole_store::datadir::{normalize_rel, ModelKind};
-use pinhole_store::installed::{CivitaiRef, InstalledFile};
+use pinhole_store::installed::{CivitaiRef, InstalledFile, Lookup};
 
 pub use pinhole_catalog::view::{
     AddFileResult, DeleteFile, DeletePreview, DeleteReason, FamilyChoice, InstalledLora,
@@ -30,6 +30,7 @@ pub use pinhole_catalog::view::{
     ResolvedResources,
 };
 
+use crate::lookup::Outcome;
 use crate::{AppCore, CoreError, CoreEvent, CoreResult, InstallStarted};
 
 /// Catalog / model-install state. RAM only.
@@ -57,6 +58,11 @@ pub struct ModelsState {
     /// Adding / deleting files holds a read lock; moving the Models folder
     /// takes the write lock, so neither starts while the other runs.
     pub(crate) folder_lock: tokio::sync::RwLock<()>,
+    /// Files whose CivitAI lookup is running (`lookup::look_up_pending`).
+    pub(crate) lookups: Mutex<HashSet<String>>,
+    /// Tests: CivitAI API base of a mock server.
+    #[cfg(test)]
+    pub(crate) test_civitai: Mutex<Option<String>>,
 }
 
 /// Read side of [`ModelsState::folder_lock`]: fails fast while the models move.
@@ -93,6 +99,8 @@ struct PendingAdd {
     friendly_name: String,
     dtype: Option<String>,
     civitai: Option<CivitaiRef>,
+    /// The CivitAI lookup's result (`None` for a file Pinhole offers itself).
+    lookup: Option<Lookup>,
     candidates: Vec<String>,
     created: std::time::Instant,
 }
@@ -125,6 +133,8 @@ pub struct Registration {
     pub component_id: Option<String>,
     pub civitai: Option<CivitaiRef>,
     pub dtype: Option<String>,
+    /// Files added by hand: the CivitAI lookup's result (`lookup.rs`). `None` for downloads.
+    pub lookup: Option<Lookup>,
 }
 
 /// `Data`-relative, `/`-separated path of a file inside the Data folder.
@@ -191,6 +201,7 @@ pub fn register_download(
                 .as_ref()
                 .filter(|_| same_file)
                 .and_then(|p| p.trigger_words.clone()),
+            lookup: reg.lookup,
         };
         let before = index.files.clone();
         index.upsert(entry.clone());
@@ -818,6 +829,7 @@ pub(crate) async fn start_install(
                 component_id: f.component_id.clone(),
                 civitai,
                 dtype: f.dtype.clone(),
+                lookup: None,
             };
             planned.push((dest, inflight_key(&f), reg));
         }
@@ -919,6 +931,7 @@ fn register_pending(
             component_id: None,
             civitai: p.civitai.clone(),
             dtype: p.dtype.clone(),
+            lookup: p.lookup,
         },
     )?;
     Ok(view_of(core, &entry))
@@ -941,8 +954,10 @@ impl Drop for ReservedDest<'_> {
 
 /// "Add a file I already have": check the extension, read the header, copy the
 /// file into `Data/models/<kind>/` while hashing it (the user's file is never
-/// moved or changed), then resolve the family: known hash → CivitAI by-hash
-/// (online only, failures ignored) → header sniffing → ask (`needsChoice`).
+/// moved or changed), look it up on CivitAI by hash (every file Pinhole doesn't offer
+/// itself, RELEASE-SPEC §5: a real person or minor is refused; no match, Offline mode or a
+/// failed lookup leave it "safe images only"), then resolve the family: known hash →
+/// CivitAI's base model → header sniffing → ask (`needsChoice`).
 pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddFileResult> {
     let _folder = folder_read(core)?;
     let src = PathBuf::from(path.trim());
@@ -1046,11 +1061,13 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         friendly_name: plain_name(&src),
         dtype: Some(detection.dtype.clone()).filter(|d| !d.is_empty()),
         civitai: None,
+        lookup: None,
         candidates: Vec::new(),
         created: std::time::Instant::now(),
     };
 
-    // Already installed (same bytes)? Keep the existing entry.
+    // Already installed (same bytes)? Keep the existing entry; adding it again retries a
+    // lookup that couldn't run before.
     if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
         if pending.copied
             && core
@@ -1060,6 +1077,18 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         {
             remove_copy(&pending);
         }
+        if existing.lookup == Some(Lookup::NotYet) {
+            let outcome = crate::lookup::look_up_one(core, &existing.id, &existing.sha256).await;
+            if outcome == Outcome::PersonOrMinor {
+                return Err(CoreError::invalid(
+                    pinhole_catalog::api::PERSON_OR_MINOR_REASON,
+                ));
+            }
+        }
+        let existing = snapshot(core).get(&existing.id).cloned().ok_or_else(|| {
+            CoreError::not_found("That file was just removed from Pinhole. Add it again.")
+        })?;
+        crate::lookup::refuse_if_flagged(&existing)?;
         return Ok(view_of(core, &existing));
     }
 
@@ -1070,47 +1099,50 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
             pending.friendly_name = name;
         }
     }
-    // 2. CivitAI by hash (online only; failures are ignored).
-    if !matches!(resolution, FamilyResolution::Resolved(_)) && !core.offline.get() {
-        let client = crate::catalog::civitai_client(core).await;
-        let lookup = tokio::time::timeout(Duration::from_secs(20), client.by_hash(&sha256)).await;
-        if let Ok(Ok(Some(v))) = lookup {
-            // The model's flags, as for a Browse install (RELEASE-SPEC §5).
-            let model = if v.model_id > 0 {
-                tokio::time::timeout(Duration::from_secs(20), client.model(v.model_id))
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-            } else {
-                None
-            };
-            if pinhole_catalog::api::version_is_person_or_minor(&v, model.as_ref()) {
+    // 2. CivitAI by hash, whether or not the family is known (RELEASE-SPEC §5). A file
+    // Pinhole offers itself is looked up too, but never counts as "safe images only".
+    pending.lookup = crate::lookup::initial(&registry, kind, &sha256);
+    if crate::lookup::looked_up_kind(kind) {
+        let outcome = crate::lookup::look_up(core, &sha256).await;
+        if pending.lookup.is_some() {
+            pending.lookup = Some(outcome.lookup());
+        }
+        match outcome {
+            Outcome::PersonOrMinor => {
                 remove_copy(&pending);
                 return Err(CoreError::invalid(
                     pinhole_catalog::api::PERSON_OR_MINOR_REASON,
                 ));
             }
-            let sfw_only = pinhole_catalog::api::sfw_only_of(&v, model.as_ref());
-            let name = pinhole_catalog::plan::model_name(&v, None);
-            pending.friendly_name = pinhole_catalog::plan::friendly_name(&v, None);
-            pending.civitai = Some(CivitaiRef {
-                model_id: v.model_id,
-                version_id: v.id,
-                model_name: Some(name),
-                version_name: Some(v.name.clone()).filter(|n| !n.is_empty()),
-                base_model: Some(v.base_model.clone()).filter(|b| !b.is_empty()),
-                trained_words: v.trained_words.clone(),
-                license: None,
-                creator_notes: None,
-                sfw_only,
-            });
-            resolution = families::resolve_family(
-                &registry,
-                Some(&sha256),
-                Some(&v.base_model),
-                Some(&detection.candidates),
-            );
+            Outcome::Found {
+                civitai,
+                friendly_name,
+            } => {
+                pending.friendly_name = friendly_name;
+                if !matches!(resolution, FamilyResolution::Resolved(_)) {
+                    resolution = families::resolve_family(
+                        &registry,
+                        Some(&sha256),
+                        civitai.base_model.as_deref(),
+                        Some(&detection.candidates),
+                    );
+                }
+                pending.civitai = Some(*civitai);
+            }
+            Outcome::NoMatch | Outcome::Failed => {}
         }
+    }
+    // Added meanwhile (the lookup takes a moment): keep the entry that is there.
+    if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
+        if core
+            .data
+            .relative(&pending.path)
+            .is_some_and(|rel| rel != existing.rel_path)
+        {
+            remove_copy(&pending);
+        }
+        crate::lookup::refuse_if_flagged(&existing)?;
+        return Ok(view_of(core, &existing));
     }
     // 3. header sniffing
     if matches!(resolution, FamilyResolution::Unsupported(None)) {
@@ -1385,6 +1417,7 @@ mod tests {
                 sfw_only: false,
             }),
             dtype: Some("f16".into()),
+            lookup: None,
         };
         let entry = register_download(&core, &file, reg.clone()).unwrap();
         assert_eq!(entry.rel_path, "models/checkpoints/m.safetensors");
@@ -1431,6 +1464,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         assert_eq!(
             register_download(&core, &outside, reg).unwrap_err().code,
@@ -1571,6 +1605,7 @@ mod tests {
             component_id: Some(id.into()),
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         let main = |fam: &str| Registration {
             kind: ModelKind::Diffusion,
@@ -1579,6 +1614,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         let zit = put(ModelKind::Diffusion, "zit.gguf", main("z_image_turbo"));
         let kontext = put(ModelKind::Diffusion, "kontext.gguf", main("flux1_kontext"));
@@ -1661,6 +1697,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         let theirs = register_download(
             &core,
@@ -1703,6 +1740,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         let a = register_download(
             &core,
@@ -1741,6 +1779,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         register_download(
             &core,
@@ -1799,6 +1838,7 @@ mod tests {
             component_id: None,
             civitai: None,
             dtype: None,
+            lookup: None,
         };
         let out = refine_main_registration(&core.registry(), &p, reg.clone());
         assert_eq!(
@@ -2115,6 +2155,7 @@ mod tests {
                 component_id: Some(comp.into()),
                 civitai: None,
                 dtype: None,
+                lookup: None,
             };
             register_download(&core, &file, reg).unwrap();
         }
@@ -2169,6 +2210,7 @@ mod tests {
                 component_id: Some(comp.into()),
                 civitai: None,
                 dtype: None,
+                lookup: None,
             };
             register_download(&core, &file, reg).unwrap();
         }
@@ -2215,6 +2257,7 @@ mod tests {
                 component_id: comp.map(Into::into),
                 civitai: None,
                 dtype: None,
+                lookup: None,
             };
             register_download(&core, &file, reg).unwrap();
         };
@@ -2273,6 +2316,7 @@ mod tests {
                 component_id: Some(comp.into()),
                 civitai: None,
                 dtype: None,
+                lookup: None,
             };
             register_download(&core, &file, reg).unwrap();
         };

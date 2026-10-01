@@ -112,7 +112,7 @@ describe("InstalledView", () => {
   });
 
   it("lists another app's folder; its models can't be deleted and get their parts from Pinhole's list", async () => {
-    const linked = { ...model("fits"), id: "m2", friendlyName: "Comfy model", linkedFolder: "ComfyUI", missingComponents: ["VAE · ae.safetensors"], civitaiVersionId: 5 };
+    const linked = { ...model("fits"), id: "m2", friendlyName: "Comfy model", linkedFolder: "ComfyUI", missingComponents: ["VAE · ae.safetensors"], civitaiVersionId: 5, safeImagesOnly: true };
     api.listModels.mockResolvedValue([model("fits"), linked]);
     api.listLinkedFolders.mockResolvedValue([
       { id: "f1", path: "/home/me/ComfyUI", name: "ComfyUI", available: true, scanning: false, models: 1, addons: 2, parts: 1, notUsed: 3 },
@@ -122,8 +122,12 @@ describe("InstalledView", () => {
     expect(screen.getByText("In ComfyUI")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Delete Test model" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Delete Comfy model" })).toBeNull();
-    // Looked through again once per visit.
+    expect(screen.getAllByText("Safe images only")).toHaveLength(1);
+    // Looked through again once per visit, without CivitAI lookups; "Check again" looks up.
     await waitFor(() => expect(api.rescanLinkedFolders).toHaveBeenCalledTimes(1));
+    expect(api.rescanLinkedFolders).toHaveBeenLastCalledWith();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(api.rescanLinkedFolders).toHaveBeenLastCalledWith(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Get missing parts" }));
     await waitFor(() => expect(api.installMissingParts).toHaveBeenCalledWith("m2"));

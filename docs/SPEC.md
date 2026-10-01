@@ -148,13 +148,19 @@ recognised automatically:
   (`ss_base_model_version` / `modelspec.architecture`, `lora_metadata` in models.yaml), else a name
   hint; unknown = usable with any model, as with "Add a file". They show under Style add-ons.
 - **Parts (VAE, text encoders):** used only when the file is byte-for-byte a part Pinhole knows:
-  same kind and size, then the same SHA-256 (the only full read of a file, and only for such size
-  matches). Main models and add-ons are not hashed.
-- Not used: anything else, and models a note says CivitAI marks as a real person or someone under
-  18 (RELEASE-SPEC §5: only data the other app already fetched; no lookups).
+  same kind and size, then the same SHA-256 (only for such size matches).
+- **CivitAI lookup (RELEASE-SPEC §5):** every main model and add-on is read once to compute its
+  SHA-256 (a note's own hash isn't trusted for this) and looked up on CivitAI by that hash when the
+  user adds the folder or presses **Check again**. One CivitAI marks as a real person or someone
+  under 18 is not used; one CivitAI doesn't know, or not looked up yet (found by the look at start
+  or when Installed opens, Offline mode, a failed lookup), counts as "safe images only" until a
+  lookup clears it. Files not looked up yet are looked up once when Offline mode is turned off.
+  Files Pinhole offers itself (known SHA-256) need no lookup.
+- Not used: anything else, and models a note or the lookup says CivitAI marks as a real person or
+  someone under 18.
 What was found is kept per install in `Data/catalog/linked-folders.json` (never in the shared
 Models folder's index: paths differ per OS), with each file's size and time so unchanged files are
-not read again. The folder is looked through again at start, when Installed opens and on
+not read (or hashed) again. The folder is looked through again at start, when Installed opens and on
 **Check again**. The files show in Installed with an "In <folder>" badge and no Delete; removing
 the folder from the list only forgets them. Fit badges and recommendations count them like
 installed files; a model that lacks parts gets **Get missing parts** (from the registry). sd-server
@@ -176,7 +182,8 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
 3. **Reset** button: drops all in-memory images and prompt fields immediately (after the question
    above when pictures are unsaved).
 4. No outbound network except: CivitAI API calls, model/engine downloads, and Hugging Face
-   component downloads — all started by the user.
+   component downloads — all started by the user (turning Offline mode off counts: it retries,
+   once, the CivitAI lookups of added or linked files that couldn't run, §6).
 5. **Offline mode** toggle (Settings): blocks all network calls at the Rust HTTP client
    layer. The catalog shows "Offline" and only installed models.
    A small **Offline / Online** badge in the top bar shows the state at all times; clicking it opens
@@ -417,10 +424,14 @@ sits by the Describe button and the Improve button. **Automatic** uses the 7B wh
 else the 3B (Safe mode Off: the Safe-mode-Off helper first, below). Only installed helpers can be picked; a removed one reads as Automatic. **Models →
 Helpers** lists them with size and Fits / Tight / Too big and Get / Remove (Remove only for files
 Pinhole downloaded as a helper). A helper with `needs_safe_off: true` is only listed while Safe
-mode is Off, and while Off, Automatic uses it first once installed: a less restrictive Qwen2.5-VL 7B
-fine-tune (Q4_K_M, 4.7 GB, Apache-2.0), which shares the 7B's vision file (Remove keeps a vision file
-another installed helper still uses). Installed models still lists it while Safe mode is On, so it
-can be removed. The word check runs on the output of every helper model.
+mode is Off, and while Off, Automatic uses it first once installed: **Qwen2.5-VL 7B abliterated**
+(`qwen25_vl_7b_safe_off`), Qwen2.5-VL 7B Instruct with its refusals removed from the text part
+([huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated](https://huggingface.co/huihui-ai/Qwen2.5-VL-7B-Instruct-abliterated),
+Apache-2.0; GGUF Q4_K_M by mradermacher, 4.7 GB), which shares the 7B's vision file (Remove keeps a
+vision file another installed helper still uses). Its note in the app says what it does and that the
+word check and the image check still apply. Installed models still lists it while Safe mode is On, so
+it can be removed. The word check runs on the output of every helper model, and the image check on
+every picture made from it.
 
 ### 5.3 Describe (img2text)
 
@@ -540,7 +551,8 @@ add-on row has **Use** (see Install step 6).
 List with friendly name, family, size, last used, **Delete** (removes orphaned components too,
 after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
 Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file
-chooser → detected), and **Use models from another app** (§3). Dropping files onto the window is not supported: the native drop handler
+chooser → detected, and looked up on CivitAI by its SHA-256 as in §6), and **Use models from another app** (§3). A model or add-on
+that can't make intimate pictures (RELEASE-SPEC §3.2 rule 3) has a **Safe images only** badge. Dropping files onto the window is not supported: the native drop handler
 is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 
 ---
@@ -550,6 +562,10 @@ is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
 Resolution order for "what is this file":
 1. **Known hash**: SHA-256 is found in `config/models.yaml → known_files` → exact family + variant.
 2. **CivitAI metadata**: the version's `baseModel` maps to a family via `civitai_base_models`.
+   "Add a file" looks every main model and add-on up by SHA-256 (`lookup.rs`), even when step 1
+   already knows the family, for CivitAI's flags (RELEASE-SPEC §5): a real person or someone under
+   18 is refused; no match, Offline mode or a failed lookup leave the file "safe images only" until
+   a lookup clears it (adding the same file again, or turning Offline mode off, retries once).
 3. **Header sniffing**: read only the safetensors JSON header / GGUF metadata (no tensor data)
    and match tensor names against each family's `detect` rules. Mirror the logic of
    `get_sd_version()` in stable-diffusion.cpp `src/model_loader.cpp`, and keep our rules

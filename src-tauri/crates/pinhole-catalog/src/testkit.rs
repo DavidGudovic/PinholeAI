@@ -59,6 +59,7 @@ pub fn model(id: &str, family: &str, kind: ModelKind, file: &str) -> InstalledFi
         observed_vram_gb: None,
         dtype: None,
         trigger_words: None,
+        lookup: None,
     }
 }
 
@@ -101,6 +102,7 @@ pub fn component(reg: &Registry, id: &str) -> InstalledFile {
         observed_vram_gb: None,
         dtype: None,
         trigger_words: None,
+        lookup: None,
     }
 }
 

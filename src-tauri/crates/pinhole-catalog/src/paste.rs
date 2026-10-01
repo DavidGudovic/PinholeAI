@@ -412,6 +412,7 @@ mod tests {
             observed_vram_gb: None,
             dtype: None,
             trigger_words: None,
+            lookup: None,
         }
     }
 

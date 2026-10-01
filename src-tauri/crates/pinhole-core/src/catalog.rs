@@ -88,6 +88,12 @@ pub async fn api_key(core: &AppCore) -> Option<String> {
 
 /// Client for metadata + downloads (carries the key, sent only where needed).
 pub async fn civitai_client(core: &AppCore) -> CivitaiClient {
+    #[cfg(test)]
+    if let Some(base) = core.models.test_civitai.lock().clone() {
+        let http = pinhole_net::HttpClient::new_for_tests(core.offline.clone(), true)
+            .expect("test client");
+        return CivitaiClient::with_base(http, None, base);
+    }
     CivitaiClient::new(core.http.clone(), api_key(core).await)
 }
 

@@ -770,7 +770,8 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
     // Every picked add-on's name and trigger words, for the word check below (whether or
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
-    let mut safe_images_only = model.civitai.as_ref().is_some_and(|c| c.sfw_only);
+    crate::lookup::refuse_if_flagged(&model)?;
+    let mut safe_images_only = model.safe_images_only();
     {
         let idx = core.installed.lock();
         // Add-ons were picked for the chosen model; an edit that fell back to
@@ -819,7 +820,8 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
                     1.0
                 },
             });
-            safe_images_only |= f.civitai.as_ref().is_some_and(|c| c.sfw_only);
+            crate::lookup::refuse_if_flagged(f)?;
+            safe_images_only |= f.safe_images_only();
             addon_words.push(f.friendly_name.clone());
             addon_words.extend(f.trigger_words().iter().map(|w| w.to_string()));
             // CivitAI's own name and trained words too: editing the trigger words changes
@@ -3086,6 +3088,7 @@ async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> Cor
             component_id: Some(UPSCALER_COMPONENT.into()),
             civitai: None,
             dtype: None,
+            lookup: None,
         },
     )?;
     stem_of(&reg_file).ok_or_else(|| CoreError::internal("Bad upscaler file name."))

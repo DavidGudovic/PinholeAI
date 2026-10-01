@@ -92,6 +92,7 @@ pub fn installed_model_view(
         base_model: file.civitai.as_ref().and_then(|c| c.base_model.clone()),
         low_bit: file.dtype.as_deref().and_then(families::low_bit_quant),
         linked_folder: linked_folder_name(index, file),
+        safe_images_only: file.safe_images_only(),
     }
 }
 
@@ -118,6 +119,7 @@ pub fn installed_lora_view(index: &InstalledIndex, file: &InstalledFile) -> Inst
         civitai_model_id: file.civitai.as_ref().map(|c| c.model_id),
         civitai_version_id: file.civitai.as_ref().map(|c| c.version_id),
         linked_folder: linked_folder_name(index, file),
+        safe_images_only: file.safe_images_only(),
     }
 }
 

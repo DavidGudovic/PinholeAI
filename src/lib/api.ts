@@ -104,8 +104,9 @@ export const installMissingParts = (modelId: string) =>
 export const listLinkedFolders = () => invoke<T.LinkedFolder[]>("list_linked_folders");
 export const addLinkedFolder = (path: string) => invoke<T.LinkedFolder>("add_linked_folder", { path });
 export const removeLinkedFolder = (id: string) => invoke<void>("remove_linked_folder", { id });
-/** Look through the linked folders again for new or changed files (progress via models-changed). */
-export const rescanLinkedFolders = () => invoke<void>("rescan_linked_folders");
+/** Look through the linked folders again for new or changed files (progress via models-changed).
+ *  `lookUp`: the user pressed "Check again", so files not looked up yet are also looked up on CivitAI. */
+export const rescanLinkedFolders = (lookUp = false) => invoke<void>("rescan_linked_folders", { lookUp });
 export const previewDelete = (modelId: string) => invoke<T.DeletePreview>("preview_delete", { modelId });
 export const deleteModel = (modelId: string) => invoke<void>("delete_model", { modelId });
 /** Paste from CivitAI: match resources to installed files or installable CivitAI versions. No prompt text is sent. */

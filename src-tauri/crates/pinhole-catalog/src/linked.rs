@@ -513,8 +513,9 @@ pub fn component_candidates<'a>(
 }
 
 /// Work out what `found` is from its header, the note next to it and its
-/// name. `hash` returns the file's SHA-256 (it reads the whole file: only
-/// called for a possible part). Blocking only through `hash`.
+/// name. `hash` returns the file's SHA-256 (it reads the whole file). Every usable file is
+/// hashed: parts to match them, models and add-ons for the CivitAI lookup (a note's own hash
+/// isn't trusted for that). Blocking only through `hash`.
 pub fn recognise(
     registry: &Registry,
     found: &FoundFile,
@@ -532,7 +533,6 @@ pub fn recognise(
         .and_then(Note::friendly_name)
         .unwrap_or_else(|| plain_name(file_name));
     let civitai = note.and_then(Note::civitai);
-    let note_sha = note.and_then(|n| n.sha256.clone()).unwrap_or_default();
 
     if detection.is_component.is_some() {
         let candidates = component_candidates(registry, &detection, found.size);
@@ -573,13 +573,14 @@ pub fn recognise(
                 let all: Vec<String> = registry.families_in_order().map(|f| f.id.clone()).collect();
                 groups.iter().find_map(|w| hint_pick(registry, &all, w))
             });
+        let sha256 = hash(&found.abs).ok_or(Skipped::NotUsable)?;
         return Ok(Recognised {
             kind: ModelKind::Lora,
             family,
             component_id: None,
             friendly_name: named,
             dtype,
-            sha256: note_sha,
+            sha256,
             civitai,
         });
     }
@@ -589,9 +590,10 @@ pub fn recognise(
         return Err(Skipped::NotUsable);
     }
     let candidates = detection.candidates.clone();
+    let sha256 = hash(&found.abs).ok_or(Skipped::NotUsable)?;
     let resolution = families::resolve_family(
         registry,
-        Some(note_sha.as_str()).filter(|s| !s.is_empty()),
+        Some(sha256.as_str()),
         note.and_then(|n| n.base_model.as_deref()),
         Some(&candidates),
     );
@@ -611,7 +613,7 @@ pub fn recognise(
         FamilyResolution::Unsupported(_) => return Err(Skipped::NotUsable),
     };
     let friendly_name = registry
-        .known_file(&note_sha)
+        .known_file(&sha256)
         .and_then(|k| k.friendly_name.clone())
         .filter(|_| note.and_then(Note::friendly_name).is_none())
         .unwrap_or(named);
@@ -624,7 +626,7 @@ pub fn recognise(
         component_id: None,
         friendly_name,
         dtype,
-        sha256: note_sha,
+        sha256,
         civitai,
     })
 }
@@ -821,15 +823,16 @@ mod tests {
         }
     }
 
-    fn no_hash(_: &Path) -> Option<String> {
-        panic!("only parts are hashed")
+    /// Models and add-ons are hashed for the CivitAI lookup (the file itself, never a note's hash).
+    fn fake_hash(_: &Path) -> Option<String> {
+        Some("ee".repeat(32))
     }
 
     #[test]
     fn main_models_get_a_family_from_notes_and_names() {
         let reg = crate::testkit::registry();
         let family = |rel: &str, note: Option<&Note>| {
-            recognise(&reg, &found(rel, 1), &sdxl(), note, &mut no_hash)
+            recognise(&reg, &found(rel, 1), &sdxl(), note, &mut fake_hash)
                 .unwrap()
                 .family
                 .unwrap()
@@ -870,12 +873,12 @@ mod tests {
             &found("checkpoints/a_b.safetensors", 1),
             &sdxl(),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.kind, ModelKind::Checkpoint);
         assert_eq!(r.friendly_name, "a b");
-        assert!(r.sha256.is_empty());
+        assert_eq!(r.sha256, "ee".repeat(32), "the file itself is hashed");
 
         let flux_dev = header(
             &[
@@ -888,7 +891,7 @@ mod tests {
             &[],
         );
         let pick = |rel: &str| {
-            let r = recognise(&reg, &found(rel, 1), &flux_dev, None, &mut no_hash).unwrap();
+            let r = recognise(&reg, &found(rel, 1), &flux_dev, None, &mut fake_hash).unwrap();
             assert_eq!(r.kind, ModelKind::Diffusion);
             r.family.unwrap()
         };
@@ -922,7 +925,7 @@ mod tests {
             &found("loras/x.safetensors", 1),
             &lora(&[("ss_base_model_version", "sdxl_base_v1-0")]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.kind, ModelKind::Lora);
@@ -932,7 +935,7 @@ mod tests {
             &found("Lora/pony/y.safetensors", 1),
             &lora(&[]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family.as_deref(), Some("sdxl_pony"));
@@ -941,7 +944,7 @@ mod tests {
             &found("Lora/z.safetensors", 1),
             &lora(&[]),
             None,
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family, None);
@@ -958,7 +961,7 @@ mod tests {
             &found("Lora/z.safetensors", 1),
             &lora(&[]),
             Some(&note),
-            &mut no_hash,
+            &mut fake_hash,
         )
         .unwrap();
         assert_eq!(r.family.as_deref(), Some("sd15"));
@@ -975,7 +978,7 @@ mod tests {
                 &found("Lora/z.safetensors", 1),
                 &lora(&[]),
                 Some(&flagged),
-                &mut no_hash
+                &mut fake_hash
             ),
             Err(Skipped::PersonOrMinor)
         );
@@ -1034,14 +1037,20 @@ mod tests {
                 &found("vae/other.safetensors", 123),
                 &vae,
                 None,
-                &mut no_hash
+                &mut fake_hash
             ),
             Err(Skipped::NotUsable)
         );
         // Not a model at all (unknown tensors).
         let junk = header(&[("foo.bar", "F16", &[4])], &[]);
         assert_eq!(
-            recognise(&reg, &found("x.safetensors", 1), &junk, None, &mut no_hash),
+            recognise(
+                &reg,
+                &found("x.safetensors", 1),
+                &junk,
+                None,
+                &mut fake_hash
+            ),
             Err(Skipped::NotUsable)
         );
     }
