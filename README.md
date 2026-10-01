@@ -79,5 +79,9 @@ wording rules.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Third-party licences are in
-[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Models are not part of Pinhole.
+Pinhole is source-available under the [Pinhole Licence 1.0](LICENSE): the MIT License plus a
+Safeguards condition. You may use, change, share and sell it, but every copy you share must keep the
+[safeguards](SAFEGUARDS.md) at least as strict as in the version you started from. Because of that
+condition it is not an open-source licence. Pinhole v1.0.0 and earlier stay under the MIT License.
+Third-party licences are in [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES). Models are not part of
+Pinhole.
