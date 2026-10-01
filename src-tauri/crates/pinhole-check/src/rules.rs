@@ -41,13 +41,13 @@ pub const ORIGINAL_FACE_MIN_SIDE: f32 = 12.0;
 /// photo can be made intimate.
 pub const ORIGINAL_FACE_SCORE: f32 = 0.6;
 /// Age estimate's confidence that a face is a child's (its 0–2 and 3–9 groups) that blocks.
-/// On photos, adults score at most ~0.05 here and young children ~0.77. See `decide` for why
-/// the photo-face rule stops at clear children.
+/// On photos, adults score at most ~0.05 here and young children ~0.77.
 pub const CHILD_FACE: f32 = 0.6;
 /// Age estimate's confidence that a face is under 20 (its 0–2, 3–9 and 10–19 groups) that
 /// blocks. Catches photoreal teenagers the child groups miss, at the cost of some
-/// young-looking adults (measured on FairFace portraits, see `decide`).
-pub const UNDER_20_FACE: f32 = 0.9;
+/// young-looking adults: on FairFace portraits 42 % of faces labelled 10–19 and 2.9 % labelled
+/// 20–29 reach it with the child groups (RELEASE-SPEC §3.2 rule 2).
+pub const UNDER_20_FACE: f32 = 0.8;
 
 /// The tagger scores the rules use.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

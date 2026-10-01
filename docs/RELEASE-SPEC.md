@@ -182,18 +182,30 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    swimwear can count here) **and** either:
    - one of the tagger's tags for a character tagged as a child ≥ 0.5 (drawn or photo), or
    - photo style (tagger `realistic` or `photorealistic` ≥ 0.1; drawings score ~0) and a face
-     whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6. On 100
-     FairFace photos, adults scored at most 0.05 and ages 3–9 0.77 on average. The age estimate
+     whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6, or whose
+     under-20 groups (0–2, 3–9 and 10–19, `under_20_face`) reach ≥ 0.8 (`UNDER_20_FACE`,
+     teenagers). The age estimate
      judges faces from 16 px; a clear face (≥ 0.8) under 16 px is too small to judge and counts
      as a child's (fails closed). With no face upright, the result is also tried turned
      90/180/270° (someone lying down). A result above 1280 px is also searched in 640 px
      windows at its own resolution and at half of it (upright).
 
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
-   often drawn young). Aimed at clear children: the age estimate's groups are wide (0–2, 3–9,
-   10–19, 20–29…) and it is off by several years, so it can't separate teenagers from young
-   adults without blocking many adults. Teenagers are left to the word check, the brought-in
-   photo rule (rule 1) and, for drawings, the child tags.
+   often drawn young). The under-20 threshold was picked on FairFace validation portraits
+   (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
+   some wrong blocks of young-looking adults, which only matter on sexual photo-style results:
+
+   | Faces counted as under 18 | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) |
+   |---|---|---|
+   | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % |
+   | + under 20 ≥ 0.9 | 23.6 % | 1.8 % |
+   | + under 20 ≥ 0.85 | 35.8 % | 2.3 % |
+   | **+ under 20 ≥ 0.8 (shipped)** | **41.6 %** | **2.9 %** |
+   | + under 20 ≥ 0.7 | 48.5 % | 4.1 % |
+
+   The 10–19 group alone never reached 0.8 on any face, so it can't be used on its own.
+   Teenagers the estimate misses are left to the word check, the brought-in photo rule
+   (rule 1) and, for drawings, the child tags.
    Any check model output that isn't a finite number is an error, so the picture is dropped.
 3. **Model marked "safe images only".** The model or a LoRA in the request is "safe images only"
    (`InstalledFile::safe_images_only`) → intimate results are blocked. That is: it carries
