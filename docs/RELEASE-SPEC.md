@@ -515,8 +515,8 @@ Done items live in git history. Still open:
   download, with a link to the full text in the acceptance prompt.
 - **Signed updates:** the code is in (SPEC §13 "Updates"); it switches on when the maintainer
   generates the key (`npx tauri signer generate -w ~/.pinhole/update.key`), stores the private key
-  and its password as the `PINHOLE_UPDATE_KEY` / `PINHOLE_UPDATE_KEY_PASSWORD` secrets of the
-  `release` environment (deployment branches and tags: `main` and `v*` only) and commits
+  as the `PINHOLE_UPDATE_KEY` secret (and its password, if it has one, as
+  `PINHOLE_UPDATE_KEY_PASSWORD`) of the `release` environment (deployment branches and tags: `main` and `v*` only) and commits
   the `.pub` file as `src-tauri/update-key.pub`. Keep a backup of the key: without it, copies can
   only update by hand.
 - **Release files traceable to the source commit** (today `SHA256SUMS.txt` proves integrity, not

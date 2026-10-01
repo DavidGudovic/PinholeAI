@@ -177,7 +177,11 @@ impl Environment {
 
 /// How this copy updates: [`detect_target_with`], or by hand while [`SELF_UPDATE`] is off.
 pub fn update_target(env: &Environment) -> Target {
-    if SELF_UPDATE {
+    update_target_with(env, SELF_UPDATE)
+}
+
+fn update_target_with(env: &Environment, self_update: bool) -> Target {
+    if self_update {
         detect_target_with(env)
     } else {
         Target::Manual
@@ -370,13 +374,18 @@ pub fn verify_sums(sums: &[u8], sig: &[u8], public_key: &str) -> CoreResult<()> 
         let text = base64::engine::general_purpose::STANDARD.decode(raw).ok()?;
         String::from_utf8(text).ok()
     };
+    // A signature that doesn't verify means the release wasn't made with the
+    // maintainer's key: don't send people to install the same file by hand.
     let bad = |details: String| {
-        CoreError::new("hash_mismatch", "This release's signature doesn't match, so Pinhole won't install it. Download it from the release page instead.")
+        CoreError::new("hash_mismatch", "This release isn't signed by Pinhole's maintainer, so Pinhole won't install it. Don't install this version by hand; check the release page again later.")
             .with_details(details)
     };
     let key = b64(public_key.as_bytes())
         .and_then(|t| minisign_verify::PublicKey::decode(&t).ok())
-        .ok_or_else(|| bad("the built-in update key can't be read".into()))?;
+        .ok_or_else(|| {
+            CoreError::internal("This copy of Pinhole can't check updates. Download the new version from the release page.")
+                .with_details("the built-in update key can't be read")
+        })?;
     let signature = b64(sig)
         .and_then(|t| minisign_verify::Signature::decode(&t).ok())
         .ok_or_else(|| bad("the signature file can't be read".into()))?;
@@ -950,25 +959,31 @@ mod tests {
     }
 
     #[test]
-    fn every_copy_updates_from_the_release_page_without_a_built_in_key() {
-        if SELF_UPDATE {
-            return;
-        }
+    fn without_a_built_in_key_every_copy_updates_from_the_release_page() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
         let e = env("windows", dir);
         assert_ne!(detect_target_with(&e), Target::Manual);
-        assert_eq!(update_target(&e).mode(), InstallMode::Manual);
+        assert_eq!(update_target_with(&e, false), Target::Manual);
+        assert_eq!(update_target_with(&e, true), detect_target_with(&e));
+        assert_eq!(update_target(&e), update_target_with(&e, SELF_UPDATE));
         let releases = vec![rel(
             "v9.0.0",
             false,
-            &[("Pinhole-9.0.0-windows-x64-setup.exe", 10), (SUMS_FILE, 1)],
+            &[
+                ("Pinhole-9.0.0-windows-x64-setup.exe", 10),
+                (SUMS_FILE, 1),
+                (SIG_FILE, 1),
+            ],
         )];
         let current = semver::Version::new(1, 0, 0);
-        let info = pick_update(&releases, &current, &update_target(&e)).unwrap();
+        let info = pick_update(&releases, &current, &update_target_with(&e, false)).unwrap();
         assert_eq!(info.install_mode, InstallMode::Manual);
         assert_eq!(info.size_bytes, None);
+        let info = pick_update(&releases, &current, &update_target_with(&e, true)).unwrap();
+        assert_eq!(info.install_mode, InstallMode::Installer);
+        assert_eq!(info.size_bytes, Some(10));
     }
 
     // A throwaway key (`tauri signer generate`) and its signature of SIGNED_SUMS
@@ -994,17 +1009,19 @@ mod tests {
     #[test]
     fn changed_list_other_key_or_garbage_is_refused() {
         let swapped = SIGNED_SUMS.replace("0f34", "aaaa");
-        let cases: [(&[u8], &[u8], &str); 5] = [
+        let cases: [(&[u8], &[u8], &str); 4] = [
             (swapped.as_bytes(), TEST_SIG.as_bytes(), TEST_KEY),
             (SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), OTHER_KEY),
             (SIGNED_SUMS.as_bytes(), b"not a signature", TEST_KEY),
             (SIGNED_SUMS.as_bytes(), b"", TEST_KEY),
-            (SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), ""),
         ];
         for (sums, sig, key) in cases {
             let err = verify_sums(sums, sig, key).unwrap_err();
             assert_eq!(err.code, "hash_mismatch");
         }
+        // A broken built-in key is this copy's problem, not the release's.
+        let err = verify_sums(SIGNED_SUMS.as_bytes(), TEST_SIG.as_bytes(), "").unwrap_err();
+        assert_eq!(err.code, "internal");
     }
 
     #[test]

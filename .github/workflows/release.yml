@@ -156,6 +156,7 @@ jobs:
       - name: Sign SHA256SUMS.txt (in-app updates)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.PINHOLE_UPDATE_KEY }}
+          # Optional: a key generated without a password needs no PINHOLE_UPDATE_KEY_PASSWORD secret.
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.PINHOLE_UPDATE_KEY_PASSWORD }}
         run: |
           pub=repo/src-tauri/update-key.pub
