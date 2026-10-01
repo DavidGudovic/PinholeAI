@@ -72,7 +72,7 @@ export function quantPlain(quant: string | null | undefined): string | null {
   const q = quant.toLowerCase();
   if (q === "bf16" || q === "fp16") return "Full quality version";
   if (q.startsWith("q8") || q === "fp8") return "High-quality compact version";
-  if (q.startsWith("q4") || q.startsWith("q5") || q.startsWith("q3")) return "Smaller version for your GPU";
+  if (q.startsWith("q4") || q.startsWith("q5") || q.startsWith("q3")) return "Smaller version for your graphics card";
   return null;
 }
 

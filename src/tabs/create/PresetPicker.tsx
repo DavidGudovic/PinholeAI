@@ -218,7 +218,7 @@ function SavePresetInner({ onClose }: { onClose: () => void }) {
               Dials: {SHAPE_LABEL[s.create.shape]} · {qualityLabel(s.create.quality)} · {s.create.count} at a time
             </li>
             <li>Fine-tune: {Object.keys(s.create.fineTune).filter((k) => k !== "negativePrompt" && k !== "hiresScale" && k !== "hiresDenoise").length} changed setting(s)</li>
-            <li>LoRAs: {s.create.loras.length || "none"}</li>
+            <li>Style add-ons: {s.create.loras.length || "none"}</li>
           </ul>
         </div>
         {error && <ErrorNotice error={error} />}

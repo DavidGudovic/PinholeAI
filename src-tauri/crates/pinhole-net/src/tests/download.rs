@@ -382,6 +382,28 @@ async fn existing_verified_dest_is_not_downloaded_again() {
 }
 
 #[tokio::test]
+async fn a_different_file_with_the_same_name_is_kept() {
+    let body = data(1000);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("model.safetensors");
+    std::fs::write(&dest, b"the user's own model").unwrap();
+    let s = spec(
+        srv.url("/m"),
+        &dest,
+        Some(sha(&body)),
+        Some(body.len() as u64),
+    );
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&dest).unwrap(), b"the user's own model");
+    assert_eq!(got.path, dir.path().join("model-2.safetensors"));
+    assert_eq!(std::fs::read(&got.path).unwrap(), body);
+}
+
+#[tokio::test]
 async fn cancel_keeps_part_and_resume_completes() {
     let body = data(400_000);
     let b = body.clone();

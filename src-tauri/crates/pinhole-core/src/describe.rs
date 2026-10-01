@@ -976,6 +976,15 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
                 .with_api_key(s.api_key.clone()));
         }
     }
+    // Describe and Improve can use different helpers: never stop one that is still answering
+    // the other (the caller's own guard counts as one).
+    if slot.as_mut().is_some_and(|s| s.proc.is_running())
+        && core.describe.busy.load(Ordering::SeqCst) > 1
+    {
+        return Err(CoreError::invalid(
+            "Wait for the other description or prompt to finish, then try again.",
+        ));
+    }
     // Taken while holding `slot`: a `shutdown` waiting for the slot has cancelled this one.
     let cancel = core.describe.stopping.lock().clone();
     let cancelled = || CoreError::new("cancelled", "Cancelled.");
