@@ -77,7 +77,8 @@ every decision can be overridden.
   NVIDIA → CUDA 12.x build (must support Blackwell / RTX 50xx), AMD/Intel → Vulkan build,
   no GPU → CPU build (warn: very slow).
 - Stored in `Data/engine/{sd,llama}/<version>/<backend>/`. Verify hash before first launch.
-- Linux has no upstream CUDA build of `sd-server`: NVIDIA on Linux uses the Vulkan build.
+- Linux has no upstream CUDA build of `sd-server`; Pinhole's fork builds one for RTX 30xx and newer
+  (compute capability 8.6+). Older NVIDIA cards, or no NVIDIA driver, use the Vulkan build.
 - Windows: the upstream builds need the MSVC runtime (VC++ 2015–2022 x64); Pinhole bundles the
   redistributable DLLs and copies them next to an engine when the system lacks them.
 
@@ -867,15 +868,13 @@ build is shared.
   5 min after the last generate/upscale once it has run a job (next Generate reloads the model);
   after start-up Pinhole checks that the server on the port is its own child reporting the model
   it launched (port squatting). `llama-server` (Describe) gets a random per-launch API key via
-  `LLAMA_API_KEY` and only `/health` stays public. **Real fix (follow-up):** ship a patched
-  `sd-server` build that rejects any request carrying an `Origin` header and requires a
-  per-launch bearer token (passed via the environment), then drop the idle-stop workaround.
-  Pinhole's side is in place: every launch gets a random key in `SD_API_KEY` and every request
-  sends it as `Authorization: Bearer` (upstream ignores both). The patch (`--api-key` / env
-  `SD_API_KEY`, `--reject-origin`) lives in `engine/sd-cpp/` and is built by a workflow in a
-  separate public repo (`engine/sd-cpp/README.md`). When `engine.yaml` pins that build, set
-  `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` to `true`: it is compiled in (not a
-  setting), adds `--reject-origin`, and an unpatched engine then can't start.
+  `LLAMA_API_KEY` and only `/health` stays public. **Fix (2026-10-01):** `engine.yaml` pins a patched
+  `sd-server` from Pinhole's fork (upstream code + `engine/sd-cpp/` patch, built by the fork's
+  workflow, `engine/sd-cpp/README.md`). Every launch gets a random key in `SD_API_KEY` (never on
+  the command line) and every request sends it as `Authorization: Bearer`; requests without it
+  get 401, and any request carrying an `Origin` header gets 403 (`--reject-origin`, added by the
+  compiled-in `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs`, not a setting, so an unpatched
+  engine can't start). The idle stop stays (it also frees memory).
 
 ## 14. Open questions
 

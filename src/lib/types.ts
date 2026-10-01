@@ -86,6 +86,8 @@ export interface HardwareView {
     ramGb: number;
     cpuThreads: number;
     os: string;
+    /** Lowest NVIDIA compute capability (Linux CUDA needs 8.6+); null if unknown. */
+    minComputeCap?: number | null;
   } | null;
   /** Effective VRAM after Settings overrides (0 = CPU only). */
   vramGb: number;

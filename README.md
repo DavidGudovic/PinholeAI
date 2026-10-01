@@ -39,7 +39,7 @@ Get the latest version from [Releases](../../releases):
 | Linux (Ubuntu 24.04+ or glibc 2.38+) | `Pinhole-<version>-linux-x86_64.AppImage` or `-linux-amd64.deb` |
 
 Windows may warn that the app is from an unknown publisher (it isn't code-signed yet): choose
-**More info → Run anyway**. On Linux, NVIDIA cards use the Vulkan driver.
+**More info → Run anyway**. On Linux, NVIDIA RTX 30xx and newer use CUDA (with the NVIDIA driver); other cards use Vulkan.
 
 ## First steps
 
@@ -56,10 +56,6 @@ Models, settings and saved pictures are in one `Data` folder (**Settings → Ope
 Like other AI image tools, Pinhole has safeguards against harmful content. Unlike most, it does
 this with AI running entirely on your own computer. [SAFETY.md](SAFETY.md) explains how they work
 and how to report a problem; the usage guidelines are shown when Pinhole first opens.
-
-One known limitation: while the image engine runs, another program on the same computer could
-send it requests or ask for recently finished pictures. A locked-down engine build that fixes this
-is on the way.
 
 ## Build from source
 

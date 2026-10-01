@@ -313,13 +313,17 @@ mod tests {
     #[test]
     fn shipped_yaml_parses_and_is_pinned() {
         let cfg = shipped();
-        assert!(cfg.stable_diffusion_cpp.version.starts_with("master-"));
+        // The lock-down build from Pinhole's fork (engine/sd-cpp/): an upstream tag + `-pinhole<n>`.
+        // A new version string also keeps an old upstream install from being reused.
+        let version = &cfg.stable_diffusion_cpp.version;
+        assert!(version.starts_with("master-") && version.contains("-pinhole"));
         assert_eq!(cfg.stable_diffusion_cpp.binary, "sd-server");
         assert_eq!(cfg.llama_cpp.binary, "llama-server");
         for key in [
             "windows_cuda",
             "windows_vulkan",
             "windows_cpu",
+            "linux_cuda",
             "linux_vulkan",
             "linux_cpu",
         ] {
@@ -330,7 +334,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("sd build {key}"));
             assert!(
                 b.url.starts_with(
-                    "https://github.com/leejet/stable-diffusion.cpp/releases/download/"
+                    "https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/"
                 ),
                 "{key}"
             );
@@ -398,12 +402,10 @@ mod tests {
             (s.key.as_str(), s.backend.as_str()),
             ("windows_cuda", "cuda")
         );
-        // No Linux CUDA upstream → Vulkan.
+        // Pinhole's fork builds Linux CUDA (RTX 30+; app.rs picks Vulkan for older cards).
         let s = cfg.select_build(sd, "linux", "cuda").unwrap();
-        assert_eq!(
-            (s.key.as_str(), s.backend.as_str()),
-            ("linux_vulkan", "vulkan")
-        );
+        assert_eq!((s.key.as_str(), s.backend.as_str()), ("linux_cuda", "cuda"));
+        assert_eq!(s.build.extra.len(), 1, "Linux CUDA runtime zip");
         let s = cfg.select_build(sd, "linux", "cpu").unwrap();
         assert_eq!(s.key, "linux_cpu");
         assert!(cfg.select_build(sd, "macos", "cpu").is_err());

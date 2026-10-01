@@ -103,10 +103,12 @@ engine output goes in `details` (UI shows it behind a "Details" toggle).
 `config/engine.yaml` pins a release tag + per-platform assets + SHA-256. Install downloads
 through `DownloadManager` into `Data/engine/sd/<version>/<backend>/`, verifies SHA-256,
 unzips (zip-slip safe), marks executables (+x on Linux). Windows CUDA also needs the
-`cudart-*` zip in the same folder. Upstream asset names (stable-diffusion.cpp CI):
-`sd-master-<short>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x64.zip`,
-`sd-master-<short>-bin-Linux-Ubuntu-24.04-x86_64{,-vulkan}.zip` (no Linux CUDA build upstream:
-Linux NVIDIA uses Vulkan).
+`cudart-*` zip in the same folder (Linux CUDA too). sd-server comes from Pinhole's fork
+(DavidGudovic/stable-diffusion.cpp: upstream code + the lock-down patch, `engine/sd-cpp/`), asset
+names `sd-<tag>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x64.zip`,
+`sd-<tag>-bin-Linux-Ubuntu-24.04-x86_64-{cpu,cuda12,vulkan}.zip`,
+`cudart-sd-bin-Linux-Ubuntu-24.04-x86_64-cu12.zip`. Linux CUDA is built for RTX 30/40/50 only
+(compute capability 8.6+); other Linux NVIDIA setups use Vulkan.
 
 ### Generate (engine agent)
 `generate(req)`:

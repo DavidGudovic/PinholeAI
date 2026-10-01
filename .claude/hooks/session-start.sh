@@ -43,17 +43,18 @@ cargo test --workspace --locked --no-run --quiet >/dev/null 2>&1 \
 
 # 4. Read-only checkout of the pinned upstream engine source (server API docs, CLI flags,
 #    get_sd_version() for registry detection rules) — see CLAUDE.md "Engine rules".
-SD_TAG="$(sed -n '/^stable_diffusion_cpp:/,/^[^ ]/{s/^  version: *//p}' config/engine.yaml | head -1)"
+# engine.yaml pins Pinhole's fork build; its `commit` is the upstream commit the build is made from.
+SD_COMMIT="$(sed -n '/^stable_diffusion_cpp:/,/^[^ #]/{s/^  commit: *//p}' config/engine.yaml | head -1)"
 SD_SRC="${HOME}/leejet/stable-diffusion.cpp"
-# The tag ends in the commit's short hash (master-929-3f8527a); an existing checkout of that commit is kept.
-SD_SHA="${SD_TAG##*-}"
-if [ -n "$SD_TAG" ] && [ "$(git -C "$SD_SRC" rev-parse --short=7 HEAD 2>/dev/null || true)" != "$SD_SHA" ]; then
-  log "cloning stable-diffusion.cpp ${SD_TAG} (read-only reference)…"
+# An existing checkout of that commit is kept.
+if [ -n "$SD_COMMIT" ] && [ "$(git -C "$SD_SRC" rev-parse HEAD 2>/dev/null || true)" != "$SD_COMMIT" ]; then
+  log "fetching stable-diffusion.cpp ${SD_COMMIT} (read-only reference)…"
   rm -rf "$SD_SRC"
-  mkdir -p "$(dirname "$SD_SRC")"
-  GIT_LFS_SKIP_SMUDGE=1 git -c advice.detachedHead=false clone -q --depth 1 --branch "$SD_TAG" \
-    https://github.com/leejet/stable-diffusion.cpp "$SD_SRC" \
-    || log "could not clone stable-diffusion.cpp (network?) — continuing without it"
+  mkdir -p "$SD_SRC"
+  ( cd "$SD_SRC" && git init -q && git remote add origin https://github.com/leejet/stable-diffusion.cpp \
+      && GIT_LFS_SKIP_SMUDGE=1 git fetch -q --depth 1 origin "$SD_COMMIT" \
+      && git -c advice.detachedHead=false checkout -q FETCH_HEAD ) \
+    || log "could not fetch stable-diffusion.cpp (network?) — continuing without it"
 fi
 if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
   echo "export SD_CPP_SRC=\"$SD_SRC\"" >> "$CLAUDE_ENV_FILE"

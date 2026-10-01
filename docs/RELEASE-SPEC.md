@@ -516,12 +516,11 @@ templates, posts and UI.
       be completely free … its a portfolio piece, so i dont think we need to go overboard asking
       lawyers"). The bar instead: serious misuse needs forking and editing the code. Revisit if
       Pinhole is ever monetised (§10)
-- [ ] Engine API locked down: ship a patched `sd-server` that rejects any request carrying an
+- [x] Engine API locked down: a patched `sd-server` that rejects any request carrying an
       `Origin` header and requires a per-launch bearer token (SPEC §13 "Local engine API exposure").
-      Today any web page open in the user's browser that finds the port can send it jobs or read
-      recent images. Decided 2026-09-28: fix before any shared build.
-      Pinhole side done (per-launch key + bearer); left: pin the patched build and set
-      `ENGINE_LOCKDOWN = true` (SPEC §13).
+      Done 2026-10-01: `config/engine.yaml` pins `master-929-3f8527a-pinhole1` from Pinhole's fork
+      (upstream code + `engine/sd-cpp/` patch), `ENGINE_LOCKDOWN = true`; the engine smoke test
+      checks 401 without the key and 403 with an `Origin`. GPU builds untested on real hardware.
 - [ ] Signed updates: release files signed with a key only the maintainer holds (e.g. minisign),
       and "Update and restart" refuses a file whose signature doesn't verify. Until then
       "Update and restart" is switched off (`update::SELF_UPDATE = false`, 2026-09-30): "Check for

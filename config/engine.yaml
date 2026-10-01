@@ -15,16 +15,20 @@
 # Update procedure: bump `version`, rewrite asset names, run the CI "verify pins" job (downloads
 # every URL, checks size + SHA-256), then run the engine smoke test (PINHOLE_SMOKE=1).
 #
-# Verified 2026-09-28: every size + SHA-256 below was checked against the GitHub release
-# (downloaded and hashed, and cross-checked with the digests GitHub publishes for the assets).
+# Verified: every size + SHA-256 below matches the digests GitHub publishes for the assets
+# and the release SHA256SUMS.txt (sd-server 2026-10-01; llama-server 2026-09-28, downloaded
+# and hashed).
 
 schema_version: 1
 
 stable_diffusion_cpp:
-  repo: https://github.com/leejet/stable-diffusion.cpp
-  # Release tag = master-<commit count>-<short sha>. Its server exposes the native async
+  # Pinhole's fork: upstream stable-diffusion.cpp at `commit`, unchanged except the sd-server
+  # lock-down patch (engine/sd-cpp/: per-launch key in SD_API_KEY, --reject-origin), built by
+  # the fork's "Pinhole engine build" workflow. Tag = upstream tag + -pinhole<n>; a new tag also
+  # keeps an older unpatched install from being reused. Its server exposes the native async
   # /sdcpp/v1 API (img_gen, jobs, cancel, capabilities, upscale) used by Pinhole.
-  version: master-929-3f8527a
+  repo: https://github.com/DavidGudovic/stable-diffusion.cpp
+  version: master-929-3f8527a-pinhole1
   commit: 3f8527a46c54ecf4cb4ed6003da8e8982283c73c
   binary: sd-server
   # Added by the engine manager in addition to the per-model wiring args. The port is
@@ -42,38 +46,52 @@ stable_diffusion_cpp:
     windows_cuda:
       # CUDA 12.8.1, CMAKE_CUDA_ARCHITECTURES 61;70;75;80;86;89;90;100;120 → includes RTX 50xx
       # (Blackwell, sm_120). Needs an NVIDIA driver with CUDA 12.8 support (570+).
-      url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-cuda12-x64.zip
-      sha256: 217d6dead9abd3f827fc338268555cc179234e7e6330ef21ecb1c985e19d2dc7
-      size_bytes: 337915440
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-win-cuda12-x64.zip
+      sha256: 9ed63ba54582d18bac77238934c1ca16a2587d5537e30bed286eab4f9642bd5b
+      size_bytes: 337844954
       size_mb: 338
       extra:
         # cudart64_12.dll, cublas64_12.dll, cublasLt64_12.dll — must sit next to sd-server.exe.
-        - url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/cudart-sd-bin-win-cu12-x64.zip
+        - url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/cudart-sd-bin-win-cu12-x64.zip
           sha256: fe20366827d357c00797eebb58244dddab7fd9a348d70090c3871004c320f38d
           size_bytes: 563452046
           size_mb: 563
     windows_vulkan:
-      url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-vulkan-x64.zip
-      sha256: 60e6850d650417409f18c2170ab5e27335db96da70cd3d1ad1e930bcffc2fd35
-      size_bytes: 30067605
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-win-vulkan-x64.zip
+      sha256: 7614331da9303798e523d92648f65ffa4555a4276b86015c339d12924c149752
+      size_bytes: 30029173
       size_mb: 30
     windows_cpu:
-      url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-win-cpu-x64.zip
-      sha256: 5e7caca2080321b25a12c1fa4175cb7d953f2b182309f8f73bfc9c725231d26c
-      size_bytes: 17486440
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-win-cpu-x64.zip
+      sha256: 2df17b82758a49c5b02503b84ccec3983bde504764bea140c4d8db963b84c41f
+      size_bytes: 17448207
       size_mb: 17
-    # No upstream Linux CUDA build: Linux NVIDIA uses Vulkan (see `fallbacks`).
-    # Upstream Linux builds are made on Ubuntu 24.04 and need glibc >= 2.38 (Ubuntu 24.04+).
+    # Linux builds are made on Ubuntu 24.04 and need glibc >= 2.38 (Ubuntu 24.04+).
+    linux_cuda:
+      # CUDA 12.8.1 for RTX 30/40/50 only (sm_86, sm_89, sm_120) to keep the download small;
+      # hardware detection picks it only for compute capability 8.6+ (older cards use Vulkan).
+      # Needs the NVIDIA proprietary driver (570+).
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-Linux-Ubuntu-24.04-x86_64-cuda12.zip
+      sha256: 4d9ac869180f55ecb481257ed931b9e99c517d5f3eb7bd36eda0443e8d2a800a
+      size_bytes: 140562103
+      size_mb: 141
+      min_glibc: "2.38"
+      extra:
+        # libcudart.so.12, libcublas.so.12, libcublasLt.so.12 next to sd-server (RUNPATH $ORIGIN).
+        - url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/cudart-sd-bin-Linux-Ubuntu-24.04-x86_64-cu12.zip
+          sha256: 7af0da5584760d9cdf73e6c4a572702e7c597b7796a00a986627300787fb76c0
+          size_bytes: 594376445
+          size_mb: 594
     linux_vulkan:
-      url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip
-      sha256: e35cc73cf5ba9637d1dc1d717760e7b8428376a4905d57e72ec8c871864f62c7
-      size_bytes: 36886217
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip
+      sha256: 9556e250e24c48833ffe6afc8f407df6183193e05db87e885921a6cb97f3dc6b
+      size_bytes: 36845461
       size_mb: 37
       min_glibc: "2.38"
     linux_cpu:
-      url: https://github.com/leejet/stable-diffusion.cpp/releases/download/master-929-3f8527a/sd-master-3f8527a-bin-Linux-Ubuntu-24.04-x86_64.zip
-      sha256: 9ad35ed309dbe59f5e66f35edafac9a69e6cc233ea6b9577071feae829159d37
-      size_bytes: 26025088
+      url: https://github.com/DavidGudovic/stable-diffusion.cpp/releases/download/master-929-3f8527a-pinhole1/sd-master-929-3f8527a-pinhole1-bin-Linux-Ubuntu-24.04-x86_64-cpu.zip
+      sha256: 9749fe206e059ce3fdcf31bb8298b6d3de8473794fbdc0899f3d693dbc76d504
+      size_bytes: 25984369
       size_mb: 26
       min_glibc: "2.38"
 
