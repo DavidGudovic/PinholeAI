@@ -196,7 +196,7 @@ export function FirstRun(props: { onDone: () => void }) {
             <section className="mx-auto w-full max-w-xl">
               <StepHeading refObj={headingRef} title="Download the image engine">
                 Pinhole makes pictures with a small open-source engine. It's downloaded once from GitHub and checked before it runs. Pinhole's safety
-                check (about 1.1 GB, from Hugging Face) downloads with it.
+                check (about 1.2 GB, from Hugging Face) downloads with it.
               </StepHeading>
               <EngineStep engine={engine} hw={hw} />
             </section>

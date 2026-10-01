@@ -186,5 +186,8 @@ implementations (sha1, sha256, xxhash — public domain / BSD-2-Clause).
       opencv/face_detection_yunet (2023mar) ........... MIT
       onnx-community/fairface_age_image_detection-ONNX  Apache-2.0
         (converted from dima806/fairface_age_image_detection, Apache-2.0)
+      Sam-Apostel/mivolo-v2-age-onnx .................. Apache-2.0
+        (ONNX export of iitolstykh/mivolo_v2, MiVOLO by Maksim Kuprashevich
+        and Irina Tolstykh, Apache-2.0)
     Runtime compiled into Pinhole: tract-onnx, tract-linalg and their tract-*
     crates (Sonos) ................................... MIT OR Apache-2.0

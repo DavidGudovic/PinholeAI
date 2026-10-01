@@ -2000,6 +2000,7 @@ mod tests {
                 side: 100.0,
                 child_face: Some(0.02),
                 under_20_face: Some(0.05),
+                age: Some(35.0),
             }]),
         }
     }
