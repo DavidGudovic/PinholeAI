@@ -27,6 +27,7 @@ change it.
     author marked it so, or it was added from your computer or another app's folder and CivitAI
     hasn't confirmed what it is), or from a picture such a model or add-on made.
 
+  A picture you bring in is checked the same way before it is first described.
   It doesn't block adult content of adults. If the check's files are missing or
   damaged, Pinhole makes nothing until they are downloaded again. When a picture is stopped, it
   isn't shown; your prompt and settings stay so you can change them.
