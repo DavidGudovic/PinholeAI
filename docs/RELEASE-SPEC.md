@@ -409,7 +409,8 @@ templates, posts and UI.
   saved until you press Save."
 - Never say that nothing is reported, recorded or sent about what people make, and keep privacy and
   no-telemetry facts out of safeguard text (SAFETY.md, usage guidelines, notices, block message);
-  no hints at consequences or monitoring either.
+  no hints at consequences or monitoring either. Limitations stay honest but neutral, never a
+  challenge ("can't stop someone determined") or a pointer to how checks could be removed or fooled.
 - Never call Pinhole "safe" or say it "prevents misuse". Say what it blocks ("has safeguards
   against …").
 - Edit examples show changes to **scenes, objects, lighting and style** — never changing a real

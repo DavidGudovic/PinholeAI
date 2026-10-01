@@ -142,7 +142,9 @@ scripts/          check.sh (pre-merge check), prune-target.sh, privacy lint, pin
   privacy or no-telemetry facts next to the safeguards (SAFETY.md, usage guidelines, notices,
   block message): next to the checks they read as an invitation to misuse. No-telemetry facts go
   only in privacy wording ("no telemetry or analytics", What goes online). Don't hint at
-  consequences or monitoring either.
+  consequences or monitoring either. Limitations stay honest but neutral ("the checks can make
+  mistakes in both directions"): never a challenge ("can't stop someone determined"), never how
+  checks could be removed, skipped or fooled.
 - Don't advertise that pictures or prompts aren't written to disk ("memory only", "nothing on
   disk", "never saved"), and never frame it as privacy or leaving no trace. Where saving needs explaining, say it once, like any editor: "Nothing is
   saved until you press Save." The privacy rules above still apply to the code.
