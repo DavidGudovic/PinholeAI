@@ -1247,9 +1247,11 @@ async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
     let mut need = 0u64;
     for f in files {
         let Some(size) = f.size_hint() else { continue };
+        // A file already there counts as done unless its size shows it's a different file
+        // (that one is kept and the download gets a new name).
         if tokio::fs::metadata(&f.dest)
             .await
-            .is_ok_and(|m| m.is_file())
+            .is_ok_and(|m| m.is_file() && f.size_bytes.is_none_or(|s| s == m.len()))
         {
             continue;
         }

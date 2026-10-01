@@ -328,9 +328,9 @@ export function makeActions(store: Store) {
     return saved;
   }
 
-  /** "Save all": asks for a folder, then saves every unsaved picture there. False when cancelled; throws if some couldn't be saved. */
-  async function saveAll(): Promise<boolean> {
-    const ids = unsavedIds(get());
+  /** "Save all": asks for a folder, then saves every unsaved picture (or just `only`) there. False when cancelled; throws if some couldn't be saved. */
+  async function saveAll(only?: string[]): Promise<boolean> {
+    const ids = only ?? unsavedIds(get());
     if (!ids.length) return true;
     const dir = await chooseFolder("Save all pictures to…");
     if (!dir) return false;
@@ -528,21 +528,28 @@ export function makeActions(store: Store) {
     return true;
   }
 
-  /** Resolves without loading when the user is first asked about unsaved edits (it loads if they go ahead). */
-  async function importToEdit(blob: Blob, confirmed = false) {
+  /**
+   * False without loading when the user is first asked about unsaved edits: if they go
+   * ahead it loads then and opens the Edit tab.
+   */
+  async function importToEdit(blob: Blob, confirmed = false): Promise<boolean> {
     if (editBusy(get())) throw busyError();
-    if (!confirmed && !confirmReplaceEdit(() => importToEdit(blob, true))) return;
+    if (!confirmed && !confirmReplaceEdit(async () => {
+      await importToEdit(blob, true);
+      setTab("edit");
+    })) return false;
     const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
       throw api.asCoreError(e);
     });
-    if (importOutlived(ref, nonce)) return;
+    if (importOutlived(ref, nonce)) return true;
     // An edit started while the image was being read: keep its history.
     if (editBusy(get())) {
       releaseRefs([ref], true);
       throw busyError();
     }
     dispatch({ type: "editLoad", ref });
+    return true;
   }
 
   /** Create's optional reference picture. */

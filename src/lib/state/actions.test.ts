@@ -27,6 +27,7 @@ vi.mock("../api", async (orig) => {
     importImage: vi.fn(async () => ({ id: "mask", width: 8, height: 8 })),
     cancelGeneration: vi.fn(async () => undefined),
     clearSession: vi.fn(async () => undefined),
+    saveImagesTo: vi.fn(async () => ({ saved: [], failed: 0 })),
     listModels: vi.fn(async () => []),
     listLoras: vi.fn(async () => []),
     familyUi: vi.fn(async () => {
@@ -39,7 +40,7 @@ let background = false;
 const notifyDone = vi.fn();
 vi.mock("./platform", async (orig) => {
   const real = await orig<typeof import("./platform")>();
-  return { ...real, windowInBackground: () => background, notifyDone: (sound: boolean) => notifyDone(sound), primeSound: () => undefined };
+  return { ...real, windowInBackground: () => background, notifyDone: (sound: boolean) => notifyDone(sound), primeSound: () => undefined, chooseFolder: vi.fn(async () => "/x") };
 });
 
 const apiMod = await import("../api");
@@ -694,7 +695,7 @@ describe("unsaved pictures", () => {
     store.dispatch({ type: "editPush", ref: ref("r"), meta: img("r") });
     store.dispatch({ type: "addResults", batch: null, images: [img("c")], refs: [ref("c")] });
     vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "pasted", width: 8, height: 8 } as never);
-    await actions.importToEdit(new Blob([new Uint8Array(4)]));
+    expect(await actions.importToEdit(new Blob([new Uint8Array(4)]))).toBe(false);
     expect(store.getState().leave).toBe("edit");
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r"]);
     expect(apiMod.importImage).not.toHaveBeenCalled();
@@ -716,9 +717,17 @@ describe("unsaved pictures", () => {
     store.dispatch({ type: "editPush", ref: ref("r"), meta: img("r") });
     store.dispatch({ type: "markSaved", entries: [{ id: "r", path: "/x/r.png" }] });
     vi.mocked(apiMod.importImage).mockResolvedValueOnce({ id: "pasted", width: 8, height: 8 } as never);
-    await actions.importToEdit(new Blob([new Uint8Array(4)]));
+    expect(await actions.importToEdit(new Blob([new Uint8Array(4)]))).toBe(true);
     expect(store.getState().leave).toBeNull();
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["pasted"]);
+  });
+
+  it("Save all can save just the given pictures", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: null, images: [img("a"), img("b")], refs: [ref("a"), ref("b")] });
+    vi.mocked(apiMod.saveImagesTo).mockResolvedValueOnce({ saved: [{ id: "b", path: "/x/b.png" }], failed: 0 } as never);
+    expect(await actions.saveAll(["b"])).toBe(true);
+    expect(apiMod.saveImagesTo).toHaveBeenCalledWith(["b"], "/x");
   });
 
   it("remembers the prompt of each Generate for Up/Down recall", async () => {

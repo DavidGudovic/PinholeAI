@@ -503,7 +503,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
         // they stay while that model is installed.
         if let Some(user) = model_using_helper_files(core, &index, &files) {
             return Err(CoreError::invalid(format!(
-                "{user} also uses this helper. Delete {user} first, then remove the helper."
+                "{user} also uses this helper. Delete {user} first, then delete the helper."
             )));
         }
         // Files are deleted before the index is saved: make sure it can be.

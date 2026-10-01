@@ -172,10 +172,13 @@ pub fn load(dir: &DataDir) -> Result<Settings, StoreError> {
     let damaged = || {
         let stamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
         let _ = std::fs::rename(&path, path.with_extension(format!("yaml.corrupt-{stamp}")));
-        Ok(Settings {
+        let recovered = Settings {
             offline: true,
             ..Settings::default()
-        })
+        };
+        // Written back so Offline mode stays on after a restart too (best effort).
+        let _ = save(dir, &recovered);
+        Ok(recovered)
     };
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
@@ -290,7 +293,11 @@ mod tests {
         for junk in ["{{{ not yaml", "- a\n- b\n", "42", "\u{0}\u{1}binary"] {
             std::fs::write(d.settings_file(), junk).unwrap();
             assert_eq!(load(&d).unwrap(), offline, "{junk:?}");
-            assert!(!d.settings_file().exists(), "{junk:?} kept aside");
+            assert_eq!(
+                load(&d).unwrap(),
+                offline,
+                "{junk:?} still offline next time"
+            );
         }
         let kept = std::fs::read_dir(d.config())
             .unwrap()

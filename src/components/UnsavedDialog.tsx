@@ -4,7 +4,7 @@ import * as api from "../lib/api";
 import { canSaveAs } from "../lib/state/platform";
 import { useActions } from "../lib/state/AppProvider";
 import { unsavedEditIds, unsavedIds } from "../lib/state/model";
-import { useAppState, useDispatch } from "../lib/state/store";
+import { useAppState, useDispatch, useStore } from "../lib/state/store";
 import type { CoreError } from "../lib/types";
 import { Button, Dialog, ErrorNotice } from "./ui";
 
@@ -15,6 +15,7 @@ export function UnsavedDialog() {
   const count = useAppState((s) => (s.leave === "edit" ? unsavedEditIds(s) : unsavedIds(s)).length);
   const actions = useActions();
   const dispatch = useDispatch();
+  const store = useStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CoreError | null>(null);
   const closing = what === "close";
@@ -29,7 +30,7 @@ export function UnsavedDialog() {
     setError(null);
     try {
       // Cancelling the folder picker (or a failed save) keeps the dialog open.
-      if (await actions.saveAll()) await actions.finishLeave(what!);
+      if (await actions.saveAll(replacing ? unsavedEditIds(store.getState()) : undefined)) await actions.finishLeave(what!);
     } catch (e) {
       setError(api.asCoreError(e));
     } finally {
