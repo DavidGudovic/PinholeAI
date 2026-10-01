@@ -59,10 +59,17 @@ pub(crate) fn looked_up_kind(kind: ModelKind) -> bool {
     )
 }
 
-/// The state a file added by hand or found in a linked folder starts with: none for a file
-/// Pinhole offers itself (known by its hash), else not looked up yet.
+/// The state a file added by hand or found in a linked folder starts with: `Shipped` for a
+/// file Pinhole offers itself (known by the hash of its own bytes), else not looked up yet.
+/// Parts and helpers have none.
 pub fn initial(registry: &Registry, kind: ModelKind, sha256: &str) -> Option<Lookup> {
-    (looked_up_kind(kind) && !registry.is_shipped_file(sha256)).then_some(Lookup::NotYet)
+    if !looked_up_kind(kind) {
+        None
+    } else if registry.is_shipped_file(sha256) {
+        Some(Lookup::Shipped)
+    } else {
+        Some(Lookup::NotYet)
+    }
 }
 
 /// Files added by hand or linked before lookups existed: mark them "not looked up yet", so
@@ -541,6 +548,45 @@ mod tests {
         crate::linked::rescan_all(&core, false);
         wait_for("hashed", || only_file(&core).sha256 == sha(&style)).await;
         assert_eq!(only_file(&core).lookup, Some(Lookup::NotYet));
+    }
+
+    /// Regression (1.0.1): a linked copy of a file Pinhole offers itself got no lookup state,
+    /// so every start cleared its hash and the whole file was read again.
+    #[test]
+    fn a_linked_copy_of_a_shipped_file_keeps_its_hash() {
+        let (_tmp, core) = test_core(Arc::new(Recorder::default()));
+        let registry = core.registry();
+        let shipped = registry.known_files()[0].sha256.clone();
+        let lookup = initial(&registry, ModelKind::Diffusion, &shipped);
+        assert_eq!(lookup, Some(Lookup::Shipped));
+        assert_eq!(
+            initial(&registry, ModelKind::Lora, &"ab".repeat(32)),
+            Some(Lookup::NotYet)
+        );
+        assert_eq!(initial(&registry, ModelKind::Vae, &shipped), None);
+        let mut index = InstalledIndex {
+            files: vec![InstalledFile {
+                id: "linked".into(),
+                rel_path: "linked/abc/diffusion_models/z.safetensors".into(),
+                kind: ModelKind::Diffusion,
+                sha256: shipped.clone(),
+                size_bytes: 1,
+                family: None,
+                component_id: None,
+                friendly_name: "z".into(),
+                civitai: None,
+                added_at: 0,
+                last_used: None,
+                observed_vram_gb: None,
+                dtype: None,
+                trigger_words: None,
+                lookup,
+            }],
+            ..Default::default()
+        };
+        assert!(!mark_unchecked(&registry, &mut index), "next start");
+        assert_eq!(index.files[0].sha256, shipped);
+        assert!(!index.files[0].safe_images_only());
     }
 
     #[test]

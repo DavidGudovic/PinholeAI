@@ -1104,7 +1104,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     pending.lookup = crate::lookup::initial(&registry, kind, &sha256);
     if crate::lookup::looked_up_kind(kind) {
         let outcome = crate::lookup::look_up(core, &sha256).await;
-        if pending.lookup.is_some() {
+        if pending.lookup == Some(Lookup::NotYet) {
             pending.lookup = Some(outcome.lookup());
         }
         match outcome {
