@@ -2307,6 +2307,12 @@ mod tests {
         ] {
             let e = generate::generate(&core, req).await.unwrap_err();
             assert_eq!(e.code, "blocked", "{name}");
+            if cfg!(debug_assertions) {
+                assert!(
+                    e.details.unwrap().starts_with("photo_made_intimate"),
+                    "{name}"
+                );
+            }
         }
     }
 
