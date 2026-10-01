@@ -62,6 +62,9 @@ instead of a refactor:
 - Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
   output are checked with `text_check::check` in describe.rs; that text only reaches the
   image engine through Create, where the type applies.
+- Describe intake: a brought-in picture passes `imagecheck::check_before_describe` (the result
+  rules, without originals) the first time it is described; Pinhole's own pictures passed result
+  intake already. Describe needs the check's files too.
 
 ---
 
