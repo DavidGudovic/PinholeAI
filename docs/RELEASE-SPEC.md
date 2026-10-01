@@ -1,7 +1,11 @@
 # Pinhole — Release Spec
 
 Pinhole is at **Level 2**: the repository is public and v1.0.0 was released on GitHub on
-2026-10-01. The open items in §12.1 and §12.2 are listed there with their real status.
+2026-10-01. v1.1.0 is prepared as a draft (not published yet): it adds the CivitAI lookup of every model
+added by hand or linked, the under-20 face rule, the release safety gate, the AI label kept on
+brought-in pictures, no exception for already-intimate imports, model trust by the shipped hash
+only (§5) and the read-only measuring tool (§4). The open items in §12.1 and
+§12.2 are listed there with their real status.
 
 Going beyond private use happens in three levels. Each level needs everything in its own checklist
 (§12) **and** everything in the levels before it.
@@ -193,9 +197,12 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    Drawn images never use the age estimate (it is trained on photos, and adult characters are
    often drawn young). The under-20 threshold was picked on FairFace validation portraits
    (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
-   some wrong blocks of young-looking adults, which only matter on sexual photo-style results:
+   some wrong blocks of young-looking adults, which only matter on sexual photo-style results.
+   The table is the share of ordinary, non-sexual face photos the age half of rule 2 would act on.
+   The 10–19 label includes adults aged 18 and 19, so it is not a count of under-18s, and these
+   are numbers for the age estimate alone, not how often the whole check catches harmful pictures:
 
-   | Faces counted as under 18 | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
+   | Faces the age rule acts on | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
    |---|---|---|
    | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % | 1.1 % |
    | + under 20 ≥ 0.9 | 23.6 % | 1.8 % | 1.4 % |
@@ -282,6 +289,16 @@ prints them for a folder of test pictures.
   characters. A rule ships only if it wrongly blocks **fewer than 1 in 1,000** of those images;
   otherwise narrow it first. Re-measure whenever a model or threshold changes, and on a larger set
   before Level 3.
+- **The tool:** `pinhole-check/examples/falsepos.rs` (2026-10-01: read-only). It never moves or
+  deletes a picture, scores the same steps and rules a result goes through in the app
+  (`Checker::readings` + `rules::decide`) for a plain Create, a result made from a photo of a
+  person and a "safe images only" model, and prints the set's identity (file count and one
+  SHA-256 over names and contents) with every denominator: files, unreadable files, check errors,
+  pictures measured (and, for the age-only mode, pictures with no judged face). Readings of every
+  step on every picture are a separate, opt-in diagnostic (`FALSEPOS_DIAG=1`). Earlier versions
+  deleted each picture that would be blocked and scored every step instead of the app's path
+  (which also measures large pictures in sections), so figures measured before this change are
+  from that version and are re-measured with this one before they are relied on.
 - **The set stays local** and is never committed. It never contains prohibited content (testing
   rule, §3.4).
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
@@ -316,8 +333,12 @@ prints them for a folder of test pictures.
     `poi`/`minor` match is refused: "Add a file" refuses it, a linked file is not used, and an
     already added file that a later lookup flags can't be used in a picture. A file CivitAI
     doesn't know, or that hasn't been looked up yet, counts as "safe images only" (§3.2 rule 3)
-    until a lookup clears it. Files Pinhole offers itself (known SHA-256 in `models.yaml`) never
-    count as unchecked.
+    until a lookup clears it. Files Pinhole offers itself (a SHA-256 listed in the shipped
+    `models.yaml`: a download, another quant of it, `known_files` or a test model) never count as
+    unchecked. Only the hash counts, never the file name or family, and hashes added in
+    `Data/config/overrides.yaml` don't count (2026-10-01). When a download's pin changes, its old
+    hash moves to `known_files` so copies already downloaded stay trusted; a file Pinhole can't
+    match by hash stays "safe images only" until a lookup clears it.
     - **When lookups run:** only on a user action: "Add a file" (adding the same file again
       retries), adding a linked folder, **Check again** on linked folders, and once when the user
       turns Offline mode off (only files not looked up yet; a "no match" is an answer and isn't
@@ -533,7 +554,8 @@ templates, posts and UI.
       and tested with made-up scores. How often harmful content gets through is not measured
       (real examples of that content must never be collected); see docs/SAFETY-MATRIX.md
 - [ ] §4 false-positive bar met for every rule: measured on 60–200 harmless pictures per group (about 950 in all), too few to
-      show 1 in 1,000 (the check itself is built, §3)
+      show 1 in 1,000 (the check itself is built, §3). Those figures came from the earlier version
+      of the measuring tool (§4 "The tool"); re-measure with the read-only version
 - [ ] §5 flags stored at install; SFW-only rule; flagged models back in the catalog
 - [ ] §6 licence field everywhere; acceptance for non-commercial, gated and filter-requiring models
 - [x] §7 first-run acceptable-use screen + Edit notice
