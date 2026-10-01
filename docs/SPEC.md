@@ -739,7 +739,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Linux: AppImage + .deb (built on Ubuntu 22.04; engine needs 24.04+, see §13).
 - GitHub Actions matrix build for both; release artifacts with SHA-256 sums.
 - License: Pinhole Licence 1.0 (`LICENSE`): the MIT License plus a Safeguards condition
-  (`SAFEGUARDS.md`), so source-available, not open source. v1.0.0 and earlier stay MIT. The
+  (`SAFEGUARDS.md`), so source-available, not open source. The
   engines (stable-diffusion.cpp, llama.cpp) keep their MIT licences; include their license files
   in `THIRD_PARTY_LICENSES`.
 - Model licenses are the user's concern, but show the license name on the model card
