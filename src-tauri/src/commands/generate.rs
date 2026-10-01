@@ -79,13 +79,10 @@ pub async fn preview_final_prompt(
     gen::preview_final_prompt(&core, &req)
 }
 
-/// Raw binary body (PNG/JPEG/WebP bytes).
-#[tauri::command]
-pub async fn import_image(
-    core: Core<'_>,
-    request: Request<'_>,
-) -> Result<ImportedImage, CoreError> {
-    let bytes = match request.body() {
+/// A binary IPC body: raw bytes, or a JSON array of bytes (the postMessage IPC fallback).
+/// Anything else is empty.
+fn body_bytes(body: &InvokeBody) -> Vec<u8> {
+    match body {
         InvokeBody::Raw(b) => b.clone(),
         InvokeBody::Json(serde_json::Value::Array(items)) => items
             .iter()
@@ -93,7 +90,16 @@ pub async fn import_image(
             .collect::<Option<Vec<u8>>>()
             .unwrap_or_default(),
         _ => Vec::new(),
-    };
+    }
+}
+
+/// Raw binary body (PNG/JPEG/WebP bytes).
+#[tauri::command]
+pub async fn import_image(
+    core: Core<'_>,
+    request: Request<'_>,
+) -> Result<ImportedImage, CoreError> {
+    let bytes = body_bytes(request.body());
     if bytes.is_empty() {
         return Err(CoreError::invalid("No image data was received."));
     }
@@ -109,10 +115,7 @@ pub async fn import_image(
 pub async fn read_picture_settings(
     request: Request<'_>,
 ) -> Result<Option<session::PictureSettings>, CoreError> {
-    let bytes = match request.body() {
-        InvokeBody::Raw(b) => b.clone(),
-        _ => Vec::new(),
-    };
+    let bytes = body_bytes(request.body());
     tauri::async_runtime::spawn_blocking(move || session::read_picture_settings(&bytes))
         .await
         .map_err(join_err)
@@ -222,3 +225,17 @@ super::area_commands![
     clear_session,
     upscale_image,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_bodies_arrive_raw_or_as_a_json_byte_array() {
+        assert_eq!(body_bytes(&InvokeBody::Raw(vec![1, 2])), [1, 2]);
+        let json = InvokeBody::Json(serde_json::json!([137, 80, 78, 71]));
+        assert_eq!(body_bytes(&json), [137, 80, 78, 71]);
+        assert!(body_bytes(&InvokeBody::Json(serde_json::json!([1, 300]))).is_empty());
+        assert!(body_bytes(&InvokeBody::Json(serde_json::json!({"a": 1}))).is_empty());
+    }
+}

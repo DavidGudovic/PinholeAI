@@ -34,6 +34,6 @@ describe("First run engine step", () => {
     expect(api.engineStatus).toHaveBeenCalledTimes(2);
     // Nothing is downloaded until the check works.
     expect(api.installEngine).not.toHaveBeenCalled();
-    expect(await screen.findByRole("button", { name: /Download engine/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /Get the engine/ })).toBeTruthy();
   });
 });

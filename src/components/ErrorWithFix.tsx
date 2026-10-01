@@ -1,5 +1,5 @@
 // ErrorNotice plus a one-click fix where there is one:
-//   engine_missing → "Set up engine" (installEngine, progress in Downloads) → "Try again".
+//   engine_missing → "Get the engine" (installEngine, progress in Downloads) → "Try again".
 //   check_missing → "Set up safety check" (installSafetyCheck, progress in Downloads) → "Try again".
 //   not_found for a model, model_load (the model file couldn't be loaded), vram when the message
 //   suggests the smaller version of the model "in Models" → "Open Models".
@@ -50,7 +50,7 @@ export function ErrorWithFix({ error, onDismiss, onRetry }: { error: CoreError; 
 
   let action = null;
   if (error.code === "engine_missing") {
-    action = setup("Set up engine", "Engine ready — try again.", async () => actions.onEngine(await api.installEngine()));
+    action = setup("Get the engine", "Engine ready — try again.", async () => actions.onEngine(await api.installEngine()));
   } else if (error.code === "check_missing") {
     action = setup("Set up safety check", "Safety check ready — try again.", async () => void (await api.installSafetyCheck()));
   } else if (error.code === "model_load" || (error.code === "vram" && /in Models/.test(error.message)) || (error.code === "not_found" && /model/i.test(error.message))) {

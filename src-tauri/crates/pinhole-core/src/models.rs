@@ -296,10 +296,16 @@ pub fn set_lora_trigger_words(
         .iter_mut()
         .find(|f| f.id == lora_id && f.kind == ModelKind::Lora)
         .ok_or_else(|| CoreError::not_found("That add-on isn't installed any more."))?;
-    file.trigger_words = Some(clean);
+    let old = file.trigger_words.replace(clean);
     let file = file.clone();
     let view = inventory::installed_lora_view(&index, &file);
-    index.save(&core.data)?;
+    if let Err(e) = index.save(&core.data) {
+        // Not saved: keep the old words in memory too, so a later save can't write them.
+        if let Some(f) = index.files.iter_mut().find(|f| f.id == lora_id) {
+            f.trigger_words = old;
+        }
+        return Err(e.into());
+    }
     Ok(view)
 }
 
@@ -389,6 +395,23 @@ pub(crate) fn helper_files<'a>(
         .collect()
 }
 
+/// The name of an installed model whose family uses one of `files` as a component.
+fn model_using_helper_files(
+    core: &AppCore,
+    index: &pinhole_store::InstalledIndex,
+    files: &[&InstalledFile],
+) -> Option<String> {
+    let registry = core.registry();
+    index.models().find_map(|m| {
+        let family = registry.family(m.family.as_deref()?)?;
+        let used = families::family_component_ids(family);
+        files
+            .iter()
+            .any(|f| f.component_id.as_deref().is_some_and(|c| used.contains(c)))
+            .then(|| m.friendly_name.clone())
+    })
+}
+
 /// Installed helpers: one row per Describe / Improve model (its two files together) and
 /// upscalers / other captioner files.
 pub fn list_helpers(core: &AppCore) -> CoreResult<Vec<InstalledHelper>> {
@@ -476,6 +499,13 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
         if files.iter().any(|f| f.is_linked()) {
             return Err(CoreError::invalid(LINKED_DELETE));
         }
+        // A model can reuse a Describe helper's files (Qwen Image Edit reads the 7B model):
+        // they stay while that model is installed.
+        if let Some(user) = model_using_helper_files(core, &index, &files) {
+            return Err(CoreError::invalid(format!(
+                "{user} also uses this helper. Delete {user} first, then delete the helper."
+            )));
+        }
         // Files are deleted before the index is saved: make sure it can be.
         index.check_savable(&core.data)?;
     }
@@ -493,6 +523,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
             ));
         }
         crate::generate::shutdown(core).await;
+        crate::engine_setup::emit_status(core);
     }
     let failed;
     {
@@ -2087,6 +2118,55 @@ mod tests {
             s.source.is_none(),
             "falls back to automatic, which has nothing installed"
         );
+    }
+
+    #[tokio::test]
+    async fn a_helper_a_model_reuses_is_kept_until_the_model_is_deleted() {
+        let (_t, core) = test_core(Arc::new(Recorder::default()));
+        let add = |kind: ModelKind, name: &str, family: Option<&str>, comp: Option<&str>| {
+            let dir = core.data.models(kind);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(name), b"1234").unwrap();
+            let file = DownloadedFile {
+                path: dir.join(name),
+                sha256: format!("{:0>64}", name.len()),
+                size_bytes: 4,
+            };
+            let reg = Registration {
+                kind,
+                friendly_name: name.into(),
+                family: family.map(Into::into),
+                component_id: comp.map(Into::into),
+                civitai: None,
+                dtype: None,
+            };
+            register_download(&core, &file, reg).unwrap();
+        };
+        add(
+            ModelKind::Captioner,
+            "m7.gguf",
+            None,
+            Some("qwen25_vl_7b_q8"),
+        );
+        add(
+            ModelKind::Captioner,
+            "p7.gguf",
+            None,
+            Some("qwen25_vl_7b_mmproj"),
+        );
+        add(ModelKind::Diffusion, "qwen.gguf", Some("qwen_image"), None);
+
+        let err = delete_helper(&core, "qwen25_vl_7b").await.unwrap_err();
+        assert!(err.message.contains("qwen.gguf"), "{err:?}");
+        let dir = core.data.models(ModelKind::Captioner);
+        assert!(dir.join("m7.gguf").exists());
+
+        // Deleting the model keeps the helper's files; then the helper can go.
+        let id = list_models(&core).unwrap()[0].id.clone();
+        delete_model(&core, &id).await.unwrap();
+        assert!(dir.join("m7.gguf").exists() && dir.join("p7.gguf").exists());
+        delete_helper(&core, "qwen25_vl_7b").await.unwrap();
+        assert!(!dir.join("m7.gguf").exists());
     }
 
     #[tokio::test]
