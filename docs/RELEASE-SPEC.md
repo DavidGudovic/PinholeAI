@@ -7,7 +7,7 @@ Going beyond that happens in three levels. Each level needs everything in its ow
 (§12) **and** everything in the levels before it.
 
 | Level | What it means | What starts to apply | Checklist |
-|---|---|---|---|
+|---|---|---|---|---|
 | 0 (now) | Private repo; personal use; demos, screen shares, recorded videos, read access to the repo for a code reviewer | nothing in this file | — |
 | 1 | **Public repo.** Source code only, no builds | publishing source code (the position of Forge or Stability Matrix); GitHub's Acceptable Use Policy; how the project describes itself | §12.1 |
 | 2 | **GitHub release + testers.** Runnable builds | supplying software: EU AI Act marking, the UK offences, model licences | §12.2 |
@@ -195,13 +195,13 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
    some wrong blocks of young-looking adults, which only matter on sexual photo-style results:
 
-   | Faces counted as under 18 | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) |
+   | Faces counted as under 18 | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
    |---|---|---|
-   | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % |
-   | + under 20 ≥ 0.9 | 23.6 % | 1.8 % |
-   | + under 20 ≥ 0.85 | 35.8 % | 2.3 % |
-   | **+ under 20 ≥ 0.8 (shipped)** | **41.6 %** | **2.9 %** |
-   | + under 20 ≥ 0.7 | 48.5 % | 4.1 % |
+   | Child groups ≥ 0.6 only (before) | 15.5 % | 1.7 % | 1.1 % |
+   | + under 20 ≥ 0.9 | 23.6 % | 1.8 % | 1.4 % |
+   | + under 20 ≥ 0.85 | 35.8 % | 2.3 % | 1.6 % |
+   | **+ under 20 ≥ 0.8 (shipped)** | **41.6 %** | **2.9 %** | **1.6 %** |
+   | + under 20 ≥ 0.7 | 48.5 % | 4.1 % | 1.9 % |
 
    The 10–19 group alone never reached 0.8 on any face, so it can't be used on its own.
    Teenagers the estimate misses are left to the word check, the brought-in photo rule
