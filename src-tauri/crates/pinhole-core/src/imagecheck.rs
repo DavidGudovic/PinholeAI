@@ -125,7 +125,7 @@ pub struct CheckState {
     install_start: tokio::sync::Mutex<()>,
     /// SHA-256 of each exported (saved) picture → the brought-in pictures it was made
     /// from, so opening a saved picture again keeps its chain (memory only, until Reset).
-    exported: Mutex<HashMap<String, Arc<[Source]>>>,
+    exported: Mutex<HashMap<String, Exported>>,
 }
 
 impl CheckState {
@@ -150,22 +150,36 @@ impl CheckState {
     }
 
     /// Save/Copy: remember what an exported picture was made from.
-    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>) {
-        if made_from.is_empty() {
+    pub fn note_export(&self, bytes: &[u8], made_from: Vec<Source>, safe_images_only: bool) {
+        if made_from.is_empty() && !safe_images_only {
             return;
         }
         let key = hex_sha256(bytes);
-        self.exported.lock().insert(key, Arc::from(made_from));
+        self.exported.lock().insert(
+            key,
+            Exported {
+                made_from: Arc::from(made_from),
+                safe_images_only,
+            },
+        );
     }
 
     /// Import: a picture Pinhole exported earlier in this session keeps its chain.
-    pub fn exported_from(&self, bytes: &[u8]) -> Option<Arc<[Source]>> {
+    pub fn exported_from(&self, bytes: &[u8]) -> Option<Exported> {
         let map = self.exported.lock();
         if map.is_empty() {
             return None;
         }
         map.get(&hex_sha256(bytes)).cloned()
     }
+}
+
+/// What a saved picture keeps for the check when it is opened again in the same session.
+#[derive(Clone)]
+pub struct Exported {
+    pub made_from: Arc<[Source]>,
+    /// See [`SessionImage::safe_images_only`].
+    pub safe_images_only: bool,
 }
 
 /// `SafetyCheckStatus` in src/lib/types.ts.

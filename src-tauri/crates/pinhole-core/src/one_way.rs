@@ -138,10 +138,10 @@ fn the_image_engine_is_asked_for_pictures_only_by_generate() {
 fn rule_inputs_are_worked_out_only_by_the_image_check() {
     assert_eq!(files_with("rules::decide("), ["imagecheck.rs"]);
     // The "safe images only" flag of files and pictures is read for the check only there
-    // (and shown as a badge in the model lists).
+    // (the session keeps it with a saved picture; the model lists show it as a badge).
     assert_eq!(
         files_with(".safe_images_only"),
-        ["imagecheck.rs", "inventory.rs"]
+        ["imagecheck.rs", "inventory.rs", "session.rs"]
     );
     assert!(files_with("safe_images_only")
         .iter()

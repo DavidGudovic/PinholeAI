@@ -2563,6 +2563,13 @@ mod tests {
         restyle.init_image_id = Some(ordinary.clone());
         let e = generate::generate(&core, restyle).await.unwrap_err();
         assert_eq!(e.code, "blocked");
+        // Nor does saving it and opening the file again.
+        let saved = session::export_png(&core, &core.session.get(&ordinary).unwrap()).unwrap();
+        let reopened = session::import_image(&core, saved).unwrap().id;
+        let e = generate::upscale_image(&core, &reopened, 4)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, "blocked");
         // An upscale or restyle of a picture from an unmarked model isn't under it.
         generate::upscale_image(&core, &made, 4).await.unwrap();
         let mut restyle = GenerateRequest::txt2img(other, "y");
