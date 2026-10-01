@@ -3228,7 +3228,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pinhole"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "parking_lot",
  "pinhole-catalog",
@@ -3250,7 +3250,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-catalog"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "fs2",
@@ -3271,7 +3271,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-check"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "image",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-core"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3316,7 +3316,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-engine"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -3344,7 +3344,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-hardware"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3357,7 +3357,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-net"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "flate2",
  "fs2",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-registry"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3390,7 +3390,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-store"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "chrono",
  "dirs 6.0.0",
@@ -3406,7 +3406,7 @@ dependencies = [
 
 [[package]]
 name = "pinhole-tests"
-version = "1.1.0"
+version = "1.0.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",

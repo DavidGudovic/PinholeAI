@@ -1,7 +1,7 @@
 # Pinhole — Release Spec
 
 Pinhole is at **Level 2**: the repository is public and v1.0.0 was released on GitHub on
-2026-10-01. v1.1.0 is prepared as a draft (not published yet): it adds the CivitAI lookup of every model
+2026-10-01. v1.0.1 is prepared as a draft (not published yet): it adds the CivitAI lookup of every model
 added by hand or linked, the under-20 face rule, the release safety gate, the AI label kept on
 brought-in pictures, no exception for already-intimate imports, model trust by the shipped hash
 only (§5) and the read-only measuring tool (§4). The open items in §12.1 and
