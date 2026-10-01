@@ -2017,14 +2017,44 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
     (r(w), r(h))
 }
 
-fn b64_image(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
-    let img = core.session.get(id).ok_or_else(|| {
+/// The pictures a job sends to the engine, read from the session only through here: every
+/// one taken is an input of the result for the image check ([`crate::imagecheck::MadeBy`]),
+/// and a mask goes as its shape only.
+#[derive(Default)]
+struct Inputs(Vec<SessionImage>);
+
+impl Inputs {
+    /// A session picture to send (base64), recorded as an input.
+    fn take(&mut self, core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
+        let img = session_image(core, id)?;
+        self.0.push(img.clone());
+        Ok((
+            base64::engine::general_purpose::STANDARD.encode(img.bytes.as_slice()),
+            img,
+        ))
+    }
+
+    /// A mask: only its shape (black and white) is sent, so it isn't an input.
+    async fn mask(core: &AppCore, id: &str) -> CoreResult<(String, SessionImage)> {
+        let img = session_image(core, id)?;
+        let bytes = img.bytes.clone();
+        // Decode and encode: off the async workers.
+        let shape = tokio::task::spawn_blocking(move || pinhole_engine::detail::mask_shape(&bytes))
+            .await
+            .map_err(|_| CoreError::internal("Reading the painted area stopped unexpectedly."))?
+            .map_err(|e| CoreError::invalid(e.to_string()))?;
+        Ok((base64::engine::general_purpose::STANDARD.encode(shape), img))
+    }
+
+    fn pictures(&self) -> &[SessionImage] {
+        &self.0
+    }
+}
+
+fn session_image(core: &AppCore, id: &str) -> CoreResult<SessionImage> {
+    core.session.get(id).ok_or_else(|| {
         CoreError::not_found("That image isn't in this session anymore. Add it again.")
-    })?;
-    Ok((
-        base64::engine::general_purpose::STANDARD.encode(img.bytes.as_slice()),
-        img,
-    ))
+    })
 }
 
 /// Run one generation. See module docs.
@@ -2096,7 +2126,7 @@ async fn generate_inner(
     let mut mask_image = None;
     let mut source: Option<SessionImage> = None;
     // Every picture the result is made from (not the mask: that is only a shape).
-    let mut inputs: Vec<SessionImage> = Vec::new();
+    let mut inputs = Inputs::default();
     match req.mode {
         // Create's reference picture ("in the style of this picture"): sent like an edit's
         // image, but the size comes from the dials, not from the picture.
@@ -2107,8 +2137,7 @@ async fn generate_inner(
                         "This model can't use a reference picture. Pick a FLUX.2 model, or remove the picture.",
                     ));
                 }
-                let (b64, img) = b64_image(core, id)?;
-                inputs.push(img.clone());
+                let (b64, _) = inputs.take(core, id)?;
                 ref_images.push(b64);
             }
         }
@@ -2117,8 +2146,7 @@ async fn generate_inner(
                 .init_image_id
                 .as_deref()
                 .ok_or_else(|| CoreError::invalid("Add an image to restyle first."))?;
-            let (b64, img) = b64_image(core, id)?;
-            inputs.push(img.clone());
+            let (b64, img) = inputs.take(core, id)?;
             init_image = Some(b64);
             source = Some(img);
         }
@@ -2132,8 +2160,7 @@ async fn generate_inner(
             }
             // The Edit tab sends the image being edited plus at most one more.
             for id in ids.iter().take(2) {
-                let (b64, img) = b64_image(core, id)?;
-                inputs.push(img.clone());
+                let (b64, img) = inputs.take(core, id)?;
                 if source.is_none() {
                     source = Some(img);
                 }
@@ -2144,7 +2171,7 @@ async fn generate_inner(
     let mut mask_src = None;
     if req.mode != GenMode::Txt2img {
         if let Some(mid) = req.mask_image_id.as_deref() {
-            let (b64, img) = b64_image(core, mid)?;
+            let (b64, img) = Inputs::mask(core, mid).await?;
             mask_image = Some(b64);
             mask_src = Some(img);
         }
@@ -2440,7 +2467,7 @@ async fn generate_inner(
         crate::imagecheck::MadeBy::Model {
             model_id: &prep.model.id,
             addon_ids: &prep.addon_ids,
-            inputs: &inputs,
+            inputs: inputs.pictures(),
         },
     )
     .await?;
@@ -2466,7 +2493,7 @@ async fn generate_inner(
             sampler: params.sampler.clone(),
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
-            origin: Origin::of_result(inputs.iter().map(|i| &i.origin)),
+            origin: Origin::of_result(inputs.pictures().iter().map(|i| &i.origin)),
             // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
             base_size: fix.is_none().then_some((width, height)),
         };

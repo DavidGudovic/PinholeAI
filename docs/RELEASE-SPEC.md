@@ -57,6 +57,10 @@ instead of a refactor:
   turns on the test-only constructors (`test-util`). Release builds build the app package
   alone (`tauri build`, `cargo build -p pinhole`); `cargo build --workspace` would pull
   `test-util` in through `tests/`, so never ship a workspace build.
+- Pictures sent to the engine: generate.rs reads them from the session only through `Inputs`,
+  which records each one as an input of the result for the image check (`imagecheck::MadeBy`);
+  a mask is sent as its black-and-white shape only. `one_way.rs` checks that generate.rs reads
+  session pictures no other way.
 - Upscale now needs the check's files and can be blocked like any made picture (so an
   upscale of a brought-in photo can hit a false block on a borderline picture).
 - Not by type: "Improve my prompt" (the idea sent to the text model) and Describe/Improve
@@ -336,6 +340,18 @@ prints them for a folder of test pictures.
   - `sfwOnly` models show a "Safe images only" badge. The flag is stored in `installed.json` at
     install time (`CivitaiRef.sfw_only`, model metadata, not prompts). While any such resource
     is loaded, §3.2 rule 3 applies.
+  - **Saved lookup results are signed** (`pinhole-store/src/seal.rs`): HMAC-SHA256 over each
+    model's and add-on's lookup result, CivitAI ids and `sfw_only`, with a key made once per
+    computer and kept in the OS keychain; the signatures are in `Data/catalog/model-lookups.json`,
+    by key. An entry that doesn't match at start (`lookup::unsigned`) counts as "safe images only"
+    until it is checked again on this computer: a one-click download or a file Pinhole offers
+    itself by hashing it again in the background, any other by its next lookup, always with the
+    hash of its own file (`lookup::look_up_existing`). A verified download is signed as it is. The entry itself
+    isn't changed, so a Models folder shared with another system keeps what that one found. A save
+    keeps the signatures of entries it doesn't have (a Models folder on a drive that isn't
+    connected). The first start with signing (no signatures file yet) signs what is installed.
+    Without a keychain (a Linux desktop with no Secret Service) nothing is signed or checked, so
+    models keep working as before.
   - **Files added by hand or linked** (built 2026-10-01, `pinhole-core/src/lookup.rs`): every
     main model and add-on gets a CivitAI by-hash lookup (SHA-256 of the file itself; a linked
     folder's notes are not trusted for it), whether or not its family is already known. A

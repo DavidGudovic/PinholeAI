@@ -57,18 +57,8 @@ impl DetailPlan {
     ) -> Result<Self, DetailError> {
         let (px, w, h) = decode_rgba(src)?;
         let src = RgbaImage::from_raw(w, h, px).ok_or(ImageError::Corrupt("pixels".into()))?;
-        let (mpx, mw, mh) = decode_rgba(mask)?;
-        let m = RgbaImage::from_raw(mw, mh, mpx).ok_or(ImageError::Corrupt("mask".into()))?;
-        let mut mask = GrayImage::from_fn(mw, mh, |x, y| {
-            let p = m.get_pixel(x, y).0;
-            // White = change; a transparent pixel is unpainted.
-            let lum = (u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])) / 3;
-            Luma([if lum * u32::from(p[3]) / 255 >= u32::from(PAINTED) {
-                255
-            } else {
-                0
-            }])
-        });
+        let mut mask = painted(mask)?;
+        let (mw, mh) = mask.dimensions();
         if (mw, mh) != (w, h) {
             mask = imageops::resize(&mask, w, h, FilterType::Nearest);
         }
@@ -133,6 +123,33 @@ impl DetailPlan {
         let (w, h) = out.dimensions();
         Ok(encode_png_rgba(out.as_raw(), w, h)?)
     }
+}
+
+/// A mask as painted (255) or not (0): white = change; a transparent pixel is unpainted.
+fn painted(mask: &[u8]) -> Result<GrayImage, ImageError> {
+    let (mpx, mw, mh) = decode_rgba(mask)?;
+    let m = RgbaImage::from_raw(mw, mh, mpx).ok_or(ImageError::Corrupt("mask".into()))?;
+    Ok(GrayImage::from_fn(mw, mh, |x, y| {
+        let p = m.get_pixel(x, y).0;
+        let lum = (u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])) / 3;
+        Luma([if lum * u32::from(p[3]) / 255 >= u32::from(PAINTED) {
+            255
+        } else {
+            0
+        }])
+    }))
+}
+
+/// Only the shape of a mask (opaque black and white PNG): what is sent to the engine as a
+/// mask, so nothing else of the picture behind it goes along.
+pub fn mask_shape(mask: &[u8]) -> Result<Vec<u8>, ImageError> {
+    let m = painted(mask)?;
+    let (w, h) = m.dimensions();
+    let rgba = RgbaImage::from_fn(w, h, |x, y| {
+        let v = m.get_pixel(x, y).0[0];
+        Rgba([v, v, v, 255])
+    });
+    encode_png_rgba(rgba.as_raw(), w, h)
 }
 
 /// Bounding box of the painted pixels.
@@ -326,6 +343,19 @@ mod tests {
             edge[0] > 90 && edge[0] < 255,
             "feathered just outside: {edge:?}"
         );
+    }
+
+    /// What is sent as a mask is only black and white, whatever the picture was.
+    #[test]
+    fn a_mask_is_sent_as_its_shape_only() {
+        let (w, h) = (8, 4);
+        let px: Vec<u8> = (0..w * h * 4).map(|i| (i * 37 % 256) as u8).collect();
+        let shape = mask_shape(&encode_png_rgba(&px, w, h).unwrap()).unwrap();
+        let (out, ow, oh) = decode_rgba(&shape).unwrap();
+        assert_eq!((ow, oh), (w, h));
+        for p in out.chunks(4) {
+            assert!(p[0] == p[1] && p[1] == p[2] && matches!(p[0], 0 | 255) && p[3] == 255);
+        }
     }
 
     #[test]
