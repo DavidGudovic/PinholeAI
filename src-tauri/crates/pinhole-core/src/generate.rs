@@ -295,6 +295,10 @@ pub struct ResultImage {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub origin: Origin,
+    /// The size the picture was made at, before hires fix or an upscale enlarged it: what
+    /// "settings (no prompt)" records, so reusing them makes the same picture again.
+    #[serde(skip)]
+    pub base_size: Option<(u32, u32)>,
 }
 
 /// `GenerateResult`
@@ -2158,12 +2162,13 @@ async fn generate_inner(
         None
     };
 
+    // A Create reference picture is read like an edit's image: it needs the vision encoder.
     let files = model_files(
         core,
         &prep.model,
         &prep.family,
         &hw,
-        req.mode == GenMode::Edit,
+        req.mode == GenMode::Edit || !ref_images.is_empty(),
     )?;
     let extras = LaunchExtras {
         lora_dir: Some(core.data.models(ModelKind::Lora)),
@@ -2444,6 +2449,7 @@ async fn generate_inner(
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
             origin: Origin::of_result(&input_origins),
+            base_size: Some((width, height)),
         };
         if !core
             .session
@@ -2894,7 +2900,9 @@ async fn upscale_inner(
         scheduler: None,
         parent_id: None,
         origin: src.origin,
+        base_size: None,
     });
+    meta.base_size = meta.base_size.or(Some((src.width, src.height)));
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
     meta.origin = src.origin;
@@ -3688,6 +3696,7 @@ mod tests {
             scheduler: None,
             parent_id: None,
             origin: Origin::Generated,
+            base_size: Some((1, 2)),
         };
         let v = serde_json::to_value(&r).unwrap();
         for k in [

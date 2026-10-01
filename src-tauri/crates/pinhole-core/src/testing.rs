@@ -822,6 +822,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_create_reference_picture_needs_the_vision_encoder() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let reference = session::import_image(
+            &core,
+            pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]),
+        )
+        .unwrap();
+        let qwen = register_fake_model(&core, "qwen_image_21");
+        core.installed
+            .lock()
+            .files
+            .retain(|f| f.component_id.as_deref() != Some("qwen3vl_8b_mmproj"));
+        let mut req = GenerateRequest::txt2img(qwen, "a lighthouse in the style of the picture");
+        req.ref_image_ids = vec![reference.id.clone()];
+        let err = generate::generate(&core, req).await.unwrap_err();
+        assert_eq!(err.code, "not_found");
+        assert!(err.message.contains("Get"), "{}", err.message);
+        assert!(mock.requests().is_empty());
+    }
+
+    #[tokio::test]
     async fn edit_add_ons_go_only_to_the_model_they_were_picked_for() {
         let (_tmp, core, _rec) = new_core();
         let mock = MockSdServer::start().await;

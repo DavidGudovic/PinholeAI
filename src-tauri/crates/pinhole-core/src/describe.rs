@@ -452,6 +452,7 @@ pub async fn install_captioner(
                 },
             };
             if let Err(e) = register_download(&core2, &file, reg) {
+                core2.downloads.fail_done(&gid, &e.code, &e.message);
                 *core2.describe.last_error.lock() = Some(e.message);
             }
         }
@@ -469,6 +470,7 @@ pub async fn install_captioner(
                 Err(e) => Err(e),
             };
             if let Err(e) = res {
+                core2.downloads.fail_done(&gid, &e.code, &e.message);
                 *core2.describe.last_error.lock() = Some(e.message);
             }
         }
@@ -951,19 +953,30 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
     if let Some(url) = core.describe.external.lock().clone() {
         return Ok(LlamaClient::new(core.local.clone(), url));
     }
-    if let Some(msg) = core.describe.last_error.lock().clone() {
-        return Err(CoreError::new("engine_failed", msg));
-    }
+    // A failed install's message explains why its files are missing; once the files and the
+    // engine are there (another helper, a retried install) it no longer applies.
+    let last_error = || {
+        core.describe
+            .last_error
+            .lock()
+            .clone()
+            .map(|msg| CoreError::new("engine_failed", msg))
+    };
     let (_, model, mmproj) = captioner_files(core, helper).ok_or_else(|| {
-        CoreError::not_found(
-            "The describe model isn't installed yet. Click Get on the Describe tab.",
-        )
+        last_error().unwrap_or_else(|| {
+            CoreError::not_found(
+                "The describe model isn't installed yet. Click Get on the Describe tab.",
+            )
+        })
     })?;
     let engine = engine_setup::installed_engine(core, EngineKind::Llama).ok_or_else(|| {
-        CoreError::not_found(
-            "The describe engine isn't installed yet. Click Get on the Describe tab.",
-        )
+        last_error().unwrap_or_else(|| {
+            CoreError::not_found(
+                "The describe engine isn't installed yet. Click Get on the Describe tab.",
+            )
+        })
     })?;
+    *core.describe.last_error.lock() = None;
     let mut slot = core.describe.slot.lock().await;
     if let Some(s) = slot.as_mut() {
         // Same files AND the same engine build (the backend may have changed in Settings).

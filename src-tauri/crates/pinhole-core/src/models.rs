@@ -1145,6 +1145,14 @@ pub fn confirm_family(core: &AppCore, token: &str, family_id: &str) -> CoreResul
         .inspect_err(|_| remove_copy(&pending))
 }
 
+/// The family question was closed without a pick: the copy made for it is removed.
+pub fn cancel_add(core: &AppCore, token: &str) {
+    let pending = core.models.pending.lock().remove(token);
+    if let Some(p) = pending {
+        remove_copy(&p);
+    }
+}
+
 // ------------------------------------------------------------------ delete
 
 pub fn preview_delete(core: &AppCore, model_id: &str) -> CoreResult<DeletePreview> {
@@ -1443,6 +1451,19 @@ mod tests {
                     confirm_family(&core, "bogus", "sdxl").unwrap_err().code,
                     "not_found"
                 );
+                // Closing the question removes the copy made for it.
+                let other = tmp.path().join("Other.safetensors");
+                std::fs::copy(&src, &other).unwrap();
+                let out2 = add_local_model(&core, other.to_str().unwrap())
+                    .await
+                    .unwrap();
+                let copy = core
+                    .data
+                    .models(ModelKind::Checkpoint)
+                    .join("Other.safetensors");
+                assert!(copy.is_file());
+                cancel_add(&core, &out2.needs_choice.unwrap().token);
+                assert!(!copy.exists() && other.is_file());
                 assert_eq!(
                     confirm_family(&core, &choice.token, "nope")
                         .unwrap_err()

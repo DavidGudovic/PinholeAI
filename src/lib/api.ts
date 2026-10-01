@@ -95,6 +95,8 @@ export const installRecommended = (role: string) =>
 export const addLocalModel = (path: string) => invoke<T.AddFileResult>("add_local_model", { path });
 export const confirmFamily = (token: string, familyId: string) =>
   invoke<T.AddFileResult>("confirm_family", { token, familyId });
+/** The family question was closed without a pick: drop the copy made for it. */
+export const cancelAdd = (token: string) => invoke<void>("cancel_add", { token });
 /** Download the parts (VAE, text encoders) an installed model still needs, from its family's list. */
 export const installMissingParts = (modelId: string) =>
   withLicence(() => invoke<T.InstallStarted>("install_missing_parts", { modelId }));

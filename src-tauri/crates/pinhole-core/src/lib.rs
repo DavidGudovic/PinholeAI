@@ -154,6 +154,8 @@ impl AppCore {
     pub async fn shutdown(&self) {
         generate::shutdown(self).await;
         describe::shutdown(self).await;
+        // Copies still waiting for a family choice would never be listed again.
+        models::discard_pending(self);
     }
 
     pub fn registry(&self) -> Arc<Registry> {
