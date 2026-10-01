@@ -24,6 +24,13 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# Pinned Rust version. The Rust build cache key includes it (prefix-key below) instead of the
+# runner's installed toolchains, which change with every runner image and new Rust release and
+# made every installer build compile from scratch. To upgrade: change it in bundle.yml, ci.yml and
+# release.yml, then run Bundle on main once so the next release finds a warm cache.
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+
 defaults:
   run:
     shell: bash
@@ -85,9 +92,12 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.99.0  # pinned: the Rust build cache is keyed on the compiler version
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: v0-rust-${{ env.RUST_TOOLCHAIN }}
+          add-rust-environment-hash-key: false
 
       # A failure here stops the release: the installers wait on this job. These crates hold the
       # word check, the image check rules and their enforcement (one_way.rs), the catalog's model
