@@ -64,12 +64,32 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
         .inner_size(1280.0, 860.0)
         .min_inner_size(900.0, 640.0)
         .disable_drag_drop_handler()
+        // A link or file dropped on the window must never take it away from the app
+        // (unsaved pictures would be lost, and a web page would load outside the Rust client).
+        .on_navigation(|url| app_url_allowed(url))
         .incognito(!under_webdriver());
     if let Some(dir) = webview_dir {
         builder = builder.data_directory(dir);
     }
     builder.build()?;
     Ok(())
+}
+
+/// Pages the main window may show: the app itself (`tauri://localhost`, or
+/// `http(s)://tauri.localhost` on Windows) and, in debug builds, the Vite dev server.
+fn app_url_allowed(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "about" => url.as_str() == "about:blank",
+        "http" | "https" => match url.host_str() {
+            Some("tauri.localhost") => true,
+            Some("127.0.0.1") | Some("localhost") => {
+                cfg!(debug_assertions) && url.port() == Some(1420)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 /// WebKitGTK's DMA-BUF renderer is slow and glitchy with NVIDIA's proprietary driver
@@ -132,7 +152,21 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::webkit_env_fixes;
+    use super::{app_url_allowed, webkit_env_fixes};
+
+    #[test]
+    fn the_window_only_shows_the_app() {
+        let ok = |u: &str| app_url_allowed(&tauri::Url::parse(u).unwrap());
+        assert!(ok("tauri://localhost/index.html"));
+        assert!(ok("http://tauri.localhost/"));
+        assert!(ok("https://tauri.localhost/"));
+        assert!(ok("about:blank"));
+        assert_eq!(ok("http://127.0.0.1:1420/"), cfg!(debug_assertions));
+        assert!(!ok("http://127.0.0.1:8080/"));
+        assert!(!ok("https://civitai.com/models/1"));
+        assert!(!ok("file:///home/u/picture.png"));
+        assert!(!ok("javascript:alert(1)"));
+    }
 
     #[test]
     fn dmabuf_renderer_off_only_for_nvidia_on_linux_unless_user_set() {
