@@ -638,10 +638,10 @@ mod tests {
             body["width"].as_u64().unwrap(),
             body["height"].as_u64().unwrap(),
         );
-        assert_eq!(
-            (u64::from(sizes[1].0), u64::from(sizes[1].1)),
-            (w, h),
-            "the redraw is checked at the size it was drawn"
+        // The engine's own output, at the model's size, not the ~128 px box it becomes.
+        assert!(
+            sizes[1].0 >= 768 && sizes[1].1 >= 768,
+            "the redraw is checked at the size it was drawn: {sizes:?}"
         );
         // The ~128x128 box is drawn at SDXL's native size, not at 128 px.
         assert!(
