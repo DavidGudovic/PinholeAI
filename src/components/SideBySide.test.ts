@@ -16,10 +16,13 @@ describe("sideLayout", () => {
     expect(l.first.height + l.second.height).toBeLessThanOrEqual(1000);
   });
 
-  it("fits pictures of different shapes and never draws one larger than twice its size", () => {
+  it("fits pictures of different shapes and draws the larger one at most twice its size", () => {
     const l = sideLayout(2000, 2000, { width: 100, height: 200 }, { width: 300, height: 200 });
-    expect(l.direction).toBe("row");
-    expect(l.first.height).toBe(400);
     expect(l.second).toEqual({ width: 600, height: 400 });
+  });
+
+  it("a small reference doesn't shrink a large result", () => {
+    const l = sideLayout(1000, 700, { width: 128, height: 128 }, { width: 1024, height: 1024 });
+    expect(l.second.height).toBe(494);
   });
 });

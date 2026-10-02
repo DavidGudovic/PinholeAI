@@ -20,7 +20,7 @@ export interface SideLayout {
 
 /**
  * Sizes for both pictures inside `w`×`h`: same height in a row, or same width in a column,
- * whichever shows more of them. Neither is drawn larger than 2× its own size.
+ * whichever shows more of them. The larger picture is drawn at most 2× its own size.
  */
 export function sideLayout(
   w: number,
@@ -30,10 +30,11 @@ export function sideLayout(
 ): SideLayout {
   const ra = a.width / a.height;
   const rb = b.width / b.height;
+  const larger = a.width * a.height >= b.width * b.height ? a : b;
   // Row: shared height.
-  const rowH = Math.max(1, Math.min(h, (w - GAP) / (ra + rb), 2 * Math.min(a.height, b.height)));
+  const rowH = Math.max(1, Math.min(h, (w - GAP) / (ra + rb), 2 * larger.height));
   // Column: shared width.
-  const colW = Math.max(1, Math.min(w, (h - GAP) / (1 / ra + 1 / rb), 2 * Math.min(a.width, b.width)));
+  const colW = Math.max(1, Math.min(w, (h - GAP) / (1 / ra + 1 / rb), 2 * larger.width));
   const rowArea = rowH * rowH * (ra + rb);
   const colArea = colW * colW * (1 / ra + 1 / rb);
   const size = (width: number, height: number) => ({ width: Math.floor(width), height: Math.floor(height) });
