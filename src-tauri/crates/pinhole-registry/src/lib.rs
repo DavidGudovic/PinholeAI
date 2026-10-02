@@ -370,6 +370,9 @@ impl Registry {
                 ));
             }
         }
+        if self.file.captioner.improve.edit.form.trim().is_empty() {
+            problems.push("captioner improve `edit` needs a `form`".into());
+        }
         for h in &self.file.captioner.helpers {
             if h.license_accept.is_some() && h.license_note.is_none() {
                 problems.push(format!(

@@ -524,6 +524,8 @@ export interface HelperModel {
   fit: Fit | null;
   needsSafeOff: boolean;
 }
+/** What "Improve my prompt" works on: Create's prompt or Edit's change instruction (`ImproveTarget` in describe.rs). */
+export type ImproveTarget = "create" | "edit";
 /** "Improve my prompt" answer. `note` set = the helper's answer was unusable and `text` is the prompt unchanged. */
 export interface ImprovedPrompt {
   text: string;

@@ -1,5 +1,6 @@
 // "Improve my prompt": a short idea → a fuller prompt, written by the small helper model that
 // also powers Describe (runs on this computer). The result replaces the box text; Undo puts it back.
+// Used by Create's prompt box and Edit's "What should change?" box (a change instruction).
 // PRIVACY: the prompt only travels to the local helper and back, through React state.
 import { useEffect, useRef, useState } from "react";
 import { Download, Undo2, WandSparkles } from "lucide-react";
@@ -11,8 +12,9 @@ import { useActions } from "../../lib/state/AppProvider";
 import { useModel } from "../../lib/state/hooks";
 import { isActiveDownload } from "../../lib/state/model";
 import { activeLoras } from "../../lib/state/request";
+import type { AppState } from "../../lib/state/model";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
-import type { CoreError } from "../../lib/types";
+import type { CoreError, ImproveTarget } from "../../lib/types";
 import { GroupProgress } from "../models/controls";
 
 const toolbarButton = cx(
@@ -20,12 +22,17 @@ const toolbarButton = cx(
   focusRing,
 );
 
-/** The Improve / Undo button for the prompt box toolbar, and the notice that goes under the box. */
-export function useImprovePrompt(familyId: string | null | undefined) {
-  const prompt = useAppState((s) => s.create.prompt);
-  const modelId = useAppState((s) => s.create.modelId);
+/** The box text Improve works on. */
+const boxText = (s: AppState, target: ImproveTarget) => (target === "edit" ? s.edit.instruction : s.create.prompt);
+
+/** The Improve / Undo button for the prompt box toolbar, and the notice that goes under the box.
+ *  `target` = which box: Create's prompt or Edit's change instruction (`modelId` = the edit model). */
+export function useImprovePrompt(familyId: string | null | undefined, target: ImproveTarget = "create", editModelId: string | null = null) {
+  const prompt = useAppState((s) => boxText(s, target));
+  const modelId = useAppState((s) => (target === "edit" ? editModelId : s.create.modelId));
   const model = useModel(modelId);
   const dispatch = useDispatch();
+  const setText = (text: string) => dispatch(target === "edit" ? { type: "patchEdit", patch: { instruction: text } } : { type: "patchCreate", patch: { prompt: text } });
   const store = useStore();
   const actions = useActions();
   const [busy, setBusy] = useState(false);
@@ -47,7 +54,7 @@ export function useImprovePrompt(familyId: string | null | undefined) {
 
   const run = async () => {
     const s = store.getState();
-    const base = s.create.prompt;
+    const base = boxText(s, target);
     if (!base.trim() || busy) return;
     const id = ++runId.current;
     const nonce = s.sessionNonce;
@@ -62,17 +69,18 @@ export function useImprovePrompt(familyId: string | null | undefined) {
       }
       setNeedHelper(null);
       const loras = store.getState().loras;
-      const avoid = activeLoras(store.getState().create, loras, model, s.settings?.addTriggerWords ?? true).flatMap((u) => u.words ?? []);
-      const answer = await api.improvePrompt(base, familyId ?? null, avoid);
+      const params = target === "edit" ? store.getState().edit : store.getState().create;
+      const avoid = activeLoras(params, loras, model, s.settings?.addTriggerWords ?? true).flatMap((u) => u.words ?? []);
+      const answer = await api.improvePrompt(base, familyId ?? null, avoid, target);
       const text = answer.text.trim();
       const now = store.getState();
       // Dropped when Reset was pressed or the prompt was edited meanwhile: the answer no longer fits.
-      if (id === runId.current && now.sessionNonce === nonce && now.create.prompt === base && text) {
+      if (id === runId.current && now.sessionNonce === nonce && boxText(now, target) === base && text) {
         if (answer.note) {
           setNote(answer.note);
           return;
         }
-        dispatch({ type: "patchCreate", patch: { prompt: text } });
+        setText(text);
         setUndo({ before: base, after: text });
       }
     } catch (e) {
@@ -117,7 +125,7 @@ export function useImprovePrompt(familyId: string | null | undefined) {
       type="button"
       className={toolbarButton}
       onClick={() => {
-        dispatch({ type: "patchCreate", patch: { prompt: undoable.before } });
+        setText(undoable.before);
         setUndo(null);
       }}
       title="Put back what you wrote"
@@ -130,7 +138,15 @@ export function useImprovePrompt(familyId: string | null | undefined) {
       className={toolbarButton}
       disabled={empty || busy}
       onClick={() => void run()}
-      title={empty ? "Type a few words first, then Improve turns them into a fuller prompt" : "Turn your idea into a fuller prompt. Runs on this computer."}
+      title={
+        target === "edit"
+          ? empty
+            ? "Type the change first, then Improve adds how it should look and what to keep"
+            : "Add how the change should look and what to keep. Runs on this computer."
+          : empty
+            ? "Type a few words first, then Improve turns them into a fuller prompt"
+            : "Turn your idea into a fuller prompt. Runs on this computer."
+      }
     >
       {busy ? <Spinner className="h-3.5 w-3.5 text-amber-500" /> : <WandSparkles className="h-3.5 w-3.5" />} {busy ? "Improving…" : "Improve"}
     </button>

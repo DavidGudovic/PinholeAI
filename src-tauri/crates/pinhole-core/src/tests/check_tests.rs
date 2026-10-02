@@ -736,14 +736,26 @@ async fn word_check_blocks_describe_and_improve() {
         .await
         .unwrap_err();
     assert_eq!(e.code, "blocked", "the model's text isn't shown");
-    let e = describe::improve_prompt(&core, "a lighthouse", None, &[])
-        .await
-        .unwrap_err();
+    let e = describe::improve_prompt(
+        &core,
+        "a lighthouse",
+        None,
+        &[],
+        describe::ImproveTarget::Create,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(e.code, "blocked", "the improved text isn't shown");
     let sent = llama.requests().len();
-    let e = describe::improve_prompt(&core, "loli, lewd", None, &[])
-        .await
-        .unwrap_err();
+    let e = describe::improve_prompt(
+        &core,
+        "loli, lewd",
+        None,
+        &[],
+        describe::ImproveTarget::Create,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(e.code, "blocked");
     assert_eq!(
         llama.requests().len(),

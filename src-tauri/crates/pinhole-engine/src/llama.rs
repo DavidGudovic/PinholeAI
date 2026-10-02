@@ -226,20 +226,36 @@ impl LlamaClient {
     }
 
     /// Text in, text out: `system` instruction plus the user's `text` as the chat message.
+    /// `answer_start` begins the answer for the model to continue (small models then keep to
+    /// the asked format); the returned text starts with it. The answer ends at the first blank
+    /// line unless the model is filling a started form (it may leave blank lines between the
+    /// form's lines; `max_tokens` still ends it).
     pub async fn rewrite(
         &self,
         system: &str,
         text: &str,
         max_tokens: u32,
+        answer_start: Option<&str>,
     ) -> Result<String, ApiError> {
-        let messages = serde_json::json!([
+        let mut messages = serde_json::json!([
             { "role": "system", "content": system },
             { "role": "user", "content": text }
         ]);
+        if let (Some(start), Some(list)) = (answer_start, messages.as_array_mut()) {
+            list.push(serde_json::json!({ "role": "assistant", "content": start }));
+        }
         // A 3B model with greedy-ish sampling and no penalty loops ("bedroom, bedroom, …") on
         // one-word ideas: moderate temperature, a repeat penalty and llama.cpp's DRY sampler.
-        self.chat(messages, max_tokens, REWRITE_SAMPLING.clone())
-            .await
+        let mut sampling = REWRITE_SAMPLING.clone();
+        if let (Some(start), Some(o)) = (answer_start, sampling.as_object_mut()) {
+            // Ends where the form would start again.
+            o.insert("stop".into(), serde_json::json!([format!("\n{start}")]));
+        }
+        let answer = self.chat(messages, max_tokens, sampling).await?;
+        Ok(match answer_start {
+            Some(start) => with_start(&answer, start),
+            None => answer,
+        })
     }
 
     async fn chat(
@@ -316,6 +332,21 @@ impl LlamaClient {
     }
 }
 
+/// `answer` beginning with `start`: llama-server returns a started answer in full, other
+/// servers only the rest. A start in other letter case or in bold counts as there.
+fn with_start(answer: &str, start: &str) -> String {
+    let a = answer.trim_start();
+    let bare = a.trim_start_matches('*');
+    if bare
+        .get(..start.len())
+        .is_some_and(|s| s.eq_ignore_ascii_case(start))
+    {
+        a.to_string()
+    } else {
+        format!("{start} {a}")
+    }
+}
+
 /// Strip chat-template leftovers / quotes / "Prompt:" preambles.
 pub fn clean_caption(s: &str) -> String {
     let mut t = s.trim();
@@ -347,6 +378,20 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["-ngl", "auto"]));
         let c = launch_args(Path::new("m"), Path::new("p"), 1, "cpu", 4096);
         assert!(c.windows(2).any(|w| w == ["-ngl", "0"]));
+    }
+
+    #[test]
+    fn a_started_answer_begins_with_its_start_once() {
+        assert_eq!(with_start("DETAILS: red", "DETAILS:"), "DETAILS: red");
+        assert_eq!(
+            with_start("**Details:** red", "DETAILS:"),
+            "**Details:** red"
+        );
+        assert_eq!(
+            with_start("\n- red\nKEEP: sky", "DETAILS:"),
+            "DETAILS: - red\nKEEP: sky"
+        );
+        assert_eq!(with_start("é", "DETAILS:"), "DETAILS: é");
     }
 
     #[test]

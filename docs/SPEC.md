@@ -325,8 +325,17 @@ write the trigger words of add-ons in use (phrases containing them are left out 
 added at request time). An answer that is a refusal ("I'm sorry, but I can't…") or adds nothing
 usable leaves the prompt unchanged with a short note. The prompt goes
 only to the loopback llama-server, never logged or stored. Without the Describe model it offers
-the one-time download, then improves. Not in Edit: instruction edits are short commands ("make the
-sky a sunset") and a fuller rewrite would drift from what should change.
+the one-time download, then improves. In Edit (Describe a change, next to "What should
+change?") Improve works the same way on the change instruction with its own two-line form
+(`improve.edit`): how the change should look, and two or three parts to keep (the composition,
+the camera angle, the background, the lighting, a person's face and pose). Pinhole writes the
+first label for the helper so it keeps to the form, and adds the lines as "<instruction>.
+<Details>. Keep … unchanged." Keep phrases naming something the instruction mentions are left out
+(`improve.edit.common_words` don't count, nor the owner in "the man's face"), at most three are kept, and details that only say "same …" or "no …" are left out. The keep line
+is left out when the instruction already says what to keep, and the details line when it
+removes something (the helper can't see what is behind it) or takes something from image 2. Always sentences
+(every edit model reads natural language); the edit model's family, Safe mode rule, add-on
+trigger words and word check apply as in Create.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when

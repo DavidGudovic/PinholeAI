@@ -5,6 +5,7 @@ import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { defaultStayClosePosition } from "../../lib/paste/map";
 import type { FamilyUi, InstalledModel } from "../../lib/types";
 import type { Action, EditParams } from "../../lib/state/model";
+import { useImprovePrompt } from "../create/ImprovePrompt";
 
 // Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
 const TWO_IMAGE_PICKS = ["qwen_image_21"];
@@ -30,6 +31,7 @@ export function InstructionFields({
   editFit: InstalledModel["fit"] | null;
   dispatch: (a: Action) => void;
 }) {
+  const improve = useImprovePrompt(ui?.familyId, "edit", editModelId);
   return needsEditModel ? (
     <div className="space-y-3">
       <div className="rounded-xl bg-neutral-50 p-3 text-sm dark:bg-neutral-800/50">
@@ -80,12 +82,12 @@ export function InstructionFields({
         />
       )}
       <div>
-        <label
-          htmlFor="edit-instruction"
-          className="mb-1.5 block text-sm font-medium"
-        >
-          What should change?
-        </label>
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <label htmlFor="edit-instruction" className="block text-sm font-medium">
+            What should change?
+          </label>
+          {improve.button}
+        </div>
         <AutoTextarea
           id="edit-instruction"
           minRows={3}
@@ -103,6 +105,7 @@ export function InstructionFields({
             })
           }
         />
+        {improve.notice && <div className="mt-2">{improve.notice}</div>}
       </div>
       {(ui?.stayCloseShown ?? true) && (
         <div>
