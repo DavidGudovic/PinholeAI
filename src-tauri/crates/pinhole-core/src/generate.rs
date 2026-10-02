@@ -685,6 +685,24 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
     (r(w), r(h))
 }
 
+/// Add detail's prompt when nothing is typed, for a photo-style picture ("a detailed face"
+/// alone made photo faces look carved).
+pub(crate) const PHOTO_FACE_PROMPT: &str = "photo of a face, natural skin texture, sharp focus";
+/// Add detail's prompt when nothing is typed, for a drawn picture.
+pub(crate) const DRAWN_FACE_PROMPT: &str = "a detailed face";
+
+/// The picture Add detail (Fix details, nothing painted) works on, when nothing is typed.
+fn add_detail_source(core: &AppCore, req: &GenerateRequest) -> Option<SessionImage> {
+    let plain = req.fix_details
+        && req.mode == GenMode::Img2img
+        && req.mask_image_id.is_none()
+        && req.prompt.trim().is_empty();
+    plain
+        .then_some(req.init_image_id.as_deref())
+        .flatten()
+        .and_then(|id| core.session.get(id))
+}
+
 /// Add detail redraws at most this many faces (the largest), one engine pass each.
 const MAX_FACES: usize = 6;
 
@@ -787,6 +805,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
+    *core.gen.part_note.lock() = None;
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     let t0 = Instant::now();
@@ -829,6 +848,22 @@ async fn generate_inner(
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
+    // Add detail with nothing typed: say what the faces are, by picture style.
+    let with_face_prompt;
+    let req = match add_detail_source(core, req) {
+        Some(src) => {
+            let mut r = req.clone();
+            r.prompt = if crate::imagecheck::is_photo_style(core, &src).await? {
+                PHOTO_FACE_PROMPT
+            } else {
+                DRAWN_FACE_PROMPT
+            }
+            .to_string();
+            with_face_prompt = r;
+            &with_face_prompt
+        }
+        None => req,
+    };
     let prep = prepare(core, req, true)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
@@ -949,6 +984,8 @@ async fn generate_inner(
     // Add detail (nothing painted): each face the image check's face finder sees is redrawn
     // the same way, one after another (see `face_masks` below).
     let mut face_masks: std::collections::VecDeque<Vec<u8>> = Default::default();
+    // Which pass runs, of how many: one per face for Add detail, else one.
+    let mut part = (0u32, 1u32);
     let fix = match fix_source {
         Some((src, mask)) => {
             let area = u64::from(params.width) * u64::from(params.height);
@@ -957,6 +994,7 @@ async fn generate_inner(
                 Some(m) => m.bytes.clone(),
                 None => {
                     face_masks = faces_to_redraw(core, src, area).await?;
+                    part.1 = u32::try_from(face_masks.len()).unwrap_or(1).max(1);
                     Arc::new(face_masks.pop_front().ok_or_else(|| {
                         CoreError::invalid(
                             "No face found that needs more detail. Paint over the part to fix instead.",
@@ -1081,6 +1119,9 @@ async fn generate_inner(
     // One pass, or one per face for Add detail: each face is redrawn on the picture the
     // previous pass made.
     loop {
+        if part.1 > 1 {
+            *core.gen.part_note.lock() = Some(format!("Face {} of {}.", part.0 + 1, part.1));
+        }
         let job = loop {
             let args = with_memory_choices(&wiring_args, fb);
             let client = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
@@ -1091,6 +1132,7 @@ async fn generate_inner(
                 &prep.secrets,
                 &label,
                 (steps, batches),
+                part,
                 cancel,
                 t0,
             )
@@ -1182,6 +1224,7 @@ async fn generate_inner(
         let Some(next_mask) = face_masks.pop_front() else {
             break;
         };
+        part.0 += 1;
         // Next face: plan it on the picture this pass made.
         let done = pngs.pop().expect("one image per Fix details pass");
         let area = u64::from(params.width) * u64::from(params.height);
@@ -1273,6 +1316,7 @@ async fn run_job(
     secrets: &[String],
     label: &str,
     (steps, batches): (u32, u32),
+    (part_index, parts): (u32, u32),
     cancel: &CancellationToken,
     t0: Instant,
 ) -> Result<Job, RunError> {
@@ -1338,7 +1382,8 @@ async fn run_job(
                                     last_step = p.step;
                                     ((passes.min(batches - 1)) * steps + p.step, steps * batches)
                                 } else {
-                                    (p.step, p.total)
+                                    // Several passes (Add detail, one per face): one bar for all.
+                                    (part_index * p.total + p.step, p.total * parts)
                                 }
                             });
                         emit_progress(core, GenPhase::Generating, label, None, step, t0);
@@ -1523,6 +1568,7 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
+    *core.gen.part_note.lock() = None;
     // Set before the first-use upscaler download, so Cancel works during it too.
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());

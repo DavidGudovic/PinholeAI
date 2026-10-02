@@ -391,11 +391,8 @@ pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResu
     let res = tokio::task::spawn_blocking(move || c.check.inspector().readings(&png))
         .await
         .map_err(|e| {
-            CoreError::new(
-                "check_failed",
-                "The safety check couldn't run, so the picture can't be upscaled. Try again.",
-            )
-            .with_details(e.to_string())
+            CoreError::new("check_failed", "The safety check couldn't run. Try again.")
+                .with_details(e.to_string())
         })?;
     let r = res.map_err(|e| check_error(core, e))?;
     Ok(r.tags
