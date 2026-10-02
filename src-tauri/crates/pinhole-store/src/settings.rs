@@ -45,7 +45,7 @@ pub struct Settings {
     /// Helper model for "Improve my prompt": `auto` or a `captioner.helpers` id.
     pub improve_model: String,
     /// Upscaler used by Upscale: `auto` (photo or drawing, by the picture's style),
-    /// `photo` or `drawing`.
+    /// `photo`, `photo_texture` (photo upscaler that keeps skin texture) or `drawing`.
     pub upscaler: String,
     /// Version of the first-launch "Before you start" notice the user agreed to (0 = none).
     pub notice_accepted: u32,
@@ -126,7 +126,10 @@ impl Settings {
         if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
             self.text_encoder_on_cpu = d.text_encoder_on_cpu;
         }
-        if !matches!(self.upscaler.as_str(), "auto" | "photo" | "drawing") {
+        if !matches!(
+            self.upscaler.as_str(),
+            "auto" | "photo" | "photo_texture" | "drawing"
+        ) {
             self.upscaler = d.upscaler;
         }
         // Unknown ids are checked where they are used (a helper may be removed from the list).

@@ -198,3 +198,7 @@ implementations (sha1, sha256, xxhash — public domain / BSD-2-Clause).
       RealESRGAN_x4plus_anime_6B (drawn pictures) ..... BSD-3-Clause
         (Real-ESRGAN by Xintao Wang et al.,
         https://github.com/xinntao/Real-ESRGAN)
+      4xNomosWebPhoto_esrgan (photos, "skin texture"; only when picked in
+        Fine-tune) ...................................... CC-BY-4.0
+        (by Philip Hofmann, https://github.com/Phhofm/models,
+        https://creativecommons.org/licenses/by/4.0/)

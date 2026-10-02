@@ -581,6 +581,9 @@ describe("settingsSummary", () => {
     expect(settingsSummary(result("u", 42, { kind: "upscaled", width: 2048, height: 2048, upscaler: "drawing" }))).toBe(
       "Upscaled · 2048×2048 · drawing upscaler · from Model One · seed 42",
     );
+    expect(settingsSummary(result("u", 42, { kind: "upscaled", width: 2048, height: 2048, upscaler: "photo_texture" }))).toBe(
+      "Upscaled · 2048×2048 · skin-texture upscaler · from Model One · seed 42",
+    );
     // Upscale of an imported image: Rust sends an empty model id and seed 0.
     expect(settingsSummary(result("u", 0, { kind: "upscaled", modelId: "", modelLabel: "Upscaled image", steps: 0, cfg: 0, sampler: null, scheduler: null }))).toBe(
       "Upscaled · 1024×1024",

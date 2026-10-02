@@ -289,6 +289,14 @@ components:
     sha256: f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da
     size_mb: 18
     note: ".pth is allowed ONLY for the pinned, hash-verified upscalers; never for user downloads"
+  # Photo upscaler that keeps skin texture, used when Fine-tune → Upscaler is set to
+  # "Photo: skin texture". 4xNomosWebPhoto_esrgan by Philip Hofmann, CC-BY-4.0.
+  nomos_webphoto_x4:
+    kind: upscaler
+    file: 4xNomosWebPhoto_esrgan.safetensors
+    url: https://github.com/Phhofm/models/releases/download/4xNomosWebPhoto_esrgan/4xNomosWebPhoto_esrgan.safetensors
+    sha256: 2f49c3065db8aaeb64adb08e8879001fe2f1460df5655499707efedad8a3d556
+    size_mb: 33
 
 # What the pinned sd-server can do that changes wiring.
 engine_features:

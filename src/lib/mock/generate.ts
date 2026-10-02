@@ -498,7 +498,8 @@ const table: MockTable = {
         parentId: null,
       };
       // Rust picks by the picture's photo-style reading; the mock has none, so "auto" means photo.
-      const upscaler = mockSettings().upscaler === "drawing" ? "drawing" : "photo";
+      const choice = mockSettings().upscaler ?? "auto";
+      const upscaler = choice === "auto" ? "photo" : choice;
       const meta: ResultImage = { ...base, id, kind: "upscaled", width: w, height: h, parentId: String(a.id), origin: im.meta?.origin ?? "imported", upscaler };
       session.set(id, { bytes: await toPng(c), width: w, height: h, seed: base.seed, meta });
       progress({ phase: "done" }, started);

@@ -92,7 +92,7 @@ function normalizeSettings(s: Settings): Settings {
     textEncoderOnCpu: pick(s.textEncoderOnCpu, ["auto", "on", "off"], "auto"),
     describeModel: String(s.describeModel ?? "").trim() || "auto",
     improveModel: String(s.improveModel ?? "").trim() || "auto",
-    upscaler: pick(s.upscaler ?? "auto", ["auto", "photo", "drawing"], "auto"),
+    upscaler: pick(s.upscaler ?? "auto", ["auto", "photo", "photo_texture", "drawing"], "auto"),
   };
 }
 

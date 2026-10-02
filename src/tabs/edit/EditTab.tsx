@@ -28,7 +28,7 @@ import {
 import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
-import { UpscalerSegmented, useUpscaler } from "../../components/UpscalerChoice";
+import { UpscalerSelect, useUpscaler } from "../../components/UpscalerChoice";
 import { LiveJobProgress } from "../../components/JobProgress";
 import { QueueButton } from "../../components/QueueButton";
 import { ModelPicker } from "../../components/ModelPicker";
@@ -971,7 +971,7 @@ export function EditTab() {
                   <span className="text-xs font-medium text-neutral-600 dark:text-neutral-400">
                     Upscaler
                   </span>
-                  <UpscalerSegmented upscaler={upscaler} />
+                  <UpscalerSelect upscaler={upscaler} />
                   <LoraSection model={model} target="edit" />
                   <PromptPreview
                     req={previewReq}
