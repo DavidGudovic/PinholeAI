@@ -335,6 +335,11 @@ impl LlamaClient {
 /// `answer` beginning with `start`: llama-server returns a started answer in full, other
 /// servers only the rest. A start in other letter case or in bold counts as there.
 fn with_start(answer: &str, start: &str) -> String {
+    // A continuation that starts a new line leaves the started line empty.
+    let rest = answer.trim_start_matches([' ', '\t']);
+    if rest.starts_with('\n') {
+        return format!("{start}{rest}");
+    }
     let a = answer.trim_start();
     let bare = a.trim_start_matches('*');
     if bare
@@ -388,8 +393,8 @@ mod tests {
             "**Details:** red"
         );
         assert_eq!(
-            with_start("\n- red\nKEEP: sky", "DETAILS:"),
-            "DETAILS: - red\nKEEP: sky"
+            with_start("\nDETAILS: red\nKEEP: sky", "PROMPT:"),
+            "PROMPT:\nDETAILS: red\nKEEP: sky"
         );
         assert_eq!(with_start("é", "DETAILS:"), "DETAILS: é");
     }

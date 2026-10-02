@@ -307,15 +307,22 @@ goes to Edit, so the Edit notice about photos of people shows. A short note says
 new scene ("the same character on a beach"). The image keeps its id, so its origin
 (Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
-**Improve** (prompt box toolbar): adds details to a short idea with the local Describe model
-(text only, `captioner.improve` in `models.yaml`). The user's words stay exactly as typed; the
-helper fills five short lines (how the subject looks, place, shot, style, light) and Pinhole adds
-what they contribute after the idea. A line the idea already covers (it names a view, a medium or
-a light, `improve.given`) is left out, and so are mood and quality words (`improve.drop`, quality
-words come from the family's `auto_prompt_prefix`), long sentences, the idea's own words and
-repeats. Sentences for natural-language families, tags (at most 12 added) for families whose
-`style_template` is `tags` (SD 1.5, SDXL), Danbooru tags for families with `improve_style: booru`
-(Pony, Illustrious, Anima). The result replaces the box text
+**Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
+model (text only, `captioner.improve` in `models.yaml`). The helper fills six short lines: the
+idea reworded for the image model (PROMPT), then how the subject looks, place, shot, style and
+light. Pinhole writes the first label for the helper so it keeps to the form. The rewording is
+used only when it keeps the idea's intent: its numbers and negations (and no new ones; each negation stays with the
+word it negates), the words in `improve.exact_words` ("more", "her", "this"…), every view, medium,
+light or "same"/"keep" phrase the idea names (`improve.given`), at least four in five of its other
+words (`improve.common_words` aside; singular and plural count as one), at most 40 words, and no
+added person (`improve.people`), mood or quality word or add-on trigger word. Otherwise the user's
+words are used as typed. The other lines are added after it: a line the idea already covers is
+left out, and so are mood and quality words (`improve.drop`, quality words come from the family's
+`auto_prompt_prefix`), "no …" phrases, phrases naming a person when the idea names none, lines with two or more phrases
+of the form's example, long sentences,
+the idea's own words and repeats. Sentences for natural-language families, tags (at most 12 added)
+for families whose `style_template` is `tags` (SD 1.5, SDXL), Danbooru tags for families with
+`improve_style: booru` (Pony, Illustrious, Anima). The result replaces the box text
 and **Undo** puts back what was typed (shown while the box still holds the improved text; the
 answer is dropped if the prompt was edited meanwhile). The instruction says to
 stay safe for work while Safe mode is On (while Off: adult themes between adults are kept and
@@ -326,16 +333,22 @@ added at request time). An answer that is a refusal ("I'm sorry, but I can't…"
 usable leaves the prompt unchanged with a short note. The prompt goes
 only to the loopback llama-server, never logged or stored. Without the Describe model it offers
 the one-time download, then improves. In Edit (Describe a change, next to "What should
-change?") Improve works the same way on the change instruction with its own two-line form
-(`improve.edit`): how the change should look, and two or three parts to keep (the composition,
-the camera angle, the background, the lighting, a person's face and pose). Pinhole writes the
-first label for the helper so it keeps to the form, and adds the lines as "<instruction>.
-<Details>. Keep … unchanged." Keep phrases naming something the instruction mentions are left out
-(`improve.edit.common_words` don't count, nor the owner in "the man's face"), at most three are kept, and details that only say "same …" or "no …" are left out. The keep line
-is left out when the instruction already says what to keep, and the details line when it
-removes something (the helper can't see what is behind it) or takes something from image 2. Always sentences
-(every edit model reads natural language); the edit model's family, Safe mode rule, add-on
-trigger words and word check apply as in Create.
+change?") Improve works the same way on the change instruction with its own three-line form
+(`improve.edit`): the instruction reworded as one command (CHANGE), how the change should look,
+and two or three parts to keep (the composition, the camera angle, the background, the lighting,
+a person's face and pose), joined as "<change>. <Details>. Keep … unchanged." The rewording
+follows the rules above, and also may not use an edit verb of another kind than the instruction's
+(`improve.edit.actions`: "add a hat" never becomes "replace the background"; an instruction with
+no verb may get one, but not one in `improve.edit.never_added` such as "remove" or "replace"); an instruction that refers to another picture ("from image 2",
+`improve.edit.keep_wording`) keeps its wording. Keep phrases naming something the instruction
+mentions are left out (`improve.common_words` don't count, nor the owner in "the man's face"), at
+most three are kept, details that only say "same …" are left out, and when the instruction keeps
+something ("same bottle, different table", "keep the bottle") only details naming another thing it mentions
+stay. The keep line is left out
+when the instruction already says what to keep, and the details line when it removes something
+(the helper can't see what is behind it) or takes something from image 2. Always sentences (every
+edit model reads natural language); the Safe mode rule, add-on trigger words and word check apply
+as in Create.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when

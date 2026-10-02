@@ -390,8 +390,9 @@ pub struct CaptionerSpec {
     pub improve: ImproveSpec,
 }
 
-/// "Improve my prompt": the helper fills a five-line form (details, place, shot, style, light)
-/// and Pinhole adds the lines it keeps after the user's own words.
+/// "Improve my prompt": the helper fills a six-line form (the idea reworded, then details, place,
+/// shot, style, light). Pinhole uses the reworded idea when it keeps the idea's intent, else the
+/// user's own words, and adds the lines it keeps after it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImproveSpec {
     /// The instruction, with `{format}`, `{style_examples}` and `{example}` taken from the style.
@@ -416,13 +417,24 @@ pub struct ImproveSpec {
     /// Added phrases containing one of these are left out.
     #[serde(default)]
     pub drop: Vec<String>,
+    /// Lowercase words that don't carry the idea: the reworded idea may leave them out, and an
+    /// edit's keep line may name them.
+    #[serde(default)]
+    pub common_words: Vec<String>,
+    /// Words a reworded idea has to keep when the idea has them, though they are in
+    /// `common_words` ("more", "her", "left").
+    #[serde(default)]
+    pub exact_words: Vec<String>,
+    /// Words for people: a reworded idea that adds one while the idea names no person is not used.
+    #[serde(default)]
+    pub people: Vec<String>,
     /// Improve for Edit's change instructions. `safe`, `adult`, `avoid` and `drop` above apply too.
     #[serde(default)]
     pub edit: ImproveEditSpec,
 }
 
-/// Improve for an edit instruction: the helper fills two lines (details of the change, what to
-/// keep) and Pinhole adds them after the user's words as sentences.
+/// Improve for an edit instruction: the helper fills three lines (the instruction reworded,
+/// details of the change, what to keep) and Pinhole joins them as sentences.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ImproveEditSpec {
     /// The instruction for the helper.
@@ -431,10 +443,18 @@ pub struct ImproveEditSpec {
     /// Per form line (`details`, `keep`): phrases that mean the instruction already covers it.
     #[serde(default)]
     pub given: BTreeMap<String, Vec<String>>,
-    /// Lowercase words of an instruction that don't name a part of the picture (the keep line
-    /// leaves out phrases naming one of the others).
+    /// An instruction with one of these phrases keeps the user's wording (references between
+    /// pictures are easy to get wrong).
     #[serde(default)]
-    pub common_words: Vec<String>,
+    pub keep_wording: Vec<String>,
+    /// Verbs a reworded instruction may not bring in when the instruction has no verb ("a hat on
+    /// the cat" never becomes "remove the hat").
+    #[serde(default)]
+    pub never_added: Vec<String>,
+    /// Groups of verbs that make the same kind of change. A reworded instruction that uses a
+    /// verb from a group the instruction has none of is not used.
+    #[serde(default)]
+    pub actions: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
