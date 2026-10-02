@@ -1,5 +1,5 @@
-// The "N waiting" button next to Generate / Apply edit: lists queued jobs, each removable.
-import { ListOrdered, Sparkles, WandSparkles, X } from "lucide-react";
+// The "N waiting" button next to Generate / Apply edit: lists queued jobs (generations, edits, upscales), each removable.
+import { ImageUp, ListOrdered, Sparkles, WandSparkles, X } from "lucide-react";
 import { useActions } from "../lib/state/AppProvider";
 import { useAppState } from "../lib/state/store";
 import { IconButton, Popover, cx, focusRing } from "./ui";
@@ -32,7 +32,9 @@ export function QueueButton() {
         {queue.map((q, i) => (
           <li key={q.id} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800">
             <span className="w-4 shrink-0 text-right text-xs tabular-nums text-neutral-400">{i + 1}</span>
-            {q.kind === "edit" ? (
+            {q.kind === "upscale" || q.kind === "editUpscale" ? (
+              <ImageUp className="h-3.5 w-3.5 shrink-0 text-neutral-500" aria-label="Upscale" />
+            ) : q.kind === "edit" ? (
               <WandSparkles className="h-3.5 w-3.5 shrink-0 text-neutral-500" aria-label="Edit" />
             ) : (
               <Sparkles className="h-3.5 w-3.5 shrink-0 text-neutral-500" aria-label="Create" />

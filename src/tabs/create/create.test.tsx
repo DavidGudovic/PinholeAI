@@ -300,6 +300,18 @@ describe("Results", () => {
     expect(items[0].textContent).toContain("2048×2048");
   });
 
+  it("keeps Upscale available while a picture is being made, and says it waits", () => {
+    const store = storeWithResults(result("n", 1024, 1024));
+    store.dispatch({ type: "jobStart", kind: "create", at: 0, count: 1 });
+    withApp(store, <Results />);
+    const button = screen.getByRole("button", { name: /Upscale/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    const items = screen.getAllByRole("menuitem") as HTMLButtonElement[];
+    expect(items.map((i) => i.disabled)).toEqual([false, false]);
+    expect(items[0].textContent).toContain("waits for the current job");
+  });
+
   it("names upscaled copies in the strip", () => {
     const store = storeWithResults(result("o", 64, 64), result("u", 256, 256, "o"));
     withApp(store, <Results />);
@@ -383,6 +395,19 @@ describe("reference picture", () => {
     expect(screen.getByTestId("side-by-side")).toBeTruthy();
     fireEvent.click(button);
     expect(screen.queryByTestId("side-by-side")).toBeNull();
+  });
+
+  it("More like this holds Variations and Same character; Describe stays a button", () => {
+    const store = storeWithResults(result("a", 64, 64));
+    withApp(store, <Results />);
+    expect(screen.queryByRole("button", { name: /Same character/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
+    expect(screen.getByRole("menuitem", { name: /Same character/ })).toBeTruthy();
+    // No batch for this result, so no Variations.
+    expect((screen.getByRole("menuitem", { name: /Variations/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Describe/ }));
+    expect(store.getState().tab).toBe("describe");
+    expect(store.getState().describe.imageId).toBe("a");
   });
 
   it("with no installed model that can use it: offers Edit", () => {

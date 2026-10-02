@@ -3,20 +3,23 @@ import { useState } from "react";
 import { ChevronDown, ImageUp, Save } from "lucide-react";
 import { useShortcuts } from "../lib/shortcuts";
 import { useActions } from "../lib/state/AppProvider";
-import type { TabId } from "../lib/state/model";
+import { willQueue, type TabId } from "../lib/state/model";
+import { useAppState } from "../lib/state/store";
 import { canSaveAs } from "../lib/state/platform";
 import { Button, MenuItem, Popover, cx, focusRing } from "./ui";
 
 /** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
 export const UPSCALE_MAX_SIDE = 8192;
 
-/** Save, plus "Save as…" in the desktop app. Errors go to `run`. */
+/** Save, plus "Save as…" (and, with `onSaveAll`, "Save all unsaved") in the desktop app. Errors go to `run`. */
 export function SaveButton({
   id,
   seed,
   size = "md",
   run,
   tab,
+  unsavedCount = 0,
+  onSaveAll,
 }: {
   id: string;
   seed: number | null;
@@ -24,6 +27,9 @@ export function SaveButton({
   /** The tab it sits in: S and Ctrl/Cmd+Shift+S save this image while that tab is showing. */
   tab: TabId;
   run: (f: () => Promise<unknown>) => Promise<void>;
+  /** Unsaved pictures in the session; "Save all unsaved" shows when there are 2 or more. */
+  unsavedCount?: number;
+  onSaveAll?: () => void;
 }) {
   const actions = useActions();
   const [saving, setSaving] = useState(false);
@@ -52,7 +58,7 @@ export function SaveButton({
       {canSaveAs() && (
         <Popover
           align="end"
-          width={180}
+          width={230}
           trigger={(p) => (
             <button
               {...p}
@@ -69,14 +75,28 @@ export function SaveButton({
           )}
         >
           {(close) => (
-            <MenuItem
-              onClick={() => {
-                close();
-                void run(() => actions.saveAs(id, seed));
-              }}
-            >
-              Save as…
-            </MenuItem>
+            <>
+              <MenuItem
+                hint="Choose the name and folder"
+                onClick={() => {
+                  close();
+                  void run(() => actions.saveAs(id, seed));
+                }}
+              >
+                Save as…
+              </MenuItem>
+              {onSaveAll && unsavedCount > 1 && (
+                <MenuItem
+                  hint="Every picture not saved yet, into a folder you choose"
+                  onClick={() => {
+                    close();
+                    onSaveAll();
+                  }}
+                >
+                  Save all unsaved ({unsavedCount})
+                </MenuItem>
+              )}
+            </>
           )}
         </Popover>
       )}
@@ -84,7 +104,7 @@ export function SaveButton({
   );
 }
 
-/** "Upscale ▾" with 2× and 4×. */
+/** "Upscale ▾" with 2× and 4×. Picked while a job runs, it waits in the queue. */
 export function UpscaleMenu({
   width,
   height,
@@ -98,6 +118,7 @@ export function UpscaleMenu({
   size?: "sm" | "md";
   onPick: (factor: 2 | 4) => void;
 }) {
+  const queues = useAppState(willQueue);
   // The upscaler always runs at 4× first (2× is 4× halved), up to 8192 px per side.
   const tooBig = width * 4 > UPSCALE_MAX_SIDE || height * 4 > UPSCALE_MAX_SIDE;
   const icon = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
@@ -120,7 +141,7 @@ export function UpscaleMenu({
               hint={
                 tooBig
                   ? `Too large to upscale (max ${UPSCALE_MAX_SIDE / 4} px per side)`
-                  : `${width * f}×${height * f}`
+                  : `${width * f}×${height * f}${queues ? " (waits for the current job)" : ""}`
               }
               onClick={() => {
                 close();
