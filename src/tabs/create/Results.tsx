@@ -5,7 +5,9 @@ import {
   Copy,
   ImageUp,
   Layers,
+  ChevronDown,
   Maximize2,
+  MoreHorizontal,
   PanelsLeftRight,
   Save,
   ScanText,
@@ -20,7 +22,7 @@ import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { ImageViewer } from "../../components/ImageViewer";
 import { Logo } from "../../components/Logo";
 import { SideBySide } from "../../components/SideBySide";
-import { Button, IconButton, Kbd, cx, focusRing } from "../../components/ui";
+import { Button, IconButton, Kbd, MenuItem, Popover, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
@@ -178,19 +180,8 @@ function Preview({
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
         <SaveButton id={result.id} seed={result.seed} run={run} tab="create" />
-        {canSaveAs() && unsavedCount > 1 && (
-          <Button
-            title="Save every unsaved picture into a folder you choose"
-            onClick={() => void run(() => actions.saveAll())}
-          >
-            <Save className="h-4 w-4" /> Save all ({unsavedCount})
-          </Button>
-        )}
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
-        </Button>
-        <Button onClick={() => actions.sendToDescribe(result.id)}>
-          <ScanText className="h-4 w-4" /> Describe
         </Button>
         <Button
           disabled={!hasBatch}
@@ -205,24 +196,67 @@ function Preview({
         >
           <Shuffle className="h-4 w-4" /> Variations
         </Button>
-        <Button title="New pictures with the same character or subject in a different scene" onClick={() => actions.sameCharacter(result.id)}>
-          <UserRound className="h-4 w-4" /> Same character
-        </Button>
         <UpscaleMenu
           width={result.width}
           height={result.height}
           disabled={busy}
           onPick={(f) => void run(() => actions.upscale(result.id, f))}
         />
+        <Popover
+          width={230}
+          trigger={(p) => (
+            <Button {...p}>
+              <MoreHorizontal className="h-4 w-4" /> More <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+            </Button>
+          )}
+        >
+          {(close) => (
+            <>
+              <MenuItem
+                icon={<UserRound className="h-4 w-4" />}
+                hint="New pictures of this subject in a different scene"
+                onClick={() => {
+                  close();
+                  actions.sameCharacter(result.id);
+                }}
+              >
+                Same character
+              </MenuItem>
+              <MenuItem
+                icon={<ScanText className="h-4 w-4" />}
+                hint="Write a prompt from this picture"
+                onClick={() => {
+                  close();
+                  actions.sendToDescribe(result.id);
+                }}
+              >
+                Describe
+              </MenuItem>
+              {canSaveAs() && unsavedCount > 1 && (
+                <MenuItem
+                  icon={<Save className="h-4 w-4" />}
+                  hint="Every unsaved picture, into a folder you choose"
+                  onClick={() => {
+                    close();
+                    void run(() => actions.saveAll());
+                  }}
+                >
+                  Save all ({unsavedCount})
+                </MenuItem>
+              )}
+            </>
+          )}
+        </Popover>
         {reference && (
-          <Button
+          <IconButton
+            label="Side by side with the reference picture"
+            variant="secondary"
             className={sideBySide ? "ring-2 ring-amber-500" : undefined}
             aria-pressed={sideBySide}
-            title="Show the reference picture and the result next to each other"
             onClick={() => setSideBySide((v) => !v)}
           >
-            <PanelsLeftRight className="h-4 w-4" /> Side by side
-          </Button>
+            <PanelsLeftRight className="h-4 w-4" />
+          </IconButton>
         )}
         <IconButton
           label="View full screen"

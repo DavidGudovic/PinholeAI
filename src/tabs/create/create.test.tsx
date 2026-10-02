@@ -385,6 +385,17 @@ describe("reference picture", () => {
     expect(screen.queryByTestId("side-by-side")).toBeNull();
   });
 
+  it("More holds Same character and Describe", () => {
+    const store = storeWithResults(result("a", 64, 64));
+    withApp(store, <Results />);
+    expect(screen.queryByRole("button", { name: /Same character/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /More/ }));
+    expect(screen.getByRole("menuitem", { name: /Same character/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Describe/ }));
+    expect(store.getState().tab).toBe("describe");
+    expect(store.getState().describe.imageId).toBe("a");
+  });
+
   it("with no installed model that can use it: offers Edit", () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "setModels", models: [sdxl] });
