@@ -642,8 +642,9 @@ export function makeActions(store: Store) {
             const now = get().edit;
             const pos = now.chain.findIndex((n) => n.imageId === node.imageId);
             if (refs[0] && pos >= 0) {
-              if (opts.from != null || pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: pos });
-              else dispatch({ type: "editAppend", ref: refs[0], meta: images[0] ?? null });
+              const secondImageId = second[0];
+              if (opts.from != null || pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: pos, secondImageId });
+              else dispatch({ type: "editAppend", ref: refs[0], meta: images[0] ?? null, secondImageId });
               releaseRefs(refs.slice(1), true);
             } else {
               releaseRefs(refs, true);

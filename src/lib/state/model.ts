@@ -86,6 +86,8 @@ export interface EditNode {
   label: string;
   /** Settings of the edit that produced this node (null for the original). */
   meta: ResultImage | null;
+  /** The second image this edit combined ("Add another image"), kept for Side by side. */
+  secondImageId?: string;
 }
 
 export interface EditParams {
@@ -306,8 +308,8 @@ export type Action =
   | { type: "queueRemove"; id: string }
   | { type: "editLoad"; ref: ImgRef }
   /** `after`: the step it was made from (default: the shown one); later steps are dropped. */
-  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null; after?: number }
-  | { type: "editAppend"; ref: ImgRef; meta?: ResultImage | null }
+  | { type: "editPush"; ref: ImgRef; meta?: ResultImage | null; after?: number; secondImageId?: string }
+  | { type: "editAppend"; ref: ImgRef; meta?: ResultImage | null; secondImageId?: string }
   | { type: "editGoto"; index: number }
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
@@ -413,7 +415,10 @@ export function referencedImageIds(
   for (const id of s.job?.imageIds ?? []) ids.add(id);
   for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);
-  for (const n of s.edit.chain) ids.add(n.imageId);
+  for (const n of s.edit.chain) {
+    ids.add(n.imageId);
+    if (n.secondImageId) ids.add(n.secondImageId);
+  }
   if (s.edit.secondImageId) ids.add(s.edit.secondImageId);
   if (s.describe.imageId) ids.add(s.describe.imageId);
   return ids;
@@ -438,6 +443,9 @@ function pruneImages(s: AppState): AppState {
   for (const k of keys) if (keep.has(k)) images[k] = s.images[k];
   return { ...s, images, batches, resultBatch };
 }
+
+/** An edit node's second image, when the edit used one. */
+const second = (id: string | undefined): Pick<EditNode, "secondImageId"> => (id ? { secondImageId: id } : {});
 
 function withRefs(images: Record<string, ImgRef>, refs: ImgRef[]): Record<string, ImgRef> {
   const out = { ...images };
@@ -641,13 +649,13 @@ function inner(s: AppState, a: Action): AppState {
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
       const kept = s.edit.chain.slice(0, (a.after ?? s.edit.index) + 1);
-      const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null }];
+      const chain = [...kept, { imageId: a.ref.id, label: `Edit ${kept.length}`, meta: a.meta ?? null, ...second(a.secondImageId) }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }
     case "editAppend": {
       // A queued edit of an earlier image in the history: added at the end, keeping the edits after it.
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
-      const chain = [...s.edit.chain, { imageId: a.ref.id, label: `Edit ${s.edit.chain.length}`, meta: a.meta ?? null }];
+      const chain = [...s.edit.chain, { imageId: a.ref.id, label: `Edit ${s.edit.chain.length}`, meta: a.meta ?? null, ...second(a.secondImageId) }];
       return { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, chain, index: chain.length - 1 } };
     }
     case "editGoto": {
