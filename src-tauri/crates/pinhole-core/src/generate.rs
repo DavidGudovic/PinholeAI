@@ -700,7 +700,7 @@ fn add_detail_source(core: &AppCore, req: &GenerateRequest) -> Option<SessionIma
     plain
         .then_some(req.init_image_id.as_deref())
         .flatten()
-        .and_then(|id| core.session.get(id))
+        .and_then(|id| session_image(core, id).ok())
 }
 
 /// Add detail redraws at most this many faces (the largest), one engine pass each.
