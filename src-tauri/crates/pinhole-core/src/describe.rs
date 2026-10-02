@@ -1022,8 +1022,8 @@ fn example_phrases(example: &str) -> std::collections::HashSet<String> {
 }
 
 /// The phrases of each form line that add something, by line name. A line the idea already
-/// covers (`given`) is left out, and so are phrases with a `drop` word or an add-on trigger
-/// word, phrases naming a person when the idea names none, phrases that say "no …", lines with
+/// covers (`given`) is left out, and so are phrases with a `skipped` word (mood and quality
+/// words, add-on trigger words), phrases naming a person when the idea names none, phrases that say "no …", lines with
 /// two or more phrases of the form's example, phrases
 /// longer than a few words, phrases made only of the idea's own words, and repeats.
 fn added_phrases<'a>(
@@ -1031,8 +1031,7 @@ fn added_phrases<'a>(
     names: &[&'a str],
     lines: &[String],
     given: &std::collections::BTreeMap<String, Vec<String>>,
-    drop: &[String],
-    avoid: &[String],
+    skipped: &[String],
     example: &str,
     people: &[String],
 ) -> Vec<(&'a str, Vec<String>)> {
@@ -1079,9 +1078,8 @@ fn added_phrases<'a>(
                     && p != "-"
                     && p.split_whitespace().count() <= MAX_PHRASE_WORDS
                     && !names_person(p, people)
-                    && !drop
+                    && !skipped
                         .iter()
-                        .chain(avoid)
                         .any(|d| crate::generate::contains_phrase(p, d))
                     && !(!words.is_empty() && words.iter().all(|w| idea_words.contains(w)))
             })
@@ -1136,8 +1134,7 @@ fn assemble_improved(
         &FORM_LINES[1..],
         lines.get(1..).unwrap_or_default(),
         &spec.given,
-        &spec.drop,
-        avoid,
+        &[spec.drop.as_slice(), avoid].concat(),
         spec.styles.get(style).map_or("", |st| st.example.as_str()),
         &spec.people,
     );
@@ -1221,8 +1218,7 @@ fn assemble_edit(
         &EDIT_FORM_LINES[1..],
         lines.get(1..).unwrap_or_default(),
         &spec.edit.given,
-        &spec.drop,
-        avoid,
+        &[spec.drop.as_slice(), avoid].concat(),
         &spec.edit.form,
         &spec.people,
     );
