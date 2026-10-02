@@ -997,6 +997,17 @@ fn face_crop(img: &RgbImage, b: [f32; 4]) -> RgbImage {
     image::imageops::crop_imm(img, x0, y0, s, s).to_image()
 }
 
+/// Overlap of two (x, y, w, h) boxes as a share of the smaller one.
+fn overlap(a: &[f32; 4], b: &[f32; 4]) -> f32 {
+    let w = (a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0]);
+    let h = (a[1] + a[3]).min(b[1] + b[3]) - a[1].max(b[1]);
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
+    }
+    let smaller = (a[2] * a[3]).min(b[2] * b[3]).max(1.0);
+    w * h / smaller
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1132,15 +1143,4 @@ mod tests {
         assert!(matches!(c.original(&png), Err(CheckError::Missing(_))));
         assert!(matches!(c.readings(b"not a png"), Err(CheckError::Image)));
     }
-}
-
-/// Overlap of two (x, y, w, h) boxes as a share of the smaller one.
-fn overlap(a: &[f32; 4], b: &[f32; 4]) -> f32 {
-    let w = (a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0]);
-    let h = (a[1] + a[3]).min(b[1] + b[3]) - a[1].max(b[1]);
-    if w <= 0.0 || h <= 0.0 {
-        return 0.0;
-    }
-    let smaller = (a[2] * a[3]).min(b[2] * b[3]).max(1.0);
-    w * h / smaller
 }
