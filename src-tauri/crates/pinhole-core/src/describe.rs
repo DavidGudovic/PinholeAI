@@ -18,6 +18,7 @@ use pinhole_engine::llama::{self, LlamaClient};
 use pinhole_engine::logbuf::LogBuffer;
 use pinhole_engine::process::{free_port, EngineProcess, ReadyError};
 use pinhole_net::download::DownloadSpec;
+use pinhole_registry::{Family, ImproveSpec};
 use pinhole_store::datadir::ModelKind;
 use serde::{Deserialize, Serialize};
 
@@ -673,72 +674,224 @@ async fn describe_inner(
 /// Longest prompt "Improve my prompt" accepts (characters).
 const IMPROVE_MAX_CHARS: usize = 2000;
 
-/// The instruction for "Improve my prompt": tag or sentence style from the family's
-/// `style_template`, the Safe mode rule (`safe` while On, `adult` while Off), and the add-on
-/// trigger words not to repeat.
+/// The five lines of the Improve form, in the order the helper writes them. The names are the
+/// keys of `captioner.improve.given`.
+const FORM_LINES: [&str; 5] = ["details", "place", "shot", "style", "light"];
+
+/// Most phrases Improve adds after the user's words in the tag styles.
+const MAX_ADDED_TAGS: usize = 12;
+
+/// Longest phrase (words) Improve adds; longer ones are usually sentences about the picture.
+const MAX_PHRASE_WORDS: usize = 6;
+
+/// The Improve style for a family: its `improve_style`, else its `style_template`; a style the
+/// registry has no form for reads as `natural`.
+fn improve_style(spec: &ImproveSpec, family: Option<&Family>) -> String {
+    let wanted = family.map(|f| {
+        f.improve_style
+            .clone()
+            .unwrap_or_else(|| f.style_template.clone())
+    });
+    match wanted {
+        Some(w) if spec.styles.contains_key(&w) => w,
+        _ => "natural".into(),
+    }
+}
+
+/// The instruction for "Improve my prompt": the form filled in for the style, the Safe mode
+/// rule (`safe` while On, `adult` while Off), and the add-on trigger words not to repeat.
 fn improve_instruction(
-    improve: &std::collections::BTreeMap<String, String>,
-    template: &str,
+    spec: &ImproveSpec,
+    style: &str,
     safe: bool,
     avoid: &[String],
 ) -> Option<String> {
-    let key = if template == "tags" {
-        "tags"
-    } else {
-        "natural"
-    };
-    let mut out = improve.get(key)?.trim().to_string();
-    if let Some(rule) = improve.get(if safe { "safe" } else { "adult" }) {
+    let st = spec.styles.get(style)?;
+    if spec.form.trim().is_empty() {
+        return None;
+    }
+    let mut out = spec
+        .form
+        .trim()
+        .replace("{format}", st.format.trim())
+        .replace("{style_examples}", st.style_examples.trim())
+        .replace("{example}", st.example.trim());
+    let rule = if safe { &spec.safe } else { &spec.adult };
+    if !rule.trim().is_empty() {
         out = format!("{out} {}", rule.trim());
     }
-    if !avoid.is_empty() {
-        if let Some(rule) = improve.get("avoid") {
-            out = format!(
-                "{out} {}",
-                rule.trim().replace("{words}", &avoid.join(", "))
-            );
-        }
+    if !avoid.is_empty() && !spec.avoid.trim().is_empty() {
+        out = format!(
+            "{out} {}",
+            spec.avoid.trim().replace("{words}", &avoid.join(", "))
+        );
     }
     Some(out)
 }
 
-/// One line of clean text; add-on trigger words the model wrote anyway are taken out
-/// (whole words only), because they are added separately at generation time.
-fn tidy_improved(text: &str, avoid: &[String]) -> String {
-    let mut t = llama::clean_caption(text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    for w in avoid {
-        let w = w.trim();
-        // Longest match first is not needed: each phrase is removed on its own.
-        while !w.is_empty() && crate::generate::contains_phrase(&t, w) {
-            let lower = t.to_lowercase();
-            let wl = w.to_lowercase();
-            // Byte offsets of the lowercase copy only line up for text that doesn't change
-            // length when lowercased; otherwise leave the rest alone.
-            if lower.len() != t.len() {
+/// The helper's answer as the five form lines, in form order. Bullets, numbers and a leading
+/// `NAME:` label are taken off, and `-` leaves a line empty. A line labelled with a form line's
+/// name goes there; small helpers often drop or rename the labels, so any other line takes the
+/// next place. A line that ends in `:` with nothing after it ("Here are the lines:") is skipped.
+fn form_lines(answer: &str) -> Vec<String> {
+    let mut out = vec![String::new(); FORM_LINES.len()];
+    let mut next = 0;
+    for line in llama::clean_caption(answer).lines() {
+        let mut t = line.trim();
+        loop {
+            let before = t;
+            t = t.trim_start_matches(['*', '\u{2022}']).trim_start();
+            if let Some(rest) = t.strip_prefix("- ") {
+                t = rest.trim_start();
+            }
+            let digits = t.len() - t.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+            if digits > 0 {
+                let rest = &t[digits..];
+                if let Some(r) = rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") ")) {
+                    t = r.trim_start();
+                }
+            }
+            if t == before {
                 break;
             }
-            let Some(i) = lower.match_indices(&wl).map(|(i, _)| i).find(|&i| {
-                let before = lower[..i].chars().next_back();
-                let after = lower[i + wl.len()..].chars().next();
-                !before.is_some_and(char::is_alphanumeric)
-                    && !after.is_some_and(char::is_alphanumeric)
-            }) else {
-                break;
-            };
-            t.replace_range(i..i + wl.len(), "");
+        }
+        if t.is_empty() {
+            continue;
+        }
+        let mut slot = None;
+        if let Some((label, rest)) = t.split_once(':') {
+            let label = label.trim_end_matches('*').trim();
+            let rest = rest.trim_start_matches('*').trim();
+            if rest.is_empty() {
+                continue;
+            }
+            if !label.is_empty()
+                && label.len() <= 20
+                && label.chars().all(|c| c.is_alphabetic() || c == ' ')
+            {
+                slot = FORM_LINES
+                    .iter()
+                    .position(|n| n.eq_ignore_ascii_case(label));
+                t = rest;
+            }
+        }
+        let i = slot.unwrap_or(next);
+        if i >= FORM_LINES.len() {
+            break;
+        }
+        next = i + 1;
+        let t = t
+            .trim()
+            .trim_matches(|c| c == '"' || c == '*')
+            .trim()
+            .trim_end_matches(['.', ','])
+            .trim();
+        if !(t == "-" || t.eq_ignore_ascii_case("none") || t.eq_ignore_ascii_case("n/a")) {
+            out[i] = t.to_string();
         }
     }
-    // Tidy what the removals left: doubled or dangling commas and spaces.
-    let parts: Vec<&str> = t
-        .split(',')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect();
-    let joined = parts.join(", ");
-    joined.split_whitespace().collect::<Vec<_>>().join(" ")
+    out
+}
+
+/// Lowercase words of three letters or more.
+fn content_words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| w.chars().count() >= 3)
+        .map(str::to_string)
+        .collect()
+}
+
+/// The improved prompt: the user's words exactly as typed, then the form lines that add
+/// something. A line the idea already covers (`given`) is left out, and so are phrases with a
+/// `drop` word or an add-on trigger word, phrases longer than a few words, phrases made only of
+/// the idea's own words, and repeats. `None` when nothing is left to add.
+fn assemble_improved(
+    idea: &str,
+    lines: &[String],
+    spec: &ImproveSpec,
+    style: &str,
+    avoid: &[String],
+) -> Option<String> {
+    let idea_words: std::collections::HashSet<String> = content_words(idea).into_iter().collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
+    for (name, line) in FORM_LINES.iter().zip(lines) {
+        let covered = spec.given.get(*name).is_some_and(|phrases| {
+            phrases
+                .iter()
+                .any(|p| crate::generate::contains_phrase(idea, p))
+        });
+        if covered {
+            continue;
+        }
+        let items: Vec<String> = line
+            .split(',')
+            .map(|p| {
+                p.trim()
+                    .trim_matches(['.', ';', ':', '"'])
+                    .trim()
+                    .to_string()
+            })
+            .filter(|p| {
+                let words = content_words(p);
+                !p.is_empty()
+                    && p != "-"
+                    && p.split_whitespace().count() <= MAX_PHRASE_WORDS
+                    && !spec
+                        .drop
+                        .iter()
+                        .chain(avoid)
+                        .any(|d| crate::generate::contains_phrase(p, d))
+                    && !(!words.is_empty() && words.iter().all(|w| idea_words.contains(w)))
+            })
+            .filter(|p| seen.insert(p.to_lowercase()))
+            .collect();
+        if !items.is_empty() {
+            groups.push((name, items));
+        }
+    }
+    if groups.is_empty() {
+        return None;
+    }
+    let idea = idea.trim_end_matches(|c: char| c == '.' || c == ',' || c.is_whitespace());
+    if style == "natural" {
+        // Details and place as their own sentences, then shot, style and light together.
+        let mut parts = vec![idea.to_string()];
+        let mut tail = Vec::new();
+        for (name, items) in groups {
+            if matches!(name, "details" | "place") {
+                parts.push(items.join(", "));
+            } else {
+                tail.extend(items);
+            }
+        }
+        if !tail.is_empty() {
+            parts.push(tail.join(", "));
+        }
+        let capital = |p: &String| {
+            let mut c = p.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect::<String>())
+                .unwrap_or_default()
+        };
+        let rest: Vec<String> = parts[1..].iter().map(capital).collect();
+        // "Wow!" stays "Wow!", not "Wow!.".
+        let end = if parts[0].ends_with(['!', '?']) {
+            " "
+        } else {
+            ". "
+        };
+        Some(format!("{}{end}{}.", parts[0], rest.join(". ")))
+    } else {
+        let tags: Vec<String> = groups
+            .into_iter()
+            .flat_map(|(_, items)| items)
+            .map(|t| t.to_lowercase())
+            .take(MAX_ADDED_TAGS)
+            .collect();
+        Some(format!("{idea}, {}", tags.join(", ")))
+    }
 }
 
 /// The helper declined instead of rewriting ("I'm sorry, but I can't…"). Only the start of the
@@ -787,65 +940,9 @@ pub struct ImprovedPrompt {
     pub note: Option<String>,
 }
 
-/// Drop repeated tags / sentences (case-insensitive). Returns the cleaned text and whether the
-/// answer was a repetition loop ("bedroom, bedroom, …") or said nothing beyond the idea.
-fn collapse_repeats(text: &str, idea: &str, tags: bool) -> (String, bool) {
-    let norm = |p: &str| -> String {
-        p.to_lowercase()
-            .chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-            .collect::<String>()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    let pieces: Vec<String> = if tags {
-        text.split(',').map(|p| p.trim().to_string()).collect()
-    } else {
-        // Sentences, each keeping its ending mark.
-        let mut out = Vec::new();
-        let mut cur = String::new();
-        let mut chars = text.chars().peekable();
-        while let Some(c) = chars.next() {
-            cur.push(c);
-            // Only at the end of a sentence: "f/1.8" stays in one piece.
-            if matches!(c, '.' | '!' | '?') && chars.peek().is_none_or(|n| n.is_whitespace()) {
-                out.push(std::mem::take(&mut cur).trim().to_string());
-            }
-        }
-        // A last sentence cut off by the token limit is dropped (when a whole one came before).
-        if !cur.trim().is_empty() && !out.is_empty() {
-            cur.clear();
-        }
-        out.push(cur.trim().to_string());
-        out
-    };
-    let pieces: Vec<String> = pieces.into_iter().filter(|p| !norm(p).is_empty()).collect();
-    let total = pieces.len();
-    let mut seen = std::collections::HashSet::new();
-    let unique: Vec<String> = pieces
-        .into_iter()
-        .filter(|p| seen.insert(norm(p)))
-        .collect();
-    let cleaned = unique.join(if tags { ", " } else { " " });
-    // The same word four times in a row ("the the the the") is a loop too.
-    let words: Vec<String> = norm(&cleaned).split(' ').map(str::to_string).collect();
-    let word_loop = words.windows(4).any(|w| w.iter().all(|x| *x == w[0]));
-    let mostly_repeats = total >= 4 && (total - unique.len()) * 2 > total;
-    let too_thin = if tags {
-        unique.len() < 3
-    } else {
-        cleaned.split_whitespace().count() < 6
-    };
-    let adds_nothing = norm(&cleaned) == norm(idea);
-    (
-        cleaned,
-        word_loop || mostly_repeats || too_thin || adds_nothing,
-    )
-}
-
-/// Turn a short idea into a fuller prompt with the local text model (the Describe model).
-/// `family_id` picks tags vs sentences; `avoid` = trigger words of the add-ons in use.
+/// Add details to a short idea with the local text model (the Describe model). The user's words
+/// stay as typed; the helper's form lines are added after them. `family_id` picks the style
+/// (sentences, tags or Danbooru tags); `avoid` = trigger words of the add-ons in use.
 /// PRIVACY: the prompt goes only to the loopback llama-server and back; never logged or stored.
 pub async fn improve_prompt(
     core: &Arc<AppCore>,
@@ -867,16 +964,14 @@ pub async fn improve_prompt(
     crate::text_check::check(idea)?;
     let _folder = crate::models::folder_read(core)?;
     let reg = core.registry();
-    let template = family_id
-        .and_then(|id| reg.family(id))
-        .map(|f| f.style_template.clone())
-        .unwrap_or_else(|| "natural".into());
+    let spec = &reg.captioner().improve;
+    let style = improve_style(spec, family_id.and_then(|id| reg.family(id)));
     let safe = core.settings.read().content_mode != "all";
-    let instruction = improve_instruction(&reg.captioner().improve, &template, safe, avoid)
-        .ok_or_else(|| {
-            CoreError::not_found("Improve my prompt isn't available. Update Pinhole.")
-        })?;
-    let max_tokens = if template == "tags" { 120 } else { 200 };
+    let instruction = improve_instruction(spec, &style, safe, avoid).ok_or_else(|| {
+        CoreError::not_found("Improve my prompt isn't available. Update Pinhole.")
+    })?;
+    // Five short lines.
+    let max_tokens = 200;
 
     let _busy = BusyGuard::new(&core.describe);
     let client = ensure_llama(core, chosen_helper(core, Purpose::Improve).as_deref()).await?;
@@ -887,25 +982,25 @@ pub async fn improve_prompt(
             _ => CoreError::new("engine_failed", "Improving the prompt failed. Try again.").with_details(format!("{e}\n{tail}")),
         }
     })?;
-    let (text, degenerate) =
-        collapse_repeats(&tidy_improved(&text, avoid), idea, template == "tags");
-    // Before the fallbacks: the word check runs on every answer, including short ones and
-    // refusals.
-    crate::text_check::check(&text)?;
-    if is_refusal(&text) {
+    // Before the fallbacks: the word check runs on the whole answer, including the parts left
+    // out below and refusals, and on the result.
+    let answer = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    crate::text_check::check(&answer)?;
+    if is_refusal(&answer) {
         return Ok(ImprovedPrompt {
             text: idea.to_string(),
             note: Some("The helper wouldn't rewrite this one, so your prompt is unchanged.".into()),
         });
     }
-    if degenerate {
+    let Some(text) = assemble_improved(idea, &form_lines(&text), spec, &style, avoid) else {
         return Ok(ImprovedPrompt {
             text: idea.to_string(),
             note: Some(
                 "The helper couldn't improve this one, so your prompt is unchanged. Try adding a few more words.".into(),
             ),
         });
-    }
+    };
+    crate::text_check::check(&text)?;
     Ok(ImprovedPrompt { text, note: None })
 }
 
@@ -1174,39 +1269,138 @@ mod tests {
         assert!(!st.is_busy());
     }
 
-    fn improve_map() -> std::collections::BTreeMap<String, String> {
-        [
-            ("natural", "NAT"),
-            ("tags", "TAGS"),
-            ("safe", "SAFE."),
-            ("adult", "ADULT."),
-            ("avoid", "Skip: {words}."),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
+    fn improve_spec() -> ImproveSpec {
+        let style = |name: &str| pinhole_registry::ImproveStyle {
+            format: format!("{name} format."),
+            style_examples: "ink".into(),
+            example: "EX".into(),
+        };
+        let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        ImproveSpec {
+            form: "FORM {format} STYLE {style_examples} {example}".into(),
+            styles: [
+                ("natural", style("nat")),
+                ("tags", style("tags")),
+                ("booru", style("booru")),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+            safe: "SAFE.".into(),
+            adult: "ADULT.".into(),
+            avoid: "Skip: {words}.".into(),
+            given: [
+                ("shot", list(&["full body", "side view"])),
+                ("style", list(&["cartoon", "photo"])),
+                ("light", list(&["sunset"])),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
+            drop: list(&["atmosphere", "best quality"]),
+        }
     }
 
     #[test]
     fn improve_instruction_follows_style_safe_mode_and_trigger_words() {
-        let m = improve_map();
+        let m = improve_spec();
         assert_eq!(
             improve_instruction(&m, "tags", false, &[]).unwrap(),
-            "TAGS ADULT."
+            "FORM tags format. STYLE ink EX ADULT."
         );
         assert_eq!(
-            improve_instruction(&m, "tags", true, &[]).unwrap(),
-            "TAGS SAFE."
+            improve_instruction(&m, "booru", true, &[]).unwrap(),
+            "FORM booru format. STYLE ink EX SAFE."
         );
         assert_eq!(
             improve_instruction(&m, "natural", true, &["sks style".into(), "ink".into()]).unwrap(),
-            "NAT SAFE. Skip: sks style, ink."
+            "FORM nat format. STYLE ink EX SAFE. Skip: sks style, ink."
         );
-        // Unknown templates read as sentences; a registry without the text says so.
-        assert!(improve_instruction(&m, "other", false, &[])
-            .unwrap()
-            .starts_with("NAT"));
         assert!(improve_instruction(&Default::default(), "tags", false, &[]).is_none());
+    }
+
+    #[test]
+    fn improve_style_comes_from_the_family() {
+        let reg = pinhole_registry::Registry::from_yaml(
+            include_str!("../../../../config/models.yaml"),
+            None,
+        )
+        .unwrap();
+        let spec = &reg.captioner().improve;
+        assert_eq!(improve_style(spec, reg.family("sd15")), "tags");
+        assert_eq!(improve_style(spec, reg.family("sdxl_illustrious")), "booru");
+        assert_eq!(improve_style(spec, reg.family("z_image_turbo")), "natural");
+        assert_eq!(improve_style(spec, None), "natural");
+        for st in spec.styles.values() {
+            assert!(!st.example.is_empty() && !st.format.is_empty());
+        }
+    }
+
+    #[test]
+    fn form_lines_follow_labels_then_position() {
+        let five = |v: [&str; 5]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            form_lines(
+                "Here are the five lines:\n**DETAILS:** red fur, round glasses\n- PLACE: small cafe\n\nSHOT: -\n3d render, clay\nlight: soft daylight.\nEXTRA: ignored",
+            ),
+            five(["red fur, round glasses", "small cafe", "", "3d render, clay", "soft daylight"])
+        );
+        // Unknown labels and plain lines take the next place; known labels go to their own.
+        assert_eq!(
+            form_lines("castle: stone walls\n1. floating island\nLIGHT: warm sun"),
+            five(["stone walls", "floating island", "", "", "warm sun"])
+        );
+        assert_eq!(form_lines("Sure:\nred fur")[0], "red fur");
+    }
+
+    #[test]
+    fn improved_prompt_keeps_the_idea_and_adds_the_rest() {
+        let m = improve_spec();
+        let lines: Vec<String> = [
+            "red fur, round glasses, red fur, cosy atmosphere",
+            "small cafe",
+            "close-up",
+            "photo, 50mm lens",
+            "warm window light",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        // The idea names a style and a view: those lines are left out; repeats, `drop` words and
+        // the idea's own words go too.
+        let idea = "A fox reading in a cafe, cartoon, side view";
+        assert_eq!(
+            assemble_improved(idea, &lines, &m, "tags", &[]).unwrap(),
+            "A fox reading in a cafe, cartoon, side view, red fur, round glasses, small cafe, warm window light"
+        );
+        assert_eq!(
+            assemble_improved("a fox. ", &lines, &m, "natural", &["glasses".into()]).unwrap(),
+            "a fox. Red fur. Small cafe. Close-up, photo, 50mm lens, warm window light."
+        );
+        // Long sentences are left out.
+        let long =
+            vec!["The fox looks like it is enjoying a quiet moment with its paper".to_string()];
+        assert!(assemble_improved("a fox", &long, &m, "tags", &[]).is_none());
+        assert!(assemble_improved("a fox", &[], &m, "natural", &[]).is_none());
+        assert_eq!(
+            assemble_improved("Wow!", &lines[..1], &m, "natural", &[]).unwrap(),
+            "Wow! Red fur, round glasses."
+        );
+    }
+
+    #[test]
+    fn tag_styles_add_at_most_twelve_tags() {
+        let m = improve_spec();
+        let many: Vec<String> = (0..5)
+            .map(|i| {
+                (0..5)
+                    .map(|j| format!("t{i}{j}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .collect();
+        let out = assemble_improved("idea", &many, &m, "booru", &[]).unwrap();
+        assert_eq!(out.split(", ").count(), 1 + MAX_ADDED_TAGS);
     }
 
     #[test]
@@ -1227,68 +1421,6 @@ mod tests {
         assert!(!is_refusal(
             "As an aircraft banks over the bay, gulls scatter."
         ));
-    }
-
-    #[test]
-    fn improved_text_is_one_clean_line_without_trigger_words() {
-        assert_eq!(
-            tidy_improved("Prompt: \"a cat,\n  on a mat\"", &[]),
-            "a cat, on a mat"
-        );
-        let avoid = vec!["Sks".to_string(), "ink wash".to_string()];
-        assert_eq!(
-            tidy_improved("sks, a cat, ink wash, soft light", &avoid),
-            "a cat, soft light"
-        );
-        // Whole words only: "ink" stays inside "pink".
-        assert_eq!(
-            tidy_improved("a pink cat, ink", &["ink".to_string()]),
-            "a pink cat"
-        );
-        assert_eq!(
-            tidy_improved("A cat in the sks style.", &["sks".to_string()]),
-            "A cat in the style."
-        );
-    }
-
-    #[test]
-    fn repetition_loops_are_caught_and_repeats_collapsed() {
-        let looped = vec!["bedroom"; 60].join(", ");
-        assert!(collapse_repeats(&looped, "bedroom", true).1);
-        assert!(collapse_repeats("the the the the the", "x", false).1);
-        assert!(
-            collapse_repeats("bedroom", "bedroom", true).1,
-            "adds nothing"
-        );
-        // A few repeats are just collapsed.
-        let (t, bad) = collapse_repeats(
-            "bedroom, cozy, Cozy, soft light, bedroom, warm lamp, morning sun",
-            "bedroom",
-            true,
-        );
-        assert!(!bad);
-        assert_eq!(t, "bedroom, cozy, soft light, warm lamp, morning sun");
-        let (t, bad) = collapse_repeats(
-            "A cozy bedroom at dawn. Soft light fills the room. A cozy bedroom at dawn.",
-            "bedroom",
-            false,
-        );
-        assert!(!bad);
-        assert_eq!(t, "A cozy bedroom at dawn. Soft light fills the room.");
-    }
-
-    #[test]
-    fn sentences_keep_decimals_and_drop_a_cut_off_tail() {
-        let (t, bad) = collapse_repeats(
-            "A portrait shot at f/1.8 in warm light. The background is soft and calm. The sky is",
-            "portrait",
-            false,
-        );
-        assert!(!bad);
-        assert_eq!(
-            t,
-            "A portrait shot at f/1.8 in warm light. The background is soft and calm."
-        );
     }
 
     #[test]
