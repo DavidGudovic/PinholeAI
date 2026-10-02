@@ -1566,26 +1566,32 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
         return Err(CoreError::invalid(UPSCALE_TOO_LARGE));
     }
-    let (component, style) = pick_upscaler(core, &src).await?;
 
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
     core.gen.job_note.lock().clear();
     *core.gen.part_note.lock() = None;
-    // Set before the first-use upscaler download, so Cancel works during it too.
+    // Set before the picture-style reading and the first-use upscaler download, so Cancel
+    // works during both.
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
-    // Cancelled just as the download finished: it stays installed, no upscale.
-    let ready = ensure_upscaler(core, component, &cancel)
-        .await
-        .and_then(|u| {
-            if cancel.is_cancelled() {
-                Err(CoreError::new("cancelled", "Cancelled."))
-            } else {
-                Ok(u)
-            }
-        });
-    let upscaler = match ready {
+    let cancelled = || {
+        if cancel.is_cancelled() {
+            Err(CoreError::new("cancelled", "Cancelled."))
+        } else {
+            Ok(())
+        }
+    };
+    let ready = async {
+        let (component, style) = pick_upscaler(core, &src).await?;
+        cancelled()?;
+        let u = ensure_upscaler(core, component, &cancel).await?;
+        // Cancelled just as the download finished: it stays installed, no upscale.
+        cancelled()?;
+        Ok::<_, CoreError>((u, style))
+    }
+    .await;
+    let (upscaler, style) = match ready {
         Ok(u) => u,
         Err(e) => {
             *core.gen.active.lock() = None;
