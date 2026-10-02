@@ -87,6 +87,8 @@ pub struct FakeCheck {
     pub original_by_size: Vec<((u32, u32), pinhole_check::Original)>,
     /// Face boxes (x, y, w, h) found on every picture.
     pub face_boxes: Vec<[f32; 4]>,
+    /// Held by a test to keep `readings` waiting (after it is counted) until released.
+    pub hold_readings: std::sync::Arc<parking_lot::Mutex<()>>,
 }
 
 #[cfg(any(test, feature = "test-util"))]
@@ -99,6 +101,7 @@ impl Inspector for FakeCheck {
             return Err(pinhole_check::CheckError::Missing(self.missing[0]));
         }
         self.counts.lock().0 += 1;
+        drop(self.hold_readings.lock());
         self.sizes
             .lock()
             .push(pinhole_engine::png::dimensions(png).unwrap_or_default());
@@ -391,11 +394,8 @@ pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResu
     let res = tokio::task::spawn_blocking(move || c.check.inspector().readings(&png))
         .await
         .map_err(|e| {
-            CoreError::new(
-                "check_failed",
-                "The safety check couldn't run, so the picture can't be upscaled. Try again.",
-            )
-            .with_details(e.to_string())
+            CoreError::new("check_failed", "The safety check couldn't run. Try again.")
+                .with_details(e.to_string())
         })?;
     let r = res.map_err(|e| check_error(core, e))?;
     Ok(r.tags

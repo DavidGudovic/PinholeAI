@@ -587,7 +587,7 @@ async fn rust_json_matches_types_ts() {
     c.check("FamilyUi", &generate::family_ui(&core, "sdxl").unwrap());
     c.check(
         "FinalPromptPreview",
-        &generate::preview_final_prompt(&core, &req).unwrap(),
+        &generate::preview_final_prompt(&core, &req).await.unwrap(),
     );
     let result = generate::generate(&core, req).await.unwrap();
     c.check("GenerateResult", &result);

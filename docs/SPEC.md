@@ -385,13 +385,13 @@ what was applied and what was skipped. The pasted text is never stored or logged
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
 
-**Queue:** pressing Generate (or Apply edit / Restyle in Edit, or Variations) while a job runs adds
-it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
+**Queue:** pressing Generate (or Apply edit / Restyle in Edit, Variations, or Upscale in Create or
+Edit) while a job runs adds it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
 moment it was pressed and runs, in order, when the one before it ends (switching models in between
 as needed). A small button next to Generate shows how many are waiting and opens the list, where
 each can be removed. Cancel stops only the running job; Reset empties the queue. Queued jobs live in
-memory only. While an edit runs or waits, the edit history stays put; a queued edit of an earlier
-image is added at the end of the history.
+memory only. While an edit runs or waits, the edit history stays put; a queued edit or upscale of an
+earlier image is added at the end of the history.
 
 ### 5.2 Edit (img2img + instruction editing)
 
@@ -431,7 +431,10 @@ Four modes; Describe a change or Restyle is picked automatically:
    and less than half the Quality dial's native side (a larger face would be drawn smaller than
    it is), and each face (largest first, at most 6) is fixed the same way, its box grown by 15% on every
    side as the mask, one engine pass per face, each on the previous pass's result. Without
-   "What is it?" text the prompt is "a detailed face". No such face → "No face found that
+   "What is it?" text the prompt is "photo of a face, natural skin texture, sharp focus" for a
+   photo-style picture (the tagger's photo-style reading, as for the Upscale Auto pick) with no
+   Style picked, else "a detailed face". With more than one face the progress note reads
+   "Face N of M." and one progress bar runs across all faces. No such face → "No face found that
    needs more detail. Paint over the part to fix instead." The picture keeps its size; the finished
    picture and each redrawn face are checked like any Fix details result.
 4. **Extend** (same models as Restyle): make the picture wider or taller and let the model

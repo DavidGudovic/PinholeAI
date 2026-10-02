@@ -197,7 +197,8 @@ export function EditTab() {
   // Set before the first await (the mask export), so a second click or Ctrl+Enter
   // during the export doesn't get as far as the job and report "still working".
   const running = useRef(false);
-  // What "Retry" on an error repeats (the last edit, Try again, upscale or save).
+  // What "Retry" on an error repeats (the edit, Try again, upscale or save that failed).
+  // Set when it fails, since a queued one can fail after others were pressed.
   // Kept as data, not a closure, so Retry runs with the current screen's state.
   const retry = useRef<
     | { kind: "edit"; again: boolean }
@@ -211,7 +212,6 @@ export function EditTab() {
     const source = e.chain[from] ? images[e.chain[from].imageId] : undefined;
     if (!source || (again && !canTryAgain)) return;
     running.current = true;
-    retry.current = { kind: "edit", again };
     setError(null);
     try {
       const m = again
@@ -248,6 +248,7 @@ export function EditTab() {
         setSideBySide(false);
       }
     } catch (err) {
+      retry.current = { kind: "edit", again };
       setError(api.asCoreError(err));
     } finally {
       running.current = false;
@@ -256,21 +257,21 @@ export function EditTab() {
   usePrimaryAction("edit", () => void run());
 
   const upscale = async (factor: 2 | 4) => {
-    if (store.getState().job || importing || !current) return;
-    retry.current = { kind: "upscale", factor };
+    if (importing || !current) return;
     setError(null);
     try {
       await actions.upscaleEdit(factor);
     } catch (err) {
+      retry.current = { kind: "upscale", factor };
       setError(api.asCoreError(err));
     }
   };
   const runAction = async (f: () => Promise<unknown>) => {
-    retry.current = { kind: "action", f };
     setError(null);
     try {
       await f();
     } catch (err) {
+      retry.current = { kind: "action", f };
       setError(api.asCoreError(err));
     }
   };
