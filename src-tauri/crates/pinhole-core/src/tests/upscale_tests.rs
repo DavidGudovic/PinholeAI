@@ -199,6 +199,7 @@ async fn upscale_picks_the_upscaler_by_picture_style() {
 /// Cancel works while Upscale reads the picture style for the Auto pick: nothing is
 /// downloaded or upscaled after it.
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // held on purpose: the reading waits for it
 async fn cancel_ends_upscale_during_the_style_reading() {
     let (_tmp, core, _rec) = new_core();
     let mock = MockSdServer::start().await;
