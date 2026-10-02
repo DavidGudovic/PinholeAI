@@ -1,7 +1,7 @@
 // Helper models (Describe / Improve): load the list, and save the choice for one purpose.
 import { useEffect, useState } from "react";
 import * as api from "./api";
-import type { HelperModel, HelperPurpose } from "./types";
+import type { HelperModel, HelperPurpose, UpscalerChoice } from "./types";
 import { emitSettingsChanged } from "../settings/events";
 
 /** Helper models from the registry (installed or not); null until loaded. Refreshes when models change. */
@@ -25,6 +25,14 @@ export function useHelperModels(): HelperModel[] | null {
     };
   }, []);
   return list;
+}
+
+/** Save which upscaler Upscale uses ("auto" = by the picture's style). */
+export async function chooseUpscaler(choice: UpscalerChoice) {
+  const current = await api.getSettings();
+  const next = await api.setSettings({ ...current, upscaler: choice });
+  emitSettingsChanged(next);
+  return next;
 }
 
 /** Save which helper model a purpose uses ("auto" = Pinhole picks). */

@@ -14,6 +14,7 @@ import { requestAddonBrowse } from "../models/lib/session";
 import { buildCreateRequest } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
+import { UpscalerSegmented, useUpscaler } from "../../components/UpscalerChoice";
 
 function Row({
   label,
@@ -148,6 +149,16 @@ function NamedSizeChips({ ui, width, height, onPick }: { ui: FamilyUi | null; wi
         </p>
       )}
     </div>
+  );
+}
+
+/** Which upscaler Upscale uses (a saved setting, shared with Edit's Fine-tune). */
+function UpscalerRow() {
+  const upscaler = useUpscaler();
+  return (
+    <Row full label="Upscaler (for Upscale)" def="auto" changed={upscaler.value !== "auto"} onReset={() => upscaler.choose("auto")}>
+      <UpscalerSegmented upscaler={upscaler} />
+    </Row>
   );
 }
 
@@ -306,6 +317,8 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
           <Row full label="VAE tiling (saves VRAM, a bit slower)" def="auto" changed={ft.vaeTiling != null} onReset={() => set({ vaeTiling: null })}>
             <Segmented size="sm" ariaLabel="VAE tiling" value={tri(ft.vaeTiling)} onChange={(t) => set({ vaeTiling: fromTri(t) })} options={[{ value: "auto" as Tri, label: "Auto" }, { value: "on" as Tri, label: "On" }, { value: "off" as Tri, label: "Off" }]} />
           </Row>
+
+          <UpscalerRow />
 
           {ui?.autoPromptPrefix && (
             <Row full label="Automatic prompt prefix" def="on" changed={ft.autoPromptPrefix != null} onReset={() => set({ autoPromptPrefix: null })}>

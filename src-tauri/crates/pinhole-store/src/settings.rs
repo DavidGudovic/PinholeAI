@@ -44,6 +44,9 @@ pub struct Settings {
     pub describe_model: String,
     /// Helper model for "Improve my prompt": `auto` or a `captioner.helpers` id.
     pub improve_model: String,
+    /// Upscaler used by Upscale: `auto` (photo or drawing, by the picture's style),
+    /// `photo` or `drawing`.
+    pub upscaler: String,
     /// Version of the first-launch "Before you start" notice the user agreed to (0 = none).
     pub notice_accepted: u32,
     /// The one-time Edit notice (first photo from the computer opened in Edit) was shown.
@@ -74,6 +77,7 @@ impl Default for Settings {
             models_folder: None,
             describe_model: "auto".into(),
             improve_model: "auto".into(),
+            upscaler: "auto".into(),
             notice_accepted: 0,
             edit_notice_seen: false,
             show_tips: true,
@@ -121,6 +125,9 @@ impl Settings {
         }
         if !matches!(self.text_encoder_on_cpu.as_str(), "auto" | "on" | "off") {
             self.text_encoder_on_cpu = d.text_encoder_on_cpu;
+        }
+        if !matches!(self.upscaler.as_str(), "auto" | "photo" | "drawing") {
+            self.upscaler = d.upscaler;
         }
         // Unknown ids are checked where they are used (a helper may be removed from the list).
         for m in [&mut self.describe_model, &mut self.improve_model] {
@@ -261,6 +268,7 @@ mod tests {
             text_encoder_on_cpu: "on".into(),
             describe_model: "describe".into(),
             improve_model: "qwen25_vl_7b".into(),
+            upscaler: "drawing".into(),
             notice_accepted: 1,
             edit_notice_seen: true,
             show_tips: false,
@@ -350,6 +358,7 @@ mod tests {
             theme: "neon".into(),
             engine_backend: "rocm".into(),
             text_encoder_on_cpu: "maybe".into(),
+            upscaler: "sharp".into(),
             vram_override_gb: Some(f32::NAN),
             ..Settings::default()
         }
@@ -361,6 +370,7 @@ mod tests {
         assert_eq!(s.theme, "system");
         assert_eq!(s.engine_backend, "auto");
         assert_eq!(s.text_encoder_on_cpu, "auto");
+        assert_eq!(s.upscaler, "auto");
         assert_eq!(s.vram_override_gb, None);
         for old in ["include_18plus", "only_18plus"] {
             let s = Settings {

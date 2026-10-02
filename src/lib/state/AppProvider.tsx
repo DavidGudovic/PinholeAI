@@ -56,6 +56,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
           modelsFolder: null,
         describeModel: "auto",
         improveModel: "auto",
+        upscaler: "auto",
         },
       }),
     );
