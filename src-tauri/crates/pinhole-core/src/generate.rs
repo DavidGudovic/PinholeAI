@@ -853,7 +853,9 @@ async fn generate_inner(
     let req = match add_detail_source(core, req) {
         Some(src) => {
             let mut r = req.clone();
-            r.prompt = if crate::imagecheck::is_photo_style(core, &src).await? {
+            // A picked Style says what the picture looks like: no photo words against it.
+            let styled = req.style_id.as_deref().is_some_and(|s| !s.is_empty());
+            r.prompt = if !styled && crate::imagecheck::is_photo_style(core, &src).await? {
                 PHOTO_FACE_PROMPT
             } else {
                 DRAWN_FACE_PROMPT
@@ -1240,6 +1242,7 @@ async fn generate_inner(
         body.mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
         fix = Some(Redraw::Detail(Arc::new(plan)));
     }
+    *core.gen.part_note.lock() = None;
     drop(body);
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept. A redrawn box is also checked on its own.
