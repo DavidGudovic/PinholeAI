@@ -416,6 +416,25 @@ pub struct ImproveSpec {
     /// Added phrases containing one of these are left out.
     #[serde(default)]
     pub drop: Vec<String>,
+    /// Improve for Edit's change instructions. `safe`, `adult`, `avoid` and `drop` above apply too.
+    #[serde(default)]
+    pub edit: ImproveEditSpec,
+}
+
+/// Improve for an edit instruction: the helper fills two lines (details of the change, what to
+/// keep) and Pinhole adds them after the user's words as sentences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImproveEditSpec {
+    /// The instruction for the helper.
+    #[serde(default)]
+    pub form: String,
+    /// Per form line (`details`, `keep`): phrases that mean the instruction already covers it.
+    #[serde(default)]
+    pub given: BTreeMap<String, Vec<String>>,
+    /// Lowercase words of an instruction that don't name a part of the picture (the keep line
+    /// leaves out phrases naming one of the others).
+    #[serde(default)]
+    pub common_words: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

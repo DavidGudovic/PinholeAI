@@ -224,7 +224,7 @@ describe("Improve my prompt", () => {
     const store = box("a fox");
     fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
     await waitFor(() => expect(store.getState().create.prompt).toBe("a fox, in soft light"));
-    expect(api.improvePrompt).toHaveBeenCalledWith("a fox", null, []);
+    expect(api.improvePrompt).toHaveBeenCalledWith("a fox", null, [], "create");
     fireEvent.click(await screen.findByRole("button", { name: /Undo/ }));
     expect(store.getState().create.prompt).toBe("a fox");
   });

@@ -37,9 +37,15 @@ async fn improve_prompt_through_mock_llama() {
     )
     .await;
     use_external_captioner(&core, &llama.base_url());
-    let text = describe::improve_prompt(&core, "  a red fox  ", None, &["sks".into()])
-        .await
-        .unwrap();
+    let text = describe::improve_prompt(
+        &core,
+        "  a red fox  ",
+        None,
+        &["sks".into()],
+        describe::ImproveTarget::Create,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         text.text, "a red fox. Thick red fur. In snow. Photo, soft light.",
         "the idea is kept as typed and the form lines follow it"
@@ -61,10 +67,54 @@ async fn improve_prompt_through_mock_llama() {
         Some("a red fox"),
         "the idea is the chat message, not part of the instruction"
     );
-    let e = describe::improve_prompt(&core, "   ", None, &[])
+    let e = describe::improve_prompt(&core, "   ", None, &[], describe::ImproveTarget::Create)
         .await
         .unwrap_err();
     assert_eq!(e.code, "invalid");
+}
+
+#[tokio::test]
+async fn improve_edit_instruction_through_mock_llama() {
+    let (_tmp, core, _rec) = new_core();
+    let llama = MockLlamaServer::start(
+        // Without the started "DETAILS:", as other servers answer.
+        "tall clear glass, bright orange juice, same spot\n\nKEEP: the table, the mug, the lighting",
+        0,
+    )
+    .await;
+    use_external_captioner(&core, &llama.base_url());
+    let out = describe::improve_prompt(
+        &core,
+        "replace the mug with a glass of juice",
+        Some("qwen_image_edit_2511"),
+        &[],
+        describe::ImproveTarget::Edit,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out.text,
+        "replace the mug with a glass of juice. Tall clear glass, bright orange juice. Keep the table and the lighting unchanged.",
+        "the instruction is kept as typed; what it changes is not kept"
+    );
+    let body = &llama.requests()[0];
+    let system = body
+        .pointer("/messages/0/content")
+        .and_then(|t| t.as_str())
+        .unwrap();
+    assert!(system.contains("two lines"), "{system}");
+    assert_eq!(
+        body.pointer("/messages/2").unwrap(),
+        &serde_json::json!({ "role": "assistant", "content": "DETAILS:" }),
+        "the answer is started with the first label"
+    );
+    assert_eq!(
+        body["stop"],
+        serde_json::json!(["\nDETAILS:"]),
+        "the form may have blank lines between its two lines"
+    );
+    assert!(system.contains("safe for work"), "{system}");
+    assert!(body["max_tokens"].as_u64().unwrap() <= 120);
 }
 
 #[tokio::test]
@@ -77,9 +127,15 @@ async fn improve_prompt_with_safe_mode_off_allows_adult_and_catches_refusals() {
     )
     .await;
     use_external_captioner(&core, &llama.base_url());
-    let out = describe::improve_prompt(&core, "a nude figure study", None, &[])
-        .await
-        .unwrap();
+    let out = describe::improve_prompt(
+        &core,
+        "a nude figure study",
+        None,
+        &[],
+        describe::ImproveTarget::Create,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         out.text, "a nude figure study",
         "a refusal never replaces the prompt"
@@ -96,14 +152,38 @@ async fn improve_prompt_with_safe_mode_off_allows_adult_and_catches_refusals() {
 }
 
 #[tokio::test]
+async fn improve_edit_catches_a_refusal_after_the_started_label() {
+    let (_tmp, core, _rec) = new_core();
+    let llama = MockLlamaServer::start("DETAILS: I'm sorry, but I can't help with that.", 0).await;
+    use_external_captioner(&core, &llama.base_url());
+    let out = describe::improve_prompt(
+        &core,
+        "make the sky green",
+        None,
+        &[],
+        describe::ImproveTarget::Edit,
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.text, "make the sky green");
+    assert!(out.note.is_some());
+}
+
+#[tokio::test]
 async fn improve_prompt_falls_back_when_the_model_loops() {
     let (_tmp, core, _rec) = new_core();
     let looped = vec!["bedroom"; 60].join(", ");
     let llama = MockLlamaServer::start(&looped, 0).await;
     use_external_captioner(&core, &llama.base_url());
-    let out = describe::improve_prompt(&core, "bedroom", Some("sdxl"), &[])
-        .await
-        .unwrap();
+    let out = describe::improve_prompt(
+        &core,
+        "bedroom",
+        Some("sdxl"),
+        &[],
+        describe::ImproveTarget::Create,
+    )
+    .await
+    .unwrap();
     assert_eq!(out.text, "bedroom", "the user's own words come back");
     assert!(out.note.is_some());
     let body = &llama.requests()[0];

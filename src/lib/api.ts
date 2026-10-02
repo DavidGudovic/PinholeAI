@@ -174,9 +174,10 @@ export const installCaptioner = (helperId?: string) =>
 export const listHelperModels = () => invoke<T.HelperModel[]>("list_helper_models");
 export const describeImage = (imageId: string, style: T.DescribeStyle) =>
   invoke<string>("describe_image", { imageId, style });
-/** "Improve my prompt": a short idea → a fuller prompt (local helper model). `avoid` = add-on trigger words. */
-export const improvePrompt = (prompt: string, familyId: string | null, avoid: string[]) =>
-  invoke<T.ImprovedPrompt>("improve_prompt", { prompt, familyId, avoid });
+/** "Improve my prompt": a short idea → a fuller prompt (local helper model). `avoid` = add-on trigger words.
+ *  `target` "edit" = an Edit change instruction (details of the change and what to keep). */
+export const improvePrompt = (prompt: string, familyId: string | null, avoid: string[], target: T.ImproveTarget = "create") =>
+  invoke<T.ImprovedPrompt>("improve_prompt", { prompt, familyId, avoid, target });
 
 // ---------------------------------------------------------------- library
 export const listStyles = () => invoke<T.Style[]>("list_styles");

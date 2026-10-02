@@ -42,6 +42,7 @@ vi.mock("../../lib/api", async (orig) => {
     generate: vi.fn(() => new Promise(() => undefined)),
     captionerStatus: vi.fn(async () => captioner),
     describeImage: vi.fn(async () => "a lighthouse"),
+    improvePrompt: vi.fn(async (p: string) => ({ text: `${p}. Warm street lights. Keep the composition unchanged.`, note: null })),
   };
 });
 
@@ -330,6 +331,31 @@ describe("Edit tab", () => {
 
     act(() => store.dispatch({ type: "editSetSecond", ref: null }));
     expect(store.getState().edit.secondImageId).toBeNull();
+    vi.mocked(api.listModels).mockImplementation(async () => [model]);
+  });
+
+  it("Improve adds details to the change with the edit model's family, and Undo puts it back", async () => {
+    const kontext = { ...model, id: "kx", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" } as InstalledModel;
+    vi.mocked(api.listModels).mockImplementation(async () => [model, kontext]);
+    captioner = { available: true, source: null, downloadBytes: 0, running: false } as CaptionerStatus;
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(2));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "instruction", instruction: "make it evening" } });
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Improve/ }));
+    await waitFor(() => expect(store.getState().edit.instruction).toBe("make it evening. Warm street lights. Keep the composition unchanged."));
+    expect(api.improvePrompt).toHaveBeenCalledWith("make it evening", "flux1_kontext", [], "edit");
+    expect(store.getState().create.prompt).toBe("");
+    fireEvent.click(await screen.findByTitle("Put back what you wrote"));
+    expect(store.getState().edit.instruction).toBe("make it evening");
     vi.mocked(api.listModels).mockImplementation(async () => [model]);
   });
 

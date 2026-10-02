@@ -101,6 +101,7 @@ const table: MockTable = {
     warm = true;
     const idea = String(a.prompt ?? "").trim();
     if (!idea) throw err("invalid", "Type a few words about your picture first.");
+    if (a.target === "edit") return { text: `${idea.replace(/[.\s]+$/, "")}. Soft natural colours. Keep the composition and the lighting unchanged.`, note: null };
     const fam = String(a.familyId ?? "");
     return { text: improved(idea, /sd15|sdxl|pony|illustrious/.test(fam)), note: null };
   },
