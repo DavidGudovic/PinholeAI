@@ -132,7 +132,7 @@ async fn style_loras_trigger_words_and_preview() {
         words: None,
     }];
     req.add_trigger_words = true;
-    let preview = generate::preview_final_prompt(&core, &req).unwrap();
+    let preview = generate::preview_final_prompt(&core, &req).await.unwrap();
     assert!(
         preview.prompt.contains("a red boat")
             && preview.prompt.contains("zxc_trigger")
@@ -200,6 +200,9 @@ fn trigger_words_follow_the_chip_and_the_users_list() {
     let (_tmp, core, _rec) = new_core();
     let model = register_fake_model(&core, "sdxl");
     let lora = register_fake_lora(&core, "sdxl", &["alpha look", "beta look", "gamma"]);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
     let prompt_for = |words: Option<Vec<&str>>, prompt: &str| {
         let mut req = GenerateRequest::txt2img(model.clone(), prompt);
         req.loras = vec![generate::LoraUse {
@@ -207,7 +210,9 @@ fn trigger_words_follow_the_chip_and_the_users_list() {
             weight: 0.8,
             words: words.map(|w| w.into_iter().map(String::from).collect()),
         }];
-        generate::preview_final_prompt(&core, &req).unwrap().prompt
+        rt.block_on(generate::preview_final_prompt(&core, &req))
+            .unwrap()
+            .prompt
     };
     // No pick = every word; a pick keeps only listed words, in the add-on's order.
     let all = prompt_for(None, "a boat");
@@ -506,6 +511,11 @@ async fn add_detail_describes_the_faces_by_picture_style() {
     };
 
     use_check(&core, style(0.6));
+    // The Fine-tune preview shows the same prompt.
+    let preview = generate::preview_final_prompt(&core, &add_detail(""))
+        .await
+        .unwrap();
+    assert!(preview.prompt.contains(generate::PHOTO_FACE_PROMPT));
     generate::generate(&core, add_detail("")).await.unwrap();
     assert!(
         last_prompt().contains(generate::PHOTO_FACE_PROMPT),

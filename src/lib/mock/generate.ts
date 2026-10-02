@@ -338,6 +338,9 @@ async function preview(req: GenerateRequest): Promise<FinalPromptPreview> {
   const natural = /flux|z_image|qwen/.test(ui.familyId);
   const style = styleById(req.styleId);
   let prompt = req.prompt.trim();
+  // Add detail with nothing typed: the mock treats every picture as a photo.
+  if (!prompt && req.fixDetails && req.mode === "img2img" && !req.maskImageId && req.initImageId)
+    prompt = req.styleId ? "a detailed face" : "photo of a face, natural skin texture, sharp focus";
   if (req.addTriggerWords && req.loras.length) {
     const loras = await invoke<InstalledLora[]>("list_loras");
     const words: string[] = [];

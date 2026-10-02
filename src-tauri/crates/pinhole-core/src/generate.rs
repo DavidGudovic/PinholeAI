@@ -318,11 +318,12 @@ struct Prepared {
 }
 
 /// Read-only "Final prompt sent to the model" (combined in memory, never stored).
-pub fn preview_final_prompt(
-    core: &AppCore,
+pub async fn preview_final_prompt(
+    core: &Arc<AppCore>,
     req: &GenerateRequest,
 ) -> CoreResult<FinalPromptPreview> {
-    let p = prepare(core, req, false)?;
+    let with_face_prompt = add_detail_prompt(core, req).await?;
+    let p = prepare(core, with_face_prompt.as_ref().unwrap_or(req), false)?;
     Ok(FinalPromptPreview {
         prompt: p.final_prompt.prompt,
         negative: p.final_prompt.negative,
@@ -703,6 +704,27 @@ fn add_detail_source(core: &AppCore, req: &GenerateRequest) -> Option<SessionIma
         .and_then(|id| session_image(core, id).ok())
 }
 
+/// Add detail with nothing typed: the request with a prompt that says what the faces are,
+/// by picture style. `None` for every other request.
+async fn add_detail_prompt(
+    core: &Arc<AppCore>,
+    req: &GenerateRequest,
+) -> CoreResult<Option<GenerateRequest>> {
+    let Some(src) = add_detail_source(core, req) else {
+        return Ok(None);
+    };
+    let mut r = req.clone();
+    // A picked Style says what the picture looks like: no photo words against it.
+    let styled = req.style_id.as_deref().is_some_and(|s| !s.is_empty());
+    r.prompt = if !styled && crate::imagecheck::is_photo_style(core, &src).await? {
+        PHOTO_FACE_PROMPT
+    } else {
+        DRAWN_FACE_PROMPT
+    }
+    .to_string();
+    Ok(Some(r))
+}
+
 /// Add detail redraws at most this many faces (the largest), one engine pass each.
 const MAX_FACES: usize = 6;
 
@@ -848,24 +870,8 @@ async fn generate_inner(
     if req.mode == GenMode::Txt2img && req.prompt.trim().is_empty() {
         return Err(CoreError::invalid("Type what you want to see first."));
     }
-    // Add detail with nothing typed: say what the faces are, by picture style.
-    let with_face_prompt;
-    let req = match add_detail_source(core, req) {
-        Some(src) => {
-            let mut r = req.clone();
-            // A picked Style says what the picture looks like: no photo words against it.
-            let styled = req.style_id.as_deref().is_some_and(|s| !s.is_empty());
-            r.prompt = if !styled && crate::imagecheck::is_photo_style(core, &src).await? {
-                PHOTO_FACE_PROMPT
-            } else {
-                DRAWN_FACE_PROMPT
-            }
-            .to_string();
-            with_face_prompt = r;
-            &with_face_prompt
-        }
-        None => req,
-    };
+    let with_face_prompt = add_detail_prompt(core, req).await?;
+    let req = with_face_prompt.as_ref().unwrap_or(req);
     let prep = prepare(core, req, true)?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);

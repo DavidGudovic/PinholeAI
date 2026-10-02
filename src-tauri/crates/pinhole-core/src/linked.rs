@@ -853,7 +853,11 @@ mod tests {
             weight: 1.0,
             words: None,
         }];
-        crate::generate::preview_final_prompt(&core, &req).unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(crate::generate::preview_final_prompt(&core, &req))
+            .unwrap();
         assert!(!core
             .data
             .models(ModelKind::Lora)
