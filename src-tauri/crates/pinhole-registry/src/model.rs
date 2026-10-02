@@ -421,7 +421,11 @@ pub struct ImproveSpec {
     /// edit's keep line may name them.
     #[serde(default)]
     pub common_words: Vec<String>,
-    /// Words for people: a reworded idea that adds one the idea doesn't have is not used.
+    /// Words a reworded idea has to keep when the idea has them, though they are in
+    /// `common_words` ("more", "her", "left").
+    #[serde(default)]
+    pub exact_words: Vec<String>,
+    /// Words for people: a reworded idea that adds one while the idea names no person is not used.
     #[serde(default)]
     pub people: Vec<String>,
     /// Improve for Edit's change instructions. `safe`, `adult`, `avoid` and `drop` above apply too.
@@ -443,6 +447,10 @@ pub struct ImproveEditSpec {
     /// pictures are easy to get wrong).
     #[serde(default)]
     pub keep_wording: Vec<String>,
+    /// Verbs a reworded instruction may not bring in when the instruction has no verb ("a hat on
+    /// the cat" never becomes "remove the hat").
+    #[serde(default)]
+    pub never_added: Vec<String>,
     /// Groups of verbs that make the same kind of change. A reworded instruction that uses a
     /// verb from a group the instruction has none of is not used.
     #[serde(default)]

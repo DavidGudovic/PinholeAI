@@ -835,21 +835,34 @@ fn form_lines(answer: &str, names: &[&str]) -> Vec<String> {
 
 /// Lowercase words of three letters or more.
 fn content_words(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+    lower_words(text)
+        .into_iter()
         .filter(|w| w.chars().count() >= 3)
+        .collect()
+}
+
+/// Lowercase words (letters, digits and apostrophes; a curly apostrophe counts as `'`).
+fn lower_words(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .replace('\u{2019}', "'")
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
         .map(str::to_string)
         .collect()
 }
 
 /// Whether `reworded` keeps the intent of `idea`. Never for an idea with an `edit.keep_wording`
-/// phrase ("the bottle from image 2"). Otherwise it is a short phrase or sentence that keeps the
-/// idea's numbers, negations and every `given` phrase the idea names (a view, a medium, a light,
-/// "keep" or "same"), at least four in five of the idea's other words (`common_words` aside;
-/// singular and plural count as one), and adds no `drop`, `people` or add-on trigger word the
-/// idea doesn't have. With `actions` (groups of edit verbs that mean the same change), it adds
-/// no verb from a group the idea has none of ("add a hat" is not "replace the background"),
-/// unless the idea has no verb at all.
+/// phrase ("the bottle from image 2"). Otherwise it is at most [`MAX_REWORDED_WORDS`] words and:
+/// - keeps at least four in five of the idea's words (`common_words` aside; singular and plural
+///   count as one, "1girl" counts as "girl"), every number and `exact_words` word ("more",
+///   "her", "left") it has, and every `given` phrase it names (a view, a medium, a light, "keep",
+///   "same");
+/// - keeps each negation with the word it negates ("not a dog" stays about the dog);
+/// - adds no number, no person when the idea has none (`people`), and no `drop` or add-on
+///   trigger word;
+/// - with `actions` (groups of edit verbs that make the same kind of change), adds no verb from
+///   a group the idea has none of ("add a hat" is not "replace the background"); an idea with no
+///   verb may get one, but not one of `edit.never_added` ("remove", "replace").
 fn keeps_intent(
     idea: &str,
     reworded: &str,
@@ -858,43 +871,59 @@ fn keeps_intent(
     actions: &[Vec<String>],
 ) -> bool {
     let r = reworded.trim();
-    let keeps_wording = spec
-        .edit
-        .keep_wording
-        .iter()
-        .any(|p| crate::generate::contains_phrase(idea, p));
-    if keeps_wording
+    let in_idea = |p: &String| crate::generate::contains_phrase(idea, p);
+    let in_new = |p: &String| crate::generate::contains_phrase(r, p);
+    if spec.edit.keep_wording.iter().any(in_idea)
         || r.is_empty()
         || r == "-"
         || r.split_whitespace().count() > MAX_REWORDED_WORDS
     {
         return false;
     }
-    let words = |t: &str| -> Vec<String> {
-        t.to_lowercase()
-            .replace('\u{2019}', "'")
-            .split(|c: char| !c.is_alphanumeric() && c != '\'')
-            .filter(|w| !w.is_empty())
-            .map(str::to_string)
-            .collect()
-    };
-    let (idea_all, new_all) = (words(idea), words(r));
-    let has_negation = |ws: &[String]| ws.iter().any(|w| NEGATIONS.contains(&w.as_str()));
-    if has_negation(&idea_all) && !has_negation(&new_all) {
-        return false;
-    }
-    let new_set: std::collections::HashSet<String> = new_all.iter().map(|w| singular(w)).collect();
+    let (idea_all, new_all) = (lower_words(idea), lower_words(r));
+    // "1girl" → "girl", "2boys" → "boy".
+    let base = |w: &str| singular(w.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let new_set: std::collections::HashSet<String> = new_all
+        .iter()
+        .flat_map(|w| [singular(w), base(w)])
+        .collect();
     let is_number = |w: &str| w.chars().all(|c| c.is_ascii_digit()) || NUMBER_WORDS.contains(&w);
     let key: Vec<String> = idea_all
         .iter()
         .filter(|w| w.chars().count() >= 3 || is_number(w))
-        .filter(|w| !spec.common_words.contains(*w))
+        .filter(|w| !spec.common_words.contains(*w) || spec.exact_words.contains(*w))
         .map(|w| singular(w))
         .collect();
     let missing: Vec<&String> = key.iter().filter(|w| !new_set.contains(*w)).collect();
     // One word in five may go ("cat astronaut" → "a cat in a spacesuit" is still the idea, "a
     // red car in the rain" without the rain is not).
-    if missing.iter().any(|w| is_number(w)) || missing.len() * 5 > key.len() {
+    let must_keep = |w: &str| is_number(w) || spec.exact_words.iter().any(|e| e == w);
+    if missing.iter().any(|w| must_keep(w)) || missing.len() * 5 > key.len() {
+        return false;
+    }
+    let idea_numbers: std::collections::HashSet<&String> =
+        idea_all.iter().filter(|w| is_number(w)).collect();
+    if new_all
+        .iter()
+        .any(|w| is_number(w) && !idea_numbers.contains(w))
+    {
+        return false;
+    }
+    // Each negation and the next word that isn't an article: "not a dog" → "dog".
+    let negated = |ws: &[String]| -> Vec<String> {
+        ws.iter()
+            .enumerate()
+            .filter(|(_, w)| NEGATIONS.contains(&w.as_str()))
+            .filter_map(|(i, _)| {
+                ws[i + 1..]
+                    .iter()
+                    .find(|w| !matches!(w.as_str(), "a" | "an" | "the" | "any"))
+                    .map(|w| singular(w))
+            })
+            .collect()
+    };
+    let new_negated = negated(&new_all);
+    if negated(&idea_all).iter().any(|w| !new_negated.contains(w)) {
         return false;
     }
     let named_but_lost = spec
@@ -902,29 +931,42 @@ fn keeps_intent(
         .values()
         .chain(spec.edit.given.values())
         .flatten()
-        .any(|p| {
-            crate::generate::contains_phrase(idea, p) && !crate::generate::contains_phrase(r, p)
-        });
+        .any(|p| in_idea(p) && !in_new(p));
     if named_but_lost {
         return false;
     }
-    let in_idea = |p: &String| crate::generate::contains_phrase(idea, p);
-    let in_new = |p: &String| crate::generate::contains_phrase(r, p);
-    // An instruction without a verb ("same bottle, different table") may get one.
     let idea_has_verb = actions.iter().flatten().any(in_idea);
-    if idea_has_verb
-        && actions
-            .iter()
-            .any(|group| group.iter().any(in_new) && !group.iter().any(in_idea))
-    {
+    let new_verb_kind = actions
+        .iter()
+        .any(|group| group.iter().any(in_new) && !group.iter().any(in_idea));
+    let forbidden_verb = !idea_has_verb && spec.edit.never_added.iter().any(in_new);
+    if (idea_has_verb && new_verb_kind) || (!actions.is_empty() && forbidden_verb) {
         return false;
     }
-    !spec
-        .drop
+    let added_person = !names_person(idea, &spec.people) && spec.people.iter().any(in_new);
+    !added_person
+        && !spec
+            .drop
+            .iter()
+            .chain(avoid)
+            .any(|d| in_new(d) && !in_idea(d))
+}
+
+/// Whether `text` names a person ("man", "1girl", "two women"; `people` is the list of such words).
+fn names_person(text: &str, people: &[String]) -> bool {
+    let words = lower_words(text);
+    let one: Vec<String> = words
         .iter()
-        .chain(&spec.people)
-        .chain(avoid)
-        .any(|d| in_new(d) && !in_idea(d))
+        .map(|w| singular(w.trim_start_matches(|c: char| c.is_ascii_digit())))
+        .collect();
+    people.iter().any(|p| {
+        let p = p.to_lowercase();
+        if p.contains(' ') {
+            crate::generate::contains_phrase(text, &p)
+        } else {
+            words.contains(&p) || one.contains(&singular(&p))
+        }
+    })
 }
 
 /// The idea Improve builds on: the helper's rewording (`reworded`, trailing full stop off) when it
@@ -942,6 +984,18 @@ fn base_idea(
     } else {
         trimmed(idea).to_string()
     }
+}
+
+/// The same words, apart from letter case, punctuation and "a", "an", "the": a rewording like
+/// that is no improvement on its own.
+fn same_words(a: &str, b: &str) -> bool {
+    let words = |t: &str| {
+        lower_words(t)
+            .into_iter()
+            .filter(|w| !matches!(w.as_str(), "a" | "an" | "the"))
+            .collect::<Vec<_>>()
+    };
+    words(a) == words(b)
 }
 
 /// `text` without a trailing full stop, comma or space.
@@ -967,8 +1021,9 @@ fn example_phrases(example: &str) -> std::collections::HashSet<String> {
 
 /// The phrases of each form line that add something, by line name. A line the idea already
 /// covers (`given`) is left out, and so are phrases with a `drop` word or an add-on trigger
-/// word, phrases that say "no …", phrases copied from the form's example, phrases longer than a
-/// few words, phrases made only of the idea's own words, and repeats.
+/// word, phrases naming a person when the idea names none, phrases that say "no …", lines with
+/// two or more phrases of the form's example, phrases
+/// longer than a few words, phrases made only of the idea's own words, and repeats.
 fn added_phrases<'a>(
     idea: &str,
     names: &[&'a str],
@@ -977,8 +1032,15 @@ fn added_phrases<'a>(
     drop: &[String],
     avoid: &[String],
     example: &str,
+    people: &[String],
 ) -> Vec<(&'a str, Vec<String>)> {
     let copied = example_phrases(example);
+    // People the idea doesn't have would change the picture.
+    let people: &[String] = if names_person(idea, people) {
+        &[]
+    } else {
+        people
+    };
     let idea_words: std::collections::HashSet<String> = content_words(idea).into_iter().collect();
     let mut seen = std::collections::HashSet::new();
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
@@ -988,7 +1050,13 @@ fn added_phrases<'a>(
                 .iter()
                 .any(|p| crate::generate::contains_phrase(idea, p))
         });
-        if covered {
+        // A line with two or more of the example's phrases describes the example.
+        let from_example = line
+            .split(',')
+            .filter(|p| copied.contains(&p.trim().trim_end_matches('.').to_lowercase()))
+            .count()
+            >= 2;
+        if covered || from_example {
             continue;
         }
         let items: Vec<String> = line
@@ -1006,9 +1074,9 @@ fn added_phrases<'a>(
                 !p.is_empty()
                     && !lower.starts_with("no ")
                     && !lower.starts_with("without ")
-                    && !copied.contains(&lower)
                     && p != "-"
                     && p.split_whitespace().count() <= MAX_PHRASE_WORDS
+                    && !names_person(p, people)
                     && !drop
                         .iter()
                         .chain(avoid)
@@ -1069,9 +1137,10 @@ fn assemble_improved(
         &spec.drop,
         avoid,
         spec.styles.get(style).map_or("", |st| st.example.as_str()),
+        &spec.people,
     );
     if groups.is_empty() {
-        return (base != trimmed(idea)).then_some(base);
+        return (!same_words(&base, idea)).then_some(base);
     }
     let idea = base.as_str();
     if style == "natural" {
@@ -1153,12 +1222,20 @@ fn assemble_edit(
         &spec.drop,
         avoid,
         &spec.edit.form,
+        &spec.people,
     );
     let common = &spec.common_words;
     let mentioned: std::collections::HashSet<String> = content_words(&both)
         .iter()
         .filter(|w| !common.contains(*w))
         .map(|w| singular(w))
+        .collect();
+    // What the instruction keeps "the same" ("same bottle" → "bottle").
+    let words = lower_words(&both);
+    let kept_same: std::collections::HashSet<String> = words
+        .windows(2)
+        .filter(|w| w[0] == "same")
+        .map(|w| singular(&w[1]))
         .collect();
     for (name, items) in &mut groups {
         if *name == "details" {
@@ -1169,6 +1246,15 @@ fn assemble_edit(
                     .iter()
                     .any(|s| lower.starts_with(s))
             });
+            // "same bottle, different table": details are about the table, never the bottle.
+            if !kept_same.is_empty() {
+                items.retain(|p| {
+                    content_words(p)
+                        .iter()
+                        .map(|w| singular(w))
+                        .any(|w| mentioned.contains(&w) && !kept_same.contains(&w))
+                });
+            }
         } else if *name == "keep" {
             // "keep the table the same" → "the table".
             for p in items.iter_mut() {
@@ -1223,7 +1309,7 @@ fn assemble_edit(
     }
     groups.retain(|(_, items)| !items.is_empty());
     if groups.is_empty() {
-        return (base != trimmed(instruction)).then_some(base);
+        return (!same_words(&base, instruction)).then_some(base);
     }
     let rest: Vec<String> = groups
         .into_iter()
@@ -1326,9 +1412,11 @@ pub async fn improve_prompt(
     .ok_or_else(|| CoreError::not_found("Improve my prompt isn't available. Update Pinhole."))?;
     // Six short lines (three for Edit), with the first label written for the helper so it
     // keeps to the form.
+    // The first line restates the idea: room for it on top of the other lines.
+    let restated = (idea.split_whitespace().count() as u32 * 2).min(MAX_REWORDED_WORDS as u32 * 2);
     let (max_tokens, answer_start) = match target {
-        ImproveTarget::Create => (240, "PROMPT:"),
-        ImproveTarget::Edit => (160, "CHANGE:"),
+        ImproveTarget::Create => (200 + restated, "PROMPT:"),
+        ImproveTarget::Edit => (120 + restated, "CHANGE:"),
     };
 
     let _busy = BusyGuard::new(&core.describe);
@@ -1667,7 +1755,8 @@ mod tests {
             .collect(),
             drop: list(&["atmosphere", "best quality"]),
             common_words: list(&["the", "with", "make", "add", "replace", "give", "her"]),
-            people: list(&["1boy", "man"]),
+            people: list(&["1boy", "1girl", "girl", "man"]),
+            exact_words: list(&["her", "more", "less"]),
             edit: Default::default(),
         }
     }
@@ -1763,6 +1852,19 @@ mod tests {
         assert_eq!(
             assemble_improved("Wow!", &lines[..2], &m, "natural", &[]).unwrap(),
             "Wow! Red fur, round glasses."
+        );
+        // A person the idea doesn't have is left out; one it has stays.
+        let person = vec![
+            "-".to_string(),
+            "rain on the glass, girl looking out the window, neon signs".to_string(),
+        ];
+        assert_eq!(
+            assemble_improved("a rainy street", &person, &m, "tags", &[]).unwrap(),
+            "a rainy street, rain on the glass, neon signs"
+        );
+        assert_eq!(
+            assemble_improved("1girl, rainy street", &person, &m, "tags", &[]).unwrap(),
+            "1girl, rainy street, rain on the glass, girl looking out the window, neon signs"
         );
     }
 
@@ -1875,6 +1977,37 @@ mod tests {
             &[],
             &[]
         ));
+        // Swapped meaning with the same words, added numbers or people, a verb that undoes the
+        // instruction: not used.
+        let mut verbs = improve_spec();
+        verbs.edit.never_added = vec!["remove".into()];
+        for (idea, reworded) in [
+            ("make the shirt less red", "make the shirt more red"),
+            ("a cat, not a dog", "a dog, not a cat"),
+            ("a dog on a sofa", "three dogs on a sofa"),
+            ("a hat on the cat", "remove the hat from the cat"),
+        ] {
+            assert!(
+                !keeps_intent(idea, reworded, &verbs, &[], &actions),
+                "{reworded}"
+            );
+        }
+        assert!(keeps_intent(
+            "a girl with red hair",
+            "1girl, red hair",
+            &m,
+            &[],
+            &[]
+        ));
+        assert!(keeps_intent(
+            "a hat on the cat",
+            "put a hat on the cat",
+            &verbs,
+            &[],
+            &actions
+        ));
+        // Only letter case, punctuation or an article changed: no improvement.
+        assert!(assemble_improved("A fox!", &with("a fox", "-"), &m, "natural", &[]).is_none());
         // Phrases copied from the form's example are left out.
         let mut ex = improve_spec();
         ex.styles.get_mut("natural").unwrap().example =
@@ -1882,13 +2015,18 @@ mod tests {
         assert_eq!(
             assemble_improved(
                 "old man",
-                &with("-", "grey beard, red scarf, no hat"),
+                &[
+                    "-".into(),
+                    "grey beard, flat cap, red scarf".into(),
+                    "rocky shore".into(),
+                    "red scarf, no hat".into()
+                ],
                 &ex,
                 "natural",
                 &[]
             )
             .unwrap(),
-            "old man. Red scarf."
+            "old man. Rocky shore. Red scarf."
         );
     }
 
@@ -1978,13 +2116,14 @@ mod tests {
             assemble_edit("remove the car", &lines("empty road", "the trees"), &m, &[]).unwrap(),
             "remove the car. Keep the trees unchanged."
         );
-        // The reworded instruction leads when it keeps the intent.
+        // The reworded instruction leads when it keeps the intent; details of what stays the
+        // same are left out.
         assert_eq!(
             assemble_edit(
                 "same bottle, different table",
                 &[
                     "put the same bottle on a different table".into(),
-                    "dark oak table".into(),
+                    "round glass vase, dark oak table".into(),
                     "the bottle, the lighting".into()
                 ],
                 &m,

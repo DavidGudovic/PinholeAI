@@ -1288,7 +1288,7 @@ captioner:
 
       Never change or contradict the idea. No feelings, moods, stories, meanings or quality words.
 
-      Example idea: old lighthouse keeper watercolor
+      Example idea: old man lighthouse keeper, watercolor
 
       {example}
 
@@ -1298,7 +1298,7 @@ captioner:
       natural:
         format: "Each line is a short phrase of a few words; PROMPT may be one sentence."
         style_examples: "photo, oil painting, 3d render or anime illustration, plus one or two words for the look"
-        example: "PROMPT: an old lighthouse keeper, watercolor painting\nDETAILS: grey beard, thick wool sweater, flat cap\nPLACE: rocky shore with a white lighthouse behind\nSHOT: waist up, eye level\nSTYLE: -\nLIGHT: overcast daylight"
+        example: "PROMPT: an old man, a lighthouse keeper, painted in watercolor\nDETAILS: grey beard, thick wool sweater, flat cap\nPLACE: rocky shore with a white lighthouse behind\nSHOT: waist up, eye level\nSTYLE: -\nLIGHT: overcast daylight"
       tags:
         format: "Each line is two to four comma-separated tags, lowercase; PROMPT has as many tags as the idea needs."
         style_examples: "photo, oil painting, 3d render or anime illustration, plus one or two words for the look"
@@ -1328,8 +1328,10 @@ captioner:
     # Words that don't carry the idea: a reworded idea may leave them out, and an edit's keep line
     # may name them.
     common_words: [the, and, with, for, from, into, its, all, but, make, add, change, replace, turn, put, give, her, his, him, she, their, them, they, this, that, these, those, more, less, look, looks, like, image, picture, photo]
-    # A reworded idea that adds one of these (the idea has none) is not used.
-    people: [1boy, 1girl, 2boys, 2girls, multiple boys, multiple girls, solo, man, men, woman, women, boy, boys, girl, girls, person, people, child, children, kid, kids, couple]
+    # Words a reworded idea has to keep when the idea has them (they are in common_words).
+    exact_words: [more, less, her, his, him, she, their, them, they, from, into, this, that, these, those]
+    # A reworded idea that adds one of these while the idea names no person is not used.
+    people: [1boy, 1girl, 2boys, 2girls, multiple boys, multiple girls, solo, man, men, woman, women, boy, boys, girl, girls, person, people, child, children, kid, kids, couple, princess, prince, knight, lady]
     # Added phrases containing one of these are left out (moods and quality words).
     drop: [atmosphere, ambiance, ambience, mood, moody, feeling, vibe, vibes, serene, tranquil, peaceful, inviting, evoking, sense of, emotional, whimsical, charming, masterpiece, best quality, high quality, high resolution, 4k, 8k, comfortable, beautiful, stunning]
     # Improve in Edit → Describe a change. Edit instructions are changes, not scenes: the helper
@@ -1384,6 +1386,8 @@ captioner:
       # An instruction with one of these keeps the user's wording: references between pictures are
       # easy to get wrong.
       keep_wording: [image 1, image 2, picture 1, picture 2, first image, second image, first picture, second picture, other image, other picture]
+      # Verbs a reworded instruction may not bring in when the instruction has none.
+      never_added: [remove, erase, delete, take out, take away, get rid of, replace, swap, instead of]
       # Verbs that make the same kind of change. A reworded instruction that uses a verb from a
       # group the user's instruction has none of is not used.
       actions:
