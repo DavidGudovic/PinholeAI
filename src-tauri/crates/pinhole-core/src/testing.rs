@@ -3955,6 +3955,71 @@ mod tests {
         assert!(core.session.is_empty());
     }
 
+    /// Upscale uses the drawing upscaler for a picture without photo-style tags, the photo
+    /// upscaler for a photo-style one, and the Settings choice over both.
+    #[tokio::test]
+    async fn upscale_picks_the_upscaler_by_picture_style() {
+        let (_tmp, core, _rec) = new_core();
+        let mock = MockSdServer::start().await;
+        use_external_engine(&core, &mock.base_url());
+        let model = register_fake_model(&core, "sdxl");
+        install_fake_upscaler(&core);
+        install_component(
+            &core,
+            ModelKind::Upscaler,
+            "RealESRGAN_x4plus_anime_6B.pth",
+            generate::UPSCALER_DRAWING_COMPONENT,
+        );
+        let mut req = GenerateRequest::txt2img(model, "a cat");
+        req.fine_tune.width = Some(64);
+        req.fine_tune.height = Some(48);
+        let src = generate::generate(&core, req).await.unwrap().images[0].clone();
+        let style = |realistic: f32| pinhole_check::Readings {
+            tags: Some(pinhole_check::Tags {
+                general: 0.9,
+                realistic,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        use_check(
+            &core,
+            FakeCheck {
+                readings: style(0.0),
+                ..Default::default()
+            },
+        );
+        let drawn = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+        assert_eq!(drawn.upscaler.as_deref(), Some("drawing"));
+        use_check(
+            &core,
+            FakeCheck {
+                readings: style(0.6),
+                ..Default::default()
+            },
+        );
+        let photo = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+        assert_eq!(photo.upscaler.as_deref(), Some("photo"));
+        core.settings.write().upscaler = "drawing".into();
+        let forced = generate::upscale_image(&core, &src.id, 2).await.unwrap();
+        assert_eq!(forced.upscaler.as_deref(), Some("drawing"));
+
+        let names: Vec<String> = mock
+            .upscale_requests()
+            .iter()
+            .map(|r| r["upscaler"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "RealESRGAN_x4plus_anime_6B",
+                "RealESRGAN_x4plus",
+                "RealESRGAN_x4plus_anime_6B"
+            ]
+        );
+    }
+
     /// Cancelling an upscale stops a Pinhole-started engine: sd-server upscales
     /// synchronously and would keep working otherwise.
     #[cfg(unix)]

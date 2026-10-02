@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { GroupStatus, InstalledModel, Preset, ResultImage, Style } from "../../lib/types";
 
 // Deferred IPC calls the tests resolve by hand; everything else goes to the mock backend.
@@ -405,6 +405,21 @@ describe("Named sizes", () => {
     expect(store.getState().create.fineTune).toMatchObject({ width: 768, height: 1344 });
     expect(screen.getByRole("button", { name: "Phone" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Instagram" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("Upscaler choice", () => {
+  it("shows Automatic and saves Drawing in Settings", async () => {
+    const store = createStore();
+    withApp(store, <FineTuneDrawer ui={null} model={null} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fine-tune/ }));
+    const group = within(screen.getByRole("radiogroup", { name: "Upscaler" }));
+    expect(group.getByRole("radio", { name: "Auto" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(group.getByRole("radio", { name: "Drawing" }));
+    await waitFor(() => expect(store.getState().settings?.upscaler).toBe("drawing"));
+    expect((await api.getSettings()).upscaler).toBe("drawing");
+    fireEvent.click(screen.getByRole("button", { name: "Reset Upscaler (for Upscale)" }));
+    await waitFor(() => expect(store.getState().settings?.upscaler).toBe("auto"));
   });
 });
 

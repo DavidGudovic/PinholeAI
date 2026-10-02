@@ -279,7 +279,16 @@ components:
     url: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
     sha256: 4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1
     size_mb: 67
-    note: ".pth is allowed ONLY for this pinned, hash-verified upscaler; never for user downloads"
+    note: ".pth is allowed ONLY for the pinned, hash-verified upscalers; never for user downloads"
+  # Used by Upscale for drawn pictures (anime, illustration, cartoon); photo-style
+  # pictures use realesrgan_x4. Same project and licence (BSD-3-Clause).
+  realesrgan_x4_anime:
+    kind: upscaler
+    file: RealESRGAN_x4plus_anime_6B.pth
+    url: https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth
+    sha256: f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da
+    size_mb: 18
+    note: ".pth is allowed ONLY for the pinned, hash-verified upscalers; never for user downloads"
 
 # What the pinned sd-server can do that changes wiring.
 engine_features:

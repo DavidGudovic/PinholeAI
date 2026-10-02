@@ -401,6 +401,7 @@ export function settingsSummary(r: ResultImage): string {
   if (r.kind === "upscaled") {
     // Rust copies model/seed/sampling from the source (empty model id + seed 0 for an imported image).
     const parts = ["Upscaled", `${r.width}×${r.height}`];
+    if (r.upscaler) parts.push(`${r.upscaler} upscaler`);
     if (r.modelId) parts.push(`from ${r.modelLabel}`, `seed ${r.seed}`);
     return parts.join(" · ");
   }

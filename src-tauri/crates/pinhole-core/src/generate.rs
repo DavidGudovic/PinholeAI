@@ -64,8 +64,10 @@ use crate::{AppCore, CoreError, CoreEvent, CoreResult};
 /// How long a model may take to load before we give up (huge models on slow disks).
 const LOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const POLL_EVERY: Duration = Duration::from_millis(300);
-/// Registry component id of the ESRGAN upscaler.
+/// Registry component id of the ESRGAN upscaler for photo-style pictures.
 pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
+/// Registry component id of the ESRGAN upscaler for drawn pictures.
+pub const UPSCALER_DRAWING_COMPONENT: &str = "realesrgan_x4_anime";
 /// sd-server has no authentication and keeps every finished job (base64 images
 /// included) at `GET /sdcpp/v1/jobs/{id}` for 600 s. So once a job ran on a
 /// Pinhole-started engine, the engine is stopped this long after the last
@@ -295,6 +297,9 @@ pub struct ResultImage {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub origin: Origin,
+    /// Upscaled pictures: which upscaler made it, `photo` or `drawing`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upscaler: Option<String>,
     /// The size the picture was made at, before hires fix or an upscale enlarged it: what
     /// "settings (no prompt)" records, so reusing them makes the same picture again.
     #[serde(skip)]
@@ -2531,6 +2536,7 @@ async fn generate_inner(
             scheduler: params.scheduler.clone(),
             parent_id: parent_id.clone(),
             origin: Origin::of_result(inputs.pictures().iter().map(|i| &i.origin)),
+            upscaler: None,
             // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
             base_size: fix.is_none().then_some((width, height)),
         };
@@ -2773,8 +2779,29 @@ fn touch_last_used(core: &AppCore, model_id: &str) {
 /// Refusal for sources the upscaler can't take: 2× also runs at 4× first.
 pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: the upscaler works at 4× first, up to 8192 pixels per side. Try a smaller image.";
 
-/// Upscale a session image with Real-ESRGAN (4×; 2× = 4× then halve). The
-/// upscaler is downloaded on first use. Needs the engine running (any model).
+/// The upscaler for `src`: the Settings choice, or with `auto` the photo upscaler for a
+/// photo-style picture and the drawing upscaler otherwise. Returns (component id, `photo` |
+/// `drawing`).
+async fn pick_upscaler(
+    core: &Arc<AppCore>,
+    src: &SessionImage,
+) -> CoreResult<(&'static str, &'static str)> {
+    let choice = core.settings.read().upscaler.clone();
+    let photo = match choice.as_str() {
+        "photo" => true,
+        "drawing" => false,
+        _ => crate::imagecheck::is_photo_style(core, src).await?,
+    };
+    Ok(if photo {
+        (UPSCALER_COMPONENT, "photo")
+    } else {
+        (UPSCALER_DRAWING_COMPONENT, "drawing")
+    })
+}
+
+/// Upscale a session image with Real-ESRGAN (4×; 2× = 4× then halve), using the photo or
+/// drawing upscaler ([`pick_upscaler`]). The upscaler is downloaded on first use. Needs the
+/// engine running (any model).
 pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreResult<ResultImage> {
     let _folder = crate::models::folder_read(core)?;
     if factor != 2 && factor != 4 {
@@ -2790,6 +2817,7 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     if u64::from(src.width) * 4 > 8192 || u64::from(src.height) * 4 > 8192 {
         return Err(CoreError::invalid(UPSCALE_TOO_LARGE));
     }
+    let (component, style) = pick_upscaler(core, &src).await?;
 
     let _run = core.gen.run_lock.lock().await;
     let epoch = core.gen.activity.fetch_add(1, Ordering::SeqCst) + 1;
@@ -2798,13 +2826,15 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
     let cancel = CancellationToken::new();
     *core.gen.active.lock() = Some(cancel.clone());
     // Cancelled just as the download finished: it stays installed, no upscale.
-    let ready = ensure_upscaler(core, &cancel).await.and_then(|u| {
-        if cancel.is_cancelled() {
-            Err(CoreError::new("cancelled", "Cancelled."))
-        } else {
-            Ok(u)
-        }
-    });
+    let ready = ensure_upscaler(core, component, &cancel)
+        .await
+        .and_then(|u| {
+            if cancel.is_cancelled() {
+                Err(CoreError::new("cancelled", "Cancelled."))
+            } else {
+                Ok(u)
+            }
+        });
     let upscaler = match ready {
         Ok(u) => u,
         Err(e) => {
@@ -2819,6 +2849,7 @@ pub async fn upscale_image(core: &Arc<AppCore>, id: &str, factor: u32) -> CoreRe
         core,
         &src,
         &upscaler,
+        style,
         factor,
         &cancel,
         t0,
@@ -2856,6 +2887,7 @@ async fn upscale_inner(
     core: &Arc<AppCore>,
     src: &SessionImage,
     upscaler_stem: &str,
+    style: &str,
     factor: u32,
     cancel: &CancellationToken,
     t0: Instant,
@@ -2983,9 +3015,11 @@ async fn upscale_inner(
         scheduler: None,
         parent_id: None,
         origin: src.origin,
+        upscaler: None,
         base_size: None,
     });
     meta.base_size = meta.base_size.or(Some((src.width, src.height)));
+    meta.upscaler = Some(style.to_string());
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
     meta.origin = src.origin;
@@ -3085,9 +3119,22 @@ async fn wait_download_or_cancel(
     }
 }
 
-/// Make sure the Real-ESRGAN component is installed; returns its file stem (the
+/// Display name of an upscaler component (downloads list, Models → Helpers).
+fn upscaler_name(component: &str) -> &'static str {
+    if component == UPSCALER_DRAWING_COMPONENT {
+        "Upscaler for drawings (Real-ESRGAN anime 4×)"
+    } else {
+        "Upscaler for photos (Real-ESRGAN 4×)"
+    }
+}
+
+/// Make sure a Real-ESRGAN component is installed; returns its file stem (the
 /// sd-server upscaler name).
-async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> CoreResult<String> {
+async fn ensure_upscaler(
+    core: &Arc<AppCore>,
+    component: &str,
+    cancel: &CancellationToken,
+) -> CoreResult<String> {
     let stem_of = |f: &InstalledFile| {
         std::path::Path::new(&f.rel_path)
             .file_stem()
@@ -3095,14 +3142,14 @@ async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> Cor
     };
     {
         let idx = core.installed.lock();
-        if let Some(f) = idx.find_component(UPSCALER_COMPONENT) {
+        if let Some(f) = idx.find_component(component) {
             if idx.abs_path(&core.data, f).is_file() {
                 return stem_of(f).ok_or_else(|| CoreError::internal("Bad upscaler file name."));
             }
         }
     }
     let reg = core.registry();
-    let comp = reg.component(UPSCALER_COMPONENT).cloned().ok_or_else(|| {
+    let comp = reg.component(component).cloned().ok_or_else(|| {
         CoreError::not_found("The upscaler isn't in Pinhole's model list. Update Pinhole.")
     })?;
     let dest = core.data.models(ModelKind::Upscaler).join(&comp.file);
@@ -3115,11 +3162,11 @@ async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> Cor
         // `size_mb` is rounded: an estimate only, never the exact size.
         size_bytes: None,
         approx_size_bytes: Some(comp.size_mb * 1_000_000),
-        label: "Upscaler (Real-ESRGAN 4×)".into(),
+        label: upscaler_name(component).into(),
         ..Default::default()
     };
     let group = core.downloads.enqueue_kind(
-        "Upscaler (Real-ESRGAN 4×)".into(),
+        upscaler_name(component).into(),
         pinhole_net::download::DownloadKind::Upscaler,
         vec![spec],
     );
@@ -3133,9 +3180,9 @@ async fn ensure_upscaler(core: &Arc<AppCore>, cancel: &CancellationToken) -> Cor
         &file,
         crate::models::Registration {
             kind: ModelKind::Upscaler,
-            friendly_name: "Real-ESRGAN 4× upscaler".into(),
+            friendly_name: upscaler_name(component).into(),
             family: None,
-            component_id: Some(UPSCALER_COMPONENT.into()),
+            component_id: Some(component.into()),
             civitai: None,
             dtype: None,
             lookup: None,
@@ -3805,6 +3852,7 @@ mod tests {
             scheduler: None,
             parent_id: None,
             origin: Origin::Generated,
+            upscaler: None,
             base_size: Some((1, 2)),
         };
         let v = serde_json::to_value(&r).unwrap();

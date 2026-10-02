@@ -324,6 +324,15 @@ Result card actions: **Save** · **Edit this** · **Describe** · **Variations**
 new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
 more than one picture is unsaved.
 
+**Upscale** runs a 4× Real-ESRGAN model in sd-server (2× = 4× then halved). There are two, both
+pinned in `models.yaml` and downloaded on first use: `realesrgan_x4` for photo-style pictures and
+`realesrgan_x4_anime` (the anime 6B model) for drawn ones. With the `upscaler` setting on `auto`
+(the default) Upscale measures the picture with the image check's tagger and uses the photo
+upscaler when its `realistic` or `photorealistic` tag reaches the photo-style threshold
+(`pinhole-check` `rules::PHOTO_STYLE`), the drawing upscaler otherwise. Fine-tune in Create and
+Edit has an **Upscaler** row (Auto / Photo / Drawing) that sets it. The upscaled picture's
+summary names the upscaler used ("drawing upscaler").
+
 **Prompt recall:** Up (at the start of the box) and Down step through the prompts sent earlier in
 this session, like a shell; Down past the newest restores what was typed. Kept in memory only (last
 50), gone on Reset or close.

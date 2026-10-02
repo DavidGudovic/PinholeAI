@@ -658,6 +658,7 @@ mod tests {
             scheduler: None,
             parent_id: Some("p".into()),
             origin: Origin::Generated,
+            upscaler: None,
             base_size: None,
         }
     }

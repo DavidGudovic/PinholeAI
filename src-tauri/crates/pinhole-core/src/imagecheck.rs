@@ -356,6 +356,26 @@ pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> C
     Ok(())
 }
 
+/// Whether a picture is photo-style (the tagger's `realistic` / `photorealistic` tags), which
+/// picks Upscale's upscaler. A picture without tagger readings counts as photo-style.
+pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<bool> {
+    let c = core.clone();
+    let png = img.bytes.clone();
+    let res = tokio::task::spawn_blocking(move || c.check.inspector().readings(&png))
+        .await
+        .map_err(|e| {
+            CoreError::new(
+                "check_failed",
+                "The safety check couldn't run, so the picture can't be upscaled. Try again.",
+            )
+            .with_details(e.to_string())
+        })?;
+    let r = res.map_err(|e| check_error(core, e))?;
+    Ok(r.tags
+        .as_ref()
+        .is_none_or(pinhole_check::rules::is_photo_style))
+}
+
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
 /// when none is blocked; otherwise the whole batch is dropped.
 /// `also_check`: parts of the results measured on their own and judged the same way (a

@@ -191,3 +191,10 @@ implementations (sha1, sha256, xxhash — public domain / BSD-2-Clause).
         and Irina Tolstykh, Apache-2.0)
     Runtime compiled into Pinhole: tract-onnx, tract-linalg and their tract-*
     crates (Sonos) ................................... MIT OR Apache-2.0
+
+5.4 Upscaler models (downloaded on first use of Upscale into the models folder's
+    upscalers/, pinned with SHA-256 in config/models.yaml; not bundled):
+      RealESRGAN_x4plus (photo-style pictures) ........ BSD-3-Clause
+      RealESRGAN_x4plus_anime_6B (drawn pictures) ..... BSD-3-Clause
+        (Real-ESRGAN by Xintao Wang et al.,
+        https://github.com/xinntao/Real-ESRGAN)
