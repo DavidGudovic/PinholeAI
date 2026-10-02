@@ -251,14 +251,27 @@ impl LlamaClient {
             // Ends where the form would start again.
             o.insert("stop".into(), serde_json::json!([format!("\n{start}")]));
         }
-        let answer = self.chat(messages, max_tokens, sampling).await?;
-        Ok(match answer_start {
+        let answer = self.chat_raw(messages, max_tokens, sampling).await?;
+        // The start goes on before the cleanup: a continuation's leading newline matters.
+        Ok(clean_caption(&match answer_start {
             Some(start) => with_start(&answer, start),
             None => answer,
-        })
+        }))
     }
 
     async fn chat(
+        &self,
+        messages: serde_json::Value,
+        max_tokens: u32,
+        sampling: serde_json::Value,
+    ) -> Result<String, ApiError> {
+        Ok(clean_caption(
+            &self.chat_raw(messages, max_tokens, sampling).await?,
+        ))
+    }
+
+    /// The answer text as the server sent it.
+    async fn chat_raw(
         &self,
         messages: serde_json::Value,
         max_tokens: u32,
@@ -328,7 +341,7 @@ impl LlamaClient {
             .next()
             .and_then(|c| c.message.content)
             .unwrap_or_default();
-        Ok(clean_caption(&text))
+        Ok(text)
     }
 }
 
@@ -383,6 +396,19 @@ mod tests {
         assert!(a.windows(2).any(|w| w == ["-ngl", "auto"]));
         let c = launch_args(Path::new("m"), Path::new("p"), 1, "cpu", 4096);
         assert!(c.windows(2).any(|w| w == ["-ngl", "0"]));
+    }
+
+    /// A server that answers only the rest of a started form, beginning on a new line: the
+    /// start stays on its own line, not in front of the next one.
+    #[tokio::test]
+    async fn a_continuation_on_a_new_line_keeps_the_started_line_apart() {
+        let mock = crate::testutil::MockLlamaServer::start("\nDETAILS: red\nKEEP: sky", 0).await;
+        let client = LlamaClient::new_plain_for_tests(mock.base_url());
+        let text = client
+            .rewrite("system", "idea", 50, Some("PROMPT:"))
+            .await
+            .unwrap();
+        assert_eq!(text, "PROMPT:\nDETAILS: red\nKEEP: sky");
     }
 
     #[test]

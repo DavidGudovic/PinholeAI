@@ -1417,8 +1417,9 @@ pub async fn improve_prompt(
     .ok_or_else(|| CoreError::not_found("Improve my prompt isn't available. Update Pinhole."))?;
     // Six short lines (three for Edit), with the first label written for the helper so it
     // keeps to the form.
-    // The first line restates the idea: room for it on top of the other lines.
-    let restated = (idea.split_whitespace().count() as u32 * 2).min(MAX_REWORDED_WORDS as u32 * 2);
+    // The first line restates the idea: room for all of it on top of the other lines (a long
+    // idea's restatement is not used, but the helper writes it before the other lines).
+    let restated = u32::try_from(idea.split_whitespace().count() * 2).unwrap_or(u32::MAX);
     let (max_tokens, answer_start) = match target {
         ImproveTarget::Create => (200 + restated, "PROMPT:"),
         ImproveTarget::Edit => (120 + restated, "CHANGE:"),
