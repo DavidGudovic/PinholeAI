@@ -4004,6 +4004,15 @@ mod tests {
         core.settings.write().upscaler = "drawing".into();
         let forced = generate::upscale_image(&core, &src.id, 2).await.unwrap();
         assert_eq!(forced.upscaler.as_deref(), Some("drawing"));
+        install_component(
+            &core,
+            ModelKind::Upscaler,
+            "4xNomosWebPhoto_esrgan.safetensors",
+            generate::UPSCALER_PHOTO_TEXTURE_COMPONENT,
+        );
+        core.settings.write().upscaler = "photo_texture".into();
+        let texture = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+        assert_eq!(texture.upscaler.as_deref(), Some("photo_texture"));
 
         let names: Vec<String> = mock
             .upscale_requests()
@@ -4015,7 +4024,8 @@ mod tests {
             [
                 "RealESRGAN_x4plus_anime_6B",
                 "RealESRGAN_x4plus",
-                "RealESRGAN_x4plus_anime_6B"
+                "RealESRGAN_x4plus_anime_6B",
+                "4xNomosWebPhoto_esrgan"
             ]
         );
     }

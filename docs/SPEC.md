@@ -324,14 +324,17 @@ Result card actions: **Save** · **Edit this** · **Describe** · **Variations**
 new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
 more than one picture is unsaved.
 
-**Upscale** runs a 4× Real-ESRGAN model in sd-server (2× = 4× then halved). There are two, both
-pinned in `models.yaml` and downloaded on first use: `realesrgan_x4` for photo-style pictures and
-`realesrgan_x4_anime` (the anime 6B model) for drawn ones. With the `upscaler` setting on `auto`
-(the default) Upscale measures the picture with the image check's tagger and uses the photo
-upscaler when its `realistic` or `photorealistic` tag reaches the photo-style threshold
-(`pinhole-check` `rules::PHOTO_STYLE`), the drawing upscaler otherwise. Fine-tune in Create and
-Edit has an **Upscaler** row (Auto / Photo / Drawing) that sets it. The upscaled picture's
-summary names the upscaler used ("drawing upscaler").
+**Upscale** runs a 4× ESRGAN model in sd-server (2× = 4× then halved). There are three, all
+pinned in `models.yaml` and each downloaded the first time it is used: `realesrgan_x4` (photos,
+smooth), `nomos_webphoto_x4` (photos, keeps skin texture) and `realesrgan_x4_anime` (the anime 6B
+model, drawings). With the `upscaler` setting on `auto` (the default) Upscale measures the picture
+with the image check's tagger and uses `realesrgan_x4` when its `realistic` or `photorealistic`
+tag reaches the photo-style threshold (`pinhole-check` `rules::PHOTO_STYLE`), the drawing upscaler
+otherwise. Fine-tune in Create and Edit has an **Upscaler** row, a list with one plain line per
+option: "Auto: picks by picture style", "Photo: smooth (good for hair, can look waxy)", "Photo:
+skin texture (real skin, can make beards crunchy)", "Drawing: clean lines and flat colour"
+(settings `auto` | `photo` | `photo_texture` | `drawing`). The upscaled picture's summary names
+the upscaler used ("drawing upscaler").
 
 **Prompt recall:** Up (at the start of the box) and Down step through the prompts sent earlier in
 this session, like a shell; Down past the newest restores what was typed. Kept in memory only (last
