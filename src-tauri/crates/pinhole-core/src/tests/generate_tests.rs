@@ -132,7 +132,7 @@ async fn style_loras_trigger_words_and_preview() {
         words: None,
     }];
     req.add_trigger_words = true;
-    let preview = generate::preview_final_prompt(&core, &req).unwrap();
+    let preview = generate::preview_final_prompt(&core, &req).await.unwrap();
     assert!(
         preview.prompt.contains("a red boat")
             && preview.prompt.contains("zxc_trigger")
@@ -200,6 +200,9 @@ fn trigger_words_follow_the_chip_and_the_users_list() {
     let (_tmp, core, _rec) = new_core();
     let model = register_fake_model(&core, "sdxl");
     let lora = register_fake_lora(&core, "sdxl", &["alpha look", "beta look", "gamma"]);
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
     let prompt_for = |words: Option<Vec<&str>>, prompt: &str| {
         let mut req = GenerateRequest::txt2img(model.clone(), prompt);
         req.loras = vec![generate::LoraUse {
@@ -207,7 +210,9 @@ fn trigger_words_follow_the_chip_and_the_users_list() {
             weight: 0.8,
             words: words.map(|w| w.into_iter().map(String::from).collect()),
         }];
-        generate::preview_final_prompt(&core, &req).unwrap().prompt
+        rt.block_on(generate::preview_final_prompt(&core, &req))
+            .unwrap()
+            .prompt
     };
     // No pick = every word; a pick keeps only listed words, in the add-on's order.
     let all = prompt_for(None, "a boat");
@@ -313,7 +318,7 @@ async fn restyle_and_instruction_edit_send_images() {
 
 #[tokio::test]
 async fn fix_details_redraws_the_painted_box_and_blends_it_back() {
-    let (_tmp, core, _rec) = new_core();
+    let (_tmp, core, rec) = new_core();
     let mock = MockSdServer::start().await;
     use_external_engine(&core, &mock.base_url());
     let model = register_fake_model(&core, "sdxl");
@@ -427,6 +432,18 @@ async fn fix_details_redraws_the_painted_box_and_blends_it_back() {
     assert_eq!(out.parent_id.as_deref(), Some(src.id.as_str()));
     let reqs = mock.requests();
     assert_eq!(reqs.len(), n + 2, "one pass per face");
+    // The progress says which face is being redrawn.
+    let notes: Vec<String> = rec
+        .0
+        .lock()
+        .iter()
+        .filter_map(|e| match e {
+            CoreEvent::Generation(p) => p.note.clone(),
+            _ => None,
+        })
+        .collect();
+    assert!(notes.iter().any(|n| n == "Face 1 of 2."), "{notes:?}");
+    assert!(notes.iter().any(|n| n == "Face 2 of 2."), "{notes:?}");
     for body in &reqs[n..] {
         assert!(body["mask_image"].as_str().unwrap().len() > 50);
         assert_eq!(body["batch_count"], 1);
@@ -438,8 +455,9 @@ async fn fix_details_redraws_the_painted_box_and_blends_it_back() {
         assert!(w >= 768 && h >= 768, "drawn at the model's size: {w}x{h}");
     }
     let sizes = checked.lock().clone();
-    assert_eq!(sizes.len(), 3, "the result and each redraw: {sizes:?}");
-    assert_eq!(sizes[0], (1200, 900));
+    // The source's picture style (for the face prompt), the result and each redraw.
+    assert_eq!(sizes.len(), 4, "{sizes:?}");
+    assert_eq!(sizes[..2], [(1200, 900), (1200, 900)]);
     let img = core.session.get(&out.id).unwrap();
     let (px, _, _) = pinhole_engine::image::decode_rgba(img.bytes.as_slice()).unwrap();
     let at = |x: usize, y: usize| &px[(y * 1200 + x) * 4..][..4];
@@ -451,6 +469,73 @@ async fn fix_details_redraws_the_painted_box_and_blends_it_back() {
     // The second pass worked on the first pass's result: the first face stays redrawn.
     assert_ne!(at(200, 200), &[10, 20, 30, 255], "first face redrawn");
     assert_ne!(at(830, 530), &[10, 20, 30, 255], "second face redrawn");
+}
+
+/// Add detail with nothing typed describes the faces by picture style; typed text is kept.
+#[tokio::test]
+async fn add_detail_describes_the_faces_by_picture_style() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    let src = session::import_image(
+        &core,
+        pinhole_engine::testutil::solid_png(1200, 900, [10, 20, 30, 255]),
+    )
+    .unwrap();
+    let add_detail = |text: &str| {
+        let mut req = GenerateRequest::txt2img(model.clone(), text);
+        req.mode = GenMode::Img2img;
+        req.init_image_id = Some(src.id.clone());
+        req.strength = Some(0.45);
+        req.fix_details = true;
+        req
+    };
+    let style = |realistic: f32| FakeCheck {
+        face_boxes: vec![[100.0, 100.0, 200.0, 200.0]],
+        readings: pinhole_check::Readings {
+            tags: Some(pinhole_check::Tags {
+                general: 0.9,
+                realistic,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let last_prompt = || {
+        mock.requests().last().unwrap()["prompt"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+
+    use_check(&core, style(0.6));
+    // The Fine-tune preview shows the same prompt.
+    let preview = generate::preview_final_prompt(&core, &add_detail(""))
+        .await
+        .unwrap();
+    assert!(preview.prompt.contains(generate::PHOTO_FACE_PROMPT));
+    generate::generate(&core, add_detail("")).await.unwrap();
+    assert!(
+        last_prompt().contains(generate::PHOTO_FACE_PROMPT),
+        "{}",
+        last_prompt()
+    );
+
+    use_check(&core, style(0.0));
+    generate::generate(&core, add_detail("")).await.unwrap();
+    let drawn = last_prompt();
+    assert!(drawn.contains(generate::DRAWN_FACE_PROMPT), "{drawn}");
+    assert!(!drawn.contains("photo"), "{drawn}");
+
+    use_check(&core, style(0.6));
+    generate::generate(&core, add_detail("an old sailor"))
+        .await
+        .unwrap();
+    let typed = last_prompt();
+    assert!(typed.contains("an old sailor"), "{typed}");
+    assert!(!typed.contains("photo of a face"), "{typed}");
 }
 
 #[tokio::test]

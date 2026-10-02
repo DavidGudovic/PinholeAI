@@ -76,7 +76,7 @@ pub async fn preview_final_prompt(
     core: Core<'_>,
     req: GenerateRequest,
 ) -> Result<FinalPromptPreview, CoreError> {
-    gen::preview_final_prompt(&core, &req)
+    gen::preview_final_prompt(&core, &req).await
 }
 
 /// A binary IPC body: raw bytes, or a JSON array of bytes (the postMessage IPC fallback).

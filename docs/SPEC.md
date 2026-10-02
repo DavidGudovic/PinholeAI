@@ -418,7 +418,10 @@ Four modes; Describe a change or Restyle is picked automatically:
    and less than half the Quality dial's native side (a larger face would be drawn smaller than
    it is), and each face (largest first, at most 6) is fixed the same way, its box grown by 15% on every
    side as the mask, one engine pass per face, each on the previous pass's result. Without
-   "What is it?" text the prompt is "a detailed face". No such face → "No face found that
+   "What is it?" text the prompt is "photo of a face, natural skin texture, sharp focus" for a
+   photo-style picture (the tagger's photo-style reading, as for the Upscale Auto pick) with no
+   Style picked, else "a detailed face". With more than one face the progress note reads
+   "Face N of M." and one progress bar runs across all faces. No such face → "No face found that
    needs more detail. Paint over the part to fix instead." The picture keeps its size; the finished
    picture and each redrawn face are checked like any Fix details result.
 4. **Extend** (same models as Restyle): make the picture wider or taller and let the model

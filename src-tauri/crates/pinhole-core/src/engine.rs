@@ -85,6 +85,8 @@ pub struct GenState {
     pub(crate) mem_fallback: parking_lot::Mutex<HashMap<String, MemFallback>>,
     /// Notes shown with the current job's progress (plain language, no prompt).
     pub(crate) job_note: parking_lot::Mutex<Vec<String>>,
+    /// Which pass of a several-pass job is running ("Face 2 of 3."), shown first in the note.
+    pub(crate) part_note: parking_lot::Mutex<Option<String>>,
     /// Graphics memory used by other programs when the running engine started (NVIDIA).
     pub(crate) gpu_others: parking_lot::Mutex<Option<OtherGpuUse>>,
     /// Model id + the memory plan its last auto-fit launch printed (where the
@@ -121,6 +123,7 @@ impl Default for GenState {
             clear_pending: AtomicBool::new(false),
             mem_fallback: parking_lot::Mutex::new(HashMap::new()),
             job_note: parking_lot::Mutex::new(Vec::new()),
+            part_note: parking_lot::Mutex::new(None),
             gpu_others: parking_lot::Mutex::new(None),
             memory_plan: parking_lot::Mutex::new(None),
             offloaded: parking_lot::Mutex::new(None),
@@ -385,6 +388,9 @@ pub(crate) fn emit_progress(
 ) {
     let mut notes = core.gen.job_note.lock().clone();
     if let Some(n) = core.gen.not_on_gpu.lock().clone() {
+        notes.insert(0, n);
+    }
+    if let Some(n) = core.gen.part_note.lock().clone() {
         notes.insert(0, n);
     }
     let note = notes.join(" ");

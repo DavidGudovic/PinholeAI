@@ -166,8 +166,9 @@ fn a_job_reads_session_pictures_only_as_declared_inputs() {
     let code: String = generate_rs().split_whitespace().collect();
     // `session_image` and `upscale_image`.
     assert_eq!(code.matches("session.get(").count(), 2);
-    // Its definition, `Inputs::take` and `Inputs::mask`.
-    assert_eq!(code.matches("session_image(").count(), 3);
+    // Its definition, `Inputs::take`, `Inputs::mask` and `add_detail_source` (the picture-style
+    // reading for the default Add detail prompt).
+    assert_eq!(code.matches("session_image(").count(), 4);
     assert!(!code.contains("session::get("));
     assert!(!code.contains("session::decode_rgba("));
     assert!(!code.contains("usecrate::session::{"));

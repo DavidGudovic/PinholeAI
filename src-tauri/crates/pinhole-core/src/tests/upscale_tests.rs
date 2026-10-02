@@ -196,6 +196,47 @@ async fn upscale_picks_the_upscaler_by_picture_style() {
     );
 }
 
+/// Cancel works while Upscale reads the picture style for the Auto pick: nothing is
+/// downloaded or upscaled after it.
+#[tokio::test]
+#[allow(clippy::await_holding_lock)] // held on purpose: the reading waits for it
+async fn cancel_ends_upscale_during_the_style_reading() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    install_fake_upscaler(&core);
+    let img = session::import_image(
+        &core,
+        pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255]),
+    )
+    .unwrap();
+    let fake = FakeCheck::default();
+    let (counts, hold) = (fake.counts.clone(), fake.hold_readings.clone());
+    use_check(&core, fake);
+    let held = hold.lock();
+    let c2 = core.clone();
+    let id = img.id.clone();
+    let task = tokio::spawn(async move { generate::upscale_image(&c2, &id, 4).await });
+    for _ in 0..200 {
+        if counts.lock().0 > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(counts.lock().0, 1, "the style reading started");
+    generate::cancel(&core);
+    drop(held);
+    let err = tokio::time::timeout(Duration::from_secs(10), task)
+        .await
+        .expect("cancel ends the upscale")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(err.code, "cancelled");
+    assert!(mock.upscale_requests().is_empty());
+    assert!(core.gen.active.lock().is_none());
+    assert_eq!(core.session.len(), 1, "only the source image");
+}
+
 /// Cancelling an upscale stops a Pinhole-started engine: sd-server upscales
 /// synchronously and would keep working otherwise.
 #[cfg(unix)]
