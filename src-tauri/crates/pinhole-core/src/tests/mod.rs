@@ -181,7 +181,6 @@ fn last_generation_event(rec: &Recorder) -> Option<crate::events::GenerationProg
     })
 }
 
-#[cfg(unix)]
 fn install_component(core: &AppCore, kind: ModelKind, file: &str, component_id: &str) {
     let (rel, size) = write_dummy(core, kind, file);
     let mut idx = core.installed.lock();
