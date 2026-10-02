@@ -409,15 +409,21 @@ describe("Named sizes", () => {
 });
 
 describe("Upscaler choice", () => {
-  it("shows Automatic and saves Drawing in Settings", async () => {
+  it("explains each upscaler, starts on Auto and saves the pick in Settings", async () => {
     const store = createStore();
     withApp(store, <FineTuneDrawer ui={null} model={null} />);
     fireEvent.click(screen.getByRole("button", { name: /Fine-tune/ }));
-    const group = within(screen.getByRole("radiogroup", { name: "Upscaler" }));
-    expect(group.getByRole("radio", { name: "Auto" }).getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(group.getByRole("radio", { name: "Drawing" }));
-    await waitFor(() => expect(store.getState().settings?.upscaler).toBe("drawing"));
-    expect((await api.getSettings()).upscaler).toBe("drawing");
+    const select = screen.getByRole("combobox", { name: "Upscaler" }) as HTMLSelectElement;
+    expect(select.value).toBe("auto");
+    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Auto: picks by picture style",
+      "Photo: smooth (good for hair, can look waxy)",
+      "Photo: skin texture (real skin, can make beards crunchy)",
+      "Drawing: clean lines and flat colour",
+    ]);
+    fireEvent.change(select, { target: { value: "photo_texture" } });
+    await waitFor(() => expect(store.getState().settings?.upscaler).toBe("photo_texture"));
+    expect((await api.getSettings()).upscaler).toBe("photo_texture");
     fireEvent.click(screen.getByRole("button", { name: "Reset Upscaler (for Upscale)" }));
     await waitFor(() => expect(store.getState().settings?.upscaler).toBe("auto"));
   });

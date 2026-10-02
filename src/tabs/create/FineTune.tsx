@@ -14,7 +14,7 @@ import { requestAddonBrowse } from "../models/lib/session";
 import { buildCreateRequest } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
-import { UpscalerSegmented, useUpscaler } from "../../components/UpscalerChoice";
+import { UpscalerSelect, useUpscaler } from "../../components/UpscalerChoice";
 
 function Row({
   label,
@@ -157,7 +157,7 @@ function UpscalerRow() {
   const upscaler = useUpscaler();
   return (
     <Row full label="Upscaler (for Upscale)" def="auto" changed={upscaler.value !== "auto"} onReset={() => upscaler.choose("auto")}>
-      <UpscalerSegmented upscaler={upscaler} />
+      <UpscalerSelect upscaler={upscaler} />
     </Row>
   );
 }

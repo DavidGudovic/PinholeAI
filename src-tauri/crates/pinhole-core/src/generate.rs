@@ -68,6 +68,8 @@ const POLL_EVERY: Duration = Duration::from_millis(300);
 pub const UPSCALER_COMPONENT: &str = "realesrgan_x4";
 /// Registry component id of the ESRGAN upscaler for drawn pictures.
 pub const UPSCALER_DRAWING_COMPONENT: &str = "realesrgan_x4_anime";
+/// Registry component id of the ESRGAN photo upscaler that keeps skin texture (Settings only).
+pub const UPSCALER_PHOTO_TEXTURE_COMPONENT: &str = "nomos_webphoto_x4";
 /// sd-server has no authentication and keeps every finished job (base64 images
 /// included) at `GET /sdcpp/v1/jobs/{id}` for 600 s. So once a job ran on a
 /// Pinhole-started engine, the engine is stopped this long after the last
@@ -297,7 +299,7 @@ pub struct ResultImage {
     pub parent_id: Option<String>,
     #[serde(default)]
     pub origin: Origin,
-    /// Upscaled pictures: which upscaler made it, `photo` or `drawing`.
+    /// Upscaled pictures: which upscaler made it, `photo`, `photo_texture` or `drawing`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upscaler: Option<String>,
     /// The size the picture was made at, before hires fix or an upscale enlarged it: what
@@ -2816,12 +2818,15 @@ pub(crate) const UPSCALE_TOO_LARGE: &str = "This image is too large to upscale: 
 
 /// The upscaler for `src`: the Settings choice, or with `auto` the photo upscaler for a
 /// photo-style picture and the drawing upscaler otherwise. Returns (component id, `photo` |
-/// `drawing`).
+/// `photo_texture` | `drawing`).
 async fn pick_upscaler(
     core: &Arc<AppCore>,
     src: &SessionImage,
 ) -> CoreResult<(&'static str, &'static str)> {
     let choice = core.settings.read().upscaler.clone();
+    if choice == "photo_texture" {
+        return Ok((UPSCALER_PHOTO_TEXTURE_COMPONENT, "photo_texture"));
+    }
     let photo = match choice.as_str() {
         "photo" => true,
         "drawing" => false,
@@ -3158,6 +3163,8 @@ async fn wait_download_or_cancel(
 fn upscaler_name(component: &str) -> &'static str {
     if component == UPSCALER_DRAWING_COMPONENT {
         "Upscaler for drawings (Real-ESRGAN anime 4×)"
+    } else if component == UPSCALER_PHOTO_TEXTURE_COMPONENT {
+        "Upscaler for photos, skin texture (4xNomosWebPhoto)"
     } else {
         "Upscaler for photos (Real-ESRGAN 4×)"
     }

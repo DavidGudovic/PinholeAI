@@ -30,7 +30,7 @@ export interface AppInfo {
 /** Safe mode: "safe" = On (hides models made for adults), "all" = Off. */
 export type ContentMode = "safe" | "all";
 
-export type UpscalerChoice = "auto" | "photo" | "drawing";
+export type UpscalerChoice = "auto" | "photo" | "photo_texture" | "drawing";
 
 export interface Settings {
   offline: boolean;
@@ -62,7 +62,7 @@ export interface Settings {
   describeModel: string;
   /** Helper model for "Improve my prompt": "auto" or a HelperModel id. */
   improveModel: string;
-  /** Upscaler used by Upscale: "auto" (photo or drawing, by the picture's style), "photo" or "drawing". */
+  /** Upscaler used by Upscale: "auto" (photo or drawing, by the picture's style), "photo", "photo_texture" or "drawing". */
   upscaler?: UpscalerChoice;
   /** Version of the first-launch notice the user agreed to (0 = none). */
   noticeAccepted?: number;
@@ -435,7 +435,7 @@ export interface ResultImage {
   /** Made in Pinhole, or made from a picture the user added (RELEASE-SPEC §3.1). */
   origin?: ImageOrigin;
   /** Upscaled pictures: which upscaler made it. */
-  upscaler?: "photo" | "drawing";
+  upscaler?: "photo" | "photo_texture" | "drawing";
 }
 
 export type ImageOrigin = "generated" | "imported";
