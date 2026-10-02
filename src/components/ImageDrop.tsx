@@ -3,6 +3,8 @@
 // straight to Rust (`import_image`); nothing is written to disk.
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ImagePlus } from "lucide-react";
+import { clipboardImage } from "../lib/api";
+import { isTauri } from "../lib/mock";
 import { imageFromTransfer } from "../lib/state/images";
 import { modKey } from "../lib/state/platform";
 import { Button, cx, focusRing } from "./ui";
@@ -45,13 +47,22 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
       // text field stays a text paste. (A file copied in a file manager also has its path
       // as text, with a uri-list: that one is an image paste.)
       const t = e.target as HTMLElement | null;
-      const editable = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
+      const editable = !!t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || !!t.isContentEditable);
       const types = Array.from(e.clipboardData?.types ?? []);
       if (editable && types.includes("text/plain") && !types.includes("text/uri-list")) return;
       const f = imageFromTransfer(e.clipboardData);
-      if (!f) return;
-      e.preventDefault();
-      cb.current(f);
+      if (f) {
+        e.preventDefault();
+        cb.current(f);
+        return;
+      }
+      // The Linux WebView (WebKitGTK) gives the paste event no data at all, even with a picture
+      // on the clipboard: read it through the app. In a text box only a picture without text.
+      if (types.length === 0 && isTauri()) {
+        void clipboardImage(editable)
+          .then((p) => p && cb.current(p))
+          .catch(() => undefined);
+      }
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);

@@ -542,7 +542,10 @@ mod tests {
         fixtures::sdxl(&src);
         let hash = sha(&src);
         // Pinhole knows this file's family by its hash (as if the shipped models.yaml listed it).
-        let yaml = std::fs::read_to_string(core.shipped.config_dir.join("models.yaml")).unwrap();
+        // A Windows checkout has CRLF line endings.
+        let yaml = std::fs::read_to_string(core.shipped.config_dir.join("models.yaml"))
+            .unwrap()
+            .replace("\r\n", "\n");
         let yaml = yaml.replacen(
             "\nknown_files:\n",
             &format!("\nknown_files:\n  - {{ sha256: {hash}, family: sdxl }}\n"),

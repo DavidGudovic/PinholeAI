@@ -982,7 +982,8 @@ try {
       assert(img && img.w === 256 && img.h === 256, "no 256×256 result image");
       await shot("28-create-result");
 
-      // Save → Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png, no text chunks (savedMetadata: none).
+      // Save → Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png. savedMetadata: none, so the only
+      // text chunk is the XMP "made with AI" marker (DigitalSourceType), without prompt or app name.
       await click("//section[@aria-label='Results']//button[normalize-space(.)='Save']");
       await driver.wait(() => fs.existsSync(path.join(DATA, "outputs")) && fs.readdirSync(path.join(DATA, "outputs")).length > 0, 15000, "nothing saved");
       const saved = fs.readdirSync(path.join(DATA, "outputs"));
@@ -990,13 +991,19 @@ try {
       assert(saved.every((n) => /^pinhole_\d{8}_\d{6}_\d+(?:_\d+)?\.png$/.test(n)), "unexpected saved file name");
       const png = fs.readFileSync(path.join(DATA, "outputs", saved[0]));
       const chunks = [];
+      const texts = [];
       for (let o = 8; o < png.length; ) {
         const len = png.readUInt32BE(o);
-        chunks.push(png.toString("latin1", o + 4, o + 8));
+        const type = png.toString("latin1", o + 4, o + 8);
+        chunks.push(type);
+        if (/tEXt|iTXt|zTXt/.test(type)) texts.push({ type, data: png.toString("utf8", o + 8, o + 8 + len) });
         o += 12 + len;
       }
       note(`PNG chunks: ${[...new Set(chunks)].join(",")}`);
-      assert(!chunks.some((c) => /tEXt|iTXt|zTXt/.test(c)), "saved PNG carries text chunks");
+      assert(texts.length === 1 && texts[0].type === "iTXt" && texts[0].data.startsWith("XML:com.adobe.xmp\0"), "saved PNG carries text chunks other than the XMP marker");
+      const xmp = texts[0].data;
+      assert(xmp.includes("DigitalSourceType"), "XMP marker has no DigitalSourceType");
+      assert(!xmp.includes(SENTINEL) && !/pinhole/i.test(xmp), "XMP marker carries prompt text or the app name");
       await sleep(500);
       await shot("29-create-saved");
     });
