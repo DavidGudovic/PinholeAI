@@ -77,6 +77,10 @@ pub struct Family {
     pub label: String,
     /// Key into `style_templates` (`natural` | `tags`).
     pub style_template: String,
+    /// Key into `captioner.improve.styles` when it differs from `style_template`
+    /// (`booru` for anime-trained families).
+    #[serde(default)]
+    pub improve_style: Option<String>,
     #[serde(default)]
     pub vram_gb: Option<VramGb>,
     #[serde(default)]
@@ -381,10 +385,47 @@ pub struct CaptionerSpec {
     /// `sentence` | `tags` → VLM instruction.
     #[serde(default)]
     pub prompts: BTreeMap<String, String>,
-    /// "Improve my prompt": `natural` | `tags` instructions, `safe` (Safe mode on) and
-    /// `avoid` (`{words}` = add-on trigger words) rules appended to them.
+    /// "Improve my prompt".
     #[serde(default)]
-    pub improve: BTreeMap<String, String>,
+    pub improve: ImproveSpec,
+}
+
+/// "Improve my prompt": the helper fills a five-line form (details, place, shot, style, light)
+/// and Pinhole adds the lines it keeps after the user's own words.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImproveSpec {
+    /// The instruction, with `{format}`, `{style_examples}` and `{example}` taken from the style.
+    #[serde(default)]
+    pub form: String,
+    /// `natural` | `tags` | `booru` (a family's `improve_style`, else its `style_template`).
+    #[serde(default)]
+    pub styles: BTreeMap<String, ImproveStyle>,
+    /// Appended while Safe mode is On.
+    #[serde(default)]
+    pub safe: String,
+    /// Appended while Safe mode is Off.
+    #[serde(default)]
+    pub adult: String,
+    /// Appended when add-ons are in use; `{words}` = their trigger words.
+    #[serde(default)]
+    pub avoid: String,
+    /// Per form line (`details` … `light`): phrases that mean the idea already covers that line,
+    /// so the helper's answer for it is left out.
+    #[serde(default)]
+    pub given: BTreeMap<String, Vec<String>>,
+    /// Added phrases containing one of these are left out.
+    #[serde(default)]
+    pub drop: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImproveStyle {
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub style_examples: String,
+    #[serde(default)]
+    pub example: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

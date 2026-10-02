@@ -307,17 +307,23 @@ goes to Edit, so the Edit notice about photos of people shows. A short note says
 new scene ("the same character on a beach"). The image keeps its id, so its origin
 (Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
-**Improve** (prompt box toolbar): turns a short idea into a fuller prompt with the local Describe
-model (text only, `captioner.improve` in `models.yaml`). Tags for families whose `style_template`
-is `tags` (SD 1.5, SDXL, Pony, Illustrious), sentences otherwise. The result replaces the box text
+**Improve** (prompt box toolbar): adds details to a short idea with the local Describe model
+(text only, `captioner.improve` in `models.yaml`). The user's words stay exactly as typed; the
+helper fills five short lines (how the subject looks, place, shot, style, light) and Pinhole adds
+what they contribute after the idea. A line the idea already covers (it names a view, a medium or
+a light, `improve.given`) is left out, and so are mood and quality words (`improve.drop`, quality
+words come from the family's `auto_prompt_prefix`), long sentences, the idea's own words and
+repeats. Sentences for natural-language families, tags (at most 12 added) for families whose
+`style_template` is `tags` (SD 1.5, SDXL), Danbooru tags for families with `improve_style: booru`
+(Pony, Illustrious, Anima). The result replaces the box text
 and **Undo** puts back what was typed (shown while the box still holds the improved text; the
-answer is dropped if the prompt was edited meanwhile). The instruction says to keep the user's
-subject, stay safe for work while Safe mode is On (while Off: adult themes between adults are kept and
+answer is dropped if the prompt was edited meanwhile). The instruction says to
+stay safe for work while Safe mode is On (while Off: adult themes between adults are kept and
 described clearly, nothing of that kind is added that the user didn't ask for, and anyone under 18 stays
-non-sexual and clothed; the word check runs on the idea and the answer either way), and not to
-write the trigger words of add-ons in use (taken out whole-word if it does anyway, since they are
-added at request time). An answer that is a refusal ("I'm sorry, but I can't…") or a repetition
-loop leaves the prompt unchanged with a short note. The prompt goes
+non-sexual and clothed; the word check runs on the idea, the whole answer and the result either way), and not to
+write the trigger words of add-ons in use (phrases containing them are left out if it does anyway, since they are
+added at request time). An answer that is a refusal ("I'm sorry, but I can't…") or adds nothing
+usable leaves the prompt unchanged with a short note. The prompt goes
 only to the loopback llama-server, never logged or stored. Without the Describe model it offers
 the one-time download, then improves. Not in Edit: instruction edits are short commands ("make the
 sky a sunset") and a fuller rewrite would drift from what should change.

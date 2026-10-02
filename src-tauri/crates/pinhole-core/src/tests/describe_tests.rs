@@ -31,19 +31,26 @@ async fn describe_through_mock_llama() {
 #[tokio::test]
 async fn improve_prompt_through_mock_llama() {
     let (_tmp, core, _rec) = new_core();
-    let llama = MockLlamaServer::start("a red fox, sks, in snow, soft light", 0).await;
+    let llama = MockLlamaServer::start(
+        "DETAILS: thick red fur, sks\nPLACE: in snow\nSHOT: -\nSTYLE: photo\nLIGHT: soft light",
+        0,
+    )
+    .await;
     use_external_captioner(&core, &llama.base_url());
     let text = describe::improve_prompt(&core, "  a red fox  ", None, &["sks".into()])
         .await
         .unwrap();
-    assert_eq!(text.text, "a red fox, in snow, soft light");
+    assert_eq!(
+        text.text, "a red fox. Thick red fur. In snow. Photo, soft light.",
+        "the idea is kept as typed and the form lines follow it"
+    );
     assert!(text.note.is_none());
     let body = &llama.requests()[0];
     let system = body
         .pointer("/messages/0/content")
         .and_then(|t| t.as_str())
         .unwrap();
-    assert!(system.contains("natural sentences"), "{system}");
+    assert!(system.contains("five lines"), "{system}");
     assert!(
         system.contains("safe for work"),
         "Safe mode is on by default"

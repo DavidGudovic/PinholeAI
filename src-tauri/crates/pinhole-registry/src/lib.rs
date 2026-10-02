@@ -363,6 +363,13 @@ impl Registry {
         let mut problems = Vec::new();
         let comp_ok = |id: &str| self.file.components.contains_key(id);
         let mut helper_ids = std::collections::HashSet::new();
+        for (name, st) in &self.file.captioner.improve.styles {
+            if st.format.trim().is_empty() || st.example.trim().is_empty() {
+                problems.push(format!(
+                    "captioner improve style `{name}` needs a `format` and an `example`"
+                ));
+            }
+        }
         for h in &self.file.captioner.helpers {
             if h.license_accept.is_some() && h.license_note.is_none() {
                 problems.push(format!(
@@ -431,6 +438,11 @@ impl Registry {
                     "family `{id}`: unknown style_template `{}`",
                     f.style_template
                 ));
+            }
+            if let Some(st) = &f.improve_style {
+                if !self.file.captioner.improve.styles.contains_key(st) {
+                    problems.push(format!("family `{id}`: unknown improve_style `{st}`"));
+                }
             }
             for other in &f.detect.ambiguous_with {
                 if !self.families.contains_key(other) {
