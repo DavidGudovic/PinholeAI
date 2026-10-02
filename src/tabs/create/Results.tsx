@@ -7,9 +7,7 @@ import {
   Layers,
   ChevronDown,
   Maximize2,
-  MoreHorizontal,
   PanelsLeftRight,
-  Save,
   ScanText,
   Shuffle,
   Trash,
@@ -28,7 +26,7 @@ import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
 import { unsavedIds, type ImgRef } from "../../lib/state/model";
-import { canSaveAs, modKey } from "../../lib/state/platform";
+import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
 import { TipLine } from "./TipLine";
 import { useAppState, useDispatch } from "../../lib/state/store";
@@ -179,42 +177,48 @@ function Preview({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <SaveButton id={result.id} seed={result.seed} run={run} tab="create" />
+        <SaveButton
+          id={result.id}
+          seed={result.seed}
+          run={run}
+          tab="create"
+          unsavedCount={unsavedCount}
+          onSaveAll={() => void run(() => actions.saveAll())}
+        />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
-        <Button
-          disabled={!hasBatch}
-          title={
-            hasBatch
-              ? busy
-                ? "Same prompt, new seeds (waits for the current job)"
-                : "Same prompt, new seeds"
-              : "Only for images made in this session"
-          }
-          onClick={() => void run(() => actions.variations(result.id))}
-        >
-          <Shuffle className="h-4 w-4" /> Variations
-        </Button>
-        <UpscaleMenu
-          width={result.width}
-          height={result.height}
-          disabled={busy}
-          onPick={(f) => void run(() => actions.upscale(result.id, f))}
-        />
         <Popover
-          width={230}
+          width={250}
           trigger={(p) => (
             <Button {...p}>
-              <MoreHorizontal className="h-4 w-4" /> More <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+              <Shuffle className="h-4 w-4" /> More like this{" "}
+              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
             </Button>
           )}
         >
           {(close) => (
             <>
               <MenuItem
+                icon={<Shuffle className="h-4 w-4" />}
+                disabled={!hasBatch}
+                hint={
+                  hasBatch
+                    ? busy
+                      ? "Same prompt, new seeds (waits for the current job)"
+                      : "Same prompt, new seeds"
+                    : "Only for images made in this session"
+                }
+                onClick={() => {
+                  close();
+                  void run(() => actions.variations(result.id));
+                }}
+              >
+                Variations
+              </MenuItem>
+              <MenuItem
                 icon={<UserRound className="h-4 w-4" />}
-                hint="New pictures of this subject in a different scene"
+                hint="This character or subject in a different scene"
                 onClick={() => {
                   close();
                   actions.sameCharacter(result.id);
@@ -222,31 +226,21 @@ function Preview({
               >
                 Same character
               </MenuItem>
-              <MenuItem
-                icon={<ScanText className="h-4 w-4" />}
-                hint="Write a prompt from this picture"
-                onClick={() => {
-                  close();
-                  actions.sendToDescribe(result.id);
-                }}
-              >
-                Describe
-              </MenuItem>
-              {canSaveAs() && unsavedCount > 1 && (
-                <MenuItem
-                  icon={<Save className="h-4 w-4" />}
-                  hint="Every unsaved picture, into a folder you choose"
-                  onClick={() => {
-                    close();
-                    void run(() => actions.saveAll());
-                  }}
-                >
-                  Save all ({unsavedCount})
-                </MenuItem>
-              )}
             </>
           )}
         </Popover>
+        <UpscaleMenu
+          width={result.width}
+          height={result.height}
+          disabled={busy}
+          onPick={(f) => void run(() => actions.upscale(result.id, f))}
+        />
+        <Button
+          title="Write a prompt from this picture"
+          onClick={() => actions.sendToDescribe(result.id)}
+        >
+          <ScanText className="h-4 w-4" /> Describe
+        </Button>
         {reference && (
           <IconButton
             label="Side by side with the reference picture"
