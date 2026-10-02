@@ -2022,22 +2022,46 @@ fn size_like(src_w: u32, src_h: u32, target_area: u64, multiple: u32) -> (u32, u
     (r(w), r(h))
 }
 
-/// "Fix details" on the whole picture: the area (pixels) the engine draws at, 1.5× the
-/// model's area per side (as a hires fix does) or the picture's own area if that is larger,
-/// and at most what keeps the longer side within 2048 px (the largest side [`size_like`]
-/// gives, so the picture keeps its shape). `None` when the picture is over 2× the model's
-/// area per side or over 2048 px on a side: drawn whole at that size the model repeats parts
-/// of the scene, and drawn smaller the result would lose detail.
-fn whole_detail_area(src_w: u32, src_h: u32, model_area: u64) -> Option<u64> {
-    const MAX_SIDE: u64 = 2048;
-    let (long, short) = (
-        u64::from(src_w.max(src_h)),
-        u64::from(src_w.min(src_h).max(1)),
-    );
-    let src_area = long * short;
-    let fits = MAX_SIDE * MAX_SIDE * short / long;
-    (src_area <= model_area * 4 && long <= MAX_SIDE)
-        .then(|| src_area.max(model_area * 9 / 4).min(fits))
+/// Add detail redraws at most this many faces (the largest), one engine pass each.
+const MAX_FACES: usize = 6;
+
+/// Masks (PNG, white = redraw) for the faces on `src` that Add detail redraws, largest
+/// first: each face box found by the image check's face finder, grown a little so hair
+/// line, chin and ears blend in.
+async fn faces_to_redraw(
+    core: &Arc<AppCore>,
+    src: &SessionImage,
+) -> CoreResult<std::collections::VecDeque<Vec<u8>>> {
+    let boxes = crate::imagecheck::face_boxes(core, src).await?;
+    let (w, h) = (src.width, src.height);
+    tokio::task::spawn_blocking(move || {
+        boxes
+            .iter()
+            .take(MAX_FACES)
+            .map(|b| pinhole_engine::detail::box_mask(w, h, *b, 0.15))
+            .collect::<Result<_, _>>()
+    })
+    .await
+    .map_err(|_| CoreError::internal("Finding faces stopped unexpectedly."))?
+    .map_err(|e| CoreError::invalid(e.to_string()))
+}
+
+/// A "Fix details" plan for `mask` on `src`, drawn at about `area` (off the async workers).
+async fn detail_plan(
+    src: Arc<Vec<u8>>,
+    mask: Arc<Vec<u8>>,
+    area: u64,
+    multiple: u32,
+) -> CoreResult<DetailPlan> {
+    tokio::task::spawn_blocking(move || {
+        DetailPlan::new(&src, &mask, |w, h| size_like(w, h, area, multiple))
+    })
+    .await
+    .map_err(|_| CoreError::internal("Fixing details stopped unexpectedly."))?
+    .map_err(|e| match e {
+        DetailError::NothingPainted => CoreError::invalid("Paint over the spot to fix first."),
+        DetailError::Image(e) => CoreError::invalid(e.to_string()),
+    })
 }
 
 /// The pictures a job sends to the engine, read from the session only through here: every
@@ -2254,52 +2278,36 @@ async fn generate_inner(
     }
     // "Fix details": the engine only draws the box around the mask, scaled to
     // about the dial's area (so a small face is redrawn at the model's size).
-    // With nothing painted it draws the whole picture larger (see `whole_detail_area`).
+    // Add detail (nothing painted): each face the image check's face finder sees is redrawn
+    // the same way, one after another (see `face_masks` below).
+    let mut face_masks: std::collections::VecDeque<Vec<u8>> = Default::default();
     let fix = match fix_source {
         Some((src, mask)) => {
             let area = u64::from(params.width) * u64::from(params.height);
             let multiple = wiring::size_multiple(&prep.family);
-            let whole_area = match mask {
-                Some(_) => None,
-                None => Some(
-                    whole_detail_area(src.width, src.height, area).ok_or_else(|| {
+            let mask_bytes = match mask {
+                Some(m) => m.bytes.clone(),
+                None => {
+                    face_masks = faces_to_redraw(core, src).await?;
+                    Arc::new(face_masks.pop_front().ok_or_else(|| {
                         CoreError::invalid(
-                            "This picture is too big to redraw whole. Paint over the part to fix.",
+                            "No face found to add detail to. Paint over the part to fix instead.",
                         )
-                    })?,
-                ),
+                    })?)
+                }
             };
             // Decode, resize, blur and encode: off the async workers.
             let src_bytes = src.bytes.clone();
-            let mask_bytes = mask.map(|m| m.bytes.clone());
-            let plan = tokio::task::spawn_blocking(move || match (mask_bytes, whole_area) {
-                (Some(mask_bytes), _) => DetailPlan::new(&src_bytes, &mask_bytes, |w, h| {
-                    size_like(w, h, area, multiple)
-                }),
-                (None, whole) => DetailPlan::whole(&src_bytes, |w, h| {
-                    size_like(w, h, whole.unwrap_or(area), multiple)
-                }),
-            })
-            .await
-            .map_err(|_| CoreError::internal("Fixing details stopped unexpectedly."))?
-            .map_err(|e| match e {
-                DetailError::NothingPainted => {
-                    CoreError::invalid("Paint over the spot to fix first.")
-                }
-                DetailError::Image(e) => CoreError::invalid(e.to_string()),
-            })?;
+            let plan = detail_plan(src_bytes, mask_bytes, area, multiple).await?;
             (width, height) = plan.work;
             init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
-            mask_image = plan
-                .mask_png
-                .as_ref()
-                .map(|m| base64::engine::general_purpose::STANDARD.encode(m));
+            mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
             Some(Redraw::Detail(Arc::new(plan)))
         }
         None => None,
     };
     // "Extend": the engine draws the whole bigger canvas at about the dial's area.
-    let fix = match (fix, req.extend, &source) {
+    let mut fix = match (fix, req.extend, &source) {
         (None, Some(c), Some(src)) => {
             let area = u64::from(params.width) * u64::from(params.height);
             let multiple = wiring::size_multiple(&prep.family);
@@ -2399,107 +2407,129 @@ async fn generate_inner(
     let mut fb = with_remembered_offload(core, &prep.model.id, &wiring_args, fb, gpu_backend);
     let steps = params.steps.max(1);
     let batches = u32::from(hires.is_none()) * body.batch_count;
-    let job = loop {
-        let args = with_memory_choices(&wiring_args, fb);
-        let client = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
-        match run_job(
-            core,
-            &client,
-            &body,
-            &prep.secrets,
-            &label,
-            (steps, batches),
-            cancel,
-            t0,
-        )
-        .await
-        {
-            Ok(job) => break job,
-            Err(RunError::Failed(e)) => return Err(e),
-            Err(RunError::OutOfMemory { stage, details }) => {
-                let offload_ok = offload_fits_ram(&args, hw.ram_gb);
-                let Some((next_fb, note)) = next_memory_fallback(
-                    fb,
-                    stage,
-                    TeChoice::current(core),
-                    gpu_backend,
-                    &args,
-                    tiling_allowed,
-                    offload_ok,
-                ) else {
-                    return Err(memory_error(core, stage, &args, gpu_backend)
-                        .with_details(with_memory_plan(core, &prep.model.id, &args, details)));
-                };
-                // Remember the automatic choice for this model (RAM only, app session).
-                {
-                    let mut remembered = core.gen.mem_fallback.lock();
-                    let entry = remembered.entry(prep.model.id.clone()).or_default();
-                    entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
-                    entry.vae_tiling |= next_fb.vae_tiling;
-                    if next_fb.vram_reserve_gib > fb.vram_reserve_gib {
-                        entry.vram_reserve_gib =
-                            entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
-                    }
-                }
-                fb = next_fb;
-                set_retry_note(core, note);
-                emit_progress(core, GenPhase::LoadingModel, &label, None, None, t0);
-            }
-        }
-    };
-    drop(body);
-    if cancel.is_cancelled() {
-        return Err(CoreError::new("cancelled", "Cancelled."));
-    }
-
-    // Decode + scrub + keep in RAM.
-    let mut images = job.result.map(|r| r.images).unwrap_or_default();
-    images.sort_by_key(|i| i.index);
-    if images.is_empty() {
-        return Err(
-            CoreError::new("engine_failed", "The engine returned no image. Try again.")
-                .with_details(core.gen.logs.tail_text(20)),
-        );
-    }
     let parent_id = source.as_ref().map(|s| s.id.clone());
-    let mut pngs = Vec::with_capacity(images.len());
+    let mut pngs = Vec::new();
     let mut also_check = Vec::new();
-    for img in images {
-        let raw = base64::engine::general_purpose::STANDARD
-            .decode(img.b64_json.as_bytes())
-            .map_err(|_| {
-                CoreError::new(
-                    "engine_failed",
-                    "The engine returned a damaged image. Try again.",
-                )
-            })?;
-        let mut png = pinhole_engine::png::scrub(&raw).map_err(|_| {
-            CoreError::new(
-                "engine_failed",
-                "The engine returned a damaged image. Try again.",
+    // One pass, or one per face for Add detail: each face is redrawn on the picture the
+    // previous pass made.
+    loop {
+        let job = loop {
+            let args = with_memory_choices(&wiring_args, fb);
+            let client = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
+            match run_job(
+                core,
+                &client,
+                &body,
+                &prep.secrets,
+                &label,
+                (steps, batches),
+                cancel,
+                t0,
             )
-        })?;
-        if let Some(plan) = &fix {
-            // Paste the redrawn box back into the whole image (or the source into the canvas).
-            // Fix details: the redraw is also checked on its own, at the size the engine drew
-            // it. Shrunk into a large picture it's too small to judge.
-            if matches!(plan, Redraw::Detail(_)) {
-                also_check.push(png.clone());
+            .await
+            {
+                Ok(job) => break job,
+                Err(RunError::Failed(e)) => return Err(e),
+                Err(RunError::OutOfMemory { stage, details }) => {
+                    let offload_ok = offload_fits_ram(&args, hw.ram_gb);
+                    let Some((next_fb, note)) = next_memory_fallback(
+                        fb,
+                        stage,
+                        TeChoice::current(core),
+                        gpu_backend,
+                        &args,
+                        tiling_allowed,
+                        offload_ok,
+                    ) else {
+                        return Err(memory_error(core, stage, &args, gpu_backend)
+                            .with_details(with_memory_plan(core, &prep.model.id, &args, details)));
+                    };
+                    // Remember the automatic choice for this model (RAM only, app session).
+                    {
+                        let mut remembered = core.gen.mem_fallback.lock();
+                        let entry = remembered.entry(prep.model.id.clone()).or_default();
+                        entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
+                        entry.vae_tiling |= next_fb.vae_tiling;
+                        if next_fb.vram_reserve_gib > fb.vram_reserve_gib {
+                            entry.vram_reserve_gib =
+                                entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
+                        }
+                    }
+                    fb = next_fb;
+                    set_retry_note(core, note);
+                    emit_progress(core, GenPhase::LoadingModel, &label, None, None, t0);
+                }
             }
-            let plan = plan.clone();
-            png = tokio::task::spawn_blocking(move || plan.blend(&png))
-                .await
-                .ok()
-                .flatten()
-                .ok_or_else(|| {
+        };
+        if cancel.is_cancelled() {
+            return Err(CoreError::new("cancelled", "Cancelled."));
+        }
+
+        // Decode + scrub + keep in RAM.
+        let mut images = job.result.map(|r| r.images).unwrap_or_default();
+        images.sort_by_key(|i| i.index);
+        if images.is_empty() {
+            return Err(CoreError::new(
+                "engine_failed",
+                "The engine returned no image. Try again.",
+            )
+            .with_details(core.gen.logs.tail_text(20)));
+        }
+        for img in images {
+            let raw = base64::engine::general_purpose::STANDARD
+                .decode(img.b64_json.as_bytes())
+                .map_err(|_| {
                     CoreError::new(
                         "engine_failed",
                         "The engine returned a damaged image. Try again.",
                     )
                 })?;
+            let mut png = pinhole_engine::png::scrub(&raw).map_err(|_| {
+                CoreError::new(
+                    "engine_failed",
+                    "The engine returned a damaged image. Try again.",
+                )
+            })?;
+            if let Some(plan) = &fix {
+                // Paste the redrawn box back into the whole image (or the source into the canvas).
+                // Fix details: the redraw is also checked on its own, at the size the engine drew
+                // it. Shrunk into a large picture it's too small to judge.
+                if matches!(plan, Redraw::Detail(_)) {
+                    also_check.push(png.clone());
+                }
+                let plan = plan.clone();
+                png = tokio::task::spawn_blocking(move || plan.blend(&png))
+                    .await
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| {
+                        CoreError::new(
+                            "engine_failed",
+                            "The engine returned a damaged image. Try again.",
+                        )
+                    })?;
+            }
+            pngs.push(png);
         }
-        pngs.push(png);
+        let Some(next_mask) = face_masks.pop_front() else {
+            break;
+        };
+        // Next face: plan it on the picture this pass made.
+        let done = pngs.pop().expect("one image per Fix details pass");
+        let area = u64::from(params.width) * u64::from(params.height);
+        let plan = detail_plan(
+            Arc::new(done),
+            Arc::new(next_mask),
+            area,
+            wiring::size_multiple(&prep.family),
+        )
+        .await?;
+        (body.width, body.height) = plan.work;
+        body.init_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.init_png));
+        body.mask_image = Some(base64::engine::general_purpose::STANDARD.encode(&plan.mask_png));
+        fix = Some(Redraw::Detail(Arc::new(plan)));
     }
+    drop(body);
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept. A redrawn box is also checked on its own.
     let checked = crate::imagecheck::check_results(
@@ -3321,26 +3351,6 @@ mod tests {
         let (w, h) = size_like(1920, 1080, 1024 * 1024, 64);
         assert_eq!((w % 64, h % 64), (0, 0));
         assert_eq!(size_like(10, 10, 1, 64), (256, 256));
-    }
-
-    #[test]
-    fn whole_picture_detail_is_drawn_larger_up_to_twice_per_side() {
-        let model = 1024 * 1024;
-        // At the model's size or smaller: 1.5× per side.
-        assert_eq!(whole_detail_area(1024, 1024, model), Some(1536 * 1536));
-        assert_eq!(whole_detail_area(512, 512, model), Some(1536 * 1536));
-        // Between 1.5× and 2× per side: drawn at its own size.
-        assert_eq!(whole_detail_area(1800, 1800, model), Some(1800 * 1800));
-        assert_eq!(whole_detail_area(2048, 2048, model), Some(2048 * 2048));
-        // Larger than that (a 4× upscale): too big to redraw whole.
-        assert_eq!(whole_detail_area(4096, 4096, model), None);
-        assert_eq!(whole_detail_area(3000, 1000, model), None);
-        // Wide: drawn no wider than 2048 px, so it keeps its shape.
-        let area = whole_detail_area(1920, 800, model).unwrap();
-        let (w, h) = size_like(1920, 800, area, 64);
-        assert!(w <= 2048, "{w}x{h}");
-        let ratio = f64::from(w) / f64::from(h);
-        assert!((ratio - 2.4).abs() < 0.1, "{w}x{h}");
     }
 
     #[test]

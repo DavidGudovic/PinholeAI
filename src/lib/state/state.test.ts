@@ -307,6 +307,10 @@ describe("requests", () => {
     const fx = buildEditRequest(e, { mode: "fix", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
     expect(fx).toMatchObject({ mode: "img2img", prompt: "a hand holding a cup", initImageId: "src", maskImageId: "mask", fixDetails: true, strength: 0.45 });
     expect(fx.fineTune).toEqual({ seed: 7 });
+    // Nothing painted (Add detail, faces) and nothing typed: the faces are described.
+    const faces = buildEditRequest({ ...e, fixPrompt: "" }, { mode: "fix", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: null, size: [512, 512] });
+    expect(faces).toMatchObject({ fixDetails: true, maskImageId: null, prompt: "a detailed face" });
+    expect(buildEditRequest(e, { mode: "fix", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: null, size: [512, 512] }).prompt).toBe("a hand holding a cup");
     expect(fx.dials.count).toBe(1);
     const rs = buildEditRequest(e, { mode: "restyle", source: ref("src"), model: model("m1", "sdxl"), ui: FAMILY_UI.sdxl, maskImageId: "mask", size: [512, 512] });
     expect(rs.fixDetails).toBeUndefined();

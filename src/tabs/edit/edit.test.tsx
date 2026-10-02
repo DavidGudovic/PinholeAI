@@ -166,7 +166,7 @@ describe("Edit tab", () => {
     expect(req).toMatchObject({ mode: "img2img", fixDetails: true, maskImageId: "mask", initImageId: "a", prompt: "" });
   });
 
-  it("Fix details with nothing painted adds detail to the whole picture, without a mask", async () => {
+  it("Fix details with nothing painted adds detail to the faces, without a mask", async () => {
     paintOnShow = false;
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

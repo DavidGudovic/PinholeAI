@@ -41,6 +41,8 @@ pub trait Inspector: Send + Sync {
         Ok(())
     }
     fn unload_if_idle(&self, _idle: Duration) {}
+    /// Boxes (x, y, w, h) of the faces big enough to redraw, largest first (Add detail).
+    fn face_boxes(&self, png: &[u8]) -> Result<Vec<[f32; 4]>, CheckError>;
 }
 
 impl Inspector for Checker {
@@ -62,6 +64,9 @@ impl Inspector for Checker {
     fn unload_if_idle(&self, idle: Duration) {
         Checker::unload_if_idle(self, idle);
     }
+    fn face_boxes(&self, png: &[u8]) -> Result<Vec<[f32; 4]>, CheckError> {
+        Checker::face_boxes(self, png)
+    }
 }
 
 /// A stand-in for the image check with fixed readings (test builds only).
@@ -80,6 +85,8 @@ pub struct FakeCheck {
     pub sizes: std::sync::Arc<parking_lot::Mutex<Vec<(u32, u32)>>>,
     /// Readings for brought-in (or fed-in) pictures of one size, in place of `original`.
     pub original_by_size: Vec<((u32, u32), pinhole_check::Original)>,
+    /// Face boxes (x, y, w, h) found on every picture.
+    pub face_boxes: Vec<[f32; 4]>,
 }
 
 #[cfg(any(test, feature = "test-util"))]
@@ -105,6 +112,9 @@ impl Inspector for FakeCheck {
             .iter()
             .find(|(s, _)| *s == size)
             .map_or(self.original, |(_, o)| *o))
+    }
+    fn face_boxes(&self, _png: &[u8]) -> Result<Vec<[f32; 4]>, pinhole_check::CheckError> {
+        Ok(self.face_boxes.clone())
     }
 }
 
@@ -354,6 +364,23 @@ pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> C
     }
     core.check.describable.lock().insert(img.id.clone());
     Ok(())
+}
+
+/// Boxes (x, y, w, h) of the faces on a session picture big enough to redraw, largest first,
+/// found by the image check's face finder (Add detail).
+pub async fn face_boxes(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<Vec<[f32; 4]>> {
+    let c = core.clone();
+    let png = img.bytes.clone();
+    let res = tokio::task::spawn_blocking(move || c.check.inspector().face_boxes(&png))
+        .await
+        .map_err(|e| {
+            CoreError::new(
+                "check_failed",
+                "Finding faces stopped unexpectedly. Try again.",
+            )
+            .with_details(e.to_string())
+        })?;
+    res.map_err(|e| check_error(core, e))
 }
 
 /// Whether a picture is photo-style (the tagger's `realistic` / `photorealistic` tags), which

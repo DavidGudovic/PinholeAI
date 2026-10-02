@@ -151,6 +151,28 @@ impl Checker {
         })
     }
 
+    /// Boxes (x, y, w, h, in image pixels) of the clear faces on a picture that are big
+    /// enough to redraw ([`Face::counts`]), largest first. Upright only, no age estimate.
+    pub fn face_boxes(&self, png: &[u8]) -> Result<Vec<[f32; 4]>, CheckError> {
+        let img = decode(png)?;
+        let mut l = self.loaded.lock();
+        *self.last_used.lock() = Some(Instant::now());
+        let mut found: Vec<_> = self
+            .faces(&mut l, &img, true)?
+            .into_iter()
+            .filter(|f| f.0.counts())
+            .collect();
+        found.sort_by(|a, b| b.0.side.total_cmp(&a.0.side));
+        // The same face can be found by more than one pass: keep the first of overlapping boxes.
+        let mut out: Vec<[f32; 4]> = Vec::new();
+        for (_, b) in found {
+            if !out.iter().any(|o| overlap(o, &b) > 0.5) {
+                out.push(b);
+            }
+        }
+        Ok(out)
+    }
+
     /// Only the faces of a picture with their age estimates (measurement tools: the
     /// age half of rule 2 on folders of portraits, without the slower classifiers).
     pub fn face_readings(&self, png: &[u8]) -> Result<Vec<Face>, CheckError> {
@@ -980,6 +1002,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn overlap_is_a_share_of_the_smaller_box() {
+        let big = [0.0, 0.0, 100.0, 100.0];
+        assert_eq!(overlap(&big, &[10.0, 10.0, 20.0, 20.0]), 1.0);
+        assert_eq!(overlap(&big, &[90.0, 0.0, 20.0, 20.0]), 0.5);
+        assert_eq!(overlap(&big, &[200.0, 0.0, 20.0, 20.0]), 0.0);
+    }
+
+    #[test]
     fn tag_index_reads_the_csv_order() {
         use tag_ids::*;
         let mut ids: Vec<u32> = RATINGS.to_vec();
@@ -1102,4 +1132,15 @@ mod tests {
         assert!(matches!(c.original(&png), Err(CheckError::Missing(_))));
         assert!(matches!(c.readings(b"not a png"), Err(CheckError::Image)));
     }
+}
+
+/// Overlap of two (x, y, w, h) boxes as a share of the smaller one.
+fn overlap(a: &[f32; 4], b: &[f32; 4]) -> f32 {
+    let w = (a[0] + a[2]).min(b[0] + b[2]) - a[0].max(b[0]);
+    let h = (a[1] + a[3]).min(b[1] + b[3]) - a[1].max(b[1]);
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
+    }
+    let smaller = (a[2] * a[3]).min(b[2] * b[3]).max(1.0);
+    w * h / smaller
 }

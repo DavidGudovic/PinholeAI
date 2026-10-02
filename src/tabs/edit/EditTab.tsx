@@ -122,7 +122,7 @@ export function EditTab() {
   const mask = useRef<MaskHandle>(null);
   // The mask each edit was made with (by result image), so "Try again" repaints the same area.
   const masks = useRef(new Map<string, Blob | null>());
-  // Steps made by Add detail (Fix details with nothing painted): Try again redoes the whole picture.
+  // Steps made by Add detail (Fix details with nothing painted): Try again redoes the faces.
   const wholeDetail = useRef(new Set<string>());
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
@@ -358,7 +358,7 @@ export function EditTab() {
     (fixing ||
       (extending ? !!canvas : text.trim().length > 0 || !!e.styleId));
   // An upscale step has nothing to redo; the original has no step before it.
-  // Fix details redoes the step with the spot painted for it, or the whole picture again
+  // Fix details redoes the step with the spot painted for it, or the faces again
   // after Add detail. Not while edits run or wait:
   // redoing a step drops the steps after it, which could be their results.
   // Extend redoes from the step before, which is smaller than the shown result.
@@ -505,7 +505,7 @@ export function EditTab() {
                 : mode === "instruction"
                   ? "Say what should change. Everything else stays the same."
                   : fixing
-                    ? "Paint over a small spot, like a face or hand, to redraw it larger and blend it back in. Paint nothing to add detail to the whole picture."
+                    ? "Paint over a small spot, like a face or hand, to redraw it larger and blend it back in. Paint nothing to add detail to every face."
                     : extending
                       ? "Pick a new shape. Pinhole adds space around your picture and draws what fits there."
                       : "Redraws the whole picture with your description."}
@@ -805,7 +805,7 @@ export function EditTab() {
                   <p className="mt-0.5 text-xs text-neutral-500">
                     {painted
                       ? "Paint a little past the edges so it blends in."
-                      : "Paint over the face, hand or detail to redraw. Paint nothing to add detail to the whole picture."}
+                      : "Paint over the face, hand or detail to redraw. Paint nothing to add detail to every face."}
                   </p>
                 </div>
               ) : (
@@ -986,7 +986,7 @@ export function EditTab() {
                   {fixing
                     ? painted
                       ? "The picture keeps its size; only the painted spot changes. "
-                      : "The picture keeps its size; it's drawn larger, then scaled back down. "
+                      : "The picture keeps its size; each face is redrawn larger, then blended back in. "
                     : extending
                       ? "The picture keeps its detail; the new space is drawn at the model's size and scaled to fit. "
                       : "Size keeps your image’s shape. "}

@@ -224,7 +224,8 @@ export function buildEditRequest(
     return {
       modelId: opts.model.id,
       mode: "img2img",
-      prompt: e.fixPrompt.trim(),
+      // Add detail (nothing painted) redraws faces: without a description, say so.
+      prompt: e.fixPrompt.trim() || (opts.maskImageId ? "" : "a detailed face"),
       styleId: e.styleId,
       dials: { shape: "square", quality: e.quality, stick: defaultStickPosition(opts.ui), count: 1 },
       fineTune: fixFineTune,
