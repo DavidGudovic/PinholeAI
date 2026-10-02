@@ -196,6 +196,29 @@ async fn improve_prompt_falls_back_when_the_model_loops() {
     assert!(body["max_tokens"].as_u64().unwrap() <= 240);
 }
 
+/// A long idea leaves the helper room to restate it and still write the other lines.
+#[tokio::test]
+async fn improve_prompt_gives_a_long_idea_room_for_every_line() {
+    let (_tmp, core, _rec) = new_core();
+    let llama = MockLlamaServer::start("PROMPT: -", 0).await;
+    use_external_captioner(&core, &llama.base_url());
+    let idea = vec!["a quiet harbour town at dawn"; 25].join(", ");
+    let _ = describe::improve_prompt(
+        &core,
+        &idea,
+        Some("sdxl"),
+        &[],
+        describe::ImproveTarget::Create,
+    )
+    .await;
+    let body = &llama.requests()[0];
+    let words = idea.split_whitespace().count() as u64;
+    assert!(
+        body["max_tokens"].as_u64().unwrap() >= 200 + words * 2,
+        "{body}"
+    );
+}
+
 /// App exit / update while the describe engine loads: `shutdown` doesn't
 /// wait for the load timeout, and describe works again afterwards.
 #[cfg(unix)]
