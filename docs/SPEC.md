@@ -394,13 +394,16 @@ Four modes; Describe a change or Restyle is picked automatically:
    image allows),
    scales it to about the Quality dial's native area, inpaints only that box (img2img +
    `mask_image`, one image, no hires fix), scales the result back down and pastes it into the
-   source with a feathered edge. The result keeps the source's size; no face detector is used.
+   source with a feathered edge. The result keeps the source's size; with a painted spot no face detector is used.
    All of it happens in memory. **How much to change** maps to `strength` 0.3/0.45/0.6.
-   With nothing painted, the button reads **Add detail** and the whole picture is redrawn
-   (img2img, no mask, one image, no hires fix) at 1.5× the Quality dial's area per side, or at
-   the picture's own size if that is larger (longer side at most 2048 px), then scaled back
-   to the picture's size, so it keeps its size and gets finer detail. A picture over 2× the dial's area per side or over
-   2048 px on a side is refused with "Paint over the part to fix".
+   With nothing painted, the button reads **Add detail**: the image check's face finder (YuNet,
+   already downloaded for the check; no new file) finds the clear faces at least 40 px across
+   and less than half the Quality dial's native side (a larger face would be drawn smaller than
+   it is), and each face (largest first, at most 6) is fixed the same way, its box grown by 15% on every
+   side as the mask, one engine pass per face, each on the previous pass's result. Without
+   "What is it?" text the prompt is "a detailed face". No such face → "No face found that
+   needs more detail. Paint over the part to fix instead." The picture keeps its size; the finished
+   picture and each redrawn face are checked like any Fix details result.
 4. **Extend** (same models as Restyle): make the picture wider or taller and let the model
    draw the new edges. The user picks a **New shape** (the Create shape chips, or **Around** =
    same shape with 15% more on every side; a chip the picture already has is greyed out) and,
