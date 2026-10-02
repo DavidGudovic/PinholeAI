@@ -29,7 +29,7 @@ tempfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 # Lists the request fields Rust skips when reading (tests/tests/ipc_shapes.rs).
-serde_ignored = "0.1"
+serde_ignored = { workspace = true }
 chrono = { workspace = true }
 parking_lot = { workspace = true }
 serde_yaml = { workspace = true }

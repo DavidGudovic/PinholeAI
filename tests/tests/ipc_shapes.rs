@@ -2,9 +2,11 @@
 //! sends use only fields Rust reads.
 //!
 //! Values come from the core functions behind the Tauri commands (a mock sd-server stands in
-//! for the engine) and, for Browse cards and install plans, from the CivitAI fixtures. Each value is compared with its interface in types.ts, nested interfaces
-//! included: every key Rust sends must be declared there, and every field types.ts marks as
-//! required (no `?`) must be sent.
+//! for the engine) and, for Browse cards and install plans, from the CivitAI fixtures. Each
+//! value is compared with its interface in types.ts, nested ones included: every key Rust sends
+//! must be declared there, every field types.ts marks as required (no `?`) must be sent, and
+//! each value must be of a kind the field's type allows (`null` only where it says `| null`).
+//! Inline `{ … }` types are compared where the value has them (not inside an empty list).
 //!
 //! Every interface in types.ts must be either checked here or listed in `NOT_CHECKED`.
 
@@ -48,12 +50,13 @@ const NOT_CHECKED: &[&str] = &[
 enum Ty {
     /// An inline `{ … }` object.
     Object(Fields),
-    /// A named type (interface, alias or primitive).
+    /// A named type: an interface, a primitive (`string`, `number`, `boolean`, `null`) or an
+    /// alias such as `ContentMode`.
     Name(String),
     Array(Box<Ty>),
-    /// One of several (`A | null`, string literal unions…).
+    /// `A | B | …`
     Union(Vec<Ty>),
-    /// Anything else (`Record<…>`, tuples, literals): not compared.
+    /// Anything else (`Record<…>`, tuples, string literals): any value fits.
     Other,
 }
 
@@ -65,123 +68,198 @@ struct Field {
 
 type Fields = BTreeMap<String, Field>;
 
-/// The interfaces declared in types.ts (`export interface Name { … }`).
+/// The object types declared in types.ts: every `export interface` (with what it extends),
+/// and `export type X = Omit<Y, …>` aliases of them.
 fn read_types_ts() -> HashMap<String, Fields> {
     let text = std::fs::read_to_string(repo_root().join("src/lib/types.ts")).unwrap();
     let src = strip_comments(&text);
     let mut out = HashMap::new();
-    let mut rest = src.as_str();
-    while let Some(i) = rest.find("export interface ") {
-        rest = &rest[i + "export interface ".len()..];
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        let open = rest.find('{').unwrap();
-        let body_end = matching(rest, open);
-        out.insert(name, parse_fields(&rest[open + 1..body_end]));
-        rest = &rest[body_end..];
+    let mut extends = Vec::new();
+    let mut omits = Vec::new();
+    for (i, _) in src.match_indices("export ") {
+        let decl = &src[i + "export ".len()..];
+        if let Some(rest) = decl.strip_prefix("interface ") {
+            let open = rest.find('{').unwrap();
+            let mut head = rest[..open].split(" extends ");
+            let name = head.next().unwrap().trim().to_string();
+            if let Some(bases) = head.next() {
+                let bases: Vec<String> = bases.split(',').map(|b| b.trim().to_string()).collect();
+                extends.push((name.clone(), bases));
+            }
+            let close = matching(rest, open);
+            out.insert(name, parse_fields(&rest[open + 1..close]));
+        } else if let Some(rest) = decl.strip_prefix("type ") {
+            let (name, value) = rest.split_once('=').unwrap();
+            let value = value[..value.find(';').unwrap()].trim();
+            if let Some(args) = value
+                .strip_prefix("Omit<")
+                .and_then(|a| a.strip_suffix('>'))
+            {
+                let (base, keys) = args.split_once(',').unwrap();
+                let keys: Vec<String> = keys
+                    .split('|')
+                    .map(|k| k.trim().trim_matches('"').to_string())
+                    .collect();
+                omits.push((name.trim().to_string(), base.trim().to_string(), keys));
+            }
+        }
     }
-    assert!(out.len() > 50, "read only {} interfaces", out.len());
+    for (name, bases) in extends {
+        for base in bases {
+            let inherited = out[&base].clone();
+            out.get_mut(&name).unwrap().extend(inherited);
+        }
+    }
+    for (name, base, keys) in omits {
+        let mut fields = out[&base].clone();
+        fields.retain(|k, _| !keys.contains(k));
+        out.insert(name, fields);
+    }
+    assert!(out.len() > 50, "read only {} types", out.len());
     out
 }
 
+/// Calls `visit(index, char, depth)` for every character of `s` outside string literals;
+/// `depth` counts the brackets open before it. Stops when `visit` returns false.
+fn walk(s: &str, mut visit: impl FnMut(usize, char, i32) -> bool) {
+    let mut depth = 0;
+    let mut quote = None;
+    let mut prev = ' ';
+    for (i, c) in s.char_indices() {
+        match quote {
+            Some(q) if c == q && prev != '\\' => quote = None,
+            Some(_) => {}
+            None if matches!(c, '"' | '\'' | '`') => quote = Some(c),
+            None => {
+                if matches!(c, '}' | ']' | ')') || (c == '>' && prev != '=') {
+                    depth -= 1;
+                }
+                if !visit(i, c, depth) {
+                    return;
+                }
+                if matches!(c, '{' | '[' | '(' | '<') {
+                    depth += 1;
+                }
+            }
+        }
+        prev = c;
+    }
+}
+
+/// `text` without `//` and `/* */` comments (string literals are kept as they are).
 fn strip_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    loop {
-        let line = rest.find("//");
-        let block = rest.find("/*");
-        match (line, block) {
-            (None, None) => break,
-            (Some(l), b) if b.is_none_or(|b| l < b) => {
-                out.push_str(&rest[..l]);
-                rest = &rest[l..];
-                rest = &rest[rest.find('\n').unwrap_or(rest.len())..];
+    let mut chars = text.chars().peekable();
+    let mut quote = None;
+    while let Some(c) = chars.next() {
+        match quote {
+            Some(q) => {
+                out.push(c);
+                if c == '\\' {
+                    out.extend(chars.next());
+                } else if c == q {
+                    quote = None;
+                }
             }
-            (_, Some(b)) => {
-                out.push_str(&rest[..b]);
-                rest = &rest[b..];
-                rest = &rest[rest.find("*/").map_or(rest.len(), |e| e + 2)..];
+            None if c == '/' && chars.peek() == Some(&'/') => {
+                while chars.peek().is_some_and(|&n| n != '\n') {
+                    chars.next();
+                }
             }
-            _ => unreachable!(),
+            None if c == '/' && chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut prev = ' ';
+                for n in chars.by_ref() {
+                    if prev == '*' && n == '/' {
+                        break;
+                    }
+                    prev = n;
+                }
+            }
+            None => {
+                if matches!(c, '"' | '\'' | '`') {
+                    quote = Some(c);
+                }
+                out.push(c);
+            }
         }
     }
-    out.push_str(rest);
     out
 }
 
 /// Index of the bracket closing the one at `open`.
 fn matching(s: &str, open: usize) -> usize {
-    let mut depth = 0i32;
-    for (i, c) in s[open..].char_indices() {
-        match c {
-            '{' | '[' | '(' | '<' => depth += 1,
-            '}' | ']' | ')' | '>' => {
-                depth -= 1;
-                if depth == 0 {
-                    return open + i;
-                }
-            }
-            _ => {}
+    let mut close = None;
+    walk(&s[open..], |i, c, depth| {
+        if depth == 0 && i > 0 && matches!(c, '}' | ']' | ')' | '>') {
+            close = Some(open + i);
         }
-    }
-    panic!("unbalanced brackets in types.ts");
+        close.is_none()
+    });
+    close.expect("unbalanced brackets in types.ts")
 }
 
-/// `s` split at `sep` where no bracket is open.
+/// `s` split at each `sep` where no bracket is open.
 fn split_top(s: &str, sep: char) -> Vec<&str> {
     let mut parts = Vec::new();
-    let (mut depth, mut start) = (0i32, 0);
-    for (i, c) in s.char_indices() {
-        match c {
-            '{' | '[' | '(' | '<' => depth += 1,
-            '}' | ']' | ')' | '>' => depth -= 1,
-            c if c == sep && depth == 0 => {
-                parts.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
+    let mut start = 0;
+    walk(s, |i, c, depth| {
+        if c == sep && depth == 0 {
+            parts.push(&s[start..i]);
+            start = i + 1;
         }
-    }
+        true
+    });
     parts.push(&s[start..]);
     parts
 }
 
 fn parse_fields(body: &str) -> Fields {
-    let mut fields = Fields::new();
-    for decl in split_top(body, ';')
+    // One declaration per `;` or line; a type continued on the next line (`a:` then `| B`)
+    // stays in one piece.
+    let mut decls: Vec<String> = Vec::new();
+    for piece in split_top(body, ';')
         .into_iter()
         .flat_map(|d| split_top(d, '\n'))
     {
-        let decl = decl.trim();
-        let Some(colon) = decl.find(':') else {
-            continue;
-        };
-        let (name, ty) = (decl[..colon].trim(), decl[colon + 1..].trim());
-        let (name, optional) = match name.strip_suffix('?') {
+        let piece = piece.trim();
+        match decls.last_mut() {
+            Some(last) if piece.starts_with('|') || last.ends_with(':') || last.ends_with('|') => {
+                last.push(' ');
+                last.push_str(piece);
+            }
+            _ if !piece.is_empty() => decls.push(piece.to_string()),
+            _ => {}
+        }
+    }
+    let mut fields = Fields::new();
+    for decl in decls {
+        let (name, ty) = decl.split_once(':').expect("a field declaration");
+        let (name, optional) = match name.trim().strip_suffix('?') {
             Some(n) => (n, true),
-            None => (name, false),
+            None => (name.trim(), false),
         };
-        fields.insert(
-            name.to_string(),
-            Field {
-                optional,
-                ty: parse_ty(ty),
-            },
+        assert!(
+            name.chars().all(|c| c.is_alphanumeric() || c == '_'),
+            "types.ts: this test can't read the field `{name}`"
         );
+        let ty = parse_ty(ty);
+        fields.insert(name.to_string(), Field { optional, ty });
     }
     fields
 }
 
 fn parse_ty(ty: &str) -> Ty {
-    let ty = ty.trim();
+    let ty = ty.trim().trim_start_matches('|').trim();
     let members = split_top(ty, '|');
     if members.len() > 1 {
         return Ty::Union(members.into_iter().map(parse_ty).collect());
     }
     if let Some(inner) = ty.strip_suffix("[]") {
         return Ty::Array(Box::new(parse_ty(inner)));
+    }
+    if ty.starts_with('(') && matching(ty, 0) == ty.len() - 1 {
+        return parse_ty(&ty[1..ty.len() - 1]);
     }
     if ty.starts_with('{') && matching(ty, 0) == ty.len() - 1 {
         return Ty::Object(parse_fields(&ty[1..ty.len() - 1]));
@@ -211,33 +289,58 @@ impl Checker {
 
     /// Compare a Rust value (or a list of them) with the types.ts interface `name`.
     fn check(&mut self, name: &str, value: &impl Serialize) {
+        assert!(self.types.contains_key(name), "{name} is not in types.ts");
         let v = serde_json::to_value(value).unwrap();
         let ty = Ty::Name(name.to_string());
-        if v.as_array().is_some_and(|a| a.is_empty()) {
-            self.problems
-                .insert(format!("{name}: the test value is an empty list"));
-        }
-        let ty = if v.is_array() {
-            Ty::Array(Box::new(ty))
-        } else {
-            ty
+        let ty = match &v {
+            Value::Array(items) => {
+                assert!(!items.is_empty(), "{name}: the test value is an empty list");
+                Ty::Array(Box::new(ty))
+            }
+            _ => ty,
         };
         self.value(name, &ty, &v);
     }
 
+    /// Whether `v` is the kind of JSON value `ty` describes (fields aren't looked at).
+    fn fits(&self, ty: &Ty, v: &Value) -> bool {
+        match ty {
+            Ty::Union(members) => members.iter().any(|m| self.fits(m, v)),
+            Ty::Array(_) => v.is_array(),
+            Ty::Object(_) => v.is_object(),
+            Ty::Name(n) => match n.as_str() {
+                "string" => v.is_string(),
+                "number" => v.is_number(),
+                "boolean" => v.is_boolean(),
+                "null" => v.is_null(),
+                "unknown" | "any" => true,
+                n if self.types.contains_key(n) => v.is_object(),
+                // String literal aliases (`ContentMode`, `Fit`…).
+                _ => v.is_string(),
+            },
+            Ty::Other => true,
+        }
+    }
+
     fn value(&mut self, at: &str, ty: &Ty, v: &Value) {
+        if !self.fits(ty, v) {
+            self.problems.insert(format!(
+                "{at}: Rust sends {v}, which types.ts doesn't allow there"
+            ));
+            return;
+        }
         match (ty, v) {
             (Ty::Union(members), _) => {
-                // The member that fits the JSON kind (`Foo | null`, `Foo[] | null`).
-                let fit = members.iter().find(|m| match (m, v) {
-                    (Ty::Array(_), Value::Array(_)) => true,
-                    (Ty::Object(_), Value::Object(_)) => true,
-                    (Ty::Name(n), Value::Object(_)) => self.types.contains_key(n),
-                    _ => false,
-                });
-                if let Some(m) = fit.cloned() {
-                    self.value(at, &m, v);
-                }
+                let fit: Vec<Ty> = members
+                    .iter()
+                    .filter(|m| self.fits(m, v))
+                    .cloned()
+                    .collect();
+                assert!(
+                    fit.len() == 1 || !v.is_object(),
+                    "{at}: more than one member of the union fits; this test can't tell which"
+                );
+                self.value(at, &fit[0], v);
             }
             (Ty::Array(inner), Value::Array(items)) => {
                 for (i, item) in items.iter().enumerate() {
@@ -322,7 +425,7 @@ impl Checker {
             let named = match ty {
                 Ty::Name(n) => Some(n.clone()),
                 Ty::Union(m) => m.iter().find_map(|t| match t {
-                    Ty::Name(n) => Some(n.clone()),
+                    Ty::Name(n) if self.types.contains_key(n) => Some(n.clone()),
                     _ => None,
                 }),
                 _ => None,
@@ -456,7 +559,11 @@ async fn rust_json_matches_types_ts() {
     let preset = json!({
         "id": "", "name": "Mine", "family": "sdxl", "modelId": null, "civitaiVersionId": null,
         "styleId": null, "shape": "square", "quality": "fast", "stick": 0.5, "count": 1,
-        "fineTune": { "steps": 20 },
+        "fineTune": {
+            "sampler": "euler", "scheduler": "karras", "steps": 20, "cfg": 7.0, "guidance": 3.5,
+            "seed": 1, "flowShift": 3.0, "clipSkip": 2, "width": 1024, "height": 1024,
+            "hires": true, "vaeTiling": true, "autoPromptPrefix": true
+        },
         "loras": [{ "loraId": "l", "civitaiVersionId": 1, "name": "Neon", "weight": 0.8 }],
         "builtin": false
     });
@@ -519,11 +626,10 @@ async fn rust_json_matches_types_ts() {
     );
 
     // A download that fails at once (Offline mode on).
-    pinhole_core::downloads::start_event_forwarding(&core);
     let mut settings = app::get_settings(&core);
     settings.offline = true;
     app::set_settings(&core, settings).unwrap();
-    let _ = engine_setup::install_engine(&core).await;
+    let _ = models::install_recommended(&core, "realistic").await;
     c.check("GroupStatus", &pinhole_core::downloads::list(&core));
 
     // Events, as the Tauri bridge sends them (the `payload` part).
@@ -531,7 +637,6 @@ async fn rust_json_matches_types_ts() {
     let event_types = HashMap::from([
         ("generation-progress", "GenerationProgress"),
         ("engine-status", "EngineStatus"),
-        ("download-progress", "GroupStatus"),
         ("models-move-progress", "ModelsMoveProgress"),
     ]);
     for e in &events {
