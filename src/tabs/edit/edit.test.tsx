@@ -273,6 +273,36 @@ describe("Edit tab", () => {
     expect(screen.queryByText(/still working on the last image/)).toBeNull();
   });
 
+  it("Side by side shows image 2 next to an edit that combined it, in place of Compare", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "editPush", ref: ref("e1") });
+    });
+    expect(screen.queryByRole("button", { name: /Side by side/ })).toBeNull();
+    act(() => {
+      store.dispatch({ type: "editSetSecond", ref: ref("b") });
+      store.dispatch({ type: "editPush", ref: ref("e2"), secondImageId: "b" });
+    });
+    const side = await screen.findByRole("button", { name: /Side by side/ });
+    const compare = screen.getByRole("button", { name: /Compare/ });
+    fireEvent.click(compare);
+    expect(compare.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(side);
+    expect(side.getAttribute("aria-pressed")).toBe("true");
+    expect(compare.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("side-by-side")).toBeTruthy();
+    fireEvent.click(compare);
+    expect(side.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("side-by-side")).toBeNull();
+  });
+
   it("with a second image, hides the brush and edits with a model that combines two images", async () => {
     const kontext = { ...model, id: "kx", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true, fit: "fits" } as InstalledModel;
     const klein = { ...model, id: "kl", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" } as InstalledModel;

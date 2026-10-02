@@ -6,6 +6,7 @@ import {
   ImageUp,
   Layers,
   Maximize2,
+  PanelsLeftRight,
   Save,
   ScanText,
   Shuffle,
@@ -18,6 +19,7 @@ import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
 import { ImageViewer } from "../../components/ImageViewer";
 import { Logo } from "../../components/Logo";
+import { SideBySide } from "../../components/SideBySide";
 import { Button, IconButton, Kbd, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
@@ -131,6 +133,12 @@ function Preview({
   const actions = useActions();
   const busy = useAppState((s) => !!s.job);
   const hasBatch = useAppState((s) => !!s.resultBatch[result.id]);
+  // The reference picture this result was made with, while it is still in memory.
+  const reference = useAppState((s) => {
+    const id = s.batches[s.resultBatch[result.id]]?.request.refImageIds?.[0];
+    return id ? s.images[id] : undefined;
+  });
+  const [sideBySide, setSideBySide] = useState(false);
   const unsavedCount = useAppState((s) => unsavedIds(s).length);
   const [error, setError] = useState<CoreError | null>(null);
 
@@ -152,13 +160,20 @@ function Preview({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 pt-5 pb-3">
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
-        <img
-          src={img.url}
-          alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}`}
-          className="max-h-full max-w-full rounded-lg object-contain shadow-lg ring-1 ring-black/5 dark:ring-white/10"
-          draggable={false}
-          onDoubleClick={onExpand}
-        />
+        {sideBySide && reference ? (
+          <SideBySide
+            first={{ ...reference, label: "Reference" }}
+            second={{ url: img.url, width: result.width, height: result.height, label: "Result" }}
+          />
+        ) : (
+          <img
+            src={img.url}
+            alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}`}
+            className="max-h-full max-w-full rounded-lg object-contain shadow-lg ring-1 ring-black/5 dark:ring-white/10"
+            draggable={false}
+            onDoubleClick={onExpand}
+          />
+        )}
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
@@ -199,6 +214,16 @@ function Preview({
           disabled={busy}
           onPick={(f) => void run(() => actions.upscale(result.id, f))}
         />
+        {reference && (
+          <Button
+            className={sideBySide ? "ring-2 ring-amber-500" : undefined}
+            aria-pressed={sideBySide}
+            title="Show the reference picture and the result next to each other"
+            onClick={() => setSideBySide((v) => !v)}
+          >
+            <PanelsLeftRight className="h-4 w-4" /> Side by side
+          </Button>
+        )}
         <IconButton
           label="View full screen"
           variant="secondary"

@@ -1,9 +1,9 @@
-// The bar above the picture: undo, redo, delete, Try again, Compare, and the image actions.
-import type { Dispatch, SetStateAction } from "react";
+// The bar above the picture: undo, redo, delete, Try again, Compare, Side by side, and the image actions.
 import {
   Columns2,
   Copy,
   ImagePlus,
+  PanelsLeftRight,
   Redo2,
   RefreshCw,
   ScanText,
@@ -31,6 +31,9 @@ export function EditToolbar({
   onTryAgain,
   compare,
   setCompare,
+  canSideBySide,
+  sideBySide,
+  setSideBySide,
   compareWith,
   setCompareWith,
   onPickImage,
@@ -50,7 +53,11 @@ export function EditToolbar({
   canTryAgain: boolean;
   onTryAgain: () => void;
   compare: boolean;
-  setCompare: Dispatch<SetStateAction<boolean>>;
+  setCompare: (on: boolean) => void;
+  /** The shown edit combined a second image. */
+  canSideBySide: boolean;
+  sideBySide: boolean;
+  setSideBySide: (on: boolean) => void;
   compareWith: "previous" | "original";
   setCompareWith: (w: "previous" | "original") => void;
   onPickImage: () => void;
@@ -108,7 +115,7 @@ export function EditToolbar({
         variant={compare && before ? "secondary" : "ghost"}
         disabled={!before && e.index === 0}
         aria-pressed={compare && !!before}
-        onClick={() => setCompare((c) => !c)}
+        onClick={() => setCompare(!compare)}
       >
         <Columns2 className="h-3.5 w-3.5" /> Compare
       </Button>
@@ -123,6 +130,17 @@ export function EditToolbar({
             { value: "original", label: "Original" },
           ]}
         />
+      )}
+      {canSideBySide && (
+        <Button
+          size="sm"
+          variant={sideBySide ? "secondary" : "ghost"}
+          aria-pressed={sideBySide}
+          title="Show image 2 and this edit next to each other"
+          onClick={() => setSideBySide(!sideBySide)}
+        >
+          <PanelsLeftRight className="h-3.5 w-3.5" /> Side by side
+        </Button>
       )}
       <div className="ml-auto flex items-center gap-1.5">
         <Button

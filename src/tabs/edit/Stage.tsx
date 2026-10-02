@@ -1,7 +1,8 @@
-// The picture being edited, with the mask canvas, Compare view, Extend frame and full-screen viewer.
+// The picture being edited, with the mask canvas, Compare and Side by side views, Extend frame and full-screen viewer.
 import { useRef, useState, type RefObject } from "react";
 import { Maximize2 } from "lucide-react";
 import { ImageViewer } from "../../components/ImageViewer";
+import { SideBySide, type SidePicture } from "../../components/SideBySide";
 import { IconButton, cx } from "../../components/ui";
 import type { ExtendCanvas } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
@@ -12,6 +13,7 @@ import { useFitBox } from "./useFitBox";
 export function Stage({
   current,
   before,
+  pair,
   beforeLabel,
   afterLabel,
   maskOn,
@@ -23,6 +25,8 @@ export function Stage({
 }: {
   current: { id: string; url: string; width: number; height: number };
   before?: { id: string; url: string; width: number; height: number };
+  /** Two pictures shown whole next to each other, in place of the picture. */
+  pair?: { first: SidePicture; second: SidePicture };
   beforeLabel: string;
   afterLabel: string;
   maskOn: boolean;
@@ -57,7 +61,8 @@ export function Stage({
       ref={container}
       className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden p-6"
     >
-      {box.width > 0 && before && (
+      {pair && <SideBySide first={pair.first} second={pair.second} />}
+      {box.width > 0 && before && !pair && (
         <CompareView
           before={before}
           after={current}
@@ -67,7 +72,7 @@ export function Stage({
           afterLabel={afterLabel}
         />
       )}
-      {canvas && !before && box.width > 0 && (
+      {canvas && !before && !pair && box.width > 0 && (
         <div
           aria-label="New space"
           className="absolute rounded-lg border-2 border-dashed border-amber-500/80 bg-amber-500/10"
@@ -76,7 +81,7 @@ export function Stage({
       )}
       {/* Kept mounted while comparing so a painted mask isn't lost. */}
       <div
-        hidden={!!before || box.width === 0}
+        hidden={!!before || !!pair || box.width === 0}
         className={cx(
           "relative overflow-hidden shadow-lg ring-1 ring-black/5 dark:ring-white/10",
           canvas ? "rounded-sm" : "rounded-lg",

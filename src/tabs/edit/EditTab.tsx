@@ -70,6 +70,8 @@ export function EditTab() {
   const [erase, setErase] = useState(false);
   const [painted, setPainted] = useState(false);
   const [compare, setCompare] = useState(false);
+  // Side by side: the second image an edit combined, next to the result.
+  const [sideBySide, setSideBySide] = useState(false);
   const [compareWith, setCompareWith] = useState<"previous" | "original">(
     "previous",
   );
@@ -124,6 +126,9 @@ export function EditTab() {
   const prevNode =
     compareWith === "original" ? e.chain[0] : e.chain[e.index - 1];
   const before = e.index > 0 && prevNode ? images[prevNode.imageId] : undefined;
+  const nodeSecond = node?.secondImageId ? images[node.secondImageId] : undefined;
+  const showSide = sideBySide && !!nodeSecond;
+  const comparing = compare && !!before && !showSide;
   const outSize = current
     ? editOutputSize(
         current.width,
@@ -152,6 +157,7 @@ export function EditTab() {
     try {
       await actions.importToEdit(f);
       setCompare(false);
+      setSideBySide(false);
     } catch (err) {
       setError(api.asCoreError(err));
     } finally {
@@ -184,6 +190,7 @@ export function EditTab() {
     masks.current.clear();
     wholeDetail.current.clear();
     setCompare(false);
+    setSideBySide(false);
     setError(null);
   }, [originalId]);
 
@@ -238,6 +245,7 @@ export function EditTab() {
         if (fixing && !m) wholeDetail.current.add(made.imageId);
         setCompare(true);
         setCompareWith("previous");
+        setSideBySide(false);
       }
     } catch (err) {
       setError(api.asCoreError(err));
@@ -537,8 +545,17 @@ export function EditTab() {
               importing={importing}
               canTryAgain={canTryAgain}
               onTryAgain={() => void run(true)}
-              compare={compare}
-              setCompare={setCompare}
+              compare={comparing}
+              setCompare={(v) => {
+                setCompare(v);
+                setSideBySide(false);
+              }}
+              canSideBySide={!!nodeSecond}
+              sideBySide={showSide}
+              setSideBySide={(v) => {
+                setSideBySide(v);
+                setCompare(false);
+              }}
               compareWith={compareWith}
               setCompareWith={setCompareWith}
               onPickImage={picker.open}
@@ -555,15 +572,23 @@ export function EditTab() {
 
             <Stage
               current={current}
-              before={compare ? before : undefined}
+              before={comparing ? before : undefined}
+              pair={
+                showSide && nodeSecond
+                  ? {
+                      first: { ...nodeSecond, label: "Image 2" },
+                      second: { ...current, label: node?.label ?? "Result" },
+                    }
+                  : undefined
+              }
               beforeLabel={
                 compareWith === "original"
                   ? "Original"
                   : (prevNode?.label ?? "Before")
               }
               afterLabel={node?.label ?? "After"}
-              maskOn={maskOn && !twoImages && !(compare && before)}
-              canvas={canvas && !(compare && before) ? canvas : null}
+              maskOn={maskOn && !twoImages && !comparing && !showSide}
+              canvas={canvas && !comparing && !showSide ? canvas : null}
               maskRef={mask}
               brush={brush}
               erase={erase}

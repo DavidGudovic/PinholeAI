@@ -379,6 +379,17 @@ describe("requests", () => {
     expect(s.edit.secondImageId).toBeNull();
   });
 
+  it("an edit remembers the second image it combined, and keeps it after image 2 is removed", () => {
+    let s = run(withModels(), { type: "editLoad", ref: ref("a") }, { type: "editSetSecond", ref: ref("b") });
+    s = run(s, { type: "editPush", ref: ref("e1"), secondImageId: "b" }, { type: "editPush", ref: ref("e2") });
+    expect(s.edit.chain.map((n) => n.secondImageId)).toEqual([undefined, "b", undefined]);
+    s = run(s, { type: "editSetSecond", ref: null });
+    expect(s.images.b).toBeDefined();
+    // Gone once the edit that used it is deleted.
+    s = run(s, { type: "editDelete", index: 1 });
+    expect(s.images.b).toBeUndefined();
+  });
+
   it("sends Create's reference picture and keeps it while it or a batch uses it", () => {
     const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], fit: "fits" });
     const big = model("big", "flux2_dev", { modes: ["txt2img", "img2img", "edit"], fit: "tooBig", lastUsed: 99 });

@@ -2,7 +2,7 @@
 import { Profiler, type ReactNode } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { GroupStatus, InstalledModel, Preset, ResultImage, Style } from "../../lib/types";
+import type { GenerateRequest, GroupStatus, InstalledModel, Preset, ResultImage, Style } from "../../lib/types";
 
 // Deferred IPC calls the tests resolve by hand; everything else goes to the mock backend.
 const hold = <T,>() => {
@@ -359,6 +359,30 @@ describe("reference picture", () => {
     expect(store.getState().create.modelId).toBe("k");
     fireEvent.click(screen.getByRole("button", { name: "Remove the reference picture" }));
     expect(store.getState().create.refImageId).toBeNull();
+  });
+
+  it("Side by side shows the reference picture next to a result made with it", () => {
+    globalThis.ResizeObserver ??= class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    const store = createStore();
+    const ref = { id: "r", url: "blob:r", width: 64, height: 96 };
+    const made = result("a", 64, 64);
+    const request = { refImageIds: ["r"] } as unknown as GenerateRequest;
+    store.dispatch({ type: "addResults", batch: { id: "b", request }, images: [made], refs: [ref, { id: "a", url: "blob:a", width: 64, height: 64 }] });
+    store.dispatch({ type: "addResults", batch: null, images: [result("c", 64, 64)], refs: [{ id: "c", url: "blob:c", width: 64, height: 64 }] });
+    // The newest result (no reference) is shown first: no button.
+    withApp(store, <Results />);
+    expect(screen.queryByRole("button", { name: /Side by side/ })).toBeNull();
+
+    act(() => store.dispatch({ type: "selectResult", id: "a" }));
+    const button = screen.getByRole("button", { name: /Side by side/ });
+    fireEvent.click(button);
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByTestId("side-by-side")).toBeTruthy();
+    fireEvent.click(button);
+    expect(screen.queryByTestId("side-by-side")).toBeNull();
   });
 
   it("with no installed model that can use it: offers Edit", () => {

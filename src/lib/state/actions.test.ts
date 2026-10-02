@@ -564,7 +564,7 @@ describe("queue", () => {
     expect(store.getState().edit.index).toBe(2);
   });
 
-  it("keeps a queued edit's second image until the edit has run, even if it was removed meanwhile", async () => {
+  it("keeps a queued edit's second image until the edit has run and on the step it made, even if it was removed meanwhile", async () => {
     const { store, actions } = setup();
     const edit: InstalledModel = { ...model, id: "e", modes: ["edit"], isEditModel: true };
     store.dispatch({ type: "setModels", models: [model, edit] });
@@ -583,6 +583,10 @@ describe("queue", () => {
     expect(vi.mocked(apiMod.generate).mock.calls[1][0].refImageIds).toEqual(["a", "two"]);
     pending!({ images: [img("r")] } as GenerateResult);
     await queued;
+    // The new step remembers it (Side by side); deleting that step lets it go.
+    expect(store.getState().edit.chain[1]?.secondImageId).toBe("two");
+    expect(store.getState().images.two).toBeDefined();
+    store.dispatch({ type: "editDelete", index: 1 });
     expect(store.getState().images.two).toBeUndefined();
   });
 
