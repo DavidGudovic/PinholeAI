@@ -576,7 +576,7 @@ pub async fn delete_helper(core: &AppCore, helper_id: &str) -> CoreResult<()> {
                 "Wait for the current pictures to finish, then delete it.",
             ));
         }
-        crate::generate::shutdown(core).await;
+        crate::engine::shutdown(core).await;
         crate::engine_setup::emit_status(core);
     }
     let failed;
@@ -1247,12 +1247,12 @@ pub async fn delete_model(core: &AppCore, model_id: &str) -> CoreResult<()> {
             .collect()
     };
     // Stopping the engine under a job would fail it as if the engine crashed.
-    if crate::generate::unload_interrupts_job(core, model_id, &paths).await {
+    if crate::engine::unload_interrupts_job(core, model_id, &paths).await {
         return Err(CoreError::invalid(
             "Wait for the current pictures to finish, then delete it.",
         ));
     }
-    crate::generate::unload_model(core, model_id, &paths).await;
+    crate::engine::unload_model(core, model_id, &paths).await;
     let failed;
     {
         let mut index = core.installed.lock();

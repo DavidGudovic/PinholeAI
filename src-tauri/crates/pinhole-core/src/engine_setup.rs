@@ -207,7 +207,7 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
         error: flags.error.as_ref().map(|e| e.message.clone()),
         error_code: flags.error.as_ref().map(|e| e.code.clone()),
         error_details: flags.error.as_ref().and_then(|e| e.details.clone()),
-        note: crate::generate::engine_note(core, &flags),
+        note: crate::memory::engine_note(core, &flags),
     };
     match selected_build(core, EngineKind::Sd) {
         Ok((cfg, sel)) => {

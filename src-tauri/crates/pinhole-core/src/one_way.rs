@@ -172,6 +172,19 @@ fn a_job_reads_session_pictures_only_as_declared_inputs() {
     assert!(!code.contains("session::decode_rgba("));
     assert!(!code.contains("usecrate::session::{"));
     assert!(!code.contains("usecrate::session::get"));
+    // The engine process and the memory retries never read session pictures.
+    for (p, text) in product_sources() {
+        if p.ends_with(Path::new("pinhole-core/src/engine.rs"))
+            || p.ends_with(Path::new("pinhole-core/src/memory.rs"))
+        {
+            let code: String = text.split_whitespace().collect();
+            assert!(
+                !code.contains("session"),
+                "{} reads the session",
+                p.display()
+            );
+        }
+    }
 }
 
 #[test]
