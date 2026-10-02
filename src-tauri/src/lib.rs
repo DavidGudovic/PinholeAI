@@ -1,6 +1,6 @@
 //! Tauri shell: builds `AppCore`, bridges core events to the WebView, and
 //! dispatches commands. Each `commands::<area>` module owns its own command
-//! list (see `area_commands!`), so agents never edit this file to add one.
+//! list (see `area_commands!`), so adding a command doesn't touch this file.
 
 mod commands;
 

@@ -1,5 +1,5 @@
-// OWNER: frontend B. "Recommended for your graphics card / computer" cards (SPEC §6.1), reused by the
-// Create / Edit / Describe empty states (frontend A). Keep this export signature.
+// "Recommended for your graphics card / computer" cards (SPEC §6.1), reused by the
+// Create / Edit / Describe empty states.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Camera, CircleCheck, Download, RotateCw, ScanText, Sparkles, WandSparkles } from "lucide-react";
 import { asCoreError, getRecommended, installRecommended, onModelsChanged } from "../lib/api";

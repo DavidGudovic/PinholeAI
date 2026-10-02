@@ -1,4 +1,4 @@
-//! Describe (img2text) via llama-server. OWNER: engine agent.
+//! Describe (img2text) via llama-server.
 //!
 //! Captioner files: reuse the edit model's Qwen2.5-VL-7B + mmproj when both are
 //! installed (`captioner.prefer_reuse`), else the small default captioner

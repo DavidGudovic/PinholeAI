@@ -11,7 +11,7 @@ package.json, vite.config.ts, index.html
 config/                    shipped YAML (bundled as Tauri resources → <resources>/config/)
   models.yaml engine.yaml catalog-filters.yaml styles/ presets/
 src-tauri/                 Tauri 2 app crate `pinhole` (thin: commands + event bridge)
-  src/lib.rs               builds AppCore, TauriSink, dispatch  (orchestrator)
+  src/lib.rs               builds AppCore, TauriSink, dispatch
   src/commands/<area>.rs   thin #[tauri::command] wrappers, one file per area
   crates/
     pinhole-registry/      models.yaml → families, header detector, wiring, VRAM, style combine (pure)

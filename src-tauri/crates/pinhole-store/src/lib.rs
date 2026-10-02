@@ -1,8 +1,6 @@
 //! Everything Pinhole writes to disk lives here (SPEC §3). Nothing in this crate
 //! may ever accept or store prompt / negative-prompt text — the only user text
 //! stored is a Style the user explicitly saves (`Data/styles/`).
-//!
-//! OWNER: store agent.
 
 pub mod datadir;
 pub mod installed;

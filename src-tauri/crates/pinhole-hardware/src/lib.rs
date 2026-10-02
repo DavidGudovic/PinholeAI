@@ -4,8 +4,6 @@
 //!
 //! All parsing is done by pure functions (`parse_nvidia_smi`, `gpu_from_dxgi`,
 //! `gpu_from_sysfs`, `merge_gpus`) so it can be tested with fixtures.
-//!
-//! OWNER: store agent.
 
 use std::path::Path;
 

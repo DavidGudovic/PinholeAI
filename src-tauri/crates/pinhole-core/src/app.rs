@@ -1,4 +1,4 @@
-//! App info, settings, hardware. OWNER: store agent.
+//! App info, settings, hardware.
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

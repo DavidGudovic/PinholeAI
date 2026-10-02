@@ -1,4 +1,4 @@
-// OWNER: frontend B. Settings sheet (SPEC §8). Every change is saved immediately.
+// Settings sheet (SPEC §8). Every change is saved immediately.
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, Bug, Check, CircleCheck, Download, FolderOpen, Info, KeyRound, Scale, ShieldAlert, ShieldCheck, TriangleAlert } from "lucide-react";

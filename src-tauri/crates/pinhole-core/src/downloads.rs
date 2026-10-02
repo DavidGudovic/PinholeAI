@@ -1,5 +1,4 @@
 //! Download list/cancel + forwarding `DownloadManager` progress to UI events.
-//! OWNER: net agent.
 //!
 //! Other areas enqueue groups directly on `core.downloads` and, when they need
 //! the result (to register files, unpack the engine…), `await`

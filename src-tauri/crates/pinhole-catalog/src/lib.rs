@@ -5,8 +5,6 @@
 //! recommended picks (SPEC §6.1), install plans and "Paste from CivitAI", so it
 //! can be tested without the Tauri/app layer.
 //!
-//! OWNER: catalog agent.
-//!
 //! PRIVACY: nothing in here touches prompt text. The CivitAI API key only
 //! travels as an `Authorization: Bearer` header to civitai.com and is never
 //! logged or stored (it lives in the OS keychain, see `pinhole_store::keychain`).

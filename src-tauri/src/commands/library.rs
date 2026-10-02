@@ -1,4 +1,4 @@
-//! `library` commands. OWNER: store agent. Thin wrappers over `pinhole_core::library`.
+//! `library` commands. Thin wrappers over `pinhole_core::library`.
 
 use std::sync::Arc;
 

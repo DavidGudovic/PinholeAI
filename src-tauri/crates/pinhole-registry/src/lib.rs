@@ -3,8 +3,8 @@
 //! "what is this model / how do I run it" question. Model knowledge lives in
 //! YAML; this crate only interprets it.
 //!
-//! OWNER: registry agent. Public signatures below are the cross-crate contract
-//! (see docs/ARCHITECTURE.md). Extend freely; don't break them.
+//! Public signatures below are the cross-crate contract (see
+//! docs/ARCHITECTURE.md): add to them, don't break them.
 //!
 //! Loading pipeline ([`Registry::from_yaml`]):
 //! 1. parse both documents as `serde_yaml::Value`, expand anchors and `<<` merge keys;

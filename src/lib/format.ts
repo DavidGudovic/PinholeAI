@@ -1,4 +1,4 @@
-// Small shared formatters (orchestrator-owned; add freely, don't change behaviour).
+// Small shared formatters.
 
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "—";

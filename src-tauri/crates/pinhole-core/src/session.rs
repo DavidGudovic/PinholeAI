@@ -1,5 +1,5 @@
 //! In-memory image store (SPEC §4): generated and imported
-//! images live here until Save or Reset. OWNER: engine agent.
+//! images live here until Save or Reset.
 //!
 //! Nothing here touches disk except [`save_image`] / [`save_image_as`], which
 //! run only on an explicit user click. Saved file names are never derived from

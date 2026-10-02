@@ -1,4 +1,4 @@
-//! `generate` commands. OWNER: engine agent. Thin wrappers over
+//! `generate` commands. Thin wrappers over
 //! `pinhole_core::{engine_setup, generate, session}` (names/args = src/lib/api.ts).
 //!
 //! PRIVACY: `req` (GenerateRequest) carries prompt text — never log it.

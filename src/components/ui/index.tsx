@@ -1,4 +1,4 @@
-// Shared UI primitives (Tailwind). Owned by frontend A; frontend B imports them.
+// Shared UI primitives (Tailwind).
 // Keep existing exports and props backwards compatible.
 import {
   useCallback,

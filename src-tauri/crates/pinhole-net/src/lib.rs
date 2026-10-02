@@ -16,8 +16,6 @@
 //! key) only in the `Authorization` header — never in the query string, and
 //! never in a custom header: reqwest strips `Authorization` on cross-host
 //! redirects (tested) but forwards unknown headers.
-//!
-//! OWNER: net agent.
 
 pub mod allow;
 pub mod download;

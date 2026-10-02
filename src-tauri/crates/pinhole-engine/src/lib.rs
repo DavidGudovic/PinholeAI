@@ -6,8 +6,6 @@
 //! (`/sdcpp/v1/img_gen`, `/jobs/{id}`, `/jobs/{id}/cancel`, `/capabilities`,
 //! `/upscale`) and llama-server's chat API for captioning.
 //!
-//! OWNER: engine agent.
-//!
 //! PRIVACY: nothing in this crate writes prompt text anywhere. Prompt-bearing
 //! types ([`sdapi::ImgGenRequest`]) are `Serialize` only for the loopback HTTP
 //! body, have a redacting `Debug`, and the engine output ring buffer

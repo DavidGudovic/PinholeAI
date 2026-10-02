@@ -1,5 +1,5 @@
 //! Installed models, add-a-file, delete, recommended picks, install flows,
-//! CivitAI resource resolution (paste). OWNER: catalog agent.
+//! CivitAI resource resolution (paste).
 //!
 //! The pure logic lives in `pinhole_catalog` (inventory, recommend, paste,
 //! local); this module wires it to `AppCore` (index, registry, hardware,
