@@ -394,11 +394,12 @@ Four modes; Describe a change or Restyle is picked automatically:
    source with a feathered edge. The result keeps the source's size; with a painted spot no face detector is used.
    All of it happens in memory. **How much to change** maps to `strength` 0.3/0.45/0.6.
    With nothing painted, the button reads **Add detail**: the image check's face finder (YuNet,
-   already downloaded for the check; no new file) finds the clear faces at least 40 px across,
-   and each face (largest first, at most 6) is fixed the same way, its box grown by 15% on every
+   already downloaded for the check; no new file) finds the clear faces at least 40 px across
+   and less than half the Quality dial's native side (a larger face would be drawn smaller than
+   it is), and each face (largest first, at most 6) is fixed the same way, its box grown by 15% on every
    side as the mask, one engine pass per face, each on the previous pass's result. Without
-   "What is it?" text the prompt is "a detailed face". No face found → "No face found to add
-   detail to. Paint over the part to fix instead." The picture keeps its size; the finished
+   "What is it?" text the prompt is "a detailed face". No such face → "No face found that
+   needs more detail. Paint over the part to fix instead." The picture keeps its size; the finished
    picture and each redrawn face are checked like any Fix details result.
 4. **Extend** (same models as Restyle): make the picture wider or taller and let the model
    draw the new edges. The user picks a **New shape** (the Create shape chips, or **Around** =

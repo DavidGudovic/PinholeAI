@@ -2027,16 +2027,21 @@ const MAX_FACES: usize = 6;
 
 /// Masks (PNG, white = redraw) for the faces on `src` that Add detail redraws, largest
 /// first: each face box found by the image check's face finder, grown a little so hair
-/// line, chin and ears blend in.
+/// line, chin and ears blend in. Only faces whose redraw box (the face and the room
+/// around it, about twice its size) is smaller than the model's `area`: a larger face
+/// would be drawn smaller than it is and come back softer.
 async fn faces_to_redraw(
     core: &Arc<AppCore>,
     src: &SessionImage,
+    area: u64,
 ) -> CoreResult<std::collections::VecDeque<Vec<u8>>> {
     let boxes = crate::imagecheck::face_boxes(core, src).await?;
     let (w, h) = (src.width, src.height);
+    let model_side = (area as f32).sqrt();
     tokio::task::spawn_blocking(move || {
         boxes
             .iter()
+            .filter(|b| b[2].max(b[3]) * 2.0 < model_side)
             .take(MAX_FACES)
             .map(|b| pinhole_engine::detail::box_mask(w, h, *b, 0.15))
             .collect::<Result<_, _>>()
@@ -2288,10 +2293,10 @@ async fn generate_inner(
             let mask_bytes = match mask {
                 Some(m) => m.bytes.clone(),
                 None => {
-                    face_masks = faces_to_redraw(core, src).await?;
+                    face_masks = faces_to_redraw(core, src, area).await?;
                     Arc::new(face_masks.pop_front().ok_or_else(|| {
                         CoreError::invalid(
-                            "No face found to add detail to. Paint over the part to fix instead.",
+                            "No face found that needs more detail. Paint over the part to fix instead.",
                         )
                     })?)
                 }

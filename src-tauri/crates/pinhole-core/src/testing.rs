@@ -675,6 +675,18 @@ mod tests {
         assert!(err.message.contains("No face found"), "{}", err.message);
         assert_eq!(mock.requests().len(), n, "no engine job");
 
+        // A face already larger than the model draws (a close-up): left as it is.
+        use_check(
+            &core,
+            FakeCheck {
+                face_boxes: vec![[200.0, 100.0, 700.0, 700.0]],
+                ..Default::default()
+            },
+        );
+        let err = generate::generate(&core, fix_req(None)).await.unwrap_err();
+        assert!(err.message.contains("No face found"), "{}", err.message);
+        assert_eq!(mock.requests().len(), n, "no engine job");
+
         // Nothing painted, two faces: each is redrawn in its own pass at the model's size,
         // largest first, and the picture comes back at its own size.
         let fake = FakeCheck {
