@@ -32,7 +32,7 @@ async fn describe_through_mock_llama() {
 async fn improve_prompt_through_mock_llama() {
     let (_tmp, core, _rec) = new_core();
     let llama = MockLlamaServer::start(
-        "DETAILS: thick red fur, sks\nPLACE: in snow\nSHOT: -\nSTYLE: photo\nLIGHT: soft light",
+        "PROMPT: a red fox standing in the snow\nDETAILS: thick red fur, sks\nPLACE: in snow\nSHOT: -\nSTYLE: photo\nLIGHT: soft light",
         0,
     )
     .await;
@@ -47,8 +47,8 @@ async fn improve_prompt_through_mock_llama() {
     .await
     .unwrap();
     assert_eq!(
-        text.text, "a red fox. Thick red fur. In snow. Photo, soft light.",
-        "the idea is kept as typed and the form lines follow it"
+        text.text, "a red fox standing in the snow. Thick red fur. Photo, soft light.",
+        "the reworded idea keeps the intent; the form lines follow it"
     );
     assert!(text.note.is_none());
     let body = &llama.requests()[0];
@@ -56,7 +56,12 @@ async fn improve_prompt_through_mock_llama() {
         .pointer("/messages/0/content")
         .and_then(|t| t.as_str())
         .unwrap();
-    assert!(system.contains("five lines"), "{system}");
+    assert!(system.contains("six lines"), "{system}");
+    assert_eq!(
+        body.pointer("/messages/2/content").and_then(|t| t.as_str()),
+        Some("PROMPT:"),
+        "the answer is started with the first label"
+    );
     assert!(
         system.contains("safe for work"),
         "Safe mode is on by default"
@@ -77,8 +82,8 @@ async fn improve_prompt_through_mock_llama() {
 async fn improve_edit_instruction_through_mock_llama() {
     let (_tmp, core, _rec) = new_core();
     let llama = MockLlamaServer::start(
-        // Without the started "DETAILS:", as other servers answer.
-        "tall clear glass, bright orange juice, same spot\n\nKEEP: the table, the mug, the lighting",
+        // Without the started "CHANGE:", as other servers answer.
+        "replace the mug with a tall glass of juice\n\nDETAILS: frosted glass, apple juice, same spot\n\nKEEP: the table, the mug, the lighting",
         0,
     )
     .await;
@@ -94,27 +99,27 @@ async fn improve_edit_instruction_through_mock_llama() {
     .unwrap();
     assert_eq!(
         out.text,
-        "replace the mug with a glass of juice. Tall clear glass, bright orange juice. Keep the table and the lighting unchanged.",
-        "the instruction is kept as typed; what it changes is not kept"
+        "replace the mug with a tall glass of juice. Frosted glass, apple juice. Keep the table and the lighting unchanged.",
+        "the reworded instruction leads; what it changes is not kept"
     );
     let body = &llama.requests()[0];
     let system = body
         .pointer("/messages/0/content")
         .and_then(|t| t.as_str())
         .unwrap();
-    assert!(system.contains("two lines"), "{system}");
+    assert!(system.contains("three lines"), "{system}");
     assert_eq!(
         body.pointer("/messages/2").unwrap(),
-        &serde_json::json!({ "role": "assistant", "content": "DETAILS:" }),
+        &serde_json::json!({ "role": "assistant", "content": "CHANGE:" }),
         "the answer is started with the first label"
     );
     assert_eq!(
         body["stop"],
-        serde_json::json!(["\nDETAILS:"]),
+        serde_json::json!(["\nCHANGE:"]),
         "the form may have blank lines between its two lines"
     );
     assert!(system.contains("safe for work"), "{system}");
-    assert!(body["max_tokens"].as_u64().unwrap() <= 120);
+    assert!(body["max_tokens"].as_u64().unwrap() <= 160);
 }
 
 #[tokio::test]
@@ -154,7 +159,7 @@ async fn improve_prompt_with_safe_mode_off_allows_adult_and_catches_refusals() {
 #[tokio::test]
 async fn improve_edit_catches_a_refusal_after_the_started_label() {
     let (_tmp, core, _rec) = new_core();
-    let llama = MockLlamaServer::start("DETAILS: I'm sorry, but I can't help with that.", 0).await;
+    let llama = MockLlamaServer::start("CHANGE: I'm sorry, but I can't help with that.", 0).await;
     use_external_captioner(&core, &llama.base_url());
     let out = describe::improve_prompt(
         &core,
@@ -188,7 +193,7 @@ async fn improve_prompt_falls_back_when_the_model_loops() {
     assert!(out.note.is_some());
     let body = &llama.requests()[0];
     assert!(body["repeat_penalty"].as_f64().unwrap() > 1.0, "{body}");
-    assert!(body["max_tokens"].as_u64().unwrap() <= 200);
+    assert!(body["max_tokens"].as_u64().unwrap() <= 240);
 }
 
 /// App exit / update while the describe engine loads: `shutdown` doesn't

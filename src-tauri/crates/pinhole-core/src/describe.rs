@@ -674,12 +674,26 @@ async fn describe_inner(
 /// Longest prompt "Improve my prompt" accepts (characters).
 const IMPROVE_MAX_CHARS: usize = 2000;
 
-/// The five lines of the Improve form, in the order the helper writes them. The names are the
-/// keys of `captioner.improve.given`.
-const FORM_LINES: [&str; 5] = ["details", "place", "shot", "style", "light"];
+/// The six lines of the Improve form, in the order the helper writes them: the idea reworded,
+/// then what it adds. The names after `prompt` are the keys of `captioner.improve.given`.
+const FORM_LINES: [&str; 6] = ["prompt", "details", "place", "shot", "style", "light"];
 
-/// The two lines of the Edit form (`captioner.improve.edit`): how the change looks, what stays.
-const EDIT_FORM_LINES: [&str; 2] = ["details", "keep"];
+/// The three lines of the Edit form (`captioner.improve.edit`): the instruction reworded, how the
+/// change looks, what stays.
+const EDIT_FORM_LINES: [&str; 3] = ["change", "details", "keep"];
+
+/// Longest reworded idea (words) Improve uses; a longer one is a description of its own.
+const MAX_REWORDED_WORDS: usize = 40;
+
+/// Number words a reworded idea has to keep.
+const NUMBER_WORDS: [&str; 12] = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "single", "pair",
+];
+
+/// Negation words: when the idea has one, the reworded idea needs one too.
+const NEGATIONS: [&str; 8] = [
+    "no", "not", "without", "never", "don't", "dont", "isn't", "nothing",
+];
 
 /// Most things the Edit form's "Keep … unchanged" names.
 const MAX_KEPT: usize = 3;
@@ -828,9 +842,133 @@ fn content_words(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether `reworded` keeps the intent of `idea`. Never for an idea with an `edit.keep_wording`
+/// phrase ("the bottle from image 2"). Otherwise it is a short phrase or sentence that keeps the
+/// idea's numbers, negations and every `given` phrase the idea names (a view, a medium, a light,
+/// "keep" or "same"), at least four in five of the idea's other words (`common_words` aside;
+/// singular and plural count as one), and adds no `drop`, `people` or add-on trigger word the
+/// idea doesn't have. With `actions` (groups of edit verbs that mean the same change), it adds
+/// no verb from a group the idea has none of ("add a hat" is not "replace the background"),
+/// unless the idea has no verb at all.
+fn keeps_intent(
+    idea: &str,
+    reworded: &str,
+    spec: &ImproveSpec,
+    avoid: &[String],
+    actions: &[Vec<String>],
+) -> bool {
+    let r = reworded.trim();
+    let keeps_wording = spec
+        .edit
+        .keep_wording
+        .iter()
+        .any(|p| crate::generate::contains_phrase(idea, p));
+    if keeps_wording
+        || r.is_empty()
+        || r == "-"
+        || r.split_whitespace().count() > MAX_REWORDED_WORDS
+    {
+        return false;
+    }
+    let words = |t: &str| -> Vec<String> {
+        t.to_lowercase()
+            .replace('\u{2019}', "'")
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .filter(|w| !w.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let (idea_all, new_all) = (words(idea), words(r));
+    let has_negation = |ws: &[String]| ws.iter().any(|w| NEGATIONS.contains(&w.as_str()));
+    if has_negation(&idea_all) && !has_negation(&new_all) {
+        return false;
+    }
+    let new_set: std::collections::HashSet<String> = new_all.iter().map(|w| singular(w)).collect();
+    let is_number = |w: &str| w.chars().all(|c| c.is_ascii_digit()) || NUMBER_WORDS.contains(&w);
+    let key: Vec<String> = idea_all
+        .iter()
+        .filter(|w| w.chars().count() >= 3 || is_number(w))
+        .filter(|w| !spec.common_words.contains(*w))
+        .map(|w| singular(w))
+        .collect();
+    let missing: Vec<&String> = key.iter().filter(|w| !new_set.contains(*w)).collect();
+    // One word in five may go ("cat astronaut" → "a cat in a spacesuit" is still the idea, "a
+    // red car in the rain" without the rain is not).
+    if missing.iter().any(|w| is_number(w)) || missing.len() * 5 > key.len() {
+        return false;
+    }
+    let named_but_lost = spec
+        .given
+        .values()
+        .chain(spec.edit.given.values())
+        .flatten()
+        .any(|p| {
+            crate::generate::contains_phrase(idea, p) && !crate::generate::contains_phrase(r, p)
+        });
+    if named_but_lost {
+        return false;
+    }
+    let in_idea = |p: &String| crate::generate::contains_phrase(idea, p);
+    let in_new = |p: &String| crate::generate::contains_phrase(r, p);
+    // An instruction without a verb ("same bottle, different table") may get one.
+    let idea_has_verb = actions.iter().flatten().any(in_idea);
+    if idea_has_verb
+        && actions
+            .iter()
+            .any(|group| group.iter().any(in_new) && !group.iter().any(in_idea))
+    {
+        return false;
+    }
+    !spec
+        .drop
+        .iter()
+        .chain(&spec.people)
+        .chain(avoid)
+        .any(|d| in_new(d) && !in_idea(d))
+}
+
+/// The idea Improve builds on: the helper's rewording (`reworded`, trailing full stop off) when it
+/// keeps the idea's intent ([`keeps_intent`]), else the idea as typed.
+fn base_idea(
+    idea: &str,
+    reworded: &str,
+    spec: &ImproveSpec,
+    avoid: &[String],
+    actions: &[Vec<String>],
+) -> String {
+    let r = trimmed(reworded.trim().trim_matches('"'));
+    if keeps_intent(idea, r, spec, avoid, actions) {
+        r.to_string()
+    } else {
+        trimmed(idea).to_string()
+    }
+}
+
+/// `text` without a trailing full stop, comma or space.
+fn trimmed(text: &str) -> &str {
+    text.trim_end_matches(|c: char| c == '.' || c == ',' || c.is_whitespace())
+}
+
+/// The DETAILS and PLACE phrases of the form's worked example (lowercase): a helper that copies
+/// them describes the example, not the idea.
+fn example_phrases(example: &str) -> std::collections::HashSet<String> {
+    example
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            l.strip_prefix("DETAILS:")
+                .or_else(|| l.strip_prefix("PLACE:"))
+        })
+        .flat_map(|rest| rest.split(','))
+        .map(|p| p.trim().to_lowercase())
+        .filter(|p| !p.is_empty() && p != "-")
+        .collect()
+}
+
 /// The phrases of each form line that add something, by line name. A line the idea already
 /// covers (`given`) is left out, and so are phrases with a `drop` word or an add-on trigger
-/// word, phrases longer than a few words, phrases made only of the idea's own words, and repeats.
+/// word, phrases that say "no …", phrases copied from the form's example, phrases longer than a
+/// few words, phrases made only of the idea's own words, and repeats.
 fn added_phrases<'a>(
     idea: &str,
     names: &[&'a str],
@@ -838,7 +976,9 @@ fn added_phrases<'a>(
     given: &std::collections::BTreeMap<String, Vec<String>>,
     drop: &[String],
     avoid: &[String],
+    example: &str,
 ) -> Vec<(&'a str, Vec<String>)> {
+    let copied = example_phrases(example);
     let idea_words: std::collections::HashSet<String> = content_words(idea).into_iter().collect();
     let mut seen = std::collections::HashSet::new();
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
@@ -861,7 +1001,12 @@ fn added_phrases<'a>(
             })
             .filter(|p| {
                 let words = content_words(p);
+                let lower = p.to_lowercase();
+                // "no cars" tends to bring cars.
                 !p.is_empty()
+                    && !lower.starts_with("no ")
+                    && !lower.starts_with("without ")
+                    && !copied.contains(&lower)
                     && p != "-"
                     && p.split_whitespace().count() <= MAX_PHRASE_WORDS
                     && !drop
@@ -898,8 +1043,9 @@ fn join_sentences(idea: &str, rest: &[String]) -> String {
     format!("{idea}{end}{}.", rest.join(". "))
 }
 
-/// The improved prompt: the user's words exactly as typed, then the form lines that add
-/// something (see [`added_phrases`]). `None` when nothing is left to add.
+/// The improved prompt: the idea (reworded when that keeps its intent, see [`base_idea`]), then
+/// the form lines that add something (see [`added_phrases`]). `None` when it would be the idea
+/// unchanged.
 fn assemble_improved(
     idea: &str,
     lines: &[String],
@@ -907,11 +1053,27 @@ fn assemble_improved(
     style: &str,
     avoid: &[String],
 ) -> Option<String> {
-    let groups = added_phrases(idea, &FORM_LINES, lines, &spec.given, &spec.drop, avoid);
+    let base = base_idea(
+        idea,
+        lines.first().map_or("", String::as_str),
+        spec,
+        avoid,
+        &[],
+    );
+    let both = format!("{idea}\n{base}");
+    let groups = added_phrases(
+        &both,
+        &FORM_LINES[1..],
+        lines.get(1..).unwrap_or_default(),
+        &spec.given,
+        &spec.drop,
+        avoid,
+        spec.styles.get(style).map_or("", |st| st.example.as_str()),
+    );
     if groups.is_empty() {
-        return None;
+        return (base != trimmed(idea)).then_some(base);
     }
-    let idea = idea.trim_end_matches(|c: char| c == '.' || c == ',' || c.is_whitespace());
+    let idea = base.as_str();
     if style == "natural" {
         // Details and place as their own sentences, then shot, style and light together.
         let mut parts = vec![idea.to_string()];
@@ -964,8 +1126,9 @@ fn and_list(items: &[String]) -> String {
     }
 }
 
-/// The improved edit instruction: the user's words exactly as typed, then the details of the
-/// change as a sentence and "Keep … unchanged." Besides the rules of [`added_phrases`], a keep
+/// The improved edit instruction: the instruction (reworded when that keeps its intent, see
+/// [`base_idea`]), then the details of the change as a sentence and "Keep … unchanged." `None`
+/// when it would be the instruction unchanged. Besides the rules of [`added_phrases`], a keep
 /// phrase that names something the instruction mentions is left out (it is what changes), and
 /// so are details that say to keep something or say "no …". At most three things to keep.
 fn assemble_edit(
@@ -974,39 +1137,48 @@ fn assemble_edit(
     spec: &ImproveSpec,
     avoid: &[String],
 ) -> Option<String> {
-    let mut groups = added_phrases(
+    let base = base_idea(
         instruction,
-        &EDIT_FORM_LINES,
-        lines,
+        lines.first().map_or("", String::as_str),
+        spec,
+        avoid,
+        &spec.edit.actions,
+    );
+    let both = format!("{instruction}\n{base}");
+    let mut groups = added_phrases(
+        &both,
+        &EDIT_FORM_LINES[1..],
+        lines.get(1..).unwrap_or_default(),
         &spec.edit.given,
         &spec.drop,
         avoid,
+        &spec.edit.form,
     );
-    let common = &spec.edit.common_words;
-    let mentioned: std::collections::HashSet<String> = content_words(instruction)
+    let common = &spec.common_words;
+    let mentioned: std::collections::HashSet<String> = content_words(&both)
         .iter()
         .filter(|w| !common.contains(*w))
         .map(|w| singular(w))
         .collect();
     for (name, items) in &mut groups {
         if *name == "details" {
-            // "same lighting" is not a detail of the change, and "no cars" tends to bring cars.
+            // "same lighting" is not a detail of the change.
             items.retain(|p| {
                 let lower = p.to_ascii_lowercase();
-                ![
-                    "same ",
-                    "keep ",
-                    "maintain ",
-                    "preserve ",
-                    "no ",
-                    "without ",
-                ]
-                .iter()
-                .any(|s| lower.starts_with(s))
+                !["same ", "keep ", "maintain ", "preserve "]
+                    .iter()
+                    .any(|s| lower.starts_with(s))
             });
         } else if *name == "keep" {
             // "keep the table the same" → "the table".
             for p in items.iter_mut() {
+                // "the sign (if any)" → "the sign".
+                if let (Some(open), Some(close)) = (p.find('('), p.rfind(')')) {
+                    if open < close {
+                        p.replace_range(open..=close, "");
+                        *p = p.split_whitespace().collect::<Vec<_>>().join(" ");
+                    }
+                }
                 // "the same lighting" → "the lighting".
                 if p.to_ascii_lowercase().starts_with("the same ") {
                     *p = format!("the {}", &p["the same ".len()..]);
@@ -1051,7 +1223,7 @@ fn assemble_edit(
     }
     groups.retain(|(_, items)| !items.is_empty());
     if groups.is_empty() {
-        return None;
+        return (base != trimmed(instruction)).then_some(base);
     }
     let rest: Vec<String> = groups
         .into_iter()
@@ -1063,9 +1235,7 @@ fn assemble_edit(
             }
         })
         .collect();
-    let instruction =
-        instruction.trim_end_matches(|c: char| c == '.' || c == ',' || c.is_whitespace());
-    Some(join_sentences(instruction, &rest))
+    Some(join_sentences(&base, &rest))
 }
 
 /// The helper declined instead of rewriting ("I'm sorry, but I can't…"). Only the start of the
@@ -1114,8 +1284,9 @@ pub struct ImprovedPrompt {
     pub note: Option<String>,
 }
 
-/// Add details to a short idea with the local text model (the Describe model). The user's words
-/// stay as typed; the helper's form lines are added after them. `family_id` picks the style
+/// Turn a short idea into a fuller prompt with the local text model (the Describe model). The
+/// helper rewords the idea and fills the form; its wording is used only when it keeps the idea's
+/// intent ([`keeps_intent`]), and the form lines are added after it. `family_id` picks the style
 /// (sentences, tags or Danbooru tags); `avoid` = trigger words of the add-ons in use. For
 /// [`ImproveTarget::Edit`] the words are a change instruction: the helper fills the Edit form
 /// and the result is always sentences.
@@ -1153,16 +1324,16 @@ pub async fn improve_prompt(
         ImproveTarget::Edit => edit_instruction(spec, safe, avoid),
     }
     .ok_or_else(|| CoreError::not_found("Improve my prompt isn't available. Update Pinhole."))?;
-    // Five short lines; for Edit two, with the first label written for the helper so it keeps
-    // to the form.
+    // Six short lines (three for Edit), with the first label written for the helper so it
+    // keeps to the form.
     let (max_tokens, answer_start) = match target {
-        ImproveTarget::Create => (200, None),
-        ImproveTarget::Edit => (120, Some("DETAILS:")),
+        ImproveTarget::Create => (240, "PROMPT:"),
+        ImproveTarget::Edit => (160, "CHANGE:"),
     };
 
     let _busy = BusyGuard::new(&core.describe);
     let client = ensure_llama(core, chosen_helper(core, Purpose::Improve).as_deref()).await?;
-    let text = client.rewrite(&instruction, idea, max_tokens, answer_start).await.map_err(|e| {
+    let text = client.rewrite(&instruction, idea, max_tokens, Some(answer_start)).await.map_err(|e| {
         let tail = core.describe.logs.tail_text(30);
         match classify(&tail, None) {
             Failure::OutOfMemory => CoreError::new("vram", "Not enough memory to improve the prompt right now — close other apps or wait for the image to finish, then try again.").with_details(tail),
@@ -1173,10 +1344,8 @@ pub async fn improve_prompt(
     // out below and refusals, and on the result.
     let answer = text.split_whitespace().collect::<Vec<_>>().join(" ");
     crate::text_check::check(&answer)?;
-    // The started label isn't the helper's: "DETAILS: I'm sorry…" is a refusal too.
-    let own = answer_start
-        .and_then(|s| answer.strip_prefix(s))
-        .unwrap_or(&answer);
+    // The started label isn't the helper's: "PROMPT: I'm sorry…" is a refusal too.
+    let own = answer.strip_prefix(answer_start).unwrap_or(&answer);
     if is_refusal(own) {
         return Ok(ImprovedPrompt {
             text: idea.to_string(),
@@ -1497,6 +1666,8 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
             drop: list(&["atmosphere", "best quality"]),
+            common_words: list(&["the", "with", "make", "add", "replace", "give", "her"]),
+            people: list(&["1boy", "man"]),
             edit: Default::default(),
         }
     }
@@ -1538,13 +1709,13 @@ mod tests {
 
     #[test]
     fn form_lines_follow_labels_then_position() {
-        let five = |v: [&str; 5]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let six = |v: [&str; 6]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
             form_lines(
-                "Here are the five lines:\n**DETAILS:** red fur, round glasses\n- PLACE: small cafe\n\nSHOT: -\n3d render, clay\nlight: soft daylight.\nEXTRA: ignored",
+                "Here are the six lines:\nPROMPT: a fox in a cafe\n**DETAILS:** red fur, round glasses\n- PLACE: small cafe\n\nSHOT: -\n3d render, clay\nlight: soft daylight.\nEXTRA: ignored",
                 &FORM_LINES,
             ),
-            five(["red fur, round glasses", "small cafe", "", "3d render, clay", "soft daylight"])
+            six(["a fox in a cafe", "red fur, round glasses", "small cafe", "", "3d render, clay", "soft daylight"])
         );
         // Unknown labels and plain lines take the next place; known labels go to their own.
         assert_eq!(
@@ -1552,7 +1723,7 @@ mod tests {
                 "castle: stone walls\n1. floating island\nLIGHT: warm sun",
                 &FORM_LINES
             ),
-            five(["stone walls", "floating island", "", "", "warm sun"])
+            six(["stone walls", "floating island", "", "", "", "warm sun"])
         );
         assert_eq!(form_lines("Sure:\nred fur", &FORM_LINES)[0], "red fur");
     }
@@ -1561,6 +1732,7 @@ mod tests {
     fn improved_prompt_keeps_the_idea_and_adds_the_rest() {
         let m = improve_spec();
         let lines: Vec<String> = [
+            "-",
             "red fur, round glasses, red fur, cosy atmosphere",
             "small cafe",
             "close-up",
@@ -1582,13 +1754,141 @@ mod tests {
             "a fox. Red fur. Small cafe. Close-up, photo, 50mm lens, warm window light."
         );
         // Long sentences are left out.
-        let long =
-            vec!["The fox looks like it is enjoying a quiet moment with its paper".to_string()];
+        let long = vec![
+            "-".to_string(),
+            "The fox looks like it is enjoying a quiet moment with its paper".to_string(),
+        ];
         assert!(assemble_improved("a fox", &long, &m, "tags", &[]).is_none());
         assert!(assemble_improved("a fox", &[], &m, "natural", &[]).is_none());
         assert_eq!(
-            assemble_improved("Wow!", &lines[..1], &m, "natural", &[]).unwrap(),
+            assemble_improved("Wow!", &lines[..2], &m, "natural", &[]).unwrap(),
             "Wow! Red fur, round glasses."
+        );
+    }
+
+    #[test]
+    fn improve_rewords_the_idea_when_that_keeps_its_intent() {
+        let m = improve_spec();
+        let with = |prompt: &str, details: &str| vec![prompt.to_string(), details.to_string()];
+        // Reworded: the idea's words are there, details follow.
+        assert_eq!(
+            assemble_improved(
+                "fox reading cafe cartoon",
+                &with("a cartoon fox reading a book in a cafe.", "red fur"),
+                &m,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "a cartoon fox reading a book in a cafe. Red fur."
+        );
+        // A rewording alone is enough to change the prompt.
+        assert_eq!(
+            assemble_improved(
+                "cat astronaut",
+                &with("a cat astronaut in a spacesuit", "-"),
+                &m,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "a cat astronaut in a spacesuit"
+        );
+        // Lost words, a lost style, number or negation, or added mood words: the idea as typed.
+        for (idea, reworded) in [
+            (
+                "same robot sitting in a garden",
+                "an old lighthouse keeper, watercolor",
+            ),
+            ("a fox, cartoon", "a fox in a forest, photo"),
+            ("two dogs on a sofa", "dogs on a sofa"),
+            ("a man with no hat", "a man with a hat"),
+            ("a cabin in snow", "a cabin in snow, cosy atmosphere"),
+        ] {
+            assert_eq!(
+                assemble_improved(idea, &with(reworded, "red door"), &m, "natural", &[]).unwrap(),
+                format!("{idea}. Red door."),
+                "{reworded}"
+            );
+        }
+        assert!(!keeps_intent("two dogs", "2 dogs", &m, &[], &[]));
+        assert!(keeps_intent(
+            "same bottle, different table",
+            "the same bottle on a different table",
+            &m,
+            &[],
+            &[]
+        ));
+        assert!(!keeps_intent(
+            "a fox",
+            "a fox, sks",
+            &m,
+            &["sks".into()],
+            &[]
+        ));
+        assert!(!keeps_intent(
+            "a snowy cabin",
+            "1boy, snowy cabin",
+            &m,
+            &[],
+            &[]
+        ));
+        let actions = vec![
+            vec!["add".to_string(), "put".to_string()],
+            vec!["replace".to_string()],
+            vec!["make".to_string(), "change".to_string()],
+        ];
+        assert!(!keeps_intent(
+            "add a red umbrella",
+            "replace the background with a red umbrella",
+            &m,
+            &[],
+            &actions
+        ));
+        assert!(keeps_intent(
+            "make the sky a sunset",
+            "change the sky to a sunset",
+            &m,
+            &[],
+            &actions
+        ));
+        assert!(keeps_intent(
+            "same bottle, different table",
+            "put the same bottle on a different table",
+            &m,
+            &[],
+            &actions
+        ));
+        let mut refs = improve_spec();
+        refs.edit.keep_wording = vec!["image 2".into()];
+        assert!(!keeps_intent(
+            "put the bottle from image 2 on the shelf",
+            "place the bottle on the shelf like in image 2",
+            &refs,
+            &[],
+            &[]
+        ));
+        assert!(!keeps_intent(
+            "a red car in the rain",
+            "a red sports car",
+            &m,
+            &[],
+            &[]
+        ));
+        // Phrases copied from the form's example are left out.
+        let mut ex = improve_spec();
+        ex.styles.get_mut("natural").unwrap().example =
+            "PROMPT: x\nDETAILS: grey beard, flat cap\nPLACE: rocky shore".into();
+        assert_eq!(
+            assemble_improved(
+                "old man",
+                &with("-", "grey beard, red scarf, no hat"),
+                &ex,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "old man. Red scarf."
         );
     }
 
@@ -1602,10 +1902,7 @@ mod tests {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect();
-        m.edit.common_words = ["the", "with", "make", "add", "replace", "give", "her"]
-            .map(String::from)
-            .to_vec();
-        let lines = |d: &str, k: &str| vec![d.to_string(), k.to_string()];
+        let lines = |d: &str, k: &str| vec!["-".to_string(), d.to_string(), k.to_string()];
         assert_eq!(
             assemble_edit(
                 "make it evening.",
@@ -1667,7 +1964,7 @@ mod tests {
         assert_eq!(
             assemble_edit(
                 "give her a red hat",
-                &lines("wide brim", "her face, the same lighting"),
+                &lines("wide brim", "her face, the same lighting (if any)"),
                 &m,
                 &[]
             )
@@ -1681,6 +1978,21 @@ mod tests {
             assemble_edit("remove the car", &lines("empty road", "the trees"), &m, &[]).unwrap(),
             "remove the car. Keep the trees unchanged."
         );
+        // The reworded instruction leads when it keeps the intent.
+        assert_eq!(
+            assemble_edit(
+                "same bottle, different table",
+                &[
+                    "put the same bottle on a different table".into(),
+                    "dark oak table".into(),
+                    "the bottle, the lighting".into()
+                ],
+                &m,
+                &[]
+            )
+            .unwrap(),
+            "put the same bottle on a different table. Dark oak table. Keep the lighting unchanged."
+        );
         // Mood words and trigger words go as in Create; nothing left = no change.
         assert!(assemble_edit(
             "add a hat",
@@ -1691,7 +2003,11 @@ mod tests {
         .is_none());
         assert_eq!(
             form_lines("KEEP: the face\nDETAILS: - red wool", &EDIT_FORM_LINES),
-            vec!["red wool".to_string(), "the face".to_string()]
+            vec![
+                String::new(),
+                "red wool".to_string(),
+                "the face".to_string()
+            ]
         );
         assert_eq!(
             and_list(&["a".into(), "b".into(), "c".into()]),
@@ -1722,7 +2038,14 @@ mod tests {
                     .join(", ")
             })
             .collect();
-        let out = assemble_improved("idea", &many, &m, "booru", &[]).unwrap();
+        let out = assemble_improved(
+            "idea",
+            &[&["-".to_string()], &many[..]].concat(),
+            &m,
+            "booru",
+            &[],
+        )
+        .unwrap();
         assert_eq!(out.split(", ").count(), 1 + MAX_ADDED_TAGS);
     }
 
