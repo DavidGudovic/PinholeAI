@@ -428,7 +428,7 @@ prints them for a folder of test pictures.
   involving anyone under 18 or who looks under 18; no sexual or intimate images of real people
   without consent; no pictures of real people made to deceive, embarrass or harass; no forged
   documents, IDs, receipts or evidence; don't pass made pictures off as real photos; follow model
-  licences; what the check stops. The owner dropped "local law" wording (2026-09-30).
+  licences; what the check stops.
 - **Block screen:** whenever the check stops something (error code `blocked`), the usage guidelines
   open again with the fixed block message on top (`src/components/BlockedNotice.tsx`, via the
   command wrapper in `src/lib/api.ts`). Never says what triggered it, no retry hint. Calls made

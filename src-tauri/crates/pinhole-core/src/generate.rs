@@ -1,4 +1,4 @@
-//! Generate / cancel / upscale / prompt preview. OWNER: engine agent.
+//! Generate / cancel / upscale / prompt preview.
 //!
 //! Flow (docs/ARCHITECTURE.md §4 "Generate"): installed model + family →
 //! components → `wiring::launch_args` → (re)start sd-server only when the args

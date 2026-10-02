@@ -1,4 +1,4 @@
-// OWNER: frontend B. Full-screen first-run flow (engine download → recommended models).
+// Full-screen first-run flow (engine download → recommended models).
 // Keep this export signature.
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, ArrowRight, Check, CircleCheck, Cpu, Download, Gpu, Lock, MemoryStick, RotateCw, ShieldCheck, Sparkles, TriangleAlert, WifiOff } from "lucide-react";

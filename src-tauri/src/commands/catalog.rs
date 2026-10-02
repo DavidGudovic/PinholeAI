@@ -1,4 +1,4 @@
-//! `catalog` commands. OWNER: catalog agent. Thin wrappers over `pinhole_core::catalog`.
+//! `catalog` commands. Thin wrappers over `pinhole_core::catalog`.
 
 use std::sync::Arc;
 

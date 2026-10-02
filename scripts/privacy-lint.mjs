@@ -805,7 +805,7 @@ pub fn run(req: &Req) {
     eprintln!("Type a prompt first");                       // literal text only
     let s = "println!(\\"{}\\", prompt)";                  // inside a string
     let r = r#"dbg!(prompt)"#;
-    todo!("store agent");
+    todo!("not written yet");
     eprintln!("{}", req.prompt.len()); // privacy-lint: allow length only, no text
 }
 #[cfg(test)]

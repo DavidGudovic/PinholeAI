@@ -1,4 +1,4 @@
-//! CivitAI browse / detail / preview images / API key. OWNER: catalog agent.
+//! CivitAI browse / detail / preview images / API key.
 //!
 //! PRIVACY: every request goes through `core.http` (allow-list + Offline mode).
 //! Browsing never sends the API key; downloads (and the permission probe)

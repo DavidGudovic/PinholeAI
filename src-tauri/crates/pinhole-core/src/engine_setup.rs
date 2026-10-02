@@ -1,4 +1,4 @@
-//! Engine status / install (first run). OWNER: engine agent.
+//! Engine status / install (first run).
 //!
 //! The engine build is picked from `config/engine.yaml` for this OS and the
 //! backend from hardware detection (NVIDIA → cuda, AMD/Intel → vulkan, none →

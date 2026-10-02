@@ -1,6 +1,6 @@
 //! "Use models from another app": the user points Pinhole at a ComfyUI, A1111,
 //! Forge or Stability Matrix models folder and Pinhole uses what it can run,
-//! in place (SPEC §3). OWNER: catalog agent.
+//! in place (SPEC §3).
 //!
 //! Read-only: nothing in a linked folder is ever written, moved or deleted.
 //! What Pinhole found is kept in `Data/catalog/linked-folders.json` (see

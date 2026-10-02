@@ -1,4 +1,4 @@
-//! `describe` commands. OWNER: engine agent. Thin wrappers over `pinhole_core::describe`.
+//! `describe` commands. Thin wrappers over `pinhole_core::describe`.
 
 use std::sync::Arc;
 

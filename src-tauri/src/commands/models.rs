@@ -1,4 +1,4 @@
-//! `models` commands. OWNER: catalog agent. Thin wrappers over `pinhole_core::models`.
+//! `models` commands. Thin wrappers over `pinhole_core::models`.
 
 use std::sync::Arc;
 

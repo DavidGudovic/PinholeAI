@@ -1,12 +1,6 @@
 //! Pinhole application core: the service layer behind every Tauri command.
 //! Tauri-free so integration and privacy tests can drive it directly.
-//!
-//! Module owners (see docs/ARCHITECTURE.md):
-//! * `app`, `library`           — store agent
-//! * `downloads`                — net agent
-//! * `engine_setup`, `generate`, `describe`, `session` — engine agent
-//! * `models`, `catalog`        — catalog agent
-//! * `lib`, `events`, `error`   — orchestrator (change only if you must; keep it compiling)
+//! Modules are described in docs/ARCHITECTURE.md.
 
 pub mod app;
 pub mod catalog;

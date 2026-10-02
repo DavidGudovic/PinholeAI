@@ -1,6 +1,5 @@
 //! Test hooks for workspace integration tests (`--features test-util`).
-//! OWNER: engine agent (generate hooks) — keep signatures stable, the `tests/`
-//! crate (ci agent) depends on them.
+//! The workspace `tests/` crate uses these hooks, so keep their signatures stable.
 //!
 //! Typical privacy test:
 //! ```ignore

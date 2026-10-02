@@ -1,4 +1,4 @@
-//! Styles + presets service. OWNER: store agent.
+//! Styles + presets service.
 //!
 //! Styles are the only user text Pinhole stores, and only through
 //! [`save_style`] (the explicit "Save as style" action). Presets never contain

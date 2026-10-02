@@ -1,4 +1,4 @@
-// OWNER: frontend B. Models tab: Browse (CivitAI) · Installed, plus the downloads list.
+// Models tab: Browse (CivitAI) · Installed, plus the downloads list.
 // Keep this export signature.
 import { useEffect, useRef, useState } from "react";
 import { getSettings, listLoras, listModels, onModelsChanged } from "../../lib/api";

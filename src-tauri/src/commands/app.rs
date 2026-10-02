@@ -1,4 +1,4 @@
-//! `app` commands. OWNER: store agent. Thin wrappers over `pinhole_core::app`.
+//! `app` commands. Thin wrappers over `pinhole_core::app`.
 
 use std::path::Path;
 use std::sync::Arc;

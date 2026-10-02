@@ -1,5 +1,5 @@
-// Small building blocks used by the Models tab, Settings and First run (frontend B).
-// The shared primitives live in src/components/ui (frontend A) and are only imported here.
+// Small building blocks used by the Models tab, Settings and First run.
+// The shared primitives live in src/components/ui and are only imported here.
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Check, Eye, EyeOff, KeyRound, ShieldCheck } from "lucide-react";
 import { asCoreError, setCivitaiKey } from "../../lib/api";

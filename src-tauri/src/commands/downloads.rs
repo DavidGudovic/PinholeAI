@@ -1,4 +1,4 @@
-//! `downloads` commands. OWNER: net agent. Thin wrappers over `pinhole_core::downloads`.
+//! `downloads` commands. Thin wrappers over `pinhole_core::downloads`.
 
 use std::sync::Arc;
 

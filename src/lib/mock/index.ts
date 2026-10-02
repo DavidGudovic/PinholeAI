@@ -2,9 +2,8 @@
 // opened in a browser, Playwright screenshots, vitest) without Tauri.
 // Activated automatically when not running inside Tauri.
 //
-// Each area registers handlers in its own file (owners in parentheses):
-//   ./app.ts (frontend B), ./models.ts (frontend B), ./catalog.ts (frontend B),
-//   ./generate.ts (frontend A), ./library.ts (frontend A), ./describe.ts (frontend A), ./update.ts
+// Each area registers handlers in its own file: ./app.ts, ./models.ts, ./catalog.ts,
+//   ./generate.ts, ./library.ts, ./describe.ts, ./update.ts
 // A handler receives the invoke args object and returns the result (or throws a CoreError).
 
 import { mockIPC } from "@tauri-apps/api/mocks";

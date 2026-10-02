@@ -26,7 +26,7 @@ async function invoke<R>(cmd: string, args?: InvokeArgs): Promise<R> {
 }
 import { askLicence, LICENCE_DECLINED, LICENSE_NEEDED } from "./licence";
 
-// ---------------------------------------------------------------- app (store agent)
+// ---------------------------------------------------------------- app
 export const appInfo = () => invoke<T.AppInfo>("app_info");
 export const getSettings = () => invoke<T.Settings>("get_settings");
 /** Saves settings.yaml and applies side effects (offline flag, theme, GPU override). */
@@ -58,7 +58,7 @@ export const installUpdate = (version: string) => invoke<void>("install_update",
 /** Opens the GitHub release page (or the releases list) in the system browser. */
 export const openReleasePage = (version: string | null) => invoke<void>("open_release_page", { version });
 
-// ---------------------------------------------------------------- engine (engine agent)
+// ---------------------------------------------------------------- engine
 export const engineStatus = () => invoke<T.EngineStatus>("engine_status");
 /** The image engine's recent output (memory only, prompt text redacted). */
 export const engineOutput = () => invoke<string>("engine_output");
@@ -71,11 +71,11 @@ export const installSafetyCheck = () => invoke<T.SafetyCheckStatus>("install_saf
 /** Dev builds only: the image check's scores for a recent result (null in release builds). */
 export const checkReadings = (id: string) => invoke<string | null>("check_readings", { id });
 
-// ---------------------------------------------------------------- downloads (net agent)
+// ---------------------------------------------------------------- downloads
 export const listDownloads = () => invoke<T.GroupStatus[]>("list_downloads");
 export const cancelDownload = (groupId: string) => invoke<void>("cancel_download", { groupId });
 
-// ---------------------------------------------------------------- models (catalog agent)
+// ---------------------------------------------------------------- models
 export const listModels = () => invoke<T.InstalledModel[]>("list_models");
 export const listLoras = () => invoke<T.InstalledLora[]>("list_loras");
 /** Replace an add-on's trigger words with the user's own list (saved in installed.json; not prompt text). */
@@ -113,7 +113,7 @@ export const deleteModel = (modelId: string) => invoke<void>("delete_model", { m
 export const resolveCivitaiResources = (resources: T.PastedResource[]) =>
   invoke<T.ResolvedResources>("resolve_civitai_resources", { resources });
 
-// ---------------------------------------------------------------- catalog (catalog agent)
+// ---------------------------------------------------------------- catalog
 export const catalogFilters = () => invoke<T.CatalogFilterOptions>("catalog_filters");
 /** `forFamily`: style add-ons made for this model family's architecture only. */
 export const browseCatalog = (query: T.BrowseQuery, forFamily: string | null = null) => invoke<T.BrowsePage>("browse_catalog", { query, forFamily });
@@ -134,7 +134,7 @@ export const hasCivitaiKey = () => invoke<boolean>("has_civitai_key");
 export const setCivitaiKey = (key: string) => invoke<void>("set_civitai_key", { key });
 export const clearCivitaiKey = () => invoke<void>("clear_civitai_key");
 
-// ---------------------------------------------------------------- generate (engine agent)
+// ---------------------------------------------------------------- generate
 export const familyUi = (familyId: string) => invoke<T.FamilyUi>("family_ui", { familyId });
 /** Resolves when the images are ready (or rejects with CoreError, code "cancelled" on cancel). */
 export const generate = (req: T.GenerateRequest) => invoke<T.GenerateResult>("generate", { req });
@@ -160,7 +160,7 @@ export const discardImage = (id: string) => invoke<void>("discard_image", { id }
 export const clearSession = () => invoke<void>("clear_session");
 export const upscaleImage = (id: string, factor: 2 | 4) => invoke<T.ResultImage>("upscale_image", { id, factor });
 
-// ---------------------------------------------------------------- describe (engine agent)
+// ---------------------------------------------------------------- describe
 export const captionerStatus = (purpose: T.HelperPurpose = "describe") => invoke<T.CaptionerStatus>("captioner_status", { purpose });
 /** `helperId`: a HelperModel id; omitted = the default helper. */
 export const installCaptioner = (helperId?: string) =>
@@ -172,7 +172,7 @@ export const describeImage = (imageId: string, style: T.DescribeStyle) =>
 export const improvePrompt = (prompt: string, familyId: string | null, avoid: string[]) =>
   invoke<T.ImprovedPrompt>("improve_prompt", { prompt, familyId, avoid });
 
-// ---------------------------------------------------------------- library (store agent)
+// ---------------------------------------------------------------- library
 export const listStyles = () => invoke<T.Style[]>("list_styles");
 /** Explicit user action only ("Save as style"). */
 export const saveStyle = (style: T.Style) => invoke<T.Style>("save_style", { style });
