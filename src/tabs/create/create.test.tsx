@@ -385,6 +385,19 @@ describe("reference picture", () => {
     expect(screen.queryByTestId("side-by-side")).toBeNull();
   });
 
+  it("More like this holds Variations and Same character; Describe stays a button", () => {
+    const store = storeWithResults(result("a", 64, 64));
+    withApp(store, <Results />);
+    expect(screen.queryByRole("button", { name: /Same character/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
+    expect(screen.getByRole("menuitem", { name: /Same character/ })).toBeTruthy();
+    // No batch for this result, so no Variations.
+    expect((screen.getByRole("menuitem", { name: /Variations/ }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /Describe/ }));
+    expect(store.getState().tab).toBe("describe");
+    expect(store.getState().describe.imageId).toBe("a");
+  });
+
   it("with no installed model that can use it: offers Edit", () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "setModels", models: [sdxl] });

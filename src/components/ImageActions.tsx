@@ -10,13 +10,15 @@ import { Button, MenuItem, Popover, cx, focusRing } from "./ui";
 /** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
 export const UPSCALE_MAX_SIDE = 8192;
 
-/** Save, plus "Save as…" in the desktop app. Errors go to `run`. */
+/** Save, plus "Save as…" (and, with `onSaveAll`, "Save all unsaved") in the desktop app. Errors go to `run`. */
 export function SaveButton({
   id,
   seed,
   size = "md",
   run,
   tab,
+  unsavedCount = 0,
+  onSaveAll,
 }: {
   id: string;
   seed: number | null;
@@ -24,6 +26,9 @@ export function SaveButton({
   /** The tab it sits in: S and Ctrl/Cmd+Shift+S save this image while that tab is showing. */
   tab: TabId;
   run: (f: () => Promise<unknown>) => Promise<void>;
+  /** Unsaved pictures in the session; "Save all unsaved" shows when there are 2 or more. */
+  unsavedCount?: number;
+  onSaveAll?: () => void;
 }) {
   const actions = useActions();
   const [saving, setSaving] = useState(false);
@@ -52,7 +57,7 @@ export function SaveButton({
       {canSaveAs() && (
         <Popover
           align="end"
-          width={180}
+          width={230}
           trigger={(p) => (
             <button
               {...p}
@@ -69,14 +74,28 @@ export function SaveButton({
           )}
         >
           {(close) => (
-            <MenuItem
-              onClick={() => {
-                close();
-                void run(() => actions.saveAs(id, seed));
-              }}
-            >
-              Save as…
-            </MenuItem>
+            <>
+              <MenuItem
+                hint="Choose the name and folder"
+                onClick={() => {
+                  close();
+                  void run(() => actions.saveAs(id, seed));
+                }}
+              >
+                Save as…
+              </MenuItem>
+              {onSaveAll && unsavedCount > 1 && (
+                <MenuItem
+                  hint="Every picture not saved yet, into a folder you choose"
+                  onClick={() => {
+                    close();
+                    onSaveAll();
+                  }}
+                >
+                  Save all unsaved ({unsavedCount})
+                </MenuItem>
+              )}
+            </>
           )}
         </Popover>
       )}
