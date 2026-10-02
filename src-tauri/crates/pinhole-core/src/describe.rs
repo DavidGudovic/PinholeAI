@@ -922,8 +922,10 @@ fn keeps_intent(
             })
             .collect()
     };
-    let new_negated = negated(&new_all);
-    if negated(&idea_all).iter().any(|w| !new_negated.contains(w)) {
+    let (idea_negated, new_negated) = (negated(&idea_all), negated(&new_all));
+    if idea_negated.iter().any(|w| !new_negated.contains(w))
+        || new_negated.iter().any(|w| !idea_negated.contains(w))
+    {
         return false;
     }
     let named_but_lost = spec
@@ -1230,12 +1232,18 @@ fn assemble_edit(
         .filter(|w| !common.contains(*w))
         .map(|w| singular(w))
         .collect();
-    // What the instruction keeps "the same" ("same bottle" → "bottle").
-    let words = lower_words(&both);
+    // What the instruction keeps: "same bottle", "keep the bottle the same" → "bottle".
+    let words = lower_words(instruction);
     let kept_same: std::collections::HashSet<String> = words
-        .windows(2)
-        .filter(|w| w[0] == "same")
-        .map(|w| singular(&w[1]))
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| matches!(w.as_str(), "same" | "keep"))
+        .filter_map(|(i, _)| {
+            words[i + 1..]
+                .iter()
+                .find(|w| !matches!(w.as_str(), "a" | "an" | "the" | "same"))
+        })
+        .map(|w| singular(w))
         .collect();
     for (name, items) in &mut groups {
         if *name == "details" {
@@ -1249,10 +1257,11 @@ fn assemble_edit(
             // "same bottle, different table": details are about the table, never the bottle.
             if !kept_same.is_empty() {
                 items.retain(|p| {
-                    content_words(p)
-                        .iter()
-                        .map(|w| singular(w))
-                        .any(|w| mentioned.contains(&w) && !kept_same.contains(&w))
+                    content_words(p).iter().map(|w| singular(w)).any(|w| {
+                        mentioned.contains(&w)
+                            && !kept_same.contains(&w)
+                            && !matches!(w.as_str(), "same" | "different" | "keep")
+                    })
                 });
             }
         } else if *name == "keep" {
@@ -1896,7 +1905,7 @@ mod tests {
             .unwrap(),
             "a cat astronaut in a spacesuit"
         );
-        // Lost words, a lost style, number or negation, or added mood words: the idea as typed.
+        // Lost words, a lost style, number or negation, an added negation or mood words: the idea as typed.
         for (idea, reworded) in [
             (
                 "same robot sitting in a garden",
@@ -1905,6 +1914,7 @@ mod tests {
             ("a fox, cartoon", "a fox in a forest, photo"),
             ("two dogs on a sofa", "dogs on a sofa"),
             ("a man with no hat", "a man with a hat"),
+            ("a red car", "a car that is not red"),
             ("a cabin in snow", "a cabin in snow, cosy atmosphere"),
         ] {
             assert_eq!(
@@ -2123,7 +2133,7 @@ mod tests {
                 "same bottle, different table",
                 &[
                     "put the same bottle on a different table".into(),
-                    "round glass vase, dark oak table".into(),
+                    "round glass vase, the same bottle label, dark oak table".into(),
                     "the bottle, the lighting".into()
                 ],
                 &m,
