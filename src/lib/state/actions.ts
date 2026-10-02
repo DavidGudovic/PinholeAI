@@ -122,7 +122,7 @@ export function makeActions(store: Store) {
   }
 
   // ---------------------------------------------------------------- queue
-  // Generate/Edit pressed while a job runs: the job waits here (memory only) and starts when
+  // Generate/Edit/Upscale pressed while a job runs: the job waits here (memory only) and starts when
   // the running one ends. Its promise settles when it has run, so the tab that queued it can
   // show its error. Removed or Reset jobs resolve quietly without running.
   let resetting = false;
@@ -281,24 +281,35 @@ export function makeActions(store: Store) {
     await runBatch(variationRequest(batch.request));
   }
 
+  /** The queue list's line for an upscale. */
+  function upscaleEntry(kind: "upscale" | "editUpscale", imageId: string, factor: 2 | 4, imageIds: string[]): Omit<QueuedJob, "id"> {
+    const im = get().images[imageId];
+    return { kind, label: `Upscale ${factor}×`, detail: im ? `${im.width * factor}×${im.height * factor}` : "Upscale", imageIds };
+  }
+
+  /** Upscale a Create result (queued if a job is running). Resolves when it has run; quietly on cancel. */
   async function upscale(resultId: string, factor: 2 | 4) {
-    // Read before the job: the source (and with it its batch) may be removed while it runs.
-    // The job holds the batch's reference picture, so Variations of the upscale still work.
+    // Read when pressed: the source (and with it its batch) may be removed while it waits or runs.
+    // The queue entry and then the job hold the batch's reference picture, so Variations of the
+    // upscale still work.
     const batchId = get().resultBatch[resultId];
     const batch = batchId ? get().batches[batchId] : undefined;
+    const imageIds = [resultId, ...(batch?.request.refImageIds ?? [])];
     try {
-      await withJob("upscale", async () => {
-        const nonce = get().sessionNonce;
-        const im = await api.upscaleImage(resultId, factor);
-        // Cancel pressed while the upscaler was still downloading (the engine had no job
-        // to stop yet): drop the image instead of adding it.
-        if (cancelRequested) {
-          void api.discardImage(im.id).catch(() => undefined);
-          throw cancelledError();
-        }
-        const refs = await jobRefs([im], nonce);
-        dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
-      }, 1, [resultId, ...(batch?.request.refImageIds ?? [])]);
+      await enqueue(upscaleEntry("upscale", resultId, factor, imageIds), () =>
+        withJob("upscale", async () => {
+          const nonce = get().sessionNonce;
+          const im = await api.upscaleImage(resultId, factor);
+          // Cancel pressed while the upscaler was still downloading (the engine had no job
+          // to stop yet): drop the image instead of adding it.
+          if (cancelRequested) {
+            void api.discardImage(im.id).catch(() => undefined);
+            throw cancelledError();
+          }
+          const refs = await jobRefs([im], nonce);
+          dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
+        }, 1, imageIds),
+      );
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
@@ -663,29 +674,36 @@ export function makeActions(store: Store) {
     }
   }
 
-  /** Upscale the shown edit step; the result becomes the next step. Resolves quietly on cancel. */
+  /**
+   * Upscale the shown edit step (queued if a job is running); the result becomes the next step.
+   * Like a queued edit, one that waited while the history moved on is added at the end, and
+   * dropped if its step is gone. Resolves quietly on cancel.
+   */
   async function upscaleEdit(factor: 2 | 4) {
     const s = get();
-    const shown = s.edit.index;
-    const node = s.edit.chain[shown];
+    const node = s.edit.chain[s.edit.index];
     if (!node) throw { code: "invalid", message: "Add an image to edit first.", details: null } as CoreError;
     try {
-      await withJob("editUpscale", async () => {
-        const nonce = get().sessionNonce;
-        const im = await api.upscaleImage(node.imageId, factor);
-        if (cancelRequested) {
-          void api.discardImage(im.id).catch(() => undefined);
-          throw cancelledError();
-        }
-        const refs = await jobRefs([im], nonce);
-        const now = get().edit;
-        if (now.index === shown && now.chain[shown]?.imageId === node.imageId) {
-          dispatch({ type: "editPush", ref: refs[0], meta: im, after: shown });
-        } else {
-          releaseRefs(refs, true);
-          toast("The upscale finished after the image changed, so it wasn't added.");
-        }
-      }, 1);
+      await enqueue(upscaleEntry("editUpscale", node.imageId, factor, [node.imageId]), () =>
+        // The job (and with it the history lock) starts before the first await.
+        withJob("editUpscale", async () => {
+          const nonce = get().sessionNonce;
+          const im = await api.upscaleImage(node.imageId, factor);
+          if (cancelRequested) {
+            void api.discardImage(im.id).catch(() => undefined);
+            throw cancelledError();
+          }
+          const refs = await jobRefs([im], nonce);
+          const now = get().edit;
+          const pos = now.chain.findIndex((n) => n.imageId === node.imageId);
+          if (pos >= 0 && pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: im, after: pos });
+          else if (pos >= 0) dispatch({ type: "editAppend", ref: refs[0], meta: im });
+          else {
+            releaseRefs(refs, true);
+            toast("The upscale finished after the image changed, so it wasn't added.");
+          }
+        }, 1, [node.imageId]),
+      );
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;

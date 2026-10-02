@@ -3,7 +3,8 @@ import { useState } from "react";
 import { ChevronDown, ImageUp, Save } from "lucide-react";
 import { useShortcuts } from "../lib/shortcuts";
 import { useActions } from "../lib/state/AppProvider";
-import type { TabId } from "../lib/state/model";
+import { willQueue, type TabId } from "../lib/state/model";
+import { useAppState } from "../lib/state/store";
 import { canSaveAs } from "../lib/state/platform";
 import { Button, MenuItem, Popover, cx, focusRing } from "./ui";
 
@@ -103,7 +104,7 @@ export function SaveButton({
   );
 }
 
-/** "Upscale ▾" with 2× and 4×. */
+/** "Upscale ▾" with 2× and 4×. Picked while a job runs, it waits in the queue. */
 export function UpscaleMenu({
   width,
   height,
@@ -117,6 +118,7 @@ export function UpscaleMenu({
   size?: "sm" | "md";
   onPick: (factor: 2 | 4) => void;
 }) {
+  const queues = useAppState(willQueue);
   // The upscaler always runs at 4× first (2× is 4× halved), up to 8192 px per side.
   const tooBig = width * 4 > UPSCALE_MAX_SIDE || height * 4 > UPSCALE_MAX_SIDE;
   const icon = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
@@ -139,7 +141,7 @@ export function UpscaleMenu({
               hint={
                 tooBig
                   ? `Too large to upscale (max ${UPSCALE_MAX_SIDE / 4} px per side)`
-                  : `${width * f}×${height * f}`
+                  : `${width * f}×${height * f}${queues ? " (waits for the current job)" : ""}`
               }
               onClick={() => {
                 close();

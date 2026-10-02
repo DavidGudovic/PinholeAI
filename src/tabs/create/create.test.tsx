@@ -300,6 +300,18 @@ describe("Results", () => {
     expect(items[0].textContent).toContain("2048×2048");
   });
 
+  it("keeps Upscale available while a picture is being made, and says it waits", () => {
+    const store = storeWithResults(result("n", 1024, 1024));
+    store.dispatch({ type: "jobStart", kind: "create", at: 0, count: 1 });
+    withApp(store, <Results />);
+    const button = screen.getByRole("button", { name: /Upscale/ }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    const items = screen.getAllByRole("menuitem") as HTMLButtonElement[];
+    expect(items.map((i) => i.disabled)).toEqual([false, false]);
+    expect(items[0].textContent).toContain("waits for the current job");
+  });
+
   it("names upscaled copies in the strip", () => {
     const store = storeWithResults(result("o", 64, 64), result("u", 256, 256, "o"));
     withApp(store, <Results />);

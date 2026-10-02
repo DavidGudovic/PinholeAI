@@ -256,7 +256,7 @@ export function EditTab() {
   usePrimaryAction("edit", () => void run());
 
   const upscale = async (factor: 2 | 4) => {
-    if (store.getState().job || importing || !current) return;
+    if (importing || !current) return;
     retry.current = { kind: "upscale", factor };
     setError(null);
     try {
