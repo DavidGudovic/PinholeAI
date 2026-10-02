@@ -188,12 +188,12 @@ pub async fn remove(core: &AppCore, id: &str) -> CoreResult<()> {
             .map(|f| index.abs_path(&core.data, f))
             .collect()
     };
-    if crate::generate::unload_interrupts_job(core, "", &paths).await {
+    if crate::engine::unload_interrupts_job(core, "", &paths).await {
         return Err(CoreError::invalid(
             "Wait for the current pictures to finish, then remove the folder.",
         ));
     }
-    crate::generate::unload_model(core, "", &paths).await;
+    crate::engine::unload_model(core, "", &paths).await;
     {
         let mut index = core.installed.lock();
         let before = index.clone();

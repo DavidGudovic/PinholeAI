@@ -35,7 +35,7 @@ this patch and the build workflow; everything else stays upstream's code at the 
    download small; Windows CUDA keeps upstream's architecture list.
 4. In Pinhole: point `config/engine.yaml` at that release (sizes and SHA-256 from the release's
    `SHA256SUMS.txt`, cross-checked with the verify-pins workflow) and run the engine smoke test.
-   `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs` is on, so an unpatched engine won't start.
+   `ENGINE_LOCKDOWN` in `pinhole-core/src/engine.rs` is on, so an unpatched engine won't start.
 
 Current pin: `master-929-3f8527a-pinhole1` from DavidGudovic/stable-diffusion.cpp.
 

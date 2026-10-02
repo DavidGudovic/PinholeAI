@@ -6,6 +6,7 @@ pub mod app;
 pub mod catalog;
 pub mod describe;
 pub mod downloads;
+pub(crate) mod engine;
 pub mod engine_setup;
 pub mod error;
 pub mod events;
@@ -16,6 +17,7 @@ pub mod library;
 pub mod licence;
 pub mod linked;
 pub mod lookup;
+pub(crate) mod memory;
 pub mod models;
 pub mod models_folder;
 #[cfg(test)]
@@ -23,6 +25,8 @@ mod one_way;
 pub mod session;
 #[cfg(feature = "test-util")]
 pub mod testing;
+#[cfg(test)]
+mod tests;
 pub mod text_check;
 pub mod update;
 
@@ -72,7 +76,7 @@ pub struct AppCore {
     /// In-memory generated/imported images (never written until Save).
     pub session: session::Session,
     /// Engine processes + current generation job.
-    pub gen: generate::GenState,
+    pub gen: crate::engine::GenState,
     /// Captioner (llama-server) state.
     pub describe: describe::DescribeState,
     /// Catalog/model-install state (e.g. pending family choices, API key cache).
@@ -152,7 +156,7 @@ impl AppCore {
             downloads,
             events,
             session: session::Session::default(),
-            gen: generate::GenState::default(),
+            gen: crate::engine::GenState::default(),
             describe: describe::DescribeState::default(),
             models: models::ModelsState::default(),
             linked: linked::LinkedRuntime::default(),
@@ -175,7 +179,7 @@ impl AppCore {
 
     /// Stop engines (app exit).
     pub async fn shutdown(&self) {
-        generate::shutdown(self).await;
+        crate::engine::shutdown(self).await;
         describe::shutdown(self).await;
         // Copies still waiting for a family choice would never be listed again.
         models::discard_pending(self);

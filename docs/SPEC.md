@@ -907,7 +907,7 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   workflow, `engine/sd-cpp/README.md`). Every launch gets a random key in `SD_API_KEY` (never on
   the command line) and every request sends it as `Authorization: Bearer`; requests without it
   get 401, and any request carrying an `Origin` header gets 403 (`--reject-origin`, added by the
-  compiled-in `ENGINE_LOCKDOWN` in `pinhole-core/src/generate.rs`, not a setting, so an unpatched
+  compiled-in `ENGINE_LOCKDOWN` in `pinhole-core/src/engine.rs`, not a setting, so an unpatched
   engine can't start). The idle stop stays (it also frees memory).
 
 ## 14. Open questions

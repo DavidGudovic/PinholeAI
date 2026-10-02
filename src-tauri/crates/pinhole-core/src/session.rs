@@ -232,7 +232,7 @@ pub fn discard(core: &AppCore, id: &str) {
 
 /// Reset: drop every image immediately (and the engines' output
 /// buffers), and stop sd-server if it ran a job — it keeps finished results
-/// for 600 s behind an unauthenticated API (`generate::IDLE_STOP_AFTER`). The
+/// for 600 s behind an unauthenticated API (`crate::engine::IDLE_STOP_AFTER`). The
 /// next Generate reloads the model. If a job is running, the engine stops
 /// right after it.
 pub async fn clear(core: &AppCore) {
@@ -240,7 +240,7 @@ pub async fn clear(core: &AppCore) {
     core.check.forget();
     core.gen.logs.clear();
     core.describe.logs.clear();
-    crate::generate::clear_engine_results(core).await;
+    crate::engine::clear_engine_results(core).await;
 }
 
 /// RGBA8 pixels for the clipboard: the export's pixels (watermarked like [`export_png`];

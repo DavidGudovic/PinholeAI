@@ -926,7 +926,7 @@ pub(crate) async fn verify_llama_identity(
     client: &LlamaClient,
     model: &std::path::Path,
 ) -> CoreResult<()> {
-    let taken = || CoreError::new("engine_failed", crate::generate::PORT_TAKEN_MESSAGE);
+    let taken = || CoreError::new("engine_failed", crate::engine::PORT_TAKEN_MESSAGE);
     if !proc.is_running() {
         return Err(taken().with_details(
             "the describe engine exited while another program answered on its port",
@@ -939,7 +939,7 @@ pub(crate) async fn verify_llama_identity(
     let expected = model.to_string_lossy();
     if !ids
         .iter()
-        .any(|id| crate::generate::same_file_path(id, &expected))
+        .any(|id| crate::engine::same_file_path(id, &expected))
     {
         return Err(taken()
             .with_details("the server on the describe engine's port reports a different model"));
@@ -1022,7 +1022,7 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
     let mut args = cfg.llama_cpp.launch_defaults.clone();
     // engine.yaml is editable in some installs: nothing that writes text to disk, prints
     // prompts or loads extra weights.
-    crate::generate::strip_flag(
+    crate::engine::strip_flag(
         &mut args,
         &[
             "--host",

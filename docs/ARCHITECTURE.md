@@ -23,7 +23,10 @@ src-tauri/                 Tauri 2 app crate `pinhole` (thin: commands + event b
     pinhole-catalog/       CivitAI API client, filters, safe-file selection, card view models
     pinhole-check/         local image check (RELEASE-SPEC §3): pinned ONNX files, rules, tract runner
     pinhole-core/          AppCore service layer (Tauri-free) used by commands and tests
-tests/                     crate `pinhole-tests`: privacy sentinel scan, offline test, engine smoke test
+                           (generate.rs = Create/Edit/Upscale jobs, engine.rs = the sd-server process,
+                           memory.rs = out-of-memory retries, src/tests/ = round trips by area)
+tests/                     crate `pinhole-tests`: privacy sentinel scan, offline test, engine smoke test,
+                           Rust JSON vs lib/types.ts (ipc_shapes.rs)
 src/                       React + TS UI
   lib/types.ts lib/api.ts  IPC contract (mirrors Rust serde camelCase)
   lib/mock/                browser mock backend (per-area handler tables)
@@ -256,7 +259,7 @@ what was skipped.
 | `core::describe::install_captioner(core)` | catalog (recommended "describe" role) |
 | `core::describe::{list_helper_models, install_captioner(core, helper_id)}` | Models → Helpers, UI pickers |
 | `core::describe::improve_prompt(core, prompt, family_id, avoid)` | Create prompt box |
-| `core::generate::unload_model(core, model_id)` | catalog (delete) |
+| `core::engine::unload_model(core, model_id)` | catalog (delete) |
 | `core::testing::{use_external_engine, register_fake_model}` (feature `test-util`) | `tests/` |
 | `pinhole_engine::testutil::MockSdServer` (feature `test-util`): `start().await`, `base_url()`, `requests()` | `tests/` |
 | `pinhole_net::HttpClient::new_for_tests(offline, allow_loopback_http)` (feature `test-util`) | `tests/`, engine and catalog tests |

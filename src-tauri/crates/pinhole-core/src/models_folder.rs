@@ -218,7 +218,7 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
         .folder_lock
         .try_write()
         .map_err(|_| CoreError::invalid("Wait for Pinhole to finish adding or deleting a model (or making or describing a picture), then change the Models folder."))?;
-    crate::generate::shutdown(core).await;
+    crate::engine::shutdown(core).await;
     crate::describe::shutdown(core).await;
     crate::models::discard_pending(core);
 
