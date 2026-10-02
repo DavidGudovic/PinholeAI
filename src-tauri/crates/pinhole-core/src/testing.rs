@@ -668,38 +668,62 @@ mod tests {
         assert_eq!(at(10, 10), &[10, 20, 30, 255]);
         assert_ne!(at(630, 340), &[10, 20, 30, 255]);
 
-        // Nothing painted: the whole picture is drawn larger, without a mask, and comes back
-        // at its own size.
+        // Nothing painted and no face found: nothing to add detail to.
         let n = mock.requests().len();
+        let err = generate::generate(&core, fix_req(None)).await.unwrap_err();
+        assert!(err.message.contains("No face found"), "{}", err.message);
+        assert_eq!(mock.requests().len(), n, "no engine job");
+
+        // A face already larger than the model draws (a close-up): left as it is.
+        use_check(
+            &core,
+            FakeCheck {
+                face_boxes: vec![[200.0, 100.0, 700.0, 700.0]],
+                ..Default::default()
+            },
+        );
+        let err = generate::generate(&core, fix_req(None)).await.unwrap_err();
+        assert!(err.message.contains("No face found"), "{}", err.message);
+        assert_eq!(mock.requests().len(), n, "no engine job");
+
+        // Nothing painted, two faces: each is redrawn in its own pass at the model's size,
+        // largest first, and the picture comes back at its own size.
+        let fake = FakeCheck {
+            face_boxes: vec![[100.0, 100.0, 200.0, 200.0], [800.0, 500.0, 60.0, 60.0]],
+            ..Default::default()
+        };
+        let checked = fake.sizes.clone();
+        use_check(&core, fake);
         let res = generate::generate(&core, fix_req(None)).await.unwrap();
         let out = &res.images[0];
         assert_eq!((out.width, out.height), (1200, 900));
         assert_eq!(out.parent_id.as_deref(), Some(src.id.as_str()));
-        let body = &mock.requests()[n];
-        assert!(body.get("mask_image").is_none_or(|v| v.is_null()));
-        assert_eq!(body["batch_count"], 1);
-        assert!(body.get("hires").is_none_or(|v| v.is_null()));
-        assert_eq!(body["strength"], 0.45);
-        let (w, h) = (
-            body["width"].as_u64().unwrap(),
-            body["height"].as_u64().unwrap(),
-        );
-        assert!(w * h > 1200 * 900, "drawn larger than the picture: {w}x{h}");
-        assert!(w % 64 == 0 && h % 64 == 0 && w > h, "{w}x{h}");
+        let reqs = mock.requests();
+        assert_eq!(reqs.len(), n + 2, "one pass per face");
+        for body in &reqs[n..] {
+            assert!(body["mask_image"].as_str().unwrap().len() > 50);
+            assert_eq!(body["batch_count"], 1);
+            assert_eq!(body["strength"], 0.45);
+            let (w, h) = (
+                body["width"].as_u64().unwrap(),
+                body["height"].as_u64().unwrap(),
+            );
+            assert!(w >= 768 && h >= 768, "drawn at the model's size: {w}x{h}");
+        }
         let sizes = checked.lock().clone();
-        assert_eq!(sizes.len(), 4, "{sizes:?}");
-        assert_eq!(sizes[2], (1200, 900), "the result is checked: {sizes:?}");
-
-        // Too big to redraw whole: asked to paint over a part instead.
-        let big = session::import_image(
-            &core,
-            pinhole_engine::testutil::solid_png(4000, 3000, [10, 20, 30, 255]),
-        )
-        .unwrap();
-        let mut req = fix_req(None);
-        req.init_image_id = Some(big.id);
-        let err = generate::generate(&core, req).await.unwrap_err();
-        assert!(err.message.contains("Paint over"), "{}", err.message);
+        assert_eq!(sizes.len(), 3, "the result and each redraw: {sizes:?}");
+        assert_eq!(sizes[0], (1200, 900));
+        let img = core.session.get(&out.id).unwrap();
+        let (px, _, _) = pinhole_engine::image::decode_rgba(img.bytes.as_slice()).unwrap();
+        let at = |x: usize, y: usize| &px[(y * 1200 + x) * 4..][..4];
+        assert_eq!(
+            at(10, 10),
+            &[10, 20, 30, 255],
+            "away from the faces: untouched"
+        );
+        // The second pass worked on the first pass's result: the first face stays redrawn.
+        assert_ne!(at(200, 200), &[10, 20, 30, 255], "first face redrawn");
+        assert_ne!(at(830, 530), &[10, 20, 30, 255], "second face redrawn");
     }
 
     #[tokio::test]
@@ -2307,6 +2331,7 @@ mod tests {
             FakeCheck {
                 readings: intimate_adult(),
                 original: pinhole_check::Original { has_face: true },
+                face_boxes: vec![[200.0, 200.0, 60.0, 60.0]],
                 ..Default::default()
             },
         );
@@ -2321,8 +2346,8 @@ mod tests {
         fix.init_image_id = Some(photo.clone());
         fix.mask_image_id = Some(mask);
         fix.fix_details = true;
-        let mut fix_whole = fix.clone();
-        fix_whole.mask_image_id = None;
+        let mut fix_faces = fix.clone();
+        fix_faces.mask_image_id = None;
         let mut extend = GenerateRequest::txt2img(sdxl, "y");
         extend.mode = GenMode::Img2img;
         extend.init_image_id = Some(photo.clone());
@@ -2336,7 +2361,7 @@ mod tests {
             ("reference", reference),
             ("edit", edit),
             ("fix details", fix),
-            ("fix details, whole picture", fix_whole),
+            ("add detail (faces)", fix_faces),
             ("extend", extend),
         ] {
             let e = generate::generate(&core, req).await.unwrap_err();
