@@ -25,7 +25,7 @@ mod one_way;
 pub mod session;
 #[cfg(feature = "test-util")]
 pub mod testing;
-#[cfg(test)]
+#[cfg(all(test, feature = "test-util"))]
 mod tests;
 pub mod text_check;
 pub mod update;

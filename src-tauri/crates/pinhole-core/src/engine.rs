@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::engine_setup;
 use crate::events::{GenPhase, GenerationProgress};
 use crate::memory::{
-    note_offload, others_note, vram_message, MemFallback, OTHERS_PREFIX, RAM_MESSAGE, RETRY_NOTES,
+    note_offload, others_note, set_others_note, vram_message, MemFallback, RAM_MESSAGE,
     VRAM_MESSAGE,
 };
 use crate::{AppCore, CoreError, CoreEvent, CoreResult};
@@ -397,24 +397,6 @@ pub(crate) fn emit_progress(
         elapsed_ms: t0.elapsed().as_millis() as u64,
         note: (!note.is_empty()).then_some(note),
     }));
-}
-
-/// Note about other programs' graphics memory, measured at each engine start
-/// (replaces the one from an earlier start of this job; shown first).
-pub(crate) fn set_others_note(core: &AppCore, note: Option<String>) {
-    let mut n = core.gen.job_note.lock();
-    n.retain(|x| !x.starts_with(OTHERS_PREFIX));
-    if let Some(note) = note {
-        n.insert(0, note);
-    }
-}
-
-/// Show `note` for the automatic retry that is starting (replaces the note of
-/// an earlier retry of the same job; other notes stay).
-pub(crate) fn set_retry_note(core: &AppCore, note: &str) {
-    let mut n = core.gen.job_note.lock();
-    n.retain(|x| !RETRY_NOTES.contains(&x.as_str()));
-    n.push(note.to_string());
 }
 
 /// Remove `flag` (and its value) from an argument list.

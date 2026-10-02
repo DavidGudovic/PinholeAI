@@ -37,7 +37,7 @@ stable_diffusion_cpp:
   # "embed_image_metadata": false per request (defense in depth).
   # --log-level info: the auto-fit memory plan ("auto-fit plan: …", backend_fit.cpp) is INFO;
   # it only reaches the in-memory ring buffer (Details). Prompt text is printed at verbose
-  # only, which Pinhole never allows (generate.rs full_sd_args clamps the level).
+  # only, which Pinhole never allows (engine.rs full_sd_args clamps the level).
   # --mmap: weights auto-fit parks in system memory are mapped from the model file
   # (model_manager.cpp can_mmap_storage) instead of copied into pinned host buffers
   # (model_manager.cpp params_buffer_type_for), so the OS can page them out.

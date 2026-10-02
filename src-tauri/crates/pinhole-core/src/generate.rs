@@ -42,13 +42,13 @@ use tokio_util::sync::CancellationToken;
 
 use crate::engine::{
     after_job, decoding_now, drop_engine, emit_progress, engine_died, engine_failure,
-    ensure_engine, exit_details, failure_error, running_engine, set_retry_note,
+    ensure_engine, exit_details, failure_error, running_engine,
 };
 use crate::engine_setup;
 use crate::events::GenPhase;
 use crate::memory::{
-    memory_choices, memory_error, next_memory_fallback, offload_fits_ram, with_memory_choices,
-    with_memory_plan, with_remembered_offload, TeChoice,
+    memory_choices, memory_error, next_memory_fallback, offload_fits_ram, set_retry_note,
+    with_memory_choices, with_memory_plan, with_remembered_offload, TeChoice,
 };
 use crate::session::SessionImage;
 use crate::{AppCore, CoreError, CoreResult};
@@ -283,6 +283,8 @@ pub struct SavedBatch {
     pub saved: Vec<SavedEntry>,
     pub failed: usize,
 }
+
+// ================================================================ cancel / family UI
 
 /// Cancel the running generation (or model load). No-op when idle.
 pub fn cancel(core: &AppCore) {

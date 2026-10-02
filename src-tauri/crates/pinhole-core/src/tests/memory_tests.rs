@@ -526,9 +526,9 @@ async fn job_notes_replace_older_ones() {
         processes: vec![],
     };
     let notes = || core.gen.job_note.lock().clone();
-    crate::engine::set_others_note(&core, Some(crate::memory::others_note(&others(9216))));
-    crate::engine::set_retry_note(&core, crate::memory::TE_RETRY_NOTE);
-    crate::engine::set_others_note(&core, Some(crate::memory::others_note(&others(9300))));
+    crate::memory::set_others_note(&core, Some(crate::memory::others_note(&others(9216))));
+    crate::memory::set_retry_note(&core, crate::memory::TE_RETRY_NOTE);
+    crate::memory::set_others_note(&core, Some(crate::memory::others_note(&others(9300))));
     assert_eq!(notes().len(), 2, "{:?}", notes());
     assert!(
         notes()[0].starts_with("Other programs are using 9.1 GB of your graphics memory."),
@@ -536,8 +536,8 @@ async fn job_notes_replace_older_ones() {
         notes()
     );
     assert_eq!(notes()[1], crate::memory::TE_RETRY_NOTE);
-    crate::engine::set_retry_note(&core, crate::memory::TILING_RETRY_NOTE);
-    crate::engine::set_others_note(&core, None);
+    crate::memory::set_retry_note(&core, crate::memory::TILING_RETRY_NOTE);
+    crate::memory::set_others_note(&core, None);
     assert_eq!(
         notes(),
         vec![crate::memory::TILING_RETRY_NOTE.to_string()],

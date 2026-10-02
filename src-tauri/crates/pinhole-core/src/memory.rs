@@ -1,6 +1,7 @@
-//! Out of memory (docs/ARCHITECTURE.md §4): before sd-server starts, leftover
-//! engines under `Data/engine/` are killed, an idle describe engine is stopped
-//! and (NVIDIA) graphics memory used by other programs is measured. A job that
+//! Out of memory (docs/ARCHITECTURE.md §4): before sd-server starts
+//! ([`crate::engine`]), leftover engines under `Data/engine/` are killed, an idle
+//! describe engine is stopped and (NVIDIA) graphics memory used by other programs
+//! is measured. A job that
 //! runs out of memory is retried with each memory-saving choice at most once:
 //! reading the prompt → the text encoder moves to the processor
 //! (`--backend te=cpu`, remembered per model for the app session; Settings
@@ -37,7 +38,7 @@ pub(crate) const OFFLOAD_RETRY_NOTE: &str = "Your graphics card ran out of memor
 
 pub(crate) const MORE_ROOM_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with more of the card kept free and the model sent to it in parts (slower).";
 
-pub(crate) const RETRY_NOTES: &[&str] = &[
+const RETRY_NOTES: &[&str] = &[
     TE_RETRY_NOTE,
     TILING_RETRY_NOTE,
     MORE_ROOM_RETRY_NOTE,
@@ -450,7 +451,7 @@ pub(crate) fn others_sentence(o: &OtherGpuUse) -> String {
 }
 
 /// How [`others_sentence`] starts (to replace an older note).
-pub(crate) const OTHERS_PREFIX: &str = "Other programs are using ";
+const OTHERS_PREFIX: &str = "Other programs are using ";
 
 /// Shown while loading when other programs hold a lot of graphics memory.
 pub(crate) fn others_note(o: &OtherGpuUse) -> String {
@@ -560,6 +561,24 @@ pub(crate) fn note_offload(core: &AppCore, model_id: &str, wiring_args: &[String
         .iter()
         .any(|a| a == "--offload-to-cpu")
         .then(|| (model_id.to_string(), wiring_args.to_vec()));
+}
+
+/// Note about other programs' graphics memory, measured at each engine start
+/// (replaces the one from an earlier start of this job; shown first).
+pub(crate) fn set_others_note(core: &AppCore, note: Option<String>) {
+    let mut n = core.gen.job_note.lock();
+    n.retain(|x| !x.starts_with(OTHERS_PREFIX));
+    if let Some(note) = note {
+        n.insert(0, note);
+    }
+}
+
+/// Show `note` for the automatic retry that is starting (replaces the note of
+/// an earlier retry of the same job; other notes stay).
+pub(crate) fn set_retry_note(core: &AppCore, note: &str) {
+    let mut n = core.gen.job_note.lock();
+    n.retain(|x| !RETRY_NOTES.contains(&x.as_str()));
+    n.push(note.to_string());
 }
 
 #[cfg(test)]
@@ -916,6 +935,6 @@ mod tests {
             assert!(m.contains("in Models"), "{m}");
         }
         assert!(!TE_ON_GPU_MESSAGE.contains("in Models"));
-        // `vram_message` with other programs named: see testing.rs `out_of_memory_is_never_the_generic_message`.
+        // `vram_message` with other programs named: see tests/memory_tests.rs `out_of_memory_is_never_the_generic_message`.
     }
 }

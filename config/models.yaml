@@ -1297,10 +1297,10 @@ captioner:
 # empty) and forces every weight into RAM — worse on low-RAM PCs.
 # `--max-vram`: Pinhole passes `-2` on 12 GB+ cards (keep 2 GiB free; auto-fit's own
 # default, free VRAM − 512 MiB, ran out on Windows/CUDA when a model only just fit), `-1` on
-# 8–12 GB, and a bigger reserve as an out-of-memory retry (generate.rs vram_reserves). A
+# 8–12 GB, and a bigger reserve as an out-of-memory retry (memory.rs vram_reserves). A
 # --max-vram here wins over both.
 # Pinhole adds --offload-to-cpu only as a later out-of-memory retry, when every weight fits in RAM
-# (generate.rs next_memory_fallback).
+# (memory.rs next_memory_fallback).
 # VAE tiling stays for small cards: decode retries with tiles on OOM by itself,
 # but img2img/edit *encoding* does not (docs/performance.md).
 hardware_profiles:
