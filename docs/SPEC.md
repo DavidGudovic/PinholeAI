@@ -224,7 +224,9 @@ Four tabs: **Create**, **Edit**, **Describe**, **Models**. Plus a Settings sheet
 A picture pasted with Ctrl/Cmd+V on any tab opens a small chooser: **Create
 reference picture** (only while Create shows the reference slot), **Edit** or **Describe**. The
 choice for the current tab is first. The picture is then imported exactly like a dropped or chosen
-file, and that tab opens. Text pasted into a text field stays a text paste.
+file, and that tab opens. Text pasted into a text field stays a text paste. On Linux the WebView's
+paste event carries no data, so the picture is read from the system clipboard through Rust
+(`clipboard_image`, PNG); in a text field only when the clipboard holds no text.
 
 ### 5.1 Create (txt2img)
 

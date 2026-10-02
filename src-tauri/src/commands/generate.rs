@@ -181,6 +181,36 @@ pub async fn copy_image(
         })
 }
 
+/// The picture on the system clipboard as PNG bytes; empty when the clipboard holds no picture,
+/// or when `only_without_text` is set and it also holds text (a text paste into a text box).
+/// The Linux WebView (WebKitGTK) hands its paste event an empty `clipboardData`, so a pasted
+/// picture is read here instead.
+#[tauri::command]
+pub async fn clipboard_image(
+    app: tauri::AppHandle,
+    only_without_text: bool,
+) -> Result<Response, CoreError> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let png = tauri::async_runtime::spawn_blocking(move || {
+        let clipboard = app.clipboard();
+        if only_without_text && clipboard.read_text().is_ok_and(|t| !t.is_empty()) {
+            return Ok(Vec::new());
+        }
+        let Ok(image) = clipboard.read_image() else {
+            return Ok(Vec::new());
+        };
+        pinhole_engine::image::encode_png_rgba(image.rgba(), image.width(), image.height()).map_err(
+            |e| {
+                CoreError::internal("Couldn't read the picture from the clipboard.")
+                    .with_details(e.to_string())
+            },
+        )
+    })
+    .await
+    .map_err(join_err)??;
+    Ok(Response::new(png))
+}
+
 #[tauri::command]
 pub async fn discard_image(core: Core<'_>, id: String) -> Result<(), CoreError> {
     session::discard(&core, &id);
@@ -221,6 +251,7 @@ super::area_commands![
     save_image_as,
     save_images_to,
     copy_image,
+    clipboard_image,
     discard_image,
     clear_session,
     upscale_image,

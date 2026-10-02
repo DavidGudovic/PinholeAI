@@ -450,6 +450,7 @@ const table: MockTable = {
       /* browser may refuse without a user gesture; the real app copies from Rust */
     }
   },
+  clipboard_image: async () => new ArrayBuffer(0),
   discard_image: async (a) => {
     session.delete(String(a.id));
   },

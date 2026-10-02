@@ -155,6 +155,12 @@ export const saveImageAs = (id: string, path: string) => invoke<T.SavedImage>("s
 /** "Save all": every listed image into a folder the user picked. */
 export const saveImagesTo = (ids: string[], dir: string) => invoke<T.SavedBatch>("save_images_to", { ids, dir });
 export const copyImage = (id: string) => invoke<void>("copy_image", { id });
+/** The picture on the system clipboard as a PNG file, or null when there is none (or, with
+ *  `onlyWithoutText`, when the clipboard also holds text). */
+export async function clipboardImage(onlyWithoutText: boolean): Promise<File | null> {
+  const png = await invoke<ArrayBuffer>("clipboard_image", { onlyWithoutText });
+  return png.byteLength ? new File([png], "pasted.png", { type: "image/png" }) : null;
+}
 export const discardImage = (id: string) => invoke<void>("discard_image", { id });
 /** Drops every in-memory image immediately. */
 export const clearSession = () => invoke<void>("clear_session");
