@@ -664,6 +664,62 @@ describe("queue", () => {
     await again;
   });
 
+  it("queues an Upscale pressed during a job and runs it afterwards, keeping its source while it waits", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] });
+    const second = actions.generateCreate();
+    await tick();
+    const up = actions.upscale("a", 2);
+    expect(store.getState().queue).toEqual([expect.objectContaining({ kind: "upscale", label: "Upscale 2×", detail: "128×128", imageIds: ["a"] })]);
+    // Removed while it waits: the queue still holds the picture it reads.
+    actions.removeResult("a");
+    expect(store.getState().images.a).toBeDefined();
+    expect(apiMod.upscaleImage).not.toHaveBeenCalled();
+    pending!({ images: [img("b")] } as GenerateResult);
+    await second;
+    expect(store.getState().job?.kind).toBe("upscale");
+    expect(apiMod.upscaleImage).toHaveBeenCalledWith("a", 2);
+    await tick();
+    pendingUpscale!(img("u"));
+    await up;
+    expect(store.getState().results.map((r) => r.id)).toEqual(["u", "b"]);
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("queues an Edit-tab Upscale behind an edit and adds it after the edit's result", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const edit = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    const up = actions.upscaleEdit(4);
+    expect(store.getState().queue).toEqual([expect.objectContaining({ kind: "editUpscale", label: "Upscale 4×", imageIds: ["a"] })]);
+    await tick();
+    pending!({ images: [img("r1")] } as GenerateResult);
+    await edit;
+    // Still waiting or running: the history stays put.
+    await expect(actions.importToEdit(new Blob([new Uint8Array(4)]))).rejects.toMatchObject({ code: "invalid" });
+    await tick();
+    pendingUpscale!(img("u"));
+    await up;
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r1", "u"]);
+    expect(store.getState().edit.index).toBe(2);
+  });
+
+  it("drops a queued upscale removed from the queue without running it", async () => {
+    const { store, actions } = setup();
+    const gen = actions.generateCreate();
+    await tick();
+    store.dispatch({ type: "addResults", batch: null, images: [img("x")], refs: [ref("x")] });
+    const up = actions.upscale("x", 2);
+    actions.removeQueued(store.getState().queue[0].id);
+    await up;
+    pending!({ images: [img("a")] } as GenerateResult);
+    await gen;
+    await tick();
+    expect(apiMod.upscaleImage).not.toHaveBeenCalled();
+    expect(store.getState().job).toBeNull();
+  });
+
   it("ignores a Generate pressed while Reset is clearing the session", async () => {
     const { store, actions } = setup();
     const first = actions.generateCreate();

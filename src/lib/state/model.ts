@@ -145,15 +145,15 @@ export interface Job {
 }
 
 /**
- * A Generate/Edit press waiting for the running job. Its settings were copied when it was
- * pressed; the job itself lives in the actions (memory only, like everything here).
+ * A Generate/Edit/Upscale press waiting for the running job. Its settings were copied when it
+ * was pressed; the job itself lives in the actions (memory only, like everything here).
  */
 export interface QueuedJob {
   id: string;
-  kind: "create" | "edit";
-  /** prompt-bearing: the start of its prompt, for the queue list. */
+  kind: Exclude<JobKind, "describe">;
+  /** prompt-bearing: the start of its prompt (or "Upscale 2×"), for the queue list. */
   label: string;
-  /** Model and image count, in plain words. */
+  /** Model and image count (or the upscaled size), in plain words. */
   detail: string;
   /** Session images it reads (kept until it has run). */
   imageIds: string[];
@@ -465,9 +465,9 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 /** An edit is running or waiting: the edit history stays put until they are done. */
-export const editBusy = (s: Pick<AppState, "job" | "queue">) => isEditJob(s.job?.kind) || s.queue.some((q) => q.kind === "edit");
+export const editBusy = (s: Pick<AppState, "job" | "queue">) => isEditJob(s.job?.kind) || s.queue.some((q) => isEditJob(q.kind));
 
-/** A new Generate/Edit press waits in the queue. */
+/** A new Generate/Edit/Upscale press waits in the queue. */
 export const willQueue = (s: Pick<AppState, "job" | "queue">) => !!s.job || s.queue.length > 0;
 
 const ACTIVE_DL = new Set(["queued", "downloading", "verifying"]);

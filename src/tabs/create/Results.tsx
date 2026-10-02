@@ -232,7 +232,6 @@ function Preview({
         <UpscaleMenu
           width={result.width}
           height={result.height}
-          disabled={busy}
           onPick={(f) => void run(() => actions.upscale(result.id, f))}
         />
         <Button

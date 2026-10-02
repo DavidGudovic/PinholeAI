@@ -372,13 +372,13 @@ what was applied and what was skipped. The pasted text is never stored or logged
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
 
-**Queue:** pressing Generate (or Apply edit / Restyle in Edit, or Variations) while a job runs adds
-it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
+**Queue:** pressing Generate (or Apply edit / Restyle in Edit, Variations, or Upscale in Create or
+Edit) while a job runs adds it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
 moment it was pressed and runs, in order, when the one before it ends (switching models in between
 as needed). A small button next to Generate shows how many are waiting and opens the list, where
 each can be removed. Cancel stops only the running job; Reset empties the queue. Queued jobs live in
-memory only. While an edit runs or waits, the edit history stays put; a queued edit of an earlier
-image is added at the end of the history.
+memory only. While an edit runs or waits, the edit history stays put; a queued edit or upscale of an
+earlier image is added at the end of the history.
 
 ### 5.2 Edit (img2img + instruction editing)
 

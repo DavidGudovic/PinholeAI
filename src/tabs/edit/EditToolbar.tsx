@@ -158,7 +158,7 @@ export function EditToolbar({
           size="sm"
           width={current.width}
           height={current.height}
-          disabled={job || importing}
+          disabled={importing}
           onPick={onUpscale}
         />
         <SaveButton
