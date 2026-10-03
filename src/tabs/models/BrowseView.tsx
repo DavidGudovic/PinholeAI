@@ -40,6 +40,7 @@ import {
   toBrowseQuery,
   toggleTag,
   visibleTags,
+  withSettingsSafeMode,
   type BrowseFilters,
   type BrowseTotals,
 } from "./lib/query";
@@ -74,7 +75,8 @@ function cardSettingsKey(s: Settings | null): string {
 export function BrowseView({ settings, onShowInstalled }: { settings: Settings | null; onShowInstalled: () => void }) {
   const [options, setOptions] = useState<CatalogFilterOptions>(FALLBACK_OPTIONS);
   const [filters, setFilters] = useState<BrowseFilters>(() => {
-    const f = getLastFilters() ?? defaultFilters(null, settings, isAdultConfirmed());
+    const last = getLastFilters();
+    const f = last ? withSettingsSafeMode(last, settings?.contentMode, FALLBACK_OPTIONS) : defaultFilters(null, settings, isAdultConfirmed());
     const forModel = takeAddonRequest();
     return forModel ? addonsFor(f, forModel) : f;
   });
@@ -98,6 +100,8 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   const [detailsFor, setDetailsFor] = useState<CatalogCard | null>(null);
   const [installedVersions, setInstalledVersions] = useState<Set<number>>(new Set());
 
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   const filtersRef = useRef(filters);
   filtersRef.current = filters;
   // Installed models: "For" choices, and the family sent for "add-ons for this model".
@@ -155,6 +159,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   useEffect(
     () =>
       onSettingsChanged((s) => {
+        setFilters((f) => withSettingsSafeMode(f, s.contentMode, optionsRef.current));
         const k = cardSettingsKey(s);
         if (k !== cardSettings.current) {
           cardSettings.current = k;

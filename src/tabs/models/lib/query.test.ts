@@ -22,6 +22,7 @@ import {
   confirmedContent,
   examplesContent,
   visibleTags,
+  withSettingsSafeMode,
 } from "./query";
 
 const card = (versionId: number, extra: Partial<CatalogCard> = {}): CatalogCard => ({
@@ -243,5 +244,17 @@ describe("moreFiltersCount", () => {
     expect(moreFiltersCount(d, d)).toBe(0);
     expect(moreFiltersCount({ ...d, tags: ["reference"] }, d)).toBe(0);
     expect(moreFiltersCount({ ...d, tags: ["reference", "portraits", "food"], commercialOnly: true, hideAnime: true, price: d.price === "free" ? "include" : "free" }, d)).toBe(5);
+  });
+});
+
+describe("withSettingsSafeMode", () => {
+  const opts = { tags: [{ key: "nsfw", label: "NSFW", needsSafeModeOff: true }, { key: "portraits", label: "Portraits" }] };
+  const off = { ...defaultFilters(null, null, false), content: "all" as const, tags: ["nsfw", "portraits"] };
+  it("turns Browse's Safe mode on when Settings has it on, keeping other tags", () => {
+    expect(withSettingsSafeMode(off, "safe", opts)).toMatchObject({ content: "safe", tags: ["portraits"] });
+  });
+  it("leaves Browse alone when Settings has Safe mode off or isn't loaded", () => {
+    expect(withSettingsSafeMode(off, "all", opts)).toBe(off);
+    expect(withSettingsSafeMode(off, null, opts)).toBe(off);
   });
 });

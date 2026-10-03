@@ -176,6 +176,12 @@ export function tagsWithSafeMode(tags: string[], options: Pick<CatalogFilterOpti
   return tags.filter((t) => !offOnly.has(t));
 }
 
+/** Safe mode turned on in Settings turns it on in Browse too (and drops the tags that need it off). */
+export function withSettingsSafeMode(f: BrowseFilters, settingsMode: ContentMode | null | undefined, options: Pick<CatalogFilterOptions, "tags">): BrowseFilters {
+  if (settingsMode !== "safe" || !isSafeModeOff(f.content)) return f;
+  return { ...f, content: "safe", tags: tagsWithSafeMode(f.tags, options) };
+}
+
 /** Tags Browse shows: the ones that only work with Safe mode off are left out while it is on. */
 export function visibleTags<T extends { needsSafeModeOff?: boolean }>(tags: T[], content: ContentMode): T[] {
   return isSafeModeOff(content) ? tags : tags.filter((t) => !t.needsSafeModeOff);
