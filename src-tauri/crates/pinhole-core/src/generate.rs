@@ -1793,6 +1793,8 @@ async fn upscale_inner(
     });
     meta.base_size = meta.base_size.or(Some((src.width, src.height)));
     meta.upscaler = Some(style.to_string());
+    // The upscaler doesn't wrap around the edges, so they may no longer join exactly.
+    meta.seamless = false;
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
     meta.origin = src.origin;

@@ -392,6 +392,8 @@ const Strip = memo(function Strip({
   );
 });
 
+const TILED_MAX_SIDE = 4096;
+
 /** The picture at `url` drawn 2×2 into one image (object URL), while `on`. */
 function useTiledUrl(url: string, width: number, height: number, on: boolean): string | null {
   const [tiledUrl, setTiledUrl] = useState<string | null>(null);
@@ -401,12 +403,16 @@ function useTiledUrl(url: string, width: number, height: number, on: boolean): s
     let live = true;
     const pic = new Image();
     pic.onload = () => {
+      // A preview only: at most 4096 px a side, well inside every webview's canvas limit.
+      const scale = Math.min(1, TILED_MAX_SIDE / (2 * Math.max(width, height)));
+      const w = Math.max(1, Math.round(width * scale));
+      const h = Math.max(1, Math.round(height * scale));
       const canvas = document.createElement("canvas");
-      canvas.width = width * 2;
-      canvas.height = height * 2;
+      canvas.width = w * 2;
+      canvas.height = h * 2;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      for (const [x, y] of [[0, 0], [width, 0], [0, height], [width, height]]) ctx.drawImage(pic, x, y, width, height);
+      for (const [x, y] of [[0, 0], [w, 0], [0, h], [w, h]]) ctx.drawImage(pic, x, y, w, h);
       canvas.toBlob((blob) => {
         if (!blob || !live) return;
         made = URL.createObjectURL(blob);

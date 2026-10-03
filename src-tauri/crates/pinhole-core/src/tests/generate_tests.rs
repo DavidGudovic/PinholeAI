@@ -1162,3 +1162,33 @@ async fn reset_while_a_job_waits_drops_its_images() {
     assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
     assert!(core.session.is_empty());
 }
+
+#[tokio::test]
+async fn repeats_without_seams_launches_with_circular_for_create_only() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sd15");
+    let circular = |args: &Vec<String>| args.iter().any(|a| a.starts_with("--circular"));
+
+    let mut req = GenerateRequest::txt2img(model.clone(), "a stone wall");
+    req.fine_tune.seamless = Some(true);
+    let res = generate::generate(&core, req).await.unwrap();
+    assert!(res.images[0].seamless);
+    assert!(circular(core.gen.external_launches.lock().last().unwrap()));
+
+    // Off again: the next launch drops the flag and the result isn't marked.
+    let res = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+        .await
+        .unwrap();
+    assert!(!res.images[0].seamless);
+    assert!(!circular(core.gen.external_launches.lock().last().unwrap()));
+
+    // A family without it ignores the setting.
+    let flux = register_fake_model(&core, "flux1_dev");
+    let mut req = GenerateRequest::txt2img(flux, "x");
+    req.fine_tune.seamless = Some(true);
+    let res = generate::generate(&core, req).await.unwrap();
+    assert!(!res.images[0].seamless);
+    assert!(!circular(core.gen.external_launches.lock().last().unwrap()));
+}
