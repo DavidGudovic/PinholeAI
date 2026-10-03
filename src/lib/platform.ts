@@ -64,8 +64,10 @@ export function blockStrayDrops(win: Window = window): () => void {
     const files = hasFiles(e);
     if (editable(e.target) && !files) return;
     e.preventDefault();
-    // A link is taken too (and never opened), so the handler can say what to do with it.
-    const link = Array.from(e.dataTransfer?.types ?? []).includes("text/uri-list");
+    // A link or page markup is taken too (and never opened), so the handler can read a picture
+    // held in it or say what to do.
+    const types = Array.from(e.dataTransfer?.types ?? []);
+    const link = types.includes("text/uri-list") || types.includes("text/html");
     if (e.type === "dragover" && e.dataTransfer) e.dataTransfer.dropEffect = (files || link) && strayDrop ? "copy" : "none";
     if (e.type === "drop" && e.dataTransfer && strayDrop) strayDrop(e.dataTransfer);
   };

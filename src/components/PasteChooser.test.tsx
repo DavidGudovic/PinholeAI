@@ -223,4 +223,44 @@ describe("dropped picture", () => {
     drop(document.body, { types: ["text/uri-list", "text/html"], uri: "", html: `<meta charset="utf-8"><img alt="" data-src="data:image/png;base64,AAAA" src="${png}">` });
     expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
   });
+
+  it("a data: address without a picture Pinhole can open says so, not that only an address came through", () => {
+    render(
+      <AppProvider store={createStore()}>
+        <PasteChooser />
+        <Toasts />
+      </AppProvider>,
+    );
+    drop(document.body, { types: ["text/uri-list"], uri: "data:image/gif;base64,R0lGODlh" });
+    expect(screen.getByText(/isn’t a picture Pinhole can open/)).toBeTruthy();
+    expect(screen.queryByText(/web address came through/)).toBeNull();
+  });
+
+  it("a page's markup alone is taken while dragged over", () => {
+    render(
+      <AppProvider store={createStore()}>
+        <PasteChooser />
+      </AppProvider>,
+    );
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: { types: ["text/html"], dropEffect: "none" } });
+    document.body.dispatchEvent(over);
+    expect((over as Event & { dataTransfer: { dropEffect: string } }).dataTransfer.dropEffect).toBe("copy");
+  });
+
+  it("a file that isn't a picture dropped on a drop area says so", () => {
+    const onFile = vi.fn();
+    render(
+      <AppProvider store={createStore()}>
+        <PasteChooser />
+        <Toasts />
+        <DropTarget onFile={onFile}>
+          <span>Reference slot</span>
+        </DropTarget>
+      </AppProvider>,
+    );
+    drop(screen.getByText("Reference slot"), { types: ["Files"], files: [new File(["x"], "notes.pdf", { type: "application/pdf" })] });
+    expect(onFile).not.toHaveBeenCalled();
+    expect(screen.getByText(/isn’t a picture Pinhole can open/)).toBeTruthy();
+  });
 });
