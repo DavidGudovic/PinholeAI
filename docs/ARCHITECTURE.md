@@ -147,7 +147,8 @@ names `sd-<tag>-bin-win-{cpu,cuda12,vulkan}-x64.zip`, `cudart-sd-bin-win-cu12-x6
 5. Decode base64 → strip every PNG text chunk (tEXt/zTXt/iTXt) defensively → store in
    `Session` (RAM) → return `ResultImage`s. Nothing touches disk until `save_image`.
 
-`save_image`: `Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png`; if Settings
+`save_image`: `<Save folder>/pinhole_YYYYMMDD_HHMMSS_<seed>.png` (Save folder = Settings →
+Saved pictures, else `Pictures/Pinhole`, else `Data/outputs/` for a portable copy); if Settings
 `savedMetadata == "settings"`, add ONE tEXt chunk `pinhole` with model, seed, steps, cfg,
 sampler, scheduler, size — never prompt/negative/style text.
 

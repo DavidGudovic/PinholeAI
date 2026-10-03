@@ -74,13 +74,15 @@ async fn sentinel_prompt_never_reaches_disk() {
         .tempdir()
         .expect("tempdir");
     let data_root = tmp.path().join("Data");
+    // Save writes outside Data: `Pictures/Pinhole`, like an installed copy.
+    let pictures = tmp.path().join("Pictures").join("Pinhole");
     std::env::set_var("PINHOLE_DATA_DIR", &data_root);
 
     let core: Arc<AppCore> = AppCore::new(
         ShippedPaths {
             config_dir: config_dir(),
         },
-        DataDir::at(data_root.clone(), true),
+        DataDir::at(data_root.clone(), false).with_pictures_home(Some(pictures.clone())),
         Arc::new(NullSink),
     )
     .unwrap_or_else(|e| panic!("AppCore::new failed: {} ({:?})", e.message, e.details));
@@ -163,7 +165,7 @@ async fn sentinel_prompt_never_reaches_disk() {
         "<lora:…> prompt tags are not supported by sd-server"
     );
 
-    // ---- Save (writes Data/outputs/pinhole_<date>_<time>_<seed>.png)
+    // ---- Save (writes Pictures/Pinhole/pinhole_<date>_<time>_<seed>.png)
     let saved = pinhole_core::session::save_image(&core, &image_id)
         .unwrap_or_else(|e| panic!("save_image failed: {}", e.message));
     let saved_path = PathBuf::from(
@@ -172,7 +174,7 @@ async fn sentinel_prompt_never_reaches_disk() {
             .expect("saved path")
             .to_string(),
     );
-    check_saved_file(&saved_path, &data_root);
+    check_saved_file(&saved_path, &pictures);
 
     // ---- generate #2 + save with "Include generation settings (no prompt)"
     core.settings.write().saved_metadata = "settings".to_string();
@@ -196,7 +198,7 @@ async fn sentinel_prompt_never_reaches_disk() {
             .expect("saved path")
             .to_string(),
     );
-    check_saved_file(&saved_path2, &data_root);
+    check_saved_file(&saved_path2, &pictures);
 
     // ---- Save as preset (model + style reference + dials; never the prompt)
     let _preset = pinhole_core::library::save_preset(
@@ -228,10 +230,24 @@ async fn sentinel_prompt_never_reaches_disk() {
     let forbidden = [s.prompt.as_str(), s.negative.as_str()];
     let styles_dir = data_root.join("styles");
 
-    // 1) Data folder
+    // 1) Data folder and the Save folder
     assert!(
-        data_root.join("outputs").is_dir(),
-        "Data/outputs should exist after saving"
+        pictures.is_dir(),
+        "Pictures/Pinhole should exist after saving"
+    );
+    let saved_hits = scan_for(
+        &pictures,
+        &[
+            s.prompt.as_str(),
+            s.negative.as_str(),
+            s.style.as_str(),
+            s.style_negative.as_str(),
+        ],
+    );
+    assert!(
+        saved_hits.is_empty(),
+        "privacy violation in the Save folder:\n{}",
+        describe_hits(&saved_hits)
     );
     let hits = scan_for(
         &data_root,
@@ -290,11 +306,11 @@ async fn sentinel_prompt_never_reaches_disk() {
     );
 }
 
-fn check_saved_file(path: &Path, data_root: &Path) {
+fn check_saved_file(path: &Path, save_folder: &Path) {
     assert!(path.is_file(), "saved image missing: {}", path.display());
     assert!(
-        path.starts_with(data_root.join("outputs")),
-        "saved image must be in Data/outputs, got {}",
+        path.starts_with(save_folder),
+        "saved image must be in the Save folder, got {}",
         path.display()
     );
     let name = path.file_name().unwrap().to_string_lossy().to_string();

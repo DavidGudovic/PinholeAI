@@ -7,6 +7,7 @@ import { ModelPicker } from "../../components/ModelPicker";
 import { QueueButton } from "../../components/QueueButton";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
+import { SetupCard } from "../../components/SetupCard";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
@@ -52,6 +53,7 @@ function NoModels() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-6 py-10">
+        <SetupCard needsModel className="mx-auto mb-6 max-w-xl" />
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
             <Sparkles className="h-6 w-6" />
@@ -171,6 +173,7 @@ function CreateWorkspace() {
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
       <aside aria-label="Create settings" className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-4 pb-5">
+          <SetupCard needsModel={false} />
           <div className="flex items-stretch gap-2">
             <div className="min-w-0 flex-1">
               <ModelPicker models={usable} value={modelId} onChange={(id) => dispatch({ type: "selectModel", modelId: id })} />

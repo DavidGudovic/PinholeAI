@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import { styleById } from "./library";
-import { mockFlags, mockSettings } from "./app";
+import { mockFlags, mockSettings, saveFolderInfo } from "./app";
 import { touchLastUsed } from "./models";
 import { FAMILY_UI } from "../state/familyFixtures";
 import type {
@@ -433,7 +433,7 @@ const table: MockTable = {
   save_image: async (a) => {
     const im = mustGet(a.id);
     await sleep(150);
-    return { path: `~/.local/share/pinhole/Data/outputs/pinhole_${stamp()}_${im.seed}.png` };
+    return { path: `${saveFolderInfo().path}\\pinhole_${stamp()}_${im.seed}.png` };
   },
   save_image_as: async (a) => {
     mustGet(a.id);
