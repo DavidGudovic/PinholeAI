@@ -111,51 +111,54 @@ export function AlsoApply({
     </Popover>
   );
 
-  if (!picked.length) {
-    return (
-      <div>
-        {fileInput}
-        {menu(
-          <>
-            <Images className="h-3.5 w-3.5" /> Also apply to…
-          </>,
-          "Make the same change to more pictures",
-        )}
-      </div>
-    );
-  }
   const more = picked.length - ROW_THUMBS;
+  // One tree whether or not pictures are picked, so the menu stays open while picking.
   return (
-    <div className="rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
+    <div className={cx(picked.length > 0 && "rounded-xl border border-neutral-200 p-2 dark:border-neutral-800")}>
       {fileInput}
       <div className="flex items-center gap-2">
-        <p className="min-w-0 flex-1 text-xs text-neutral-500">
-          <span className="font-medium text-neutral-700 dark:text-neutral-300">
-            Also on {picked.length} more {picked.length === 1 ? "picture" : "pictures"}.
-          </span>{" "}
-          The results go to Create.
-        </p>
-        {menu("Change…", "Pick other pictures")}
-        <IconButton
-          label="Don't apply to other pictures"
-          size="sm"
-          variant="ghost"
-          disabled={disabled}
-          onClick={() => dispatch({ type: "editSetAlso", refs: [] })}
-        >
-          <Trash className="h-3.5 w-3.5" />
-        </IconButton>
-      </div>
-      <div className="mt-1.5 flex gap-1">
-        {picked.slice(0, ROW_THUMBS).map((p) => (
-          <img key={p.id} src={p.url} alt="" className="h-9 w-9 rounded-md object-cover" draggable={false} />
-        ))}
-        {more > 0 && (
-          <span className="flex h-9 w-9 items-center justify-center rounded-md bg-neutral-100 text-xs text-neutral-500 tabular-nums dark:bg-neutral-800">
-            +{more}
-          </span>
+        {picked.length > 0 && (
+          <p className="min-w-0 flex-1 text-xs text-neutral-500">
+            <span className="font-medium text-neutral-700 dark:text-neutral-300">
+              Also on {picked.length} more {picked.length === 1 ? "picture" : "pictures"}.
+            </span>{" "}
+            The results go to Create.
+          </p>
+        )}
+        {menu(
+          picked.length ? (
+            "Change…"
+          ) : (
+            <>
+              <Images className="h-3.5 w-3.5" /> Also apply to…
+            </>
+          ),
+          picked.length ? "Pick other pictures" : "Make the same change to more pictures",
+        )}
+        {picked.length > 0 && (
+          <IconButton
+            label="Don't apply to other pictures"
+            size="sm"
+            variant="ghost"
+            disabled={disabled}
+            onClick={() => dispatch({ type: "editSetAlso", refs: [] })}
+          >
+            <Trash className="h-3.5 w-3.5" />
+          </IconButton>
         )}
       </div>
+      {picked.length > 0 && (
+        <div className="mt-1.5 flex gap-1">
+          {picked.slice(0, ROW_THUMBS).map((p) => (
+            <img key={p.id} src={p.url} alt="" className="h-9 w-9 rounded-md object-cover" draggable={false} />
+          ))}
+          {more > 0 && (
+            <span className="flex h-9 w-9 items-center justify-center rounded-md bg-neutral-100 text-xs text-neutral-500 tabular-nums dark:bg-neutral-800">
+              +{more}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
