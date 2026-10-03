@@ -3,6 +3,7 @@
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { UserAttentionType, getCurrentWindow } from "@tauri-apps/api/window";
+import { join } from "@tauri-apps/api/path";
 import { isTauri } from "../mock";
 
 export async function copyText(text: string): Promise<void> {
@@ -26,10 +27,11 @@ export async function readClipboardText(): Promise<string | null> {
   return null;
 }
 
-/** Native "Save as" dialog (Tauri only). Returns null when cancelled or unavailable. */
-export async function chooseSavePath(defaultName: string): Promise<string | null> {
+/** Native "Save as" dialog (Tauri only), starting in `folder` when given. Returns null when cancelled or unavailable. */
+export async function chooseSavePath(defaultName: string, folder?: string): Promise<string | null> {
   if (!isTauri()) return null;
-  return (await save({ defaultPath: defaultName, filters: [{ name: "PNG image", extensions: ["png"] }] })) ?? null;
+  const defaultPath = folder ? await join(folder, defaultName) : defaultName;
+  return (await save({ defaultPath, filters: [{ name: "PNG image", extensions: ["png"] }] })) ?? null;
 }
 
 export const canSaveAs = () => isTauri();
