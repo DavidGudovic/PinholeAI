@@ -39,6 +39,7 @@ import {
   tagsWithSafeMode,
   toBrowseQuery,
   toggleTag,
+  visibleTags,
   type BrowseFilters,
   type BrowseTotals,
 } from "./lib/query";
@@ -428,22 +429,13 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         {moreOpen && (
           <div id="browse-more-filters" className="space-y-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
             <ScrollRow label="Tags" className="gap-1.5">
-              {options.tags
+              {visibleTags(options.tags, filters.content)
                 .filter((t) => t.key !== REFERENCE_TAG)
-                .map((t) => {
-                  const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
-                  return (
-                    <Chip
-                      key={t.key}
-                      active={!locked && filters.tags.includes(t.key)}
-                      disabled={locked}
-                      title={locked ? "Turn Safe mode off to use this tag" : undefined}
-                      onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}
-                    >
-                      {t.label}
-                    </Chip>
-                  );
-                })}
+                .map((t) => (
+                  <Chip key={t.key} active={filters.tags.includes(t.key)} onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}>
+                    {t.label}
+                  </Chip>
+                ))}
             </ScrollRow>
             <ScrollRow className="gap-x-4">
               <FilterGroup label="Price">
