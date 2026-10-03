@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
-import { namedSizes, referenceSize, screenPixels, sizeForRatio } from "../../lib/sizes";
+import { fillReferenceSize, namedSizes, referenceSize, screenPixels, sizeForRatio } from "../../lib/sizes";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
 import { asCoreError, previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
@@ -177,7 +177,8 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
 
   const stickPos = c.stick ?? defaultStickPosition(ui);
   const steps = ui ? ui.qualitySteps[qualityIndex(c.quality)] : null;
-  const [sw, sh] = referenceSize(c, ref, ui) ?? ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape];
+  const refSize = referenceSize(c, ref, ui);
+  const [sw, sh] = refSize ? fillReferenceSize(ft.width, ft.height, refSize) : (ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape]);
   const cfgDefault = ui ? (ui.stickMapsTo === "cfg" && ui.showStick ? stickValue(ui, stickPos) : ui.defaultCfg) : null;
   const guidanceDefault = ui ? (ui.stickMapsTo === "guidance" ? stickValue(ui, stickPos) : ui.defaultGuidance) : null;
   const showGuidance = !ui || ui.stickMapsTo === "guidance" || ui.defaultGuidance != null;
@@ -319,6 +320,16 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
           <Row full label="VAE tiling (saves VRAM, a bit slower)" def="auto" changed={ft.vaeTiling != null} onReset={() => set({ vaeTiling: null })}>
             <Segmented size="sm" ariaLabel="VAE tiling" value={tri(ft.vaeTiling)} onChange={(t) => set({ vaeTiling: fromTri(t) })} options={[{ value: "auto" as Tri, label: "Auto" }, { value: "on" as Tri, label: "On" }, { value: "off" as Tri, label: "Off" }]} />
           </Row>
+
+          {ui?.seamless && (
+            <Row full label="Repeats without seams" def="off" changed={ft.seamless != null} onReset={() => set({ seamless: null })}>
+              <Toggle
+                checked={ft.seamless ?? false}
+                onChange={(v) => set({ seamless: v || null })}
+                label={<span className="text-sm">Edges join up when repeated, for patterns and textures. Switching it reloads the model.</span>}
+              />
+            </Row>
+          )}
 
           <UpscalerRow />
 

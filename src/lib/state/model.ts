@@ -745,8 +745,8 @@ function inner(s: AppState, a: Action): AppState {
           ...s.edit,
           chain: [{ imageId: a.ref.id, label: "Original", meta: null }],
           index: 0,
-          // The picture being edited isn't also one of the others.
-          alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref.id),
+          // "Also apply to…" belongs to the picture it was picked for.
+          alsoIds: [],
         },
       };
     case "editPush": {
@@ -776,7 +776,7 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, edit: { ...s.edit, chain, index } };
     }
     case "editClear":
-      return { ...s, edit: { ...s.edit, chain: [], index: 0 } };
+      return { ...s, edit: { ...s.edit, chain: [], index: 0, alsoIds: [] } };
     case "editSetSecond":
       return a.ref
         ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id, alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref!.id) } }

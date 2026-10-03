@@ -263,6 +263,15 @@ describe("requests", () => {
     expect(req({ ...create.fineTune, hires: false })).toEqual({ hires: false });
   });
 
+  it("sends Repeats without seams only for families that offer it", () => {
+    const create = { ...withModels().create, prompt: "p", fineTune: { seamless: true } as FineTune };
+    const ft = (familyId: keyof typeof FAMILY_UI) =>
+      buildCreateRequest(create, { ui: FAMILY_UI[familyId], loras: [], model: model("m1", familyId), settings: null }).fineTune;
+    expect(ft("sdxl")).toEqual({ seamless: true });
+    expect(ft("sd15")).toEqual({ seamless: true });
+    expect(ft("flux1_dev")).toEqual({});
+  });
+
   it("filters LoRAs that don't match the model's architecture", () => {
     let s = run(withModels(), { type: "selectModel", modelId: "m1" });
     s = run(s, { type: "patchCreate", patch: { loras: [{ loraId: "p", weight: 0.8 }, { loraId: "x", weight: 1 }, { loraId: "gone", weight: 1 }] } });
@@ -435,9 +444,11 @@ describe("requests", () => {
     expect(s.create.refShape).toBe(true);
     expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
 
-    // Width and Height typed in Fine-tune still win.
+    // Width and Height typed in Fine-tune still win; with one typed, the other keeps the reference's shape.
     s = run(s, { type: "setFineTune", patch: { width: 1024 } });
-    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1344 });
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1792 });
+    s = run(s, { type: "setFineTune", patch: { height: 1024 } });
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1024 });
 
     // Picking a shape takes over; choosing Same as reference again clears the typed size.
     s = run(s, { type: "setDial", dial: "shape", value: "landscape" });
@@ -644,6 +655,12 @@ describe("settingsSummary", () => {
     );
   });
 
+  it("says when a picture repeats without seams", () => {
+    expect(settingsSummary(result("a", 42, { seamless: true }))).toBe(
+      "Model One · 1024×1024 · 30 steps · CFG 6 · dpm++2m karras · repeats without seams · seed 42",
+    );
+  });
+
   it("labels upscales instead of repeating the source's sampling settings", () => {
     expect(settingsSummary(result("u", 42, { kind: "upscaled", width: 2048, height: 2048 }))).toBe("Upscaled · 2048×2048 · from Model One · seed 42");
     expect(settingsSummary(result("u", 42, { kind: "upscaled", width: 2048, height: 2048, upscaler: "drawing" }))).toBe(
@@ -703,11 +720,17 @@ describe("Also apply to… and sheets", () => {
     expect(s.edit.alsoIds[0]).toBe("b");
     expect(s.edit.alsoIds).toHaveLength(16);
     expect(referencedImageIds(s).has("b")).toBe(true);
-    // Editing one of them instead takes it off the list.
+    // Loading another picture to edit starts with an empty list.
     s = run(s, { type: "editLoad", ref: r("b") });
-    expect(s.edit.alsoIds).not.toContain("b");
-    s = run(s, { type: "editSetAlso", refs: [] });
+    expect(s.edit.alsoIds).toEqual([]);
     expect(s.images.x0).toBeUndefined();
+  });
+
+  it("closing the picture empties the list", () => {
+    let s = run(initialState(), { type: "editLoad", ref: r("a") }, { type: "editSetAlso", refs: [r("b")] });
+    s = run(s, { type: "editClear" });
+    expect(s.edit.alsoIds).toEqual([]);
+    expect(referencedImageIds(s).has("b")).toBe(false);
   });
 
   it("a sheet is the run the picture came in, oldest first, upscales apart, up to 8", () => {

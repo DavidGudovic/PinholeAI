@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { namedSizes, referenceSize, sizeForRatio } from "./sizes";
+import { fillReferenceSize, namedSizes, referenceSize, sizeForRatio } from "./sizes";
 
 describe("named sizes", () => {
   it("keeps the model's picture area and snaps to 64", () => {
@@ -47,5 +47,14 @@ describe("same as reference", () => {
     expect(referenceSize({ ...on, refImageId: null }, { width: 3000, height: 2000 }, null)).toBeNull();
     expect(referenceSize(on, null, null)).toBeNull();
     expect(referenceSize(on, { width: 0, height: 10 }, null)).toBeNull();
+  });
+});
+
+describe("fillReferenceSize", () => {
+  it("uses the reference size, or keeps its shape around a typed side", () => {
+    expect(fillReferenceSize(undefined, undefined, [1344, 768])).toEqual([1344, 768]);
+    expect(fillReferenceSize(undefined, 1344, [1344, 768])).toEqual([2368, 1344]);
+    expect(fillReferenceSize(768, null, [1344, 768])).toEqual([768, 448]);
+    expect(fillReferenceSize(512, 512, [1344, 768])).toEqual([512, 512]);
   });
 });
