@@ -53,7 +53,7 @@ export function ShapeChip({
   disabled?: boolean;
   inset?: boolean;
 }) {
-  const labelRef = useFitText(label);
+  const labelRef = useFitText(label, active);
   const max = 18;
   const iw = w >= h ? max : Math.round((max * w) / h);
   const ih = h >= w ? max : Math.round((max * h) / w);
@@ -91,7 +91,7 @@ export function ShapeChip({
 }
 
 /** Shrinks a one-line label's text a little when it is wider than its box (a wide system font in a narrow column). */
-function useFitText(label: ReactNode) {
+function useFitText(label: ReactNode, active: boolean) {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
@@ -106,7 +106,8 @@ function useFitText(label: ReactNode) {
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
     ro?.observe(el.parentElement ?? el);
     return () => ro?.disconnect();
-  }, [label]);
+    // A selected chip's label is bold, so wider: measure again when it is picked.
+  }, [label, active]);
   return ref;
 }
 
