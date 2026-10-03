@@ -718,6 +718,10 @@ describe("Also apply to… and sheets", () => {
     expect(sheetIds(s, "p2")).toEqual(["p1", "p2", "p3"]);
     expect(sheetIds(s, "u1")).toEqual([]);
     expect(sheetIds(s, "solo")).toEqual([]);
+    // Choices in braces: one batch per choice, one run.
+    s = run(s, { type: "addResults", batch: batch("k1"), images: [res("red")], refs: [r("red")], group: "k" });
+    s = run(s, { type: "addResults", batch: batch("k2"), images: [res("blue")], refs: [r("blue")], group: "k" });
+    expect(sheetIds(s, "blue")).toEqual(["red", "blue"]);
     const ids = Array.from({ length: 10 }, (_, i) => `g${i}`);
     for (const id of ids) s = run(s, { type: "addResults", batch: null, images: [res(id)], refs: [r(id)], group: "g" });
     expect(sheetIds(s, "g5")).toEqual(ids.slice(2));

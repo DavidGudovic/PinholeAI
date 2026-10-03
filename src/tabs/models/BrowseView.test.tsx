@@ -6,6 +6,8 @@ import { createStore, StoreContext } from "../../lib/state/store";
 import { ScrollRootContext } from "./lib/preview";
 import { BrowseView } from "./BrowseView";
 import * as api from "../../lib/api";
+import { defaultFilters } from "./lib/query";
+import { rememberFilters } from "./lib/session";
 
 const observers: { options: IntersectionObserverInit | undefined; targets: Element[] }[] = [];
 class FakeIO {
@@ -82,7 +84,7 @@ describe("BrowseView reference picture filter", () => {
       </StoreContext.Provider>,
     );
     await screen.findByRole("button", { name: "Show Juggernaut XL details" }, { timeout: 5000 });
-    fireEvent.click(screen.getByRole("button", { name: "Reference picture" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Reference picture" }));
     const klein = await screen.findByRole("button", { name: "Show FLUX.2 [klein] 4B details" }, { timeout: 5000 });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Show Juggernaut XL details" })).toBeNull(), { timeout: 5000 });
     const cards = screen.getAllByRole("article");
@@ -90,4 +92,62 @@ describe("BrowseView reference picture filter", () => {
     for (const c of cards) expect(within(c).getByText("Reference picture")).toBeTruthy();
     expect(within(klein.closest("article")!).getByText("Reference picture")).toBeTruthy();
   }, 15_000);
+});
+
+describe("BrowseView More filters", () => {
+  it("keeps Tags, Price, Commercial use and Hide anime folded, with a count of what is set", async () => {
+    rememberFilters(defaultFilters(null, null, false));
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <ScrollRootContext.Provider value={document.createElement("div")}>
+          <BrowseView settings={null} onShowInstalled={() => undefined} />
+        </ScrollRootContext.Provider>
+      </StoreContext.Provider>,
+    );
+    const more = await screen.findByRole("button", { name: "More filters" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Portraits" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Hide anime" })).toBeNull();
+    // Always shown.
+    expect(screen.getByRole("switch", { name: "Works with Pinhole" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Runs on my card" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Reference picture" })).toBeTruthy();
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole("button", { name: "Portraits" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Hide anime" }));
+    // Reference picture is its own switch, not one of the folded tags.
+    expect(screen.queryByRole("button", { name: "Reference picture" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "More filters" }));
+    expect(screen.getByRole("button", { name: /^More filters\s*2$/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Portraits" })).toBeNull();
+  }, 15_000);
+
+  it("starts open when one of its filters is already set", async () => {
+    rememberFilters({ ...defaultFilters(null, null, false), hideAnime: true });
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <ScrollRootContext.Provider value={document.createElement("div")}>
+          <BrowseView settings={null} onShowInstalled={() => undefined} />
+        </ScrollRootContext.Provider>
+      </StoreContext.Provider>,
+    );
+    expect((await screen.findByRole("button", { name: "More filters" })).getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("switch", { name: "Hide anime" }).getAttribute("aria-checked")).toBe("true");
+  }, 15_000);
+});
+
+describe("BrowseView tags with Safe mode on", () => {
+  it("doesn't show tags that need Safe mode off", async () => {
+    rememberFilters(defaultFilters(null, null, false));
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <BrowseView settings={null} onShowInstalled={() => undefined} />
+      </StoreContext.Provider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "More filters" }, { timeout: 5000 }));
+    await screen.findByRole("button", { name: "Portraits" });
+    const offOnly = (await api.catalogFilters()).tags.filter((t) => t.needsSafeModeOff);
+    expect(offOnly.length).toBeGreaterThan(0);
+    for (const t of offOnly) expect(screen.queryByRole("button", { name: t.label })).toBeNull();
+  }, 10_000);
 });

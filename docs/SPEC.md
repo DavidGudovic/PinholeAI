@@ -289,8 +289,18 @@ Upscale reaches the monitor's own resolution.
 **Starter ideas**: while the prompt box is empty, a few plain example chips ("Cabin in the snow",
 "Watercolor fox"…) fill it on click, with a hint to try Improve. Examples stay fictional and safe for work.
 
+**Choices in braces**: `a {red|blue|green} car` makes one picture per combination in one Generate
+(several groups multiply; the first group changes slowest). Only braces holding a `|` count; other
+braces, and everything in a saved Style, stay plain text. Repeated options count once, and How many
+is not used. The pictures share one seed (the locked one, else a new random one), so only the
+choices differ. At most 16 pictures: the button reads "Generate 3" ("Add 3 to queue"), and when
+there are more combinations a line under it says "Makes the first 16 of 30 combinations". The
+prompts are expanded in memory only, run one after another as one queued job, and each one is a
+normal Create request (word check, image check and everything else as for a typed prompt). Prompt
+history keeps the prompt as typed.
+
 **Tip line**: one quiet "Tip" under a picture in Create about a feature that is easy to miss (Keep this
-look, Variations, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
+look, Variations, choices in braces, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
 per app session; × closes it, **Don't show tips** (or Settings → Show tips) turns it off for good.
 
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
@@ -365,14 +375,25 @@ edit model reads natural language); the Safe mode rule, add-on trigger words and
 as in Create.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
+new seeds) · **Same character** · **On another model…** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
 more than one picture is unsaved. **Save as one sheet (n)** (in Save's menu, desktop app) saves
-the pictures that came in the same run as the shown one (its batch, or one "Also apply to…" edit;
+the pictures that came in the same run as the shown one (its batch, one Generate with choices in
+braces, or one "Also apply to…" edit;
 upscales only with upscales; 2–8, oldest first) as one grid picture through the save dialog: equal
 cells the size of the largest picture, each fitted and centred, small white gaps, no text, at most
 8192 px a side. It goes through the export function (`session::export_png` with several pictures):
-each picture is watermarked, the sheet too when Pinhole made any of them, and the XMP marker is
+each picture is watermarked, the sheet too when it carries a marker, and the XMP marker is
 their shared source type or "composite"; no settings chunk. The pictures themselves stay unsaved.
+
+**On another model…** (under More like this): lists installed models other than the one that made
+the picture, with their Fits/Tight badge; models that are too big or not fully set up are left
+out, and when the picture used a reference picture only models that take one are listed. Picking
+one runs the same prompt, style, shape, Quality, reference picture and seed there as a queued job
+(the model switch restarts sd-server with progress, as usual). Settings that belong to one family
+(sampler, steps, CFG, Stick to prompt) use the new model's defaults, a set size (a named size,
+Same as reference) keeps its shape at the new model's usual size, Hires fix on or off carries
+over, and add-ons that don't work with it are left out. The new picture opens side by side with the first one, each labelled
+with its model's name; the side-by-side button switches between the two views.
 
 **Upscale** runs a 4× ESRGAN model in sd-server (2× = 4× then halved). There are three, all
 pinned in `models.yaml` and each downloaded the first time it is used: `realesrgan_x4` (photos,
@@ -496,6 +517,10 @@ text-to-image run (size, seed, sampler), not an edit of your own picture.
 If no edit model is installed, the Edit tab shows one card: "Get the best edit model for your
 GPU" — one-click download of the top edit model that fits (§6.1), showing its download size
 and VRAM need.
+When Edit opens in Restyle only because no edit model is installed, one slim line at the top
+offers it: "To change one thing and keep the rest, get the edit model (size)" with a Get button.
+Restyle stays usable; the line goes once an edit model is installed and can be closed for the
+session. Picking Restyle yourself doesn't show it.
 
 **Edit chain**: each edit result can be edited again. Keep an in-memory undo stack
 (original → edit 1 → edit 2…) with a before/after comparison slider. Click any step in the
@@ -548,7 +573,7 @@ Two sub-views: **Browse** and **Installed**.
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | For (style add-ons only) | Any model · For <installed model> (defaults to the model picked in Create) | `baseModels=` the CivitAI base models of every registry family with the same architecture as that model (`families::lora_base_models`: an SDXL model also gets Pony and Illustrious LoRAs); each card shows the newest version made for them; a tag that narrows `baseModels` (Edit) with nothing in common answers "none" without asking CivitAI. Not a filter "Clear filters" resets |
 | Look | Realistic · Anime · Illustration · 3D · Painting · Pixel art · Line art · Cinematic · Vintage · Brand & product | tag sets from `config/catalog-filters.yaml`. Look, Tags and the switches row each stay on one line and scroll sideways when the window is too narrow |
-| Tags | multi-select: Edit model · Reference picture · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). Reference picture = models whose family has both `txt2img` and `edit` in `models.yaml` `modes` (they can follow Create's reference picture); the base models come from `models.yaml` and are also sent as `baseModels`; those cards and installed models show a "Reference picture" badge. NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Tags | multi-select: Edit model · Reference picture · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). Reference picture = models whose family has both `txt2img` and `edit` in `models.yaml` `modes` (they can follow Create's reference picture); the base models come from `models.yaml` and are also sent as `baseModels`; those cards and installed models show a "Reference picture" badge. NSFW = exactly the models Safe mode hides; not shown while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Most liked · Most downloaded (default) · Newest | `sort=Most Liked / Most Downloaded / Newest` |
@@ -558,6 +583,11 @@ Two sub-views: **Browse** and **Installed**.
 | Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
 | Style | Hide anime (switch, default off, remembered in Settings; models and add-ons) | client-side (CivitAI can only include one tag, never exclude; Browse keeps fetching until the page is full): hides models tagged or named anime / manga / cartoon / chibi / waifu, and whose newest version is on an anime-native base (Illustrious, NoobAI). Pony is not hidden by base, only by tags. Rules in `catalog-filters.yaml → hide_anime` |
 | Search | free text | `query` |
+
+Always shown: search, Kind, Sort, Time, Look, Safe mode, Works with Pinhole, Runs on my card and
+Reference picture (a switch for that tag). Tags, Price, Commercial use and Hide anime sit under
+**More filters**, which starts open whenever one of them is set and shows how many are set while
+closed.
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
   (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`); a text search is paged by `page=N` (CivitAI sends no cursor for it), other browsing by `cursor`.
@@ -623,6 +653,8 @@ grid where it was):
   badge, LoRA trigger words) and the same Install button.
 - **Example images**: the version's preview images from CivitAI, fetched through the Rust client
   like every preview. With Safe mode on, images made for adults are left out (with a count); videos are skipped.
+  Opened from Installed, Safe mode counts as on unless it is off in Settings (confirmed this session)
+  and in Browse.
   Images come from `GET /api/v1/model-versions/{id}`, the only endpoint that still returns each
   image's generation data (`/models` and `/images` send `meta: null`, checked 2026-09-28).
 - Clicking an image shows it larger with its prompt and main settings, plus two buttons:

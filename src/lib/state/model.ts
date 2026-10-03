@@ -72,6 +72,8 @@ export interface CreateParams {
 export interface Batch {
   id: string;
   request: GenerateRequest;
+  /** "On another model": the result these pictures were made to compare with. */
+  compareWith?: string;
 }
 
 /** "fix" = Fix details: redraw a painted spot at the model's size and blend it back. "extend" = Extend: grow the canvas and draw the new space. */
@@ -198,7 +200,7 @@ export interface AppState {
   batches: Record<string, Batch>;
   /** result image id → batch id */
   resultBatch: Record<string, string>;
-  /** result image id → the run it came in with when it has no batch (one "Also apply to…" edit). */
+  /** result image id → the run it came in with when that is more than its batch (one "Also apply to…" edit, or choices in braces). */
   resultGroup: Record<string, string>;
   /** image id → where it was saved this session (paths only). Drives the "unsaved pictures" warning. */
   saved: Record<string, string>;
@@ -315,7 +317,7 @@ export type Action =
   | { type: "setDial"; dial: "count"; value: 1 | 2 | 4 }
   | { type: "selectModel"; modelId: string | null }
   | { type: "keepLook"; on: boolean }
-  /** `group`: results without a batch that came in one run (one "Also apply to…" edit). */
+  /** `group`: results that came in one run across batches (one "Also apply to…" edit, or choices in braces). */
   | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[]; group?: string }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
@@ -324,6 +326,8 @@ export type Action =
   | { type: "askLeave"; what: LeaveKind | null }
   | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
+  /** Pictures the running job still has to make (a Generate with choices makes them one by one). */
+  | { type: "jobCount"; count: number }
   | { type: "jobEnd" }
   | { type: "queueAdd"; job: QueuedJob }
   | { type: "queueRemove"; id: string }
@@ -458,18 +462,18 @@ export const SHEET_MAX = 8;
 
 /**
  * The pictures "Save as one sheet" puts together for result `id`: the results that came in the
- * same run (its batch, or one "Also apply to…" edit), oldest first, at most SHEET_MAX. Upscales
+ * same run (its batch, one "Also apply to…" edit, or one Generate with choices in braces), oldest first, at most SHEET_MAX. Upscales
  * join the run they were made from but only go with other upscales. Empty when there are fewer than 2.
  */
 export function sheetIds(s: Pick<AppState, "results" | "resultBatch" | "resultGroup" | "images">, id: string): string[] {
-  const group = s.resultBatch[id] ?? s.resultGroup[id];
+  const group = s.resultGroup[id] ?? s.resultBatch[id];
   const me = s.results.find((r) => r.id === id);
   if (!group || !me) return [];
   const upscaled = me.kind === "upscaled";
   // In the order they arrived (`images` keeps it): a batch in its own order, then later runs.
   const rank = new Map(Object.keys(s.images).map((k, i) => [k, i]));
   const ids = s.results
-    .filter((r) => (s.resultBatch[r.id] ?? s.resultGroup[r.id]) === group && (r.kind === "upscaled") === upscaled && rank.has(r.id))
+    .filter((r) => (s.resultGroup[r.id] ?? s.resultBatch[r.id]) === group && (r.kind === "upscaled") === upscaled && rank.has(r.id))
     .map((r) => r.id)
     .sort((a, b) => rank.get(a)! - rank.get(b)!);
   // The newest SHEET_MAX, keeping the one picked.
@@ -672,8 +676,8 @@ function inner(s: AppState, a: Action): AppState {
       const batches = a.batch ? { ...s.batches, [a.batch.id]: a.batch } : s.batches;
       const resultBatch = { ...s.resultBatch };
       if (a.batch) for (const im of a.images) resultBatch[im.id] = a.batch.id;
-      const resultGroup = a.group && !a.batch ? { ...s.resultGroup } : s.resultGroup;
-      if (a.group && !a.batch) for (const im of a.images) resultGroup[im.id] = a.group;
+      const resultGroup = a.group ? { ...s.resultGroup } : s.resultGroup;
+      if (a.group) for (const im of a.images) resultGroup[im.id] = a.group;
       return {
         ...s,
         images: withRefs(s.images, a.refs),
@@ -721,6 +725,8 @@ function inner(s: AppState, a: Action): AppState {
       };
     case "jobProgress":
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
+    case "jobCount":
+      return s.job ? { ...s, job: { ...s.job, count: a.count } } : s;
     case "jobEnd":
       return s.job ? { ...s, job: null } : s;
     case "queueAdd":
