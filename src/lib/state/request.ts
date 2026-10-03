@@ -110,20 +110,20 @@ export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
 
 /**
  * "On another model": the same prompt, style, shape, quality, reference picture and seed on
- * `model`. Settings that belong to one model family (sampler, steps, size, Stick to prompt
- * position) go back to `model`'s defaults, and add-ons that don't work with it are left out.
+ * `model` (and Hires fix on or off as it was). Settings that belong to one model family
+ * (sampler, steps, size, Stick to prompt position, prompt prefix) go back to `model`'s defaults, and add-ons that don't work with it are left out.
  */
 export function otherModelRequest(
   req: GenerateRequest,
   seed: number,
   opts: { model: InstalledModel; ui: FamilyUi | null; loras: InstalledLora[] },
 ): GenerateRequest {
-  const { negativePrompt, vaeTiling } = req.fineTune;
+  const { negativePrompt, vaeTiling, hires } = req.fineTune;
   return {
     ...req,
     modelId: opts.model.id,
     dials: { ...req.dials, stick: defaultStickPosition(opts.ui), count: 1 },
-    fineTune: effectiveFineTune({ negativePrompt, vaeTiling, seed }, opts.ui),
+    fineTune: effectiveFineTune({ negativePrompt, vaeTiling, hires, seed }, opts.ui),
     loras: req.loras.filter((u) => {
       const l = opts.loras.find((x) => x.id === u.loraId);
       return !!l && loraCompatible(l, opts.model.familyId);

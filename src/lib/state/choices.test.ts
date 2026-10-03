@@ -29,6 +29,13 @@ describe("choices in braces", () => {
     expect(expandChoices("a fox {in snow|}, watercolor").prompts).toEqual(["a fox in snow, watercolor", "a fox, watercolor"]);
   });
 
+  it("never makes an empty prompt, and counts only different prompts", () => {
+    expect(expandChoices("{cat|}").prompts).toEqual(["cat"]);
+    expect(expandChoices("{|}").prompts).toEqual([]);
+    expect(choiceCount("a {big  dog|big dog}")).toBeNull();
+    expect(choiceCount("{a|}{|a}")).toEqual({ count: 2, total: 2 });
+  });
+
   it("stops at the cap and reports how many there would be", () => {
     const c = expandChoices("{a|b|c|d|e} {1|2|3|4|5|6}");
     expect(c.prompts).toHaveLength(MAX_CHOICE_PICTURES);

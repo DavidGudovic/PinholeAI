@@ -1,6 +1,6 @@
 // Results: big preview of the selected image, its actions and settings summary,
 // and a strip of every image made this session (in memory until Save).
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowLeftRight,
   ChevronLeft,
@@ -227,7 +227,7 @@ function Preview({
                 }}
               />
             ) : (
-              <>
+              <FocusFirst>
                 <MenuItem
                   icon={<Shuffle className="h-4 w-4" />}
                   disabled={!hasBatch}
@@ -263,7 +263,7 @@ function Preview({
                 >
                   On another model…
                 </MenuItem>
-              </>
+              </FocusFirst>
             )
           }
         </Popover>
@@ -349,7 +349,7 @@ function OtherModelList({
     (m) => m.id !== req?.modelId && m.fit !== "tooBig" && !m.missingComponents.length && (!usedReference || takesReference(m)),
   );
   return (
-    <div role="menu" aria-label="On another model">
+    <FocusFirst role="menu" label="On another model">
       <MenuItem icon={<ChevronLeft className="h-4 w-4" />} onClick={onBack}>
         On another model
       </MenuItem>
@@ -385,6 +385,19 @@ function OtherModelList({
       >
         Get more models…
       </MenuItem>
+    </FocusFirst>
+  );
+}
+
+/** Moves focus into a menu whose items just replaced the ones that had it. */
+function FocusFirst({ children, role, label }: { children: ReactNode; role?: string; label?: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
+  }, []);
+  return (
+    <div ref={box} role={role} aria-label={label}>
+      {children}
     </div>
   );
 }

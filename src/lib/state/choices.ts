@@ -8,9 +8,9 @@ export const MAX_CHOICE_PICTURES = 16;
 const GROUP = /\{([^{}]*\|[^{}]*)\}/g;
 
 export interface Choices {
-  /** The prompts to make, in order (at most `cap`). Just the prompt when it has no choices. */
+  /** The prompts to make, in order (at most `cap`, never empty text). Just the prompt when it has no choices. */
   prompts: string[];
-  /** How many different prompts the choices make before the cap. 1 = no choices. */
+  /** How many different prompts the choices make before the cap. */
   total: number;
 }
 
@@ -32,10 +32,12 @@ export function expandChoices(prompt: string, cap = MAX_CHOICE_PICTURES): Choice
   parts.push(prompt.slice(last));
   if (!groups.length) return { prompts: [prompt], total: 1 };
 
-  const total = groups.reduce((n, g) => n * g.length, 1);
+  const combinations = groups.reduce((n, g) => n * g.length, 1);
   const prompts: string[] = [];
   // Bounded: options that repeat each other's text ("{x|}{x|}") make fewer distinct prompts.
-  for (let i = 0; i < Math.min(total, cap * 64) && prompts.length < cap; i++) {
+  const tries = Math.min(combinations, cap * 64);
+  let i = 0;
+  for (; i < tries && prompts.length < cap; i++) {
     // Mixed-radix digits of i, last group fastest.
     let rest = i;
     const picks = new Array<string>(groups.length);
@@ -44,13 +46,14 @@ export function expandChoices(prompt: string, cap = MAX_CHOICE_PICTURES): Choice
       rest = Math.floor(rest / groups[g].length);
     }
     const text = tidy(parts.map((p, k) => p + (k < picks.length ? picks[k] : "")).join(""));
-    if (!prompts.includes(text)) prompts.push(text);
+    if (text && !prompts.includes(text)) prompts.push(text);
   }
-  return { prompts, total };
+  // Every combination looked at: the count is exact. Else (cut by the cap) the combinations.
+  return { prompts, total: i === combinations ? prompts.length : combinations };
 }
 
 /** How many pictures one Generate makes from `prompt` (null when it has no choices). */
 export function choiceCount(prompt: string): { count: number; total: number } | null {
   const c = expandChoices(prompt);
-  return c.total > 1 ? { count: c.prompts.length, total: c.total } : null;
+  return c.prompts.length > 1 ? { count: c.prompts.length, total: c.total } : null;
 }

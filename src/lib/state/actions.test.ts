@@ -885,6 +885,30 @@ describe("choices in braces", () => {
     expect(s.job).toBeNull();
   });
 
+  it("keeps making the other choices when one fails, then shows the error", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}" } });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await tick();
+    await tick();
+    pendingFail!({ code: "invalid", message: "No.", details: null });
+    await tick();
+    await tick();
+    pending!({ images: [img("c")] } as GenerateResult);
+    await expect(run).rejects.toMatchObject({ code: "invalid" });
+    expect(calls().map((r) => r.prompt)).toEqual(["a", "b", "c"]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["c", "a"]);
+  });
+
+  it("refuses choices that leave nothing to make", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{|}" } });
+    await expect(actions.generateCreate()).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
+  });
+
   it("uses the locked seed, and Cancel keeps the pictures already made", async () => {
     const { store, actions } = setup();
     store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}", fineTune: { seed: 7 } } });
@@ -928,6 +952,14 @@ describe("on another model", () => {
     const s = store.getState();
     expect(s.selectedResultId).toBe("c");
     expect(s.batches[s.resultBatch["c"]].compareWith).toBe("a");
+  });
+
+  it("refuses a model that can't use the picture's reference picture", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: { id: "b", request: { modelId: "m", prompt: "p", refImageIds: ["r"] } as never }, images: [img("a")], refs: [ref("a")] });
+    store.dispatch({ type: "setModels", models: [model, other] });
+    await expect(actions.onOtherModel("a", "o")).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
   });
 
   it("says when the picture's settings are gone", async () => {

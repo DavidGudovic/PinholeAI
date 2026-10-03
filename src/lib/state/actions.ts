@@ -218,14 +218,14 @@ export function makeActions(store: Store) {
     const s = get();
     const model = currentCreateModel();
     if (!model) throw { code: "not_found", message: "Pick a model first — or get one of the recommended models.", details: null } as CoreError;
-    if (!s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
+    const { prompts } = expandChoices(s.create.prompt);
+    if (!prompts.length || !s.create.prompt.trim()) throw { code: "invalid", message: "Type what you want to see first.", details: null } as CoreError;
     if (s.create.refImageId && !takesReference(model)) {
       const fix = referenceModel(s.models) ? "Switch to a model that can" : "Use it in Edit";
       throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. ${fix}, or remove the picture.`, details: null } as CoreError;
     }
     const { create, loras, settings } = s;
     const imageIds = create.refImageId ? [create.refImageId] : [];
-    const { prompts } = expandChoices(create.prompt);
     if (prompts.length > 1) return generateChoices(prompts, model, imageIds);
     await queueBatch(
       create.count,
@@ -240,7 +240,8 @@ export function makeActions(store: Store) {
 
   /**
    * One picture per prompt made from `{a|b}` choices, as one queued job. They share a seed
-   * (the locked one, else a new random one) so only the choices differ between them.
+   * (the locked one, else a new random one) so only the choices differ between them. One that
+   * fails doesn't stop the others; the first error is shown at the end.
    */
   async function generateChoices(prompts: string[], model: InstalledModel, imageIds: string[]) {
     const { create, loras, settings } = get();
@@ -254,13 +255,21 @@ export function makeActions(store: Store) {
             const nonce = get().sessionNonce;
             dispatch({ type: "pushPrompt", prompt: create.prompt });
             const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+            let failed: CoreError | null = null;
             for (const [i, prompt] of prompts.entries()) {
               const c = { ...create, prompt, count: 1 as const, fineTune: { ...create.fineTune, seed } };
               const req = buildCreateRequest(c, { ui, loras, model, settings });
-              const { images, refs } = await generateNow(req, nonce);
-              if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+              try {
+                const { images, refs } = await generateNow(req, nonce);
+                if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+              } catch (e) {
+                const err = api.asCoreError(e);
+                if (err.code === "cancelled") throw err;
+                failed ??= err;
+              }
               dispatch({ type: "jobCount", count: prompts.length - i - 1 });
             }
+            if (failed) throw failed;
           },
           prompts.length,
           entry.imageIds,
@@ -332,6 +341,8 @@ export function makeActions(store: Store) {
     const model = (s.models ?? []).find((m) => m.id === modelId);
     if (!model) throw { code: "not_found", message: "That model isn't installed anymore. Pick another one.", details: null } as CoreError;
     const imageIds = batch.request.refImageIds ?? [];
+    if (imageIds.length && !takesReference(model)) throw { code: "invalid", message: `${model.friendlyName} can't use a reference picture. Pick another model.`, details: null } as CoreError;
+    if (model.missingComponents.length) throw { code: "invalid", message: `${model.friendlyName} still needs ${model.missingComponents.join(", ")}. Open Models → Installed to finish setting it up.`, details: null } as CoreError;
     await queueBatch(
       1,
       queueEntry("create", batch.request.prompt, model, 1, imageIds),
