@@ -414,6 +414,10 @@ pub fn installable_files<'a>(
 /// `Diffusion Model` / `UNet` file of an all-in-one family (SD 1.5, SDXL) holds
 /// only the diffusion model, not its VAE and text encoders, so it can't stand in
 /// for the full checkpoint.
+///
+/// Files that would get the same row (see [`choice_group`]), such as an fp16 and
+/// a bf16 copy, or an FP8 and an INT8 copy, are listed once: the one
+/// [`select_file`] ranks best, in the place of the group's first file.
 pub fn size_choices<'a>(
     files: &'a [ModelFile],
     allowed_formats: &[String],
@@ -422,10 +426,35 @@ pub fn size_choices<'a>(
     let default = select_file(files, allowed_formats).ok();
     let format = default.map(file_format);
     let diffusion_only = default.map(is_diffusion_only);
-    installable(files, allowed_formats)
+    let mut groups: Vec<(String, Vec<&ModelFile>)> = Vec::new();
+    for f in installable(files, allowed_formats)
         .filter(|f| any_format || format.as_deref().is_none_or(|x| file_format(f) == x))
         .filter(|f| any_format || diffusion_only.is_none_or(|d| is_diffusion_only(f) == d))
+    {
+        let key = choice_group(f);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, g)) => g.push(f),
+            None => groups.push((key, vec![f])),
+        }
+    }
+    groups
+        .iter()
+        .filter_map(|(_, g)| best_of(files, g, allowed_formats))
         .collect()
+}
+
+/// Which size row a file belongs to: its format, whether it holds only the
+/// diffusion model, and its [`precision_label`], with INT8 counted as FP8 (same
+/// size and graphics memory).
+/// Files whose label names no precision ("Standard", "Compact (GGUF)") each get
+/// their own row.
+fn choice_group(f: &ModelFile) -> String {
+    let label = match precision_label(f).as_str() {
+        "Compact (INT8)" => "Compact (FP8)".to_string(),
+        l @ ("Standard" | "Compact (GGUF)") => format!("{l} {}/{}", f.id, f.name),
+        l => l.to_string(),
+    };
+    format!("{}|{}|{label}", file_format(f), is_diffusion_only(f))
 }
 
 #[cfg(test)]
@@ -932,6 +961,80 @@ mod tests {
             "primary GGUF"
         );
         assert!(pick(777001).unwrap_err().contains("scan"));
+    }
+
+    #[test]
+    fn same_size_copies_are_one_size_choice() {
+        // A Qwen 2.1 checkpoint on CivitAI: int4, int8, bf16, fp8 and fp16 files.
+        let mut files = vec![
+            file(
+                "m_int4.safetensors",
+                Some("SafeTensor"),
+                Some("int4"),
+                None,
+                false,
+                4.47e6,
+            ),
+            file(
+                "m_int8.safetensors",
+                Some("SafeTensor"),
+                Some("int8"),
+                None,
+                false,
+                7.09e6,
+            ),
+            file(
+                "m_bf16.safetensors",
+                Some("SafeTensor"),
+                Some("bf16"),
+                None,
+                false,
+                13.9e6,
+            ),
+            file(
+                "m_fp8.safetensors",
+                Some("SafeTensor"),
+                Some("fp8"),
+                None,
+                false,
+                7.08e6,
+            ),
+            file(
+                "m_fp16.safetensors",
+                Some("SafeTensor"),
+                Some("fp16"),
+                None,
+                true,
+                13.9e6,
+            ),
+        ];
+        for (i, f) in files.iter_mut().enumerate() {
+            f.id = i as u64 + 1;
+            f.hashes.insert("SHA256".into(), format!("{i}").repeat(64));
+        }
+        let names = |files: &[ModelFile], any: bool| -> Vec<String> {
+            size_choices(files, &allowed(), any)
+                .into_iter()
+                .map(|f| f.name.clone())
+                .collect()
+        };
+        assert_eq!(
+            names(&files, false),
+            ["m_fp8.safetensors", "m_fp16.safetensors"]
+        );
+        assert_eq!(names(&files, true), names(&files, false));
+        let choices = size_choices(&files, &allowed(), false);
+        let labels: Vec<String> = size_labels(&choices).into_iter().map(|(l, _)| l).collect();
+        assert_eq!(labels, ["Compact (FP8)", "Full quality"]);
+        // A pick of a hidden copy falls back to the usual file.
+        let (f, _) = select_file_for_machine(&files, &allowed(), false, Some(2), |_| None).unwrap();
+        assert_eq!(f.name, "m_fp16.safetensors");
+        // INT8 alone still shows.
+        files.remove(3);
+        assert_eq!(
+            names(&files, false),
+            ["m_int8.safetensors", "m_fp16.safetensors"]
+        );
     }
 
     #[test]

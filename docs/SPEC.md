@@ -655,7 +655,8 @@ model in small text.
    one installable file, the dialog shows a **Size** choice ("Full quality", "Compact (FP8)",
    "Compact (Q4)"…) with each file's size and VRAM badge and a plain explanation: compact
    versions need less graphics memory, pictures keep their size, fine detail is a little softer.
-   The user's pick is re-planned and installed as chosen.
+   Files that would get the same row (fp16 and bf16 copies; FP8 and INT8 copies) are listed
+   once, as the file step 1 ranks best. The user's pick is re-planned and installed as chosen.
 2. Resolve the family (§6) and list the extra components needed (VAE, text encoders),
    skipping any already installed (matched by SHA-256).
 3. Show the total download size and a free-disk-space check, then download everything with
