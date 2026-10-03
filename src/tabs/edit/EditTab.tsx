@@ -183,13 +183,16 @@ export function EditTab() {
   // This session's pictures: another one to edit (not the one shown), or image 2 (not image 1).
   const sessionPics = useSessionPictures([node?.imageId]);
   const pickSession = (id: string) => {
-    if (editBusy(store.getState())) return;
     setError(null);
     actions.sendToEdit(id);
   };
   const pickSecond = (id: string) => {
     const ref = store.getState().images[id];
-    if (!ref || editBusy(store.getState())) return;
+    if (!ref) return;
+    if (editBusy(store.getState())) {
+      actions.toast("Wait for the edits in progress to finish first.");
+      return;
+    }
     setError(null);
     dispatch({ type: "editSetSecond", ref });
   };

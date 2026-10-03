@@ -614,6 +614,11 @@ describe("pictures from this session", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use as image 2" }));
     expect(store.getState().edit.secondImageId).toBe("b");
     expect(screen.getByRole("button", { name: "Remove image 2" })).toBeTruthy();
+    // Picking image 2 as the picture to edit leaves no image 2 behind (it can't be both).
+    fireEvent.click(screen.getByRole("button", { name: "Another image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit this picture" }));
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(store.getState().edit.secondImageId).toBeNull();
     vi.mocked(api.listModels).mockImplementation(async () => [model]);
   });
 

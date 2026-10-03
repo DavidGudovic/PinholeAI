@@ -444,6 +444,8 @@ export function makeActions(store: Store) {
     }
     if (!confirmed && !confirmReplaceEdit(() => sendToEdit(id, true))) return;
     dispatch({ type: "editLoad", ref });
+    // A picture can't be image 1 and image 2 at once.
+    if (get().edit.secondImageId === id) dispatch({ type: "editSetSecond", ref: null });
     setTab("edit");
   }
 

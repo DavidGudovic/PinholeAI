@@ -11,7 +11,7 @@ import * as api from "../../lib/api";
 import { useActions } from "../../lib/state/AppProvider";
 import { referenceModel, takesReference } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
-import { useAppState, useDispatch } from "../../lib/state/store";
+import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import type { CoreError, InstalledModel } from "../../lib/types";
 
 /** How many of this session's pictures the empty slot offers. */
@@ -23,6 +23,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
   const models = useAppState((s) => s.models);
   const recent = useSessionPictures([], RECENT);
   const dispatch = useDispatch();
+  const store = useStore();
   const actions = useActions();
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<CoreError | null>(null);
@@ -89,7 +90,10 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
         <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={`Optional: make something in the style of a picture, or with the same character or subject. Drop, paste (${modKey}+V) or choose one.`}>
           {importing ? <Spinner className="h-3.5 w-3.5" /> : <ImagePlus className="h-3.5 w-3.5" />} Add a reference picture
         </Button>
-        <SessionStrip pictures={recent} title="Use as the reference picture" onPick={(p) => dispatch({ type: "createSetRef", ref: p })} />
+        <SessionStrip pictures={recent} title="Use as the reference picture" onPick={(p) => {
+            const now = store.getState().images[p.id];
+            if (now) dispatch({ type: "createSetRef", ref: now });
+          }} />
       </div>
       {error && (
         <div className="mt-2">
