@@ -5,7 +5,7 @@
 // debounced, cards are memoised and skipped by the browser while far off screen, and
 // previews load on-screen first (lib/preview.ts). Nothing is written to disk.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
+import { ChevronDown, RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
 import { asCoreError, browseCatalog, catalogFilters, getSettings, listLoras, listModels, onModelsChanged, setSettings } from "../../lib/api";
 import type { BrowsePage, CatalogCard, CatalogFilterOptions, ContentMode, CoreError, PriceMode, Settings } from "../../lib/types";
 import { Button, ErrorNotice, Segmented, Toggle, cx, focusRing, inputClass } from "../../components/ui";
@@ -32,6 +32,8 @@ import {
   FALLBACK_OPTIONS,
   isSafeModeOff,
   mergePage,
+  moreFiltersCount,
+  REFERENCE_TAG,
   resultsSummary,
   showPriceBadge,
   tagsWithSafeMode,
@@ -76,6 +78,8 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
     return forModel ? addonsFor(f, forModel) : f;
   });
   const [search, setSearch] = useState(filters.query);
+  // "More filters" starts open whenever one of them is set, so nothing set is hidden.
+  const [moreOpen, setMoreOpen] = useState(() => moreFiltersCount(filters, defaultFilters(null, settings, isAdultConfirmed())) > 0);
   const debouncedSearch = useDebounced(search, SEARCH_DEBOUNCE_MS);
   const [pendingContent, setPendingContent] = useState<ContentMode | null>(() =>
     !getLastFilters() && settings && isSafeModeOff(settings.contentMode) && !isAdultConfirmed() ? settings.contentMode : null,
@@ -303,6 +307,7 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
   };
   const defaults = defaultFilters(options, settings, isAdultConfirmed());
   const changed = changedFilterCount(filters, { ...defaults, kind: filters.kind });
+  const moreCount = moreFiltersCount(filters, defaults);
   const clearFilters = () => {
     pristine.current = false;
     setSearch("");
@@ -378,45 +383,36 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
           ))}
         </ScrollRow>
 
-        <ScrollRow label="Tags" className="gap-1.5">
-          {options.tags.map((t) => {
-            const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
-            return (
-              <Chip
-                key={t.key}
-                active={!locked && filters.tags.includes(t.key)}
-                disabled={locked}
-                title={locked ? "Turn Safe mode off to use this tag" : undefined}
-                onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}
-              >
-                {t.label}
-              </Chip>
-            );
-          })}
-        </ScrollRow>
-
         {/* One line: scrolls sideways in a narrow window instead of folding. */}
         <div className="border-t border-neutral-100 pt-3 dark:border-neutral-800">
           <ScrollRow className="gap-x-4">
             <FilterGroup label="Safe mode">
               <Segmented ariaLabel="Safe mode" options={options.content.map((c) => ({ value: c.key, label: c.label }))} value={filters.content} onChange={setContent} />
             </FilterGroup>
-            <FilterGroup label="Price">
-              <Select<PriceMode> label="Price" className="[&>select]:[field-sizing:content]" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
-            </FilterGroup>
-            <FilterGroup label="Commercial use">
-              <Segmented
-                ariaLabel="Commercial use"
-                options={COMMERCIAL_OPTIONS}
-                value={filters.commercialOnly ? "ok" : "any"}
-                onChange={(v) => update({ commercialOnly: v === "ok" })}
-              />
-            </FilterGroup>
             <Toggle checked={filters.compatibleOnly} onChange={(v) => update({ compatibleOnly: v })} label={<span className="text-sm whitespace-nowrap">Works with Pinhole</span>} />
-            <Toggle checked={filters.hideAnime} onChange={setHideAnime} label={<span className="text-sm whitespace-nowrap">Hide anime</span>} />
             {filters.kind === "models" && (
               <Toggle checked={filters.runsOnMyCard} onChange={(v) => update({ runsOnMyCard: v })} label={<span className="text-sm whitespace-nowrap">Runs on my card</span>} />
             )}
+            {options.tags.some((t) => t.key === REFERENCE_TAG) && (
+              <Toggle
+                checked={filters.tags.includes(REFERENCE_TAG)}
+                onChange={(v) => update({ tags: v ? [...filters.tags, REFERENCE_TAG] : filters.tags.filter((t) => t !== REFERENCE_TAG) })}
+                label={<span className="text-sm whitespace-nowrap">Reference picture</span>}
+              />
+            )}
+            <button
+              type="button"
+              aria-expanded={moreOpen}
+              aria-controls="browse-more-filters"
+              onClick={() => setMoreOpen((o) => !o)}
+              className={cx("inline-flex shrink-0 items-center gap-1 rounded text-sm font-medium whitespace-nowrap text-neutral-700 hover:text-neutral-950 dark:text-neutral-300 dark:hover:text-white", focusRing)}
+            >
+              More filters
+              {!moreOpen && moreCount > 0 && (
+                <span className="rounded-full bg-amber-500 px-1.5 text-xs leading-5 font-semibold text-neutral-950">{moreCount}</span>
+              )}
+              <ChevronDown className={cx("h-4 w-4 transition-transform", moreOpen && "rotate-180")} aria-hidden />
+            </button>
             {changed > 0 && (
               <button
                 type="button"
@@ -428,6 +424,43 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
             )}
           </ScrollRow>
         </div>
+
+        {moreOpen && (
+          <div id="browse-more-filters" className="space-y-3 border-t border-neutral-100 pt-3 dark:border-neutral-800">
+            <ScrollRow label="Tags" className="gap-1.5">
+              {options.tags
+                .filter((t) => t.key !== REFERENCE_TAG)
+                .map((t) => {
+                  const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
+                  return (
+                    <Chip
+                      key={t.key}
+                      active={!locked && filters.tags.includes(t.key)}
+                      disabled={locked}
+                      title={locked ? "Turn Safe mode off to use this tag" : undefined}
+                      onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}
+                    >
+                      {t.label}
+                    </Chip>
+                  );
+                })}
+            </ScrollRow>
+            <ScrollRow className="gap-x-4">
+              <FilterGroup label="Price">
+                <Select<PriceMode> label="Price" className="[&>select]:[field-sizing:content]" value={filters.price} onChange={(price) => update({ price })} options={options.price.map((p) => ({ value: p.key, label: p.label }))} />
+              </FilterGroup>
+              <FilterGroup label="Commercial use">
+                <Segmented
+                  ariaLabel="Commercial use"
+                  options={COMMERCIAL_OPTIONS}
+                  value={filters.commercialOnly ? "ok" : "any"}
+                  onChange={(v) => update({ commercialOnly: v === "ok" })}
+                />
+              </FilterGroup>
+              <Toggle checked={filters.hideAnime} onChange={setHideAnime} label={<span className="text-sm whitespace-nowrap">Hide anime</span>} />
+            </ScrollRow>
+          </div>
+        )}
       </div>
 
       {/* ------------------------------------------------ results */}

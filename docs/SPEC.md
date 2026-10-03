@@ -483,6 +483,10 @@ text-to-image run (size, seed, sampler), not an edit of your own picture.
 If no edit model is installed, the Edit tab shows one card: "Get the best edit model for your
 GPU" — one-click download of the top edit model that fits (§6.1), showing its download size
 and VRAM need.
+When Edit opens in Restyle only because no edit model is installed, one slim line at the top
+offers it: "To change one thing and keep the rest, get the edit model (size)" with a Get button.
+Restyle stays usable; the line goes once an edit model is installed and can be closed for the
+session. Picking Restyle yourself doesn't show it.
 
 **Edit chain**: each edit result can be edited again. Keep an in-memory undo stack
 (original → edit 1 → edit 2…) with a before/after comparison slider. Click any step in the
@@ -545,6 +549,11 @@ Two sub-views: **Browse** and **Installed**.
 | Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
 | Style | Hide anime (switch, default off, remembered in Settings; models and add-ons) | client-side (CivitAI can only include one tag, never exclude; Browse keeps fetching until the page is full): hides models tagged or named anime / manga / cartoon / chibi / waifu, and whose newest version is on an anime-native base (Illustrious, NoobAI). Pony is not hidden by base, only by tags. Rules in `catalog-filters.yaml → hide_anime` |
 | Search | free text | `query` |
+
+Always shown: search, Kind, Sort, Time, Look, Safe mode, Works with Pinhole, Runs on my card and
+Reference picture (a switch for that tag). Tags, Price, Commercial use and Hide anime sit under
+**More filters**, which starts open whenever one of them is set and shows how many are set while
+closed.
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
   (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`); a text search is paged by `page=N` (CivitAI sends no cursor for it), other browsing by `cursor`.
