@@ -54,6 +54,7 @@ const BASE_FAMILY: Record<string, string | null> = {
   "Flux.1 D": "flux1_dev",
   "Flux.1 S": "flux1_schnell",
   "Flux.1 Kontext": "flux1_kontext",
+  "Flux.2 Klein 4B": "flux2_klein_4b",
   ZImageTurbo: "z_image_turbo",
   Qwen: null,
   "SD 3.5 Large": null,
@@ -72,6 +73,7 @@ const SEEDS: Seed[] = [
   { name: "Pony Diffusion V6 XL", versionName: "V6 (start with this one)", type: "Checkpoint", baseModel: "Pony", looks: ["anime", "illustration"], creator: "PurpleSmartAI", thumbsUpRatio: 0.94, downloadCount: 1_020_000, mainMb: 6617, previewNsfw: true, licenseNote: "Fair AI Public License 1.0-SD" },
   { name: "FLUX.1 [dev] fp8", versionName: "fp8 e4m3fn", type: "Checkpoint", baseModel: "Flux.1 D", looks: ["realistic"], versionId: 691639, modelId: 618692, creator: "Black Forest Labs", thumbsUpRatio: 0.93, downloadCount: 402_000, mainMb: 11_900, commercialOk: false, licenseNote: "Non-commercial license" },
   { name: "FLUX.1 [schnell]", versionName: "Q8_0 GGUF", type: "Checkpoint", baseModel: "Flux.1 S", looks: ["realistic", "illustration"], creator: "city96", thumbsUpRatio: 0.9, downloadCount: 131_000, mainMb: 12_700, gguf: true, licenseNote: "Apache 2.0" },
+  { name: "FLUX.2 [klein] 4B", versionName: "fp8", type: "Checkpoint", baseModel: "Flux.2 Klein 4B", looks: ["realistic", "illustration"], creator: "Black Forest Labs", thumbsUpRatio: 0.94, downloadCount: 64_000, mainMb: 7_800, licenseNote: "Apache 2.0", createdDaysAgo: 14 },
   { name: "epiCRealism", versionName: "Natural Sin RC1", type: "Checkpoint", baseModel: "SD 1.5", looks: ["realistic"], creator: "epinikion", thumbsUpRatio: 0.96, downloadCount: 700_000, mainMb: 2034 },
   { name: "NoobAI-XL", versionName: "V-Pred 1.0", type: "Checkpoint", baseModel: "NoobAI", looks: ["anime"], creator: "L_A_X", thumbsUpRatio: 0.92, downloadCount: 210_000, mainMb: 6938 },
   { name: "Qwen Image Studio", versionName: "v2", type: "Checkpoint", baseModel: "Qwen", looks: ["realistic", "brand"], creator: "studio_q", thumbsUpRatio: 0.91, downloadCount: 22_400, mainMb: 11_600, gguf: true, ambiguous: true, licenseNote: "Apache 2.0", createdDaysAgo: 9 },
@@ -237,6 +239,7 @@ function toCard(e: Entry, content?: BrowseQuery["content"]): CatalogCard {
     type: e.type,
     baseModel: e.baseModel,
     familyId: e.familyId,
+    takesReference: takesReferenceEntry(e),
     styleBadge: badgeLook ? BADGE[badgeLook] : null,
     creator: e.creator,
     // Rust asks the CDN for CivitAI's own card rendition; videos come back as a still frame.
@@ -275,9 +278,16 @@ const PERIOD_DAYS: Record<string, number> = { Week: 7, Month: 30, Year: 365 };
 
 /** Safe mode hides these; the NSFW tag finds only these (Rust: model.nsfw or safe_filter rules). */
 const isAdultEntry = (e: Entry) => e.modelNsfw || e.suggestive;
+/** Rust: families with both txt2img and edit in models.yaml `modes`; never style add-ons. */
+const takesReferenceEntry = (e: Entry) => {
+  const modes = (e.type !== "LORA" && e.familyId && FAMILIES[e.familyId]?.modes) || [];
+  return modes.includes("txt2img") && modes.includes("edit");
+};
 /** Tags multi-select (Rust: catalog-filters.yaml → tags). Subject tags are faked per entry. */
 const mockTagMatches = (e: Entry, tag: string) =>
-  tag === "nsfw" ? isAdultEntry(e) : tag === "edit" ? /\bedit\b|kontext/i.test(e.name) || e.baseModel === "Flux.1 Kontext" : (e.versionId + tag.length) % 3 === 0;
+  tag === "reference"
+    ? takesReferenceEntry(e) || e.type === "LORA" && e.baseModel.startsWith("Flux.2")
+    : tag === "nsfw" ? isAdultEntry(e) : tag === "edit" ? /\bedit\b|kontext/i.test(e.name) || e.baseModel === "Flux.1 Kontext" : (e.versionId + tag.length) % 3 === 0;
 
 async function browse(q: BrowseQuery, forFamily: string | null = null): Promise<BrowsePage> {
   await sleep(q.cursor ? 450 : 650);
@@ -632,6 +642,7 @@ const FILTERS: CatalogFilterOptions = {
   ],
   tags: [
     { key: "edit", label: "Edit model", needsSafeModeOff: false },
+    { key: "reference", label: "Reference picture", needsSafeModeOff: false },
     { key: "portraits", label: "Portraits", needsSafeModeOff: false },
     { key: "characters", label: "Characters", needsSafeModeOff: false },
     { key: "landscapes", label: "Landscapes", needsSafeModeOff: false },

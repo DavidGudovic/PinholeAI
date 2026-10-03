@@ -373,6 +373,20 @@ describe("reference picture", () => {
     expect(store.getState().create.refImageId).toBeNull();
   });
 
+  it("shows the one-time note about photos of people for a picture from the computer only", async () => {
+    const store = storeWithResults({ ...result("a", 64, 64), origin: "generated" });
+    store.dispatch({ type: "setModels", models: [sdxl, klein] });
+    store.dispatch({ type: "setSettings", settings: { ...(await api.getSettings()), editNoticeSeen: false } });
+    store.dispatch({ type: "createSetRef", ref: store.getState().images.a });
+    withApp(store, <ReferenceSlot model={klein} />);
+    expect(screen.queryByText(/Only use photos of people who have agreed/)).toBeNull();
+    act(() => store.dispatch({ type: "createSetRef", ref: { id: "photo", url: "blob:photo", width: 64, height: 64 } }));
+    expect(screen.getByText(/Only use photos of people who have agreed/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    expect(screen.queryByText(/Only use photos of people who have agreed/)).toBeNull();
+    await waitFor(() => expect(store.getState().settings?.editNoticeSeen).toBe(true));
+  });
+
   it("Side by side shows the reference picture next to a result made with it", () => {
     globalThis.ResizeObserver ??= class {
       observe() {}

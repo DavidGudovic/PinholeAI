@@ -310,8 +310,9 @@ of quietly dropping it.
 button and no new mode or setting. It uses the first of: the Create model, if it takes a reference
 picture; another installed one that does and can run now (ready, not "Too big"; switched to); else
 Edit → **Describe a change** with the image loaded (any image 2 cleared), which offers the one-click
-edit model when none is installed. An Imported result (made from a picture the user added) always
-goes to Edit, so the Edit notice about photos of people shows. A short note says to describe the
+edit model when none is installed. The same applies to an Imported result (made from a picture the
+user added); the notice about photos of people (RELEASE-SPEC §7) shows in Create's reference slot as
+in Edit. A short note says to describe the
 new scene ("the same character on a beach"). The image keeps its id, so its origin
 (Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 
@@ -529,7 +530,7 @@ Two sub-views: **Browse** and **Installed**.
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | For (style add-ons only) | Any model · For <installed model> (defaults to the model picked in Create) | `baseModels=` the CivitAI base models of every registry family with the same architecture as that model (`families::lora_base_models`: an SDXL model also gets Pony and Illustrious LoRAs); each card shows the newest version made for them; a tag that narrows `baseModels` (Edit) with nothing in common answers "none" without asking CivitAI. Not a filter "Clear filters" resets |
 | Look | Realistic · Anime · Illustration · 3D · Painting · Pixel art · Line art · Cinematic · Vintage · Brand & product | tag sets from `config/catalog-filters.yaml`. Look, Tags and the switches row each stay on one line and scroll sideways when the window is too narrow |
-| Tags | multi-select: Edit model · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Tags | multi-select: Edit model · Reference picture · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). Reference picture = models whose family has both `txt2img` and `edit` in `models.yaml` `modes` (they can follow Create's reference picture); the base models come from `models.yaml` and are also sent as `baseModels`; those cards and installed models show a "Reference picture" badge. NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Most liked · Most downloaded (default) · Newest | `sort=Most Liked / Most Downloaded / Newest` |

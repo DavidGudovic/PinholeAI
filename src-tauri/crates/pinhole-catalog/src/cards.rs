@@ -38,6 +38,8 @@ pub struct FamilyInfo {
     /// The family's main file is the diffusion model alone (VAE and text encoders come
     /// separately), so a GGUF of it can stand in for a safetensors file.
     pub diffusion_only: bool,
+    /// Create's reference picture works with it ([`families::takes_reference`]).
+    pub takes_reference: bool,
 }
 
 /// The real environment: registry + effective hardware + installed index.
@@ -87,6 +89,7 @@ impl CatalogEnv for RegistryEnv<'_> {
             label: f.label.clone(),
             license_note: f.license_note.clone(),
             diffusion_only: families::main_model_kind(f) == ModelKind::Diffusion,
+            takes_reference: families::takes_reference(f),
         })
     }
 
@@ -162,6 +165,9 @@ pub fn card_or_hidden(
         .pick_version(ctx.query, m, |b| env.is_compatible(b), ctx.now)
         .ok_or(Hidden::Other)?;
     let card = card_for_version(ctx.filters, ctx.query.content, env, m, version, ctx.now);
+    if !card.takes_reference && f.wants_reference(ctx.query) && !f.is_lora_type(&m.kind) {
+        return Err(Hidden::Other);
+    }
     // Unknown size (LoRAs, no family) is never hidden: they have no figure of their own.
     if ctx.query.runs_on_my_card && card.fit == Some(Fit::TooBig) {
         return Err(Hidden::TooBig);
@@ -240,6 +246,7 @@ pub fn card_for_version(
         kind: m.kind.clone(),
         base_model: v.base_model.clone(),
         family_id: family.as_ref().map(|f| f.id.clone()),
+        takes_reference: !is_lora && family.as_ref().is_some_and(|f| f.takes_reference),
         style_badge: filters.style_badge(&m.tags),
         creator: m.creator.as_ref().and_then(|c| c.username.clone()),
         preview_url: preview.map(|i| preview_url(i, filters.preview_width)),
@@ -401,6 +408,7 @@ pub(crate) mod tests {
                 "Illustrious" => ("sdxl_illustrious", "SDXL · Illustrious / NoobAI", None),
                 "SD 1.5" => ("sd15", "Stable Diffusion 1.5", None),
                 "Flux.1 D" => ("flux1_dev", "FLUX.1 dev", Some("Non-commercial license")),
+                "Flux.2 Klein 4B" => ("flux2_klein_4b", "FLUX.2 klein 4B", None),
                 _ => return None,
             };
             Some(FamilyInfo {
@@ -408,6 +416,7 @@ pub(crate) mod tests {
                 label: label.into(),
                 license_note: lic.map(Into::into),
                 diffusion_only: id.starts_with("flux"),
+                takes_reference: id.starts_with("flux2"),
             })
         }
         fn vram_for(&self, _family: &str, bytes: u64) -> Option<(VramNeed, Fit)> {
@@ -497,6 +506,42 @@ pub(crate) mod tests {
         assert_eq!(json["versionId"], 789646);
         assert_eq!(json["fit"], "tight");
         assert_eq!(json["vram"]["minGb"].as_f64().map(|v| v > 0.0), Some(true));
+    }
+
+    #[test]
+    fn reference_picture_badge_and_filter() {
+        let f = filters().with_reference_base_models(&["Flux.2 Klein 4B".to_string()]);
+        let sdxl = page().items[0].clone();
+        let mut klein = sdxl.clone();
+        klein.id += 1;
+        klein.model_versions[0].base_model = "Flux.2 Klein 4B".into();
+        let q = BrowseQuery::default();
+        let ctx = CardContext {
+            filters: &f,
+            query: &q,
+            now: now(),
+        };
+        assert!(!build_card(&ctx, &env(), &sdxl).unwrap().takes_reference);
+        assert!(build_card(&ctx, &env(), &klein).unwrap().takes_reference);
+
+        let q = BrowseQuery {
+            tags: vec!["reference".into()],
+            ..Default::default()
+        };
+        let ctx = CardContext {
+            filters: &f,
+            query: &q,
+            now: now(),
+        };
+        assert!(f.wants_reference(&q));
+        assert!(build_card(&ctx, &env(), &sdxl).is_none());
+        assert!(build_card(&ctx, &env(), &klein).is_some());
+        // An older version on a reference base model doesn't count: the card shows the newest.
+        let mut old = sdxl.clone();
+        let mut v = old.model_versions[0].clone();
+        v.base_model = "Flux.2 Klein 4B".into();
+        old.model_versions.push(v);
+        assert!(build_card(&ctx, &env(), &old).is_none());
     }
 
     #[test]

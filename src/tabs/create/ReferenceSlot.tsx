@@ -10,6 +10,7 @@ import { Button, ErrorNotice, IconButton, Spinner } from "../../components/ui";
 import * as api from "../../lib/api";
 import { useActions } from "../../lib/state/AppProvider";
 import { referenceModel, takesReference } from "../../lib/state/model";
+import { PhotoNotice } from "../../components/PhotoNotice";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import type { CoreError, InstalledModel } from "../../lib/types";
@@ -60,6 +61,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
             </IconButton>
           </div>
         </DropTarget>
+        <PhotoNotice imageId={ref.id} verb="use" />
         {!able && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-amber-800 dark:text-amber-300">
             <span className="inline-flex items-start gap-1.5">

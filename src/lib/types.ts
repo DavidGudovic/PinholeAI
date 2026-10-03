@@ -619,6 +619,8 @@ export interface CatalogCard {
   type: string;
   baseModel: string;
   familyId: string | null;
+  /** The model can follow a reference picture in Create (never set for style add-ons). */
+  takesReference: boolean;
   styleBadge: string | null;
   creator: string | null;
   /** Preview URL — fetch bytes via fetchPreview(); never put it in an <img src>. */

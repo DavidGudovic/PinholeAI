@@ -28,6 +28,7 @@ const card = (versionId: number, extra: Partial<CatalogCard> = {}): CatalogCard 
   type: "Checkpoint",
   baseModel: "SDXL 1.0",
   familyId: "sdxl",
+  takesReference: false,
   styleBadge: null,
   creator: null,
   previewUrl: null,
