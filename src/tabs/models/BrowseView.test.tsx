@@ -7,7 +7,8 @@ import { ScrollRootContext } from "./lib/preview";
 import { BrowseView } from "./BrowseView";
 import * as api from "../../lib/api";
 import { defaultFilters } from "./lib/query";
-import { rememberFilters } from "./lib/session";
+import { getLastFilters, rememberFilters } from "./lib/session";
+import { emitSettingsChanged } from "../../settings/events";
 
 const observers: { options: IntersectionObserverInit | undefined; targets: Element[] }[] = [];
 class FakeIO {
@@ -150,4 +151,34 @@ describe("BrowseView tags with Safe mode on", () => {
     expect(offOnly.length).toBeGreaterThan(0);
     for (const t of offOnly) expect(screen.queryByRole("button", { name: t.label })).toBeNull();
   }, 10_000);
+});
+
+describe("BrowseView follows Safe mode turned on in Settings", () => {
+  const offFilters = async () => {
+    const offOnly = (await api.catalogFilters()).tags.filter((t) => t.needsSafeModeOff).map((t) => t.key);
+    return { ...defaultFilters(null, null, false), content: "all" as const, tags: offOnly };
+  };
+
+  it("opens with Safe mode on when Browse was left with it off", async () => {
+    rememberFilters(await offFilters());
+    const settings = { ...(await api.getSettings()), contentMode: "safe" as const };
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <BrowseView settings={settings} onShowInstalled={() => undefined} />
+      </StoreContext.Provider>,
+    );
+    await waitFor(() => expect(getLastFilters()).toMatchObject({ content: "safe", tags: [] }));
+  });
+
+  it("turns it on while Browse is open", async () => {
+    rememberFilters(await offFilters());
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <BrowseView settings={null} onShowInstalled={() => undefined} />
+      </StoreContext.Provider>,
+    );
+    await waitFor(() => expect(getLastFilters()?.content).toBe("all"));
+    emitSettingsChanged({ ...(await api.getSettings()), contentMode: "safe" });
+    await waitFor(() => expect(getLastFilters()).toMatchObject({ content: "safe", tags: [] }));
+  });
 });

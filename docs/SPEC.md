@@ -614,6 +614,7 @@ closed.
   in RAM only). There is no "adult only" mode: the NSFW tag is the only way to narrow to those
   models, and it needs Safe mode off.
 - Safe mode is **On** by default. While it is on, also blur any preview image flagged NSFW.
+  Turning it on in Settings turns it on in Browse too, also when Browse was left with it off.
 - Safe mode, Look, Tags and Price are partly client-side filters: keep fetching pages until the grid page
   (24 cards) is full (cap at 5 extra requests per scroll, then show "Load more"). A newer query
   stops the older one's extra requests. A request that times out is asked once more; if a later
