@@ -2,7 +2,7 @@
 // images. Each image can send its settings to Create or itself to Edit, and
 // the model's CivitAI page opens in the system browser.
 // PRIVACY: image generation data (prompts) stays in memory; nothing is logged.
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowLeft, Check, Download, ExternalLink, ImageOff, RotateCw, ShieldAlert, SlidersHorizontal, ThumbsUp, Wand2 } from "lucide-react";
 import * as api from "../../lib/api";
 import type { CatalogCard, ContentMode, CoreError, GalleryItem, ModelGallery } from "../../lib/types";
@@ -23,9 +23,12 @@ import { UseAddonButton, useInstalledLoraId } from "./UseAddon";
 // Image loading is local to this page (not ./lib/preview) so it doesn't depend
 // on the Browse grid's loader. At most a few fetches run at once. Bytes come
 // from Rust and are kept as Blobs only while the page is open, so the viewer and
-// "Edit this image" reuse what the grid already fetched. The opened image jumps
-// the queue; closing the page drops the fetches that haven't started.
-const MAX_PARALLEL = 4;
+// "Edit this image" reuse what the grid already fetched. Tiles on screen are
+// fetched first, then the ones near it; the opened image jumps the queue; closing
+// the page drops the fetches that haven't started.
+const MAX_PARALLEL = 8;
+/** Tiles this far below the screen are fetched ahead of a scroll. */
+const NEAR_MARGIN = "1200px 0px";
 const loader = createBlobLoader((url) => api.fetchPreview(url).then((buf) => new Blob([buf])), MAX_PARALLEL);
 const loadBlob = loader.load;
 
@@ -52,6 +55,102 @@ function useImage(url: string | null, front = false): { src: string | null; fail
   return state.url === url && url ? state : { src: null, failed: false };
 }
 
+type Seen = "visible" | "near" | "away";
+type Watch = (el: Element, cb: (seen: Seen) => void) => () => void;
+/** Reports whether a tile is on the page's screen, near it, or away. */
+const WatchContext = createContext<Watch | null>(null);
+
+/** One pair of observers for the page's tiles, rooted at the page's own scroller. */
+function useTileWatch(root: Element | null): Watch | null {
+  const [watch, setWatch] = useState<Watch | null>(null);
+  useEffect(() => {
+    if (!root || typeof IntersectionObserver === "undefined") return;
+    const tiles = new Map<Element, { visible: boolean; near: boolean; cb: (seen: Seen) => void }>();
+    const onEntries = (key: "visible" | "near") => (entries: IntersectionObserverEntry[]) => {
+      for (const e of entries) {
+        const t = tiles.get(e.target);
+        if (!t || t[key] === e.isIntersecting) continue;
+        t[key] = e.isIntersecting;
+        t.cb(t.visible ? "visible" : t.near ? "near" : "away");
+      }
+    };
+    const visible = new IntersectionObserver(onEntries("visible"), { root });
+    const near = new IntersectionObserver(onEntries("near"), { root, rootMargin: NEAR_MARGIN });
+    setWatch(() => (el: Element, cb: (seen: Seen) => void) => {
+      tiles.set(el, { visible: false, near: false, cb });
+      visible.observe(el);
+      near.observe(el);
+      return () => {
+        visible.unobserve(el);
+        near.unobserve(el);
+        tiles.delete(el);
+      };
+    });
+    return () => {
+      visible.disconnect();
+      near.disconnect();
+    };
+  }, [root]);
+  return watch;
+}
+
+/**
+ * A gallery tile's thumbnail: fetched once the tile is near the screen, ahead of the
+ * others once it is on screen, and kept while the page is open.
+ */
+function useTileImage(url: string, ref: RefObject<Element | null>): { src: string | null; failed: boolean } {
+  const watch = useContext(WatchContext);
+  // Without IntersectionObserver every tile counts as on screen.
+  const [seen, setSeen] = useState<Seen>(typeof IntersectionObserver === "undefined" ? "visible" : "away");
+  const [state, setState] = useState<{ url: string | null; src: string | null; failed: boolean }>({ url: null, src: null, failed: false });
+  const asked = useRef<string | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    const el = ref.current;
+    if (!watch || !el) return;
+    return watch(el, setSeen);
+  }, [watch, ref]);
+  useEffect(() => {
+    if (seen === "away") return;
+    // Already asked: an on-screen tile moves its request to the front of the queue.
+    if (asked.current === url) {
+      if (seen === "visible") void loadBlob(url, { front: true }).catch(() => undefined);
+      return;
+    }
+    asked.current = url;
+    const mine = () => alive.current && asked.current === url;
+    const load = () =>
+      loadBlob(url, { front: seen === "visible" })
+        .then((blob) => mine() && setState({ url, src: URL.createObjectURL(blob), failed: false }))
+        .catch(() => mine() && setState({ url, src: null, failed: true }));
+    if (seen === "visible") {
+      load();
+      return;
+    }
+    // Tiles near the screen ask after the ones on it (tiles mount column by column, so
+    // asking in page order would fill the free slots with the first column).
+    let waiting = true;
+    const t = setTimeout(() => {
+      waiting = false;
+      load();
+    }, 0);
+    return () => {
+      clearTimeout(t);
+      // Not asked yet: ask again on the next change (e.g. now on screen, at the front).
+      if (waiting && asked.current === url) asked.current = null;
+    };
+  }, [seen, url]);
+  // The Blob URL is given back when the tile shows another picture or goes (page closed).
+  useEffect(() => () => void (state.src && URL.revokeObjectURL(state.src)), [state.src]);
+  return state.url === url ? state : { src: null, failed: false };
+}
+
 export function ModelDetails({
   card,
   content,
@@ -74,6 +173,8 @@ export function ModelDetails({
   const [busy, setBusy] = useState<"edit" | null>(null);
   const [actionError, setActionError] = useState<CoreError | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const [root, setRoot] = useState<HTMLDivElement | null>(null);
+  const watch = useTileWatch(root);
   const isLora = card.type.toUpperCase() === "LORA";
 
   useEffect(() => {
@@ -91,6 +192,7 @@ export function ModelDetails({
 
   useEffect(() => {
     rootRef.current?.focus();
+    setRoot(rootRef.current);
     return () => loader.clear();
   }, []);
 
@@ -213,11 +315,13 @@ export function ModelDetails({
             </p>
           ) : (
             <>
-              <div className="columns-[220px] gap-4">
-                {gallery.items.map((it) => (
-                  <Tile key={it.index} item={it} onOpen={setOpen} />
-                ))}
-              </div>
+              <WatchContext.Provider value={watch}>
+                <div className="columns-[220px] gap-4">
+                  {gallery.items.map((it) => (
+                    <Tile key={it.index} item={it} onOpen={setOpen} />
+                  ))}
+                </div>
+              </WatchContext.Provider>
               {gallery.hiddenNsfw > 0 && (
                 <p className="text-xs text-neutral-500">
                   {gallery.hiddenNsfw === 1 ? "1 image is" : `${gallery.hiddenNsfw} images are`} hidden because Safe mode is on.
@@ -321,10 +425,12 @@ function Header({
 // Images made for adults never reach the page with Safe mode on (Rust leaves them out), so there is nothing to blur.
 // `onOpen` takes the item so the page can pass a stable setter and memo can skip re-renders.
 const Tile = memo(function Tile({ item, onOpen }: { item: GalleryItem; onOpen: (item: GalleryItem) => void }) {
-  const preview = useImage(item.thumbUrl);
+  const ref = useRef<HTMLButtonElement>(null);
+  const preview = useTileImage(item.thumbUrl, ref);
   const ratio = item.width && item.height ? `${item.width} / ${item.height}` : "3 / 4";
   return (
     <button
+      ref={ref}
       type="button"
       onClick={() => onOpen(item)}
       aria-label={item.generation ? "Open image (settings available)" : "Open image"}

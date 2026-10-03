@@ -2,8 +2,8 @@
 //
 // Speed: pages are cached in RAM per filters (going back to filters you used shows the grid
 // at once), the next page is fetched ahead while you look at this one, filter clicks are
-// debounced, cards are memoised and skipped by the browser while far off screen, and
-// previews load on-screen first (lib/preview.ts). Nothing is written to disk.
+// debounced, cards are memoised, only the rows near the screen are in the page (VirtualGrid),
+// and previews load on-screen first (lib/preview.ts). Nothing is written to disk.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, RotateCw, Search, SearchX, WifiOff, X } from "lucide-react";
 import { asCoreError, browseCatalog, catalogFilters, getSettings, listLoras, listModels, onModelsChanged, setSettings } from "../../lib/api";
@@ -16,6 +16,7 @@ import { CatalogCardView } from "./CatalogCardView";
 import { Chip, EmptyState, FilterGroup, SafeModeOffDialog, ScrollRow, Select, Skeleton } from "./controls";
 import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
+import { VirtualGrid } from "./VirtualGrid";
 import { useDebounced, useTauriEvent } from "./lib/hooks";
 import { PageStore } from "./lib/pageStore";
 import { measureSince } from "./lib/perf";
@@ -517,10 +518,12 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
               <span key={h}>{h}</span>
             ))}
           </div>
-          <Grid>
-            {items.map((c) => (
+          <VirtualGrid
+            items={items}
+            itemKey={cardKey}
+            scrollRoot={scrollRoot}
+            renderItem={(c) => (
               <CatalogCardView
-                key={c.versionId}
                 card={c}
                 content={filters.content}
                 showPrice={showPrice}
@@ -528,9 +531,9 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
                 onInstall={onInstall}
                 onOpen={onOpen}
               />
-            ))}
-            {phase === "more" && <SkeletonCards count={4} />}
-          </Grid>
+            )}
+            after={phase === "more" ? <SkeletonCards count={4} /> : undefined}
+          />
           <div ref={sentinel} className="flex flex-col items-center gap-2 py-6">
             {error && <ErrorNotice error={error} />}
             {phase === "more" ? null : nextCursor ? (
@@ -594,6 +597,8 @@ function SkeletonCards({ count }: { count: number }) {
     </>
   );
 }
+
+const cardKey = (c: CatalogCard) => c.versionId;
 
 /** Browse style add-ons for one installed model (a fresh search). */
 function addonsFor(f: BrowseFilters, modelId: string): BrowseFilters {

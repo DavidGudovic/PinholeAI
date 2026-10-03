@@ -19,7 +19,8 @@ describe("platform", () => {
     expect(doc.head.querySelector("style")?.textContent).toBe(WEBKITGTK_CSS);
     expect(WEBKITGTK_CSS).toMatch(/backdrop-filter: none/);
     expect(WEBKITGTK_CSS).toMatch(/\.pinhole-hover-zoom \{[^}]*scale: none/);
-    expect(WEBKITGTK_CSS).toMatch(/\.pinhole-card \{[^}]*box-shadow: none/);
+    expect(WEBKITGTK_CSS).toMatch(/\.pinhole-card,[^{]*\.pinhole-card button:not\(:focus-visible\) \{[^}]*box-shadow: none/);
+    expect(WEBKITGTK_CSS).toMatch(/article\.pinhole-card \{[^}]*border-radius: 0/);
     expect(WEBKITGTK_CSS).toMatch(/\.pinhole-card \.animate-pulse \{[^}]*animation: none/);
   });
 
