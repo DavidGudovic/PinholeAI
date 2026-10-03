@@ -445,6 +445,13 @@ const table: MockTable = {
     await sleep(150);
     return { saved: ids.map((id) => ({ id, path: `${String(a.dir)}/pinhole_${stamp()}_${mustGet(id).seed}.png` })), failed: 0 };
   },
+  save_sheet_as: async (a) => {
+    const ids = a.ids as string[];
+    if (ids.length < 2) throw { code: "invalid", message: "Pick at least two pictures for a sheet.", details: null };
+    ids.forEach(mustGet);
+    await sleep(150);
+    return { path: String(a.path) };
+  },
   copy_image: async (a) => {
     const im = mustGet(a.id);
     try {

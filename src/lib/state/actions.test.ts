@@ -46,6 +46,7 @@ vi.mock("./platform", async (orig) => {
 const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
+const { ALSO_MAX, sheetIds } = await import("./model");
 
 const model: InstalledModel = {
   id: "m",
@@ -852,5 +853,89 @@ describe("done alert", () => {
     pending!({ images: [img("c")] } as GenerateResult);
     await two;
     expect(notifyDone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Also apply to…", () => {
+  it("queues the same edit on each picture after the shown one; the run's results go to Create together", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetAlso", refs: [ref("b"), ref("c")] });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const sizes: [number, number][] = [];
+    const run = actions.runEdit({
+      mode: "restyle",
+      model,
+      mask: null,
+      size: [64, 64],
+      alsoSize: (w, h) => (sizes.push([w, h]), [w, h]),
+    });
+    // The list is handed to the queue: the pictures stay held by it.
+    expect(store.getState().edit.alsoIds).toEqual([]);
+    expect(store.getState().queue.map((q) => q.imageIds)).toEqual([["b"], ["c"]]);
+    expect(store.getState().images.b).toBeDefined();
+    await tick();
+    pending!({ images: [img("ra")] } as GenerateResult);
+    await run;
+    for (const out of ["rb", "rc"]) {
+      await tick();
+      await tick();
+      pending!({ images: [img(out)] } as GenerateResult);
+    }
+    await tick();
+    await tick();
+    const calls = vi.mocked(apiMod.generate).mock.calls.map((c) => c[0]);
+    expect(calls.map((r) => r.initImageId)).toEqual(["a", "b", "c"]);
+    expect(calls.map((r) => r.maskImageId ?? null)).toEqual([null, null, null]);
+    expect(sizes).toEqual([[64, 64], [64, 64]]);
+    const s = store.getState();
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a", "ra"]);
+    expect(s.results.map((r) => r.id)).toEqual(["rc", "rb", "ra"]);
+    expect(new Set(["ra", "rb", "rc"].map((id) => s.resultGroup[id])).size).toBe(1);
+    expect(sheetIds(s, "rb")).toEqual(["ra", "rb", "rc"]);
+  });
+
+  it("Try again redoes only the shown picture", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const first = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    await tick();
+    pending!({ images: [img("r")] } as GenerateResult);
+    await first;
+    store.dispatch({ type: "editSetAlso", refs: [ref("b")] });
+    const again = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64], from: 0, newSeed: true, alsoSize: (w, h) => [w, h] });
+    expect(store.getState().queue).toEqual([]);
+    await tick();
+    pending!({ images: [img("r2")] } as GenerateResult);
+    await again;
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(2);
+    expect(store.getState().edit.alsoIds).toEqual(["b"]);
+  });
+
+  it("adds picture files up to the limit", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    let n = 0;
+    vi.mocked(apiMod.importImage).mockImplementation(async () => ({ id: `f${n++}`, width: 8, height: 8 }) as never);
+    const files = Array.from({ length: ALSO_MAX + 2 }, () => new Blob([new Uint8Array(4)]));
+    await actions.importAlsoToEdit(files);
+    expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
+    await actions.importAlsoToEdit([new Blob([new Uint8Array(4)])]);
+    expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
+  });
+});
+
+describe("Save as one sheet", () => {
+  it("asks where and saves the pictures as one", async () => {
+    const { store, actions } = setup();
+    const saveSheetAs = vi.spyOn(apiMod, "saveSheetAs").mockResolvedValue({ path: "/x/sheet.png" });
+    const platform = await import("./platform");
+    vi.spyOn(platform, "canSaveAs").mockReturnValue(true);
+    vi.spyOn(platform, "chooseSavePath").mockResolvedValue("/x/sheet.png");
+    await actions.saveSheet(["a", "b"]);
+    expect(saveSheetAs).toHaveBeenCalledWith(["a", "b"], "/x/sheet.png");
+    // The pictures themselves still count as unsaved.
+    expect(store.getState().saved).toEqual({});
   });
 });

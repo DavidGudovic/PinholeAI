@@ -563,3 +563,35 @@ describe("Describe tab", () => {
     expect(api.describeImage).not.toHaveBeenCalled();
   });
 });
+
+describe("Also apply to…", () => {
+  it("picks pictures from this session, counts them on the button and hides the brush", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({
+      type: "addResults",
+      batch: null,
+      images: [{ id: "c1", width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "M", familyId: "sdxl", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: null, origin: "generated" }],
+      refs: [ref("c1")],
+    });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { mode: "restyle", restylePrompt: "watercolor" } });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(screen.getByText("Only change here")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Also apply to/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Also apply to this picture" }));
+    await flush();
+    expect(store.getState().edit.alsoIds).toEqual(["c1"]);
+    expect(screen.getByRole("button", { name: /Restyle 2 pictures/ })).toBeTruthy();
+    expect(screen.queryByText("Only change here")).toBeNull();
+    expect(screen.getByText(/Also on 1 more picture/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Don't apply to other pictures" }));
+    expect(store.getState().edit.alsoIds).toEqual([]);
+  });
+});
+

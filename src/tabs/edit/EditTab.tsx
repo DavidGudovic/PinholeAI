@@ -15,6 +15,7 @@ import { useShortcuts } from "../../lib/shortcuts";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
 import {
+  alsoChoices,
   createModels,
   editBusy,
   editModels,
@@ -22,6 +23,7 @@ import {
   isEditJob,
   willQueue,
   type EditMode,
+  type ImgRef,
 } from "../../lib/state/model";
 import {
   buildEditRequest,
@@ -32,6 +34,7 @@ import {
 } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "../create/AddonChips";
+import { AlsoApply } from "./AlsoApply";
 import { ApplyBar } from "./ApplyBar";
 import { EditFineTune } from "./EditFineTune";
 import { EditHistory } from "./EditHistory";
@@ -100,6 +103,13 @@ export function EditTab() {
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
+  // "Also apply to…": Describe a change and Restyle only (no brush: each picture is different).
+  const alsoMode = mode === "instruction" || mode === "restyle";
+  const also = useMemo(
+    () => (alsoMode ? e.alsoIds.map((id) => images[id]).filter((r): r is ImgRef => !!r) : []),
+    [alsoMode, e.alsoIds, images],
+  );
+  const batching = also.length > 0;
   const edits = useMemo(
     () => editModels(models, twoImages),
     [models, twoImages],
@@ -179,6 +189,22 @@ export function EditTab() {
     }
   };
   const secondPicker = useFilePicker((f) => void loadSecond(f));
+  const results = useAppState((s) => s.results);
+  const alsoOptions = useMemo(
+    () => alsoChoices({ results, edit: e, images }, [node?.imageId, twoImages ? e.secondImageId : null]),
+    [results, e, images, node?.imageId, twoImages],
+  );
+  const loadAlso = async (files: File[]) => {
+    setError(null);
+    setImporting(true);
+    try {
+      await actions.importAlsoToEdit(files);
+    } catch (err) {
+      setError(api.asCoreError(err));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // A new current image means a new mask.
   useEffect(() => {
@@ -216,7 +242,7 @@ export function EditTab() {
     try {
       const m = again
         ? (masks.current.get(current.id) ?? null)
-        : maskOn && painted && !twoImages
+        : maskOn && painted && !twoImages && !batching
           ? ((await mask.current?.exportPng()) ?? null)
           : null;
       const outFrom = editOutputSize(
@@ -235,6 +261,7 @@ export function EditTab() {
         // one queued behind another is added after its result instead of replacing it.
         from: again ? from : undefined,
         newSeed: again,
+        alsoSize: batching && !again ? (w, h) => editOutputSize(w, h, size, sizeMultiple(model.familyId)) : undefined,
       });
       running.current = false;
       await done;
@@ -456,7 +483,17 @@ export function EditTab() {
             )}
           </div>
 
-          {!twoImages && !extending && (
+          {alsoMode && current && (
+            <AlsoApply
+              picked={also}
+              choices={alsoOptions}
+              disabled={importing}
+              onFiles={(files) => void loadAlso(files)}
+              dispatch={dispatch}
+            />
+          )}
+
+          {!twoImages && !extending && !batching && (
             <MaskControls
               fixing={fixing}
               maskOn={maskOn}
@@ -500,6 +537,7 @@ export function EditTab() {
           myJob={myJob}
           queues={queues}
           canRun={canRun}
+          pictures={1 + also.length}
           onRun={() => void run()}
           cancelling={cancelling}
           onCancel={async () => {

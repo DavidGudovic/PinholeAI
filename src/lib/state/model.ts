@@ -115,6 +115,8 @@ export interface EditParams {
   loras: LoraUse[];
   /** Optional second image for "Describe a change" (image 2); session RAM like the chain. */
   secondImageId: string | null;
+  /** "Also apply to…": more pictures that get the same edit, each as its own queued job. Session RAM. */
+  alsoIds: string[];
   /** null = the Create tab's model. */
   restyleModelId: string | null;
   quality: Quality;
@@ -185,6 +187,8 @@ export interface AppState {
   batches: Record<string, Batch>;
   /** result image id → batch id */
   resultBatch: Record<string, string>;
+  /** result image id → the run it came in with when it has no batch (one "Also apply to…" edit). */
+  resultGroup: Record<string, string>;
   /** image id → where it was saved this session (paths only). Drives the "unsaved pictures" warning. */
   saved: Record<string, string>;
   /** Prompts sent this session, oldest first. Memory only; Up/Down in the prompt box. */
@@ -235,6 +239,7 @@ export const initialEdit = (): EditParams => ({
   editModelId: null,
   loras: [],
   secondImageId: null,
+  alsoIds: [],
   restyleModelId: null,
   quality: "balanced",
   seed: null,
@@ -259,6 +264,7 @@ export function initialState(): AppState {
     selectedResultId: null,
     batches: {},
     resultBatch: {},
+    resultGroup: {},
     saved: {},
     promptHistory: [],
     leave: null,
@@ -295,7 +301,8 @@ export type Action =
   | { type: "setDial"; dial: "count"; value: 1 | 2 | 4 }
   | { type: "selectModel"; modelId: string | null }
   | { type: "keepLook"; on: boolean }
-  | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[] }
+  /** `group`: results without a batch that came in one run (one "Also apply to…" edit). */
+  | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[]; group?: string }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
   | { type: "markSaved"; entries: { id: string; path: string }[] }
@@ -314,6 +321,8 @@ export type Action =
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
   | { type: "editSetSecond"; ref: ImgRef | null }
+  /** The "Also apply to…" pictures, in order (replaces the list). */
+  | { type: "editSetAlso"; refs: ImgRef[] }
   | { type: "createSetRef"; ref: ImgRef | null }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
@@ -404,6 +413,43 @@ export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "ima
   return [...ids].filter((id) => s.images[id] && !s.saved[id]);
 }
 
+/**
+ * Pictures "Also apply to…" offers: Create's results (newest first), then the edited steps in
+ * Edit's history, without the ids in `exclude`.
+ */
+export function alsoChoices(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
+  const skip = new Set(exclude.filter(Boolean));
+  const ids = [...s.results.map((r) => r.id), ...s.edit.chain.filter((n) => n.meta).map((n) => n.imageId).reverse()];
+  return [...new Set(ids)].filter((id) => !skip.has(id) && s.images[id]).map((id) => s.images[id]);
+}
+
+/** Most pictures one "Also apply to…" takes. */
+export const ALSO_MAX = 16;
+/** "Save as one sheet" takes 2 to this many pictures. */
+export const SHEET_MAX = 8;
+
+/**
+ * The pictures "Save as one sheet" puts together for result `id`: the results that came in the
+ * same run (its batch, or one "Also apply to…" edit), oldest first, at most SHEET_MAX. Upscales
+ * join the run they were made from but only go with other upscales. Empty when there are fewer than 2.
+ */
+export function sheetIds(s: Pick<AppState, "results" | "resultBatch" | "resultGroup" | "images">, id: string): string[] {
+  const group = s.resultBatch[id] ?? s.resultGroup[id];
+  const me = s.results.find((r) => r.id === id);
+  if (!group || !me) return [];
+  const upscaled = me.kind === "upscaled";
+  // In the order they arrived (`images` keeps it): a batch in its own order, then later runs.
+  const rank = new Map(Object.keys(s.images).map((k, i) => [k, i]));
+  const ids = s.results
+    .filter((r) => (s.resultBatch[r.id] ?? s.resultGroup[r.id]) === group && (r.kind === "upscaled") === upscaled && rank.has(r.id))
+    .map((r) => r.id)
+    .sort((a, b) => rank.get(a)! - rank.get(b)!);
+  // The newest SHEET_MAX, keeping the one picked.
+  let out = ids.slice(-SHEET_MAX);
+  if (!out.includes(id)) out = [...ids.slice(-(SHEET_MAX - 1)), id].sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+  return out.length >= 2 ? out : [];
+}
+
 /** Every session image id the UI still shows. */
 export function referencedImageIds(
   s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job" | "create" | "batches">>,
@@ -420,6 +466,7 @@ export function referencedImageIds(
     if (n.secondImageId) ids.add(n.secondImageId);
   }
   if (s.edit.secondImageId) ids.add(s.edit.secondImageId);
+  for (const id of s.edit.alsoIds ?? []) ids.add(id);
   if (s.describe.imageId) ids.add(s.describe.imageId);
   return ids;
 }
@@ -587,6 +634,8 @@ function inner(s: AppState, a: Action): AppState {
       const batches = a.batch ? { ...s.batches, [a.batch.id]: a.batch } : s.batches;
       const resultBatch = { ...s.resultBatch };
       if (a.batch) for (const im of a.images) resultBatch[im.id] = a.batch.id;
+      const resultGroup = a.group && !a.batch ? { ...s.resultGroup } : s.resultGroup;
+      if (a.group && !a.batch) for (const im of a.images) resultGroup[im.id] = a.group;
       return {
         ...s,
         images: withRefs(s.images, a.refs),
@@ -594,6 +643,7 @@ function inner(s: AppState, a: Action): AppState {
         selectedResultId: a.images[0]?.id ?? s.selectedResultId,
         batches,
         resultBatch,
+        resultGroup,
       };
     }
     case "selectResult": {
@@ -644,7 +694,13 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: withRefs(s.images, [a.ref]),
-        edit: { ...s.edit, chain: [{ imageId: a.ref.id, label: "Original", meta: null }], index: 0 },
+        edit: {
+          ...s.edit,
+          chain: [{ imageId: a.ref.id, label: "Original", meta: null }],
+          index: 0,
+          // The picture being edited isn't also one of the others.
+          alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref.id),
+        },
       };
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
@@ -676,8 +732,13 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, edit: { ...s.edit, chain: [], index: 0 } };
     case "editSetSecond":
       return a.ref
-        ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id } }
+        ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id, alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref!.id) } }
         : { ...s, edit: { ...s.edit, secondImageId: null } };
+    case "editSetAlso": {
+      const shown = s.edit.chain[s.edit.index]?.imageId;
+      const refs = a.refs.filter((r, i) => r.id !== shown && a.refs.findIndex((o) => o.id === r.id) === i).slice(0, ALSO_MAX);
+      return { ...s, images: withRefs(s.images, refs), edit: { ...s.edit, alsoIds: refs.map((r) => r.id) } };
+    }
     case "createSetRef":
       return a.ref
         ? { ...s, images: withRefs(s.images, [a.ref]), create: { ...s.create, refImageId: a.ref.id } }
@@ -707,6 +768,7 @@ function inner(s: AppState, a: Action): AppState {
         selectedResultId: null,
         batches: {},
         resultBatch: {},
+        resultGroup: {},
         saved: {},
         promptHistory: [],
         leave: null,

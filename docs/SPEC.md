@@ -361,7 +361,13 @@ as in Create.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
 new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
-more than one picture is unsaved.
+more than one picture is unsaved. **Save as one sheet (n)** (in Save's menu, desktop app) saves
+the pictures that came in the same run as the shown one (its batch, or one "Also apply to…" edit;
+upscales only with upscales; 2–8, oldest first) as one grid picture through the save dialog: equal
+cells the size of the largest picture, each fitted and centred, small white gaps, no text, at most
+8192 px a side. It goes through the export function (`session::export_png` with several pictures):
+each picture is watermarked, the sheet too when Pinhole made any of them, and the XMP marker is
+their shared source type or "composite"; no settings chunk. The pictures themselves stay unsaved.
 
 **Upscale** runs a 4× ESRGAN model in sd-server (2× = 4× then halved). There are three, all
 pinned in `models.yaml` and each downloaded the first time it is used: `realesrgan_x4` (photos,
@@ -425,6 +431,13 @@ Four modes; Describe a change or Restyle is picked automatically:
      `multi_ref: true` (Qwen-Image 2.1, Qwen Image Edit, FLUX.2) are offered then, and one that Fits wins the
      automatic pick. The brush is hidden while image 2 is there. Image 2 stays in memory like
      the edit chain until it is removed or Reset.
+   - Optional **"Also apply to…"** (also in Restyle): up to 16 more pictures, picked from this
+     session's results and edited steps or from files. Apply then queues the shown picture's edit
+     and, behind it, one edit per picked picture with the same text, model, settings and image 2,
+     each at its own size and without the brush (hidden while pictures are picked). The shown
+     picture's result joins the edit chain as usual; every result of the run also goes to
+     Create's results as one group (for Save as one sheet). The list is cleared once queued;
+     Try again redoes only the shown picture.
 2. **Restyle** (classic img2img with the current Create model): image as `init_image`.
    - Dial: **How much to change** (Subtle · Medium · Strong → `strength` 0.35/0.55/0.75).
 3. **Fix details** (same models as Restyle): the user paints over a small spot such as a face or
@@ -832,7 +845,7 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
 ## 12. Nice-to-haves (post v1, pick later)
 
 - **Face fix** pass (ADetailer-style) for small faces in full-body shots.
-- **Batch edit**: apply the same instruction to several images (e.g. a product line).
+- Built: **Batch edit** ("Also apply to…", §5.2) and **Save as one sheet** (§5.1).
 - Built: "Improve my prompt" (§5.1) and the keyboard-first flow: Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`.
 - Ruled out: background remover, ControlNet, seed grid (Edit Fine-tune stays slim).
 
