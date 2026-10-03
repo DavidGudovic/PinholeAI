@@ -482,13 +482,12 @@ export function makeActions(store: Store) {
     const ref = s.images[id];
     if (!ref) return;
     const current = (s.models ?? []).find((m) => m.id === s.create.modelId) ?? null;
-    // Only switch to a model that can run now; otherwise Edit, which offers a one-click model.
+    // The picked Create model is used whenever it takes a reference picture, like the reference
+    // slot. Only switch to another model that can run now; otherwise Edit, which offers a one-click model.
     const usable = (m: InstalledModel | null) => !!m && takesReference(m) && !m.missingComponents.length && m.fit !== "tooBig";
     const other = referenceModel(s.models);
-    const able = usable(current) ? current : usable(other) ? other : null;
-    // A picture the user added goes through Edit, which shows its notice about photos of people.
-    const imported = s.results.find((r) => r.id === id)?.origin === "imported";
-    if (able && !imported) {
+    const able = takesReference(current) ? current : usable(other) ? other : null;
+    if (able) {
       if (able !== current) dispatch({ type: "selectModel", modelId: able.id });
       dispatch({ type: "createSetRef", ref });
       setTab("create");
