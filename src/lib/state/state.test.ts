@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FineTune, InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, sessionPictures, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -200,6 +200,15 @@ describe("unsaved pictures and prompt history", () => {
     expect(unsavedIds(s).sort()).toEqual(["b", "e"]);
     s = run(s, { type: "removeResult", id: "b" });
     expect(unsavedIds(s)).toEqual(["e"]);
+  });
+
+  it("this session's pictures: Create and Edit results, newest first, without imported originals", () => {
+    let s = made(withModels());
+    s = run(s, { type: "addResults", batch: null, images: [result("c", 4)], refs: [ref("c")] });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "a", "b"]);
+    expect(sessionPictures(s, ["e", null]).map((p) => p.id)).toEqual(["c", "a", "b"]);
+    s = run(s, { type: "removeResult", id: "a" });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "b"]);
   });
 
   it("Reset forgets what was saved and the prompt history", () => {

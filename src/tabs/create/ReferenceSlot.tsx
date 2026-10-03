@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { ImagePlus, Trash, TriangleAlert } from "lucide-react";
 import { DropTarget, useFilePicker } from "../../components/ImageDrop";
+import { SessionStrip, useSessionPictures } from "../../components/SessionPictures";
 import { Button, ErrorNotice, IconButton, Spinner } from "../../components/ui";
 import * as api from "../../lib/api";
 import { useActions } from "../../lib/state/AppProvider";
@@ -20,8 +21,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
   const refId = useAppState((s) => s.create.refImageId);
   const ref = useAppState((s) => (refId ? s.images[refId] : undefined));
   const models = useAppState((s) => s.models);
-  const results = useAppState((s) => s.results);
-  const images = useAppState((s) => s.images);
+  const recent = useSessionPictures([], RECENT);
   const dispatch = useDispatch();
   const actions = useActions();
   const [importing, setImporting] = useState(false);
@@ -82,7 +82,6 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
     );
   }
 
-  const recent = results.filter((r) => images[r.id]).slice(0, RECENT);
   return (
     <DropTarget onFile={(f) => void load(f)} label="Drop to use as the reference picture">
       {picker.input}
@@ -90,22 +89,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
         <Button size="sm" variant="ghost" disabled={importing} onClick={picker.open} title={`Optional: make something in the style of a picture, or with the same character or subject. Drop, paste (${modKey}+V) or choose one.`}>
           {importing ? <Spinner className="h-3.5 w-3.5" /> : <ImagePlus className="h-3.5 w-3.5" />} Add a reference picture
         </Button>
-        {recent.length > 0 && (
-          <div role="group" aria-label="Use a picture from this session" className="flex gap-1">
-            {recent.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                title="Use as the reference picture"
-                aria-label="Use as the reference picture"
-                className="h-7 w-7 overflow-hidden rounded-md opacity-80 ring-amber-500 hover:opacity-100 hover:ring-2 focus-visible:ring-2 focus-visible:outline-none"
-                onClick={() => dispatch({ type: "createSetRef", ref: images[r.id] })}
-              >
-                <img src={images[r.id].url} alt="" className="h-full w-full object-cover" draggable={false} />
-              </button>
-            ))}
-          </div>
-        )}
+        <SessionStrip pictures={recent} title="Use as the reference picture" onPick={(p) => dispatch({ type: "createSetRef", ref: p })} />
       </div>
       {error && (
         <div className="mt-2">

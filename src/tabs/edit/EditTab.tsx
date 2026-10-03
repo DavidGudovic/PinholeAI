@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DropTarget, DropZone, useFilePicker } from "../../components/ImageDrop";
 import { CheckReadings } from "../../components/CheckReadings";
+import { SessionChoices, useSessionPictures } from "../../components/SessionPictures";
 import { useUpscaler } from "../../components/UpscalerChoice";
 import { StylePicker } from "../../components/StylePicker";
 import { Spinner } from "../../components/ui";
@@ -179,6 +180,19 @@ export function EditTab() {
     }
   };
   const secondPicker = useFilePicker((f) => void loadSecond(f));
+  // This session's pictures: another one to edit (not the one shown), or image 2 (not image 1).
+  const sessionPics = useSessionPictures([node?.imageId]);
+  const pickSession = (id: string) => {
+    if (editBusy(store.getState())) return;
+    setError(null);
+    actions.sendToEdit(id);
+  };
+  const pickSecond = (id: string) => {
+    const ref = store.getState().images[id];
+    if (!ref || editBusy(store.getState())) return;
+    setError(null);
+    dispatch({ type: "editSetSecond", ref });
+  };
 
   // A new current image means a new mask.
   useEffect(() => {
@@ -433,6 +447,8 @@ export function EditTab() {
               second={second}
               pickerInput={secondPicker.input}
               onPick={secondPicker.open}
+              sessionPictures={sessionPics}
+              onPickSession={(p) => pickSecond(p.id)}
               myJob={myJob}
               locked={locked}
               importing={importing}
@@ -532,6 +548,12 @@ export function EditTab() {
               busy={importing}
             >
               {importing && <Spinner className="mt-3 h-4 w-4" />}
+              <SessionChoices
+                pictures={sessionPics}
+                title="Edit this picture"
+                disabled={importing}
+                onPick={(p) => pickSession(p.id)}
+              />
             </DropZone>
           </div>
         ) : (
@@ -560,6 +582,8 @@ export function EditTab() {
               compareWith={compareWith}
               setCompareWith={setCompareWith}
               onPickImage={picker.open}
+              sessionPictures={sessionPics}
+              onPickSession={(p) => pickSession(p.id)}
               onUpscale={(f) => void upscale(f)}
               runAction={runAction}
               onCopy={() =>

@@ -404,6 +404,30 @@ export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "ima
   return [...ids].filter((id) => s.images[id] && !s.saved[id]);
 }
 
+/**
+ * Pictures made this session that are still in memory (Create results and Edit results), newest
+ * first, for the "From this session" choices. Create results keep the strip's order; each Edit
+ * result goes before the results that arrived before it (`images` keeps the order pictures arrived in).
+ */
+export function sessionPictures(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
+  const skip = new Set(exclude.filter(Boolean));
+  const rank = new Map(Object.keys(s.images).map((id, i) => [id, i]));
+  const results = s.results.map((r) => r.id).filter((id) => rank.has(id));
+  const inResults = new Set(results);
+  const edits = s.edit.chain
+    .filter((n) => n.meta && rank.has(n.imageId) && !inResults.has(n.imageId))
+    .map((n) => n.imageId)
+    .sort((a, b) => rank.get(b)! - rank.get(a)!);
+  const out: string[] = [];
+  let e = 0;
+  for (const id of results) {
+    while (e < edits.length && rank.get(edits[e])! > rank.get(id)!) out.push(edits[e++]);
+    out.push(id);
+  }
+  out.push(...edits.slice(e));
+  return [...new Set(out)].filter((id) => !skip.has(id)).map((id) => s.images[id]);
+}
+
 /** Every session image id the UI still shows. */
 export function referencedImageIds(
   s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job" | "create" | "batches">>,
