@@ -356,7 +356,8 @@ fn installed_root() -> Option<PathBuf> {
 /// Linux, the Pictures known folder on Windows), else inside `~/Pictures` when that exists.
 fn pictures_home(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
     pictures
-        .filter(|p| p.is_absolute())
+        // XDG settings point Pictures at the home folder to turn it off.
+        .filter(|p| p.is_absolute() && Some(p) != home.as_ref())
         .or_else(|| {
             home.map(|h| h.join("Pictures"))
                 .filter(|p| p.is_absolute() && p.is_dir())
@@ -543,6 +544,11 @@ mod tests {
         fs::create_dir_all(home.join("Pictures")).unwrap();
         assert_eq!(
             pictures_home(None, Some(home.clone())),
+            Some(home.join("Pictures").join("Pinhole"))
+        );
+        // Pictures turned off in the XDG settings (set to the home folder): ~/Pictures or nothing.
+        assert_eq!(
+            pictures_home(Some(home.clone()), Some(home.clone())),
             Some(home.join("Pictures").join("Pinhole"))
         );
         // A relative answer is never used.

@@ -262,6 +262,8 @@ pub struct SaveFolderInfo {
     pub custom: bool,
     /// The default folder ("Use default" puts Save back there).
     pub default_path: String,
+    /// `Data/outputs/` when it holds pictures saved before and Save now goes elsewhere.
+    pub earlier_path: Option<String>,
 }
 
 const SAVE_FOLDER_MISSING: &str = "Your Saved pictures folder isn't available. Connect the drive it's on, or pick another folder in Settings → Saved pictures.";
@@ -277,7 +279,13 @@ pub fn save_folder(core: &AppCore) -> (PathBuf, bool) {
 
 pub fn save_folder_info(core: &AppCore) -> SaveFolderInfo {
     let (path, custom) = save_folder(core);
+    let old = core.data.outputs();
+    let has_pictures = std::fs::read_dir(&old)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
     SaveFolderInfo {
+        earlier_path: (has_pictures && !same_folder(&old, &path))
+            .then(|| old.display().to_string()),
         path: path.display().to_string(),
         custom,
         default_path: core.data.default_saves().display().to_string(),
@@ -316,7 +324,7 @@ pub fn set_save_folder(core: &AppCore, folder: Option<String>) -> CoreResult<Sav
                 ));
             }
             // Picking the default folder again is the same as Use default.
-            (path != core.data.default_saves()).then_some(f)
+            (!same_folder(&path, &core.data.default_saves())).then_some(f)
         }
     };
     let mut current = core.settings.write();
@@ -326,6 +334,15 @@ pub fn set_save_folder(core: &AppCore, folder: Option<String>) -> CoreResult<Sav
     *current = next.normalized();
     drop(current);
     Ok(save_folder_info(core))
+}
+
+/// Paths name the same folder (letter case doesn't count on Windows).
+fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
 }
 
 /// The Save folder, for "Open folder" (created if missing so the file manager can open it).
@@ -498,6 +515,14 @@ pub(crate) mod tests {
         assert_eq!(save_folder_info(&core).path, pictures.display().to_string());
         assert_eq!(save_folder_for_write(&core).unwrap(), pictures);
         assert!(pictures.is_dir());
+
+        // Pictures saved by an older version stay in Data/outputs, and Settings says so.
+        assert_eq!(save_folder_info(&core).earlier_path, None);
+        std::fs::write(core.data.outputs().join("pinhole_old.png"), b"x").unwrap();
+        assert_eq!(
+            save_folder_info(&core).earlier_path,
+            Some(core.data.outputs().display().to_string())
+        );
     }
 
     fn gpu(index: usize, vendor: Vendor, vram_gb: f32) -> GpuInfo {

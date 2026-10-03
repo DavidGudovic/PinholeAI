@@ -256,6 +256,8 @@ export interface SaveFolderInfo {
   custom: boolean;
   /** Where Use default puts them. */
   defaultPath: string;
+  /** Data/outputs when it holds pictures saved before and Save now goes elsewhere. */
+  earlierPath: string | null;
 }
 
 export interface ModelsFolderPreview {

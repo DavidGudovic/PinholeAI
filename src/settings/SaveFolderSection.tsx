@@ -66,6 +66,7 @@ export function SaveFolderSection() {
         </Button>
       </div>
       <p className="text-xs text-neutral-500">Save puts pictures here. Changing it doesn't move pictures you already saved.</p>
+      {info?.earlierPath && <p className="text-xs break-all text-neutral-500">Pictures you saved before are still in {info.earlierPath}.</p>}
       {error && <ErrorNotice error={error} onDismiss={() => setError(null)} />}
     </div>
   );

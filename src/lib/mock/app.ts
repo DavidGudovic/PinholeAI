@@ -110,7 +110,7 @@ const DEFAULT_SAVES = "C:\\Users\\Alex\\Pictures\\Pinhole";
 
 export function saveFolderInfo(): SaveFolderInfo {
   const custom = mockSettings().saveFolder ?? null;
-  return { path: custom ?? DEFAULT_SAVES, custom: custom != null, defaultPath: DEFAULT_SAVES };
+  return { path: custom ?? DEFAULT_SAVES, custom: custom != null, defaultPath: DEFAULT_SAVES, earlierPath: null };
 }
 
 // ---------------------------------------------------------------- hardware

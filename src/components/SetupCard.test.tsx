@@ -138,6 +138,30 @@ describe("SetupCard", () => {
     expect(api.installEngine).not.toHaveBeenCalled();
   }, 10_000);
 
+  it("shows a failed model download at once while the engine still downloads, and doesn't ask twice", async () => {
+    setup(false, false);
+    let failModel: (e: unknown) => void = () => undefined;
+    api.installRecommended.mockImplementation(() => new Promise((_, reject) => (failModel = reject)));
+    render(
+      <AppProvider>
+        <SetupCard needsModel />
+      </AppProvider>,
+    );
+    const card = await screen.findByRole("region", { name: "Pinhole still needs" }, { timeout: 5000 });
+    await within(card).findByText("A model: Z-Image Turbo");
+    fireEvent.click(within(card).getByRole("button", { name: /Get all/ }));
+    // Everything was asked for: the button waits instead of asking again.
+    const waiting = await within(card).findByRole("button", { name: /Downloading/ });
+    expect((waiting as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(waiting);
+    expect(api.installRecommended).toHaveBeenCalledTimes(1);
+    expect(api.installSafetyCheck).toHaveBeenCalledTimes(1);
+    failModel({ code: "disk", message: "Not enough free space for this model.", details: null });
+    expect(await within(card).findByText(/Not enough free space/)).toBeTruthy();
+    // The model can be asked for again on its own.
+    expect(await within(card).findByRole("button", { name: "Get Z-Image Turbo (6.0 GB)" })).toBeTruthy();
+  }, 10_000);
+
   it("stays hidden when the engine and the safety check are ready", async () => {
     setup(true, true);
     render(

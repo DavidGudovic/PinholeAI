@@ -10,7 +10,7 @@ import { formatBytes } from "../lib/format";
 import { isActiveDownload } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { useActions } from "../lib/state/AppProvider";
-import { tagGroup } from "../tabs/models/lib/downloads";
+import { tagGroup, useTaggedGroup } from "../tabs/models/lib/downloads";
 import { useEngine, useOnHardwareChange, useTauriEvent } from "../tabs/models/lib/hooks";
 import { Button, ErrorNotice, Spinner } from "./ui";
 
@@ -52,7 +52,9 @@ export function SetupCard({ needsModel, className = "" }: { needsModel: boolean;
   const downloads = useAppState((s) => s.downloads);
   const [check, setCheck] = useState<SafetyCheckStatus | null>(null);
   const [picks, setPicks] = useState<RecommendedPick[] | null>(null);
-  const [starting, setStarting] = useState(false);
+  // Asked for here and not answered yet (a licence question can be open): counts as downloading,
+  // so a second click doesn't ask again.
+  const [requested, setRequested] = useState<ReadonlySet<SetupItem["key"]>>(new Set());
   const [error, setError] = useState<CoreError | null>(null);
 
   const refreshCheck = useCallback(() => {
@@ -77,45 +79,53 @@ export function SetupCard({ needsModel, className = "" }: { needsModel: boolean;
   const checkActive = downloads.some((d) => d.kind === "safetyCheck" && isActiveDownload(d));
   useEffect(refreshCheck, [checkActive, refreshCheck]);
   const pick = needsModel ? modelOffer(picks) : null;
-  const modelActive = !!pick && downloads.some((d) => d.kind === "model" && d.label === pick.title && isActiveDownload(d));
+  const modelGroup = useTaggedGroup(`rec:${pick?.role ?? ""}`, (g) => g.kind === "model" && !!pick && g.label === pick.title);
+  const modelActive = !!pick && !!modelGroup && isActiveDownload(modelGroup);
 
   const items = useMemo(() => {
     const out: SetupItem[] = [];
     const st = engine.status;
-    if (st && !st.installed) out.push({ key: "engine", label: "Image engine", bytes: st.downloadBytes ?? 0, downloading: engine.busy });
-    if (check && !check.ready) out.push({ key: "check", label: "Safety check", bytes: check.downloadBytes, downloading: check.downloading || checkActive });
-    if (pick) out.push({ key: "model", label: `A model: ${pick.title}`, bytes: pick.downloadBytes, downloading: modelActive });
+    if (st && !st.installed) out.push({ key: "engine", label: "Image engine", bytes: st.downloadBytes ?? 0, downloading: engine.busy || requested.has("engine") });
+    if (check && !check.ready) out.push({ key: "check", label: "Safety check", bytes: check.downloadBytes, downloading: check.downloading || checkActive || requested.has("check") });
+    if (pick) out.push({ key: "model", label: `A model: ${pick.title}`, bytes: pick.downloadBytes, downloading: modelActive || requested.has("model") });
     return out;
-  }, [engine.status, engine.busy, check, checkActive, pick, modelActive]);
+  }, [engine.status, engine.busy, check, checkActive, pick, modelActive, requested]);
 
   // Only a model missing is the Create tab's own "Get a model" page.
   if (!items.some((i) => i.key !== "model")) return null;
 
-  const getAll = async () => {
+  const getAll = () => {
     setError(null);
-    setStarting(true);
     void actions.refreshDownloads().catch(() => undefined);
     const left = items.filter((i) => !i.downloading).map((i) => i.key);
-    const jobs: Promise<unknown>[] = [];
+    setRequested((r) => new Set([...r, ...left]));
+    // Each request reports its own failure as soon as it happens.
+    const run = (key: SetupItem["key"], job: () => Promise<unknown>, doneWhen: "started" | "finished") => {
+      const p = job();
+      const settle = () =>
+        setRequested((r) => {
+          const next = new Set(r);
+          next.delete(key);
+          return next;
+        });
+      p.catch((e) => {
+        const ce = api.asCoreError(e);
+        if (ce.code !== "cancelled") setError(ce);
+      }).finally(() => {
+        if (doneWhen === "finished") settle();
+        refreshCheck();
+      });
+      if (doneWhen === "started") p.then(settle, settle);
+    };
     // The engine setup also starts the safety check; asking for it again joins that download.
-    // engine.install shows its own failure (engine.error).
-    if (left.includes("engine")) jobs.push(engine.install());
-    if (left.includes("check")) jobs.push(api.installSafetyCheck().finally(refreshCheck));
+    // engine.install shows its own failure (engine.error) and keeps engine.busy while it runs.
+    if (left.includes("engine")) run("engine", () => engine.install(), "started");
+    if (left.includes("check")) run("check", () => api.installSafetyCheck(), "finished");
     if (left.includes("model") && pick) {
-      jobs.push(
-        api.installRecommended(pick.role).then(({ groupId }) => {
-          tagGroup(`rec:${pick.role}`, groupId);
-        }),
-      );
+      const role = pick.role;
+      // Resolves once the download is queued (after any licence question).
+      run("model", () => api.installRecommended(role).then(({ groupId }) => tagGroup(`rec:${role}`, groupId)), "started");
     }
-    setStarting(false);
-    const results = await Promise.allSettled(jobs);
-    const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (failed) {
-      const ce = api.asCoreError(failed.reason);
-      if (ce.code !== "cancelled") setError(ce);
-    }
-    refreshCheck();
   };
 
   const allDownloading = items.every((i) => i.downloading);
@@ -141,8 +151,8 @@ export function SetupCard({ needsModel, className = "" }: { needsModel: boolean;
         ))}
       </ul>
       <div className="mt-3 flex items-center gap-2">
-        <Button size="sm" variant="primary" disabled={starting || allDownloading} onClick={() => void getAll()}>
-          {starting || allDownloading ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
+        <Button size="sm" variant="primary" disabled={allDownloading} onClick={getAll}>
+          {allDownloading ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}
           {setupButtonLabel(items)}
         </Button>
         {allDownloading && (
