@@ -225,7 +225,8 @@ A picture pasted with Ctrl/Cmd+V on any tab opens a small chooser: **Create
 reference picture** (only while Create shows the reference slot), **Edit** or **Describe**. The
 choice for the current tab is first. The picture is then imported exactly like a dropped or chosen
 file, and that tab opens. Text pasted into a text field stays a text paste. On Linux the WebView's
-paste event carries no data, so the picture is read from the system clipboard through Rust
+paste event carries no picture (no data, or only the page markup after a browser's Copy image), so
+the picture is read from the system clipboard through Rust
 (`clipboard_image`, PNG); in a text field only when the clipboard holds no text.
 
 A picture dropped on the window opens the same chooser, wherever no drop area takes it (the Edit and
