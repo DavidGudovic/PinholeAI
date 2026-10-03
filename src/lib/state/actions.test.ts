@@ -1170,11 +1170,14 @@ describe("Save as one sheet", () => {
   it("asks where and saves the pictures as one", async () => {
     const { store, actions } = setup();
     const saveSheetAs = vi.spyOn(apiMod, "saveSheetAs").mockResolvedValue({ path: "/x/sheet.png" });
+    vi.spyOn(apiMod, "saveFolderInfo").mockResolvedValue({ path: "/home/u/Pictures/Pinhole", custom: false, defaultPath: "/home/u/Pictures/Pinhole", earlierPath: null });
     const platform = await import("./platform");
     vi.spyOn(platform, "canSaveAs").mockReturnValue(true);
     vi.spyOn(platform, "chooseSavePath").mockResolvedValue("/x/sheet.png");
     await actions.saveSheet(["a", "b"]);
     expect(saveSheetAs).toHaveBeenCalledWith(["a", "b"], "/x/sheet.png");
+    // The dialog starts in the Saved pictures folder.
+    expect(platform.chooseSavePath).toHaveBeenCalledWith("pinhole_sheet_2.png", "/home/u/Pictures/Pinhole");
     // The pictures themselves still count as unsaved.
     expect(store.getState().saved).toEqual({});
   });
