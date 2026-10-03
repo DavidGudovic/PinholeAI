@@ -3,26 +3,28 @@
 //! to "Improve my prompt", on what the Describe model writes back and on Browse search text.
 
 use crate::{CoreError, CoreResult};
-pub use pinhole_engine::words::{pairs_minor_with_sexual, CheckedPrompt, BLOCKED_MESSAGE};
+pub use pinhole_engine::words::{
+    pairs_minor_with_sexual, Blocked, CheckedPrompt, BLOCKED_MESSAGE, DOCUMENT_MESSAGE,
+};
 
-fn blocked() -> CoreError {
-    CoreError::new("blocked", BLOCKED_MESSAGE)
+fn blocked(b: Blocked) -> CoreError {
+    CoreError::new("blocked", b.message())
 }
 
 /// Blocks text that pairs an under-18 term with a sexual term, or that asks for a usable copy
 /// of an identity document or banknote.
 pub fn check(text: &str) -> CoreResult<()> {
-    pinhole_engine::words::check(text).map_err(|_| blocked())
+    pinhole_engine::words::check(text).map_err(blocked)
 }
 
 /// [`check`] that returns the prompt as the only type the image engine accepts.
 pub fn checked(text: impl Into<String>) -> CoreResult<CheckedPrompt> {
-    CheckedPrompt::check(text).map_err(|_| blocked())
+    CheckedPrompt::check(text).map_err(blocked)
 }
 
 /// [`checked`] with add-on names and trigger words as context.
 pub fn checked_with(text: impl Into<String>, context: &[String]) -> CoreResult<CheckedPrompt> {
-    CheckedPrompt::check_with(text, context).map_err(|_| blocked())
+    CheckedPrompt::check_with(text, context).map_err(blocked)
 }
 
 #[cfg(test)]
@@ -37,5 +39,7 @@ mod tests {
         assert!(e.details.is_none());
         assert!(check("a nude woman, oil painting").is_ok());
         assert!(checked("loli, nude").is_err());
+        let e = check("a valid driver's license from Ohio").unwrap_err();
+        assert_eq!(e.message, DOCUMENT_MESSAGE);
     }
 }

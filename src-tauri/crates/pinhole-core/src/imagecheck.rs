@@ -1,6 +1,7 @@
 //! The local image check at result intake (RELEASE-SPEC §4). Every generated picture
 //! is measured by `pinhole_check` before it enters the session; if one picture of a
-//! batch is blocked, the whole batch is dropped with the neutral block message.
+//! batch is blocked, the whole batch is dropped with a one-sentence message for the rule
+//! ([`block_message`]).
 //!
 //! Fail closed: without all check files (or with a damaged one) Create and Edit stop
 //! with `check_missing`, which the UI answers with "Set up safety check". The check is
@@ -19,7 +20,6 @@ use pinhole_net::download::{DownloadKind, DownloadSpec};
 use serde::Serialize;
 
 use crate::session::{SessionImage, Source};
-use crate::text_check::BLOCKED_MESSAGE;
 use crate::{AppCore, CoreError, CoreResult};
 
 /// Models are dropped from memory after this long without a check.
@@ -320,9 +320,14 @@ impl MadeBy<'_> {
     }
 
     /// Rule 3: a model or add-on of this step, or of any step before it, is marked "safe
-    /// images only". A file that isn't installed any more counts as marked.
-    fn safe_images_only(&self, core: &AppCore) -> bool {
-        let inherited = self.inputs().iter().any(|i| i.safe_images_only);
+    /// images only". A file that isn't installed any more counts as marked. `None` when
+    /// rule 3 doesn't apply.
+    fn safe_images_only(&self, core: &AppCore) -> Option<SafeOnly> {
+        let inherited = self
+            .inputs()
+            .iter()
+            .any(|i| i.safe_images_only)
+            .then_some(SafeOnly::Earlier);
         let MadeBy::Model {
             model_id,
             addon_ids,
@@ -332,10 +337,60 @@ impl MadeBy<'_> {
             return inherited;
         };
         let idx = core.installed.lock();
-        inherited
-            || std::iter::once(*model_id)
-                .chain(addon_ids.iter().map(String::as_str))
-                .any(|id| idx.get(id).is_none_or(|f| f.safe_images_only()))
+        let mut why = None;
+        for id in std::iter::once(*model_id).chain(addon_ids.iter().map(String::as_str)) {
+            match idx.get(id) {
+                Some(f) if f.civitai.as_ref().is_some_and(|c| c.sfw_only) => {
+                    return Some(SafeOnly::Marked)
+                }
+                Some(f) if !f.safe_images_only() => {}
+                _ => why = Some(SafeOnly::Unconfirmed),
+            }
+        }
+        why.or(inherited)
+    }
+}
+
+/// Why rule 3 applies, which picks its block message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafeOnly {
+    /// A model or add-on in use is marked "safe images only" on CivitAI.
+    Marked,
+    /// A model or add-on in use was added by hand or linked and no CivitAI lookup has cleared
+    /// it, or it isn't installed any more.
+    Unconfirmed,
+    /// A picture it was made from was made under rule 3.
+    Earlier,
+}
+
+pub const LOOKS_UNDERAGE_MESSAGE: &str =
+    "Someone may look under 18. The age check can be wrong about young-looking adults.";
+pub const PHOTO_MADE_INTIMATE_MESSAGE: &str =
+    "This started from a picture you brought in that shows a face. Pinhole doesn't make intimate pictures from those.";
+pub const SAFE_ONLY_MARKED_MESSAGE: &str =
+    "A model or add-on in use is marked safe images only on CivitAI, so it can't make intimate pictures.";
+pub const SAFE_ONLY_UNCONFIRMED_MESSAGE: &str =
+    "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate pictures.";
+pub const SAFE_ONLY_EARLIER_MESSAGE: &str =
+    "This started from a picture made with a safe-images-only model, so it can't become intimate.";
+
+/// The sentence shown when the image check blocks a picture.
+fn block_message(rule: Rule, safe: Option<SafeOnly>) -> &'static str {
+    match (rule, safe) {
+        (Rule::LooksUnderage, _) => LOOKS_UNDERAGE_MESSAGE,
+        (Rule::PhotoMadeIntimate, _) => PHOTO_MADE_INTIMATE_MESSAGE,
+        (Rule::SafeImagesOnlyModel, Some(SafeOnly::Marked)) => SAFE_ONLY_MARKED_MESSAGE,
+        (Rule::SafeImagesOnlyModel, Some(SafeOnly::Earlier)) => SAFE_ONLY_EARLIER_MESSAGE,
+        (Rule::SafeImagesOnlyModel, _) => SAFE_ONLY_UNCONFIRMED_MESSAGE,
+    }
+}
+
+/// Which rule's message a batch shows when several pictures are blocked: age first.
+fn rank(rule: Rule) -> u8 {
+    match rule {
+        Rule::LooksUnderage => 0,
+        Rule::PhotoMadeIntimate => 1,
+        Rule::SafeImagesOnlyModel => 2,
     }
 }
 
@@ -349,10 +404,12 @@ pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> C
     ensure_ready(core)?;
     let c = core.clone();
     let png = img.bytes.clone();
-    let safe = img.safe_images_only;
+    let safe = img.safe_images_only.then_some(SafeOnly::Earlier);
     let res = tokio::task::spawn_blocking(move || {
         let r = c.check.inspector().readings(&png)?;
-        Ok::<_, CheckError>(pinhole_check::rules::decide(&r, &[], safe).map(|rule| (rule, r)))
+        Ok::<_, CheckError>(
+            pinhole_check::rules::decide(&r, &[], safe.is_some()).map(|rule| (rule, r)),
+        )
     })
     .await
     .map_err(|e| {
@@ -363,7 +420,7 @@ pub async fn check_before_describe(core: &Arc<AppCore>, img: &SessionImage) -> C
         .with_details(e.to_string())
     })?;
     if let Some((rule, r)) = res.map_err(|e| check_error(core, e))? {
-        return Err(blocked_error(rule, &r));
+        return Err(blocked_error(rule, safe, &r));
     }
     core.check.describable.lock().insert(img.id.clone());
     Ok(())
@@ -414,7 +471,8 @@ pub async fn check_results(
     made_by: MadeBy<'_>,
 ) -> CoreResult<Vec<CheckedPng>> {
     let (sources, inputs) = made_by.sources();
-    let safe_images_only = made_by.safe_images_only(core);
+    let safe = made_by.safe_images_only(core);
+    let safe_images_only = safe.is_some();
     let made_from: Arc<[Source]> = Arc::from(sources.clone());
     let c = core.clone();
     let res = tokio::task::spawn_blocking(move || {
@@ -440,10 +498,13 @@ pub async fn check_results(
         } else {
             Vec::new()
         };
-        let blocked = all.iter().find_map(|r| {
-            pinhole_check::rules::decide(r, &originals, safe_images_only)
-                .map(|rule| (rule, r.clone()))
-        });
+        let blocked = all
+            .iter()
+            .filter_map(|r| {
+                pinhole_check::rules::decide(r, &originals, safe_images_only)
+                    .map(|rule| (rule, r.clone()))
+            })
+            .min_by_key(|(rule, _)| rank(*rule));
         Ok::<_, CheckError>((pngs, blocked))
     })
     .await
@@ -456,7 +517,7 @@ pub async fn check_results(
     })?;
     let (pngs, blocked) = res.map_err(|e| check_error(core, e))?;
     if let Some((rule, r)) = blocked {
-        return Err(blocked_error(rule, &r));
+        return Err(blocked_error(rule, safe, &r));
     }
     Ok(pngs
         .into_iter()
@@ -499,8 +560,8 @@ impl CheckedPng {
     }
 }
 
-fn blocked_error(rule: Rule, r: &Readings) -> CoreError {
-    let e = CoreError::new("blocked", BLOCKED_MESSAGE);
+fn blocked_error(rule: Rule, safe: Option<SafeOnly>, r: &Readings) -> CoreError {
+    let e = CoreError::new("blocked", block_message(rule, safe));
     // Debug builds add the rule and scores to the details for tuning; release builds
     // return the message only.
     if cfg!(debug_assertions) {
@@ -690,4 +751,26 @@ pub fn start_idle_unload(core: &Arc<AppCore>) {
                 tokio::task::spawn_blocking(move || inspector.unload_if_idle(UNLOAD_AFTER)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_batch_shows_the_age_message_first() {
+        let rules = [
+            Rule::SafeImagesOnlyModel,
+            Rule::LooksUnderage,
+            Rule::PhotoMadeIntimate,
+        ];
+        assert_eq!(
+            rules.into_iter().min_by_key(|r| rank(*r)),
+            Some(Rule::LooksUnderage)
+        );
+        assert_eq!(
+            block_message(Rule::SafeImagesOnlyModel, None),
+            SAFE_ONLY_UNCONFIRMED_MESSAGE
+        );
+    }
 }

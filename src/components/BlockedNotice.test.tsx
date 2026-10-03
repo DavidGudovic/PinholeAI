@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-const BLOCKED = { code: "blocked", message: "Pinhole can't help with this. See the usage guidelines.", details: null };
+const BLOCKED = { code: "blocked", message: "Someone may look under 18. The age check can be wrong about young-looking adults.", details: null };
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
 
@@ -27,7 +27,7 @@ describe("BlockedNotice", () => {
     await act(async () => {
       await expect(generate({} as GenerateRequest)).rejects.toMatchObject({ code: "blocked" });
     });
-    expect(screen.getByRole("status").textContent).toBe(BLOCKED.message);
+    expect(screen.getByRole("status").textContent).toBe(`Why it was blocked: ${BLOCKED.message}`);
     expect(screen.getByText("Not allowed")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
     expect(screen.queryByText("Usage guidelines")).toBeNull();

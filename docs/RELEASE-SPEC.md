@@ -236,9 +236,24 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
-Block message: one neutral line for every rule and for the text check, "Pinhole can't help with
-this. See the usage guidelines." (`text_check::BLOCKED_MESSAGE`), shown with the usage guidelines
-(§7). It is the same for every rule and doesn't name the rule or the content.
+Block message: one or two short sentences naming the rule, shown under "Why it was blocked" with
+the usage guidelines (§7). It never includes scores, estimated ages, thresholds or which model
+measured what. If several pictures of a batch are blocked, the message of the first rule in this
+order is shown: rule 2, rule 1, rule 3.
+
+- Rule 2: "Someone may look under 18. The age check can be wrong about young-looking adults."
+- Rule 1: "This started from a picture you brought in that shows a face. Pinhole doesn't make
+  intimate pictures from those."
+- Rule 3, a model or add-on in use has CivitAI's flag: "A model or add-on in use is marked safe
+  images only on CivitAI, so it can't make intimate pictures."
+- Rule 3, a model or add-on in use isn't cleared by a lookup (or isn't installed any more):
+  "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate
+  pictures."
+- Rule 3, only a picture it was made from was under the rule: "This started from a picture made
+  with a safe-images-only model, so it can't become intimate."
+- Text check, under-18 and sexual terms: "This asks for something the usage guidelines don't
+  allow." (`text_check::BLOCKED_MESSAGE`). Document or money copy: "Pinhole doesn't make copies
+  of IDs, documents or money." (`text_check::DOCUMENT_MESSAGE`).
 
 ### 3.3 How it runs
 
@@ -319,7 +334,7 @@ prints them for a folder of test pictures.
   rule, §3.4).
 - **A block costs the user little:** the prompt, settings and source image are kept; only the
   blocked image is dropped from memory.
-- **Release builds show only the block message.** Dev builds show the rule and scores for tuning (§3.4). A user can still
+- **Release builds show only the rule's block message.** Dev builds show the rule and scores for tuning (§3.4). A user can still
   report a false positive in a GitHub issue, describing what they tried.
 
 ---
@@ -430,8 +445,8 @@ prints them for a folder of test pictures.
   documents, IDs, receipts or evidence; don't pass made pictures off as real photos; follow model
   licences; what the check stops.
 - **Block screen:** whenever the check stops something (error code `blocked`), the usage guidelines
-  open again with the fixed block message on top (`src/components/BlockedNotice.tsx`, via the
-  command wrapper in `src/lib/api.ts`). Never says what triggered it, no retry hint. Calls made
+  open again with the rule's block message on top (`src/components/BlockedNotice.tsx`, via the
+  command wrapper in `src/lib/api.ts`). Names the rule only (§3.2), never the content, scores or a retry hint. Calls made
   while typing (prompt preview, Browse search) show the message in place instead.
 - **Edit notice** (built 2026-09-30, `editNoticeSeen`), the first time an Imported image is opened in Edit: "Only edit photos of
   people who have agreed to it. Making sexual or humiliating images of real people without consent
