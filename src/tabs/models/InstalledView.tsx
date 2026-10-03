@@ -29,7 +29,8 @@ import { InstallDialog } from "./InstallDialog";
 import { ModelDetails } from "./ModelDetails";
 import { useHardware, useOnHardwareChange, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
-import { requestAddonBrowse } from "./lib/session";
+import { getLastFilters, isAdultConfirmed, requestAddonBrowse } from "./lib/session";
+import { examplesContent } from "./lib/query";
 import { takesReference } from "../../lib/state/model";
 import { UseAddonButton } from "./UseAddon";
 import { AddLinkedFolderButton, LinkedFolders } from "./LinkedFolders";
@@ -119,8 +120,8 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
 
   const showDetails = (card: CatalogCard) => {
     getSettings()
-      .then((s) => setContent(s.contentMode))
-      .catch(() => undefined)
+      .then((s) => setContent(examplesContent(s.contentMode, isAdultConfirmed(), getLastFilters())))
+      .catch(() => setContent("safe"))
       .finally(() => setDetailsFor(card));
   };
 

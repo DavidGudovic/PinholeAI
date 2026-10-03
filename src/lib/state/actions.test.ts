@@ -854,3 +854,120 @@ describe("done alert", () => {
     expect(notifyDone).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("choices in braces", () => {
+  const calls = () => vi.mocked(apiMod.generate).mock.calls.map((c) => c[0]);
+
+  it("makes one picture per choice as one job, with one seed, keeping the typed prompt in history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "a {red|blue|green} car", count: 4 } });
+    const run = actions.generateCreate();
+    await tick();
+    expect(store.getState().job?.count).toBe(3);
+    for (const [i, id] of ["a", "b", "c"].entries()) {
+      await tick();
+      pending!({ images: [img(id)] } as GenerateResult);
+      await tick();
+      await tick();
+      expect(store.getState().job?.count ?? 0).toBe(2 - i);
+    }
+    await run;
+    expect(calls().map((r) => r.prompt)).toEqual(["a red car", "a blue car", "a green car"]);
+    expect(calls().every((r) => r.dials.count === 1)).toBe(true);
+    const seeds = new Set(calls().map((r) => r.fineTune.seed));
+    expect(seeds.size).toBe(1);
+    expect(typeof [...seeds][0]).toBe("number");
+    expect(store.getState().results.map((r) => r.id)).toEqual(["c", "b", "a"]);
+    // Each picture's Variations use its own prompt.
+    const s = store.getState();
+    expect(s.batches[s.resultBatch["b"]].request.prompt).toBe("a blue car");
+    expect(s.promptHistory).toEqual(["a {red|blue|green} car"]);
+    expect(s.job).toBeNull();
+  });
+
+  it("keeps making the other choices when one fails, then shows the error", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}" } });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await tick();
+    await tick();
+    pendingFail!({ code: "invalid", message: "No.", details: null });
+    await tick();
+    await tick();
+    pending!({ images: [img("c")] } as GenerateResult);
+    await expect(run).rejects.toMatchObject({ code: "invalid" });
+    expect(calls().map((r) => r.prompt)).toEqual(["a", "b", "c"]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["c", "a"]);
+  });
+
+  it("refuses choices that leave nothing to make", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{|}" } });
+    await expect(actions.generateCreate()).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
+  });
+
+  it("uses the locked seed, and Cancel keeps the pictures already made", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}", fineTune: { seed: 7 } } });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await tick();
+    await tick();
+    await actions.cancel();
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await run;
+    expect(calls().map((r) => r.fineTune.seed)).toEqual([7, 7]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["a"]);
+    expect(store.getState().job).toBeNull();
+  });
+});
+
+describe("on another model", () => {
+  const other: InstalledModel = { ...model, id: "o", friendlyName: "Other" };
+
+  it("runs the same prompt, seed and shape on the other model, without the first model's own settings", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models: [model, other] });
+    store.dispatch({ type: "patchCreate", patch: { shape: "portrait", count: 2, fineTune: { sampler: "euler", steps: 30, width: 512, height: 1024, negativePrompt: "blur" } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), seed: 42 }, img("b")] } as GenerateResult);
+    await first;
+    await tick();
+    // The refresh after a job reads the (empty) fake model list.
+    store.dispatch({ type: "setModels", models: [model, other] });
+
+    const run = actions.onOtherModel("a", "o");
+    await tick();
+    expect(store.getState().job?.count).toBe(1);
+    pending!({ images: [img("c")] } as GenerateResult);
+    await run;
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ modelId: "o", prompt: "a lighthouse", dials: { shape: "portrait", count: 1 } });
+    const { width, height, ...rest } = req.fineTune;
+    expect(rest).toEqual({ seed: 42, negativePrompt: "blur" });
+    // The set size keeps its shape, at the new model's usual size.
+    expect(width! / height!).toBeCloseTo(0.5, 1);
+    expect(width! * height!).toBeGreaterThan(512 * 1024 * 0.9);
+    const s = store.getState();
+    expect(s.selectedResultId).toBe("c");
+    expect(s.batches[s.resultBatch["c"]].compareWith).toBe("a");
+  });
+
+  it("refuses a model that can't use the picture's reference picture", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: { id: "b", request: { modelId: "m", prompt: "p", refImageIds: ["r"] } as never }, images: [img("a")], refs: [ref("a")] });
+    store.dispatch({ type: "setModels", models: [model, other] });
+    await expect(actions.onOtherModel("a", "o")).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
+  });
+
+  it("says when the picture's settings are gone", async () => {
+    const { actions } = setup();
+    await expect(actions.onOtherModel("x", "o")).rejects.toMatchObject({ code: "not_found" });
+  });
+});

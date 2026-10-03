@@ -81,7 +81,7 @@ content:
 # or a version on one of `base_models` (CivitAI baseModel strings). `api_base_models` (optional)
 # also limits the CivitAI request to those base models, so filtering happens server-side.
 # `rule: takes_reference` = models that can follow a reference picture (see `reference`).
-# `rule: made_for_adults` = exactly the models Safe mode hides; the tag is greyed out while
+# `rule: made_for_adults` = exactly the models Safe mode hides; the tag is not shown while
 # Safe mode is on. It has no preset.
 # Edit tags/words checked on live /api/v1/models answers (2026-09-28): many Qwen-Image-Edit
 # uploads are only tagged "base model", so the name matters most.

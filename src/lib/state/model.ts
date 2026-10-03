@@ -72,6 +72,8 @@ export interface CreateParams {
 export interface Batch {
   id: string;
   request: GenerateRequest;
+  /** "On another model": the result these pictures were made to compare with. */
+  compareWith?: string;
 }
 
 /** "fix" = Fix details: redraw a painted spot at the model's size and blend it back. "extend" = Extend: grow the canvas and draw the new space. */
@@ -310,6 +312,8 @@ export type Action =
   | { type: "askLeave"; what: LeaveKind | null }
   | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
+  /** Pictures the running job still has to make (a Generate with choices makes them one by one). */
+  | { type: "jobCount"; count: number }
   | { type: "jobEnd" }
   | { type: "queueAdd"; job: QueuedJob }
   | { type: "queueRemove"; id: string }
@@ -674,6 +678,8 @@ function inner(s: AppState, a: Action): AppState {
       };
     case "jobProgress":
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
+    case "jobCount":
+      return s.job ? { ...s, job: { ...s.job, count: a.count } } : s;
     case "jobEnd":
       return s.job ? { ...s, job: null } : s;
     case "queueAdd":

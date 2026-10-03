@@ -98,6 +98,20 @@ export function isSafeModeOff(mode: ContentMode): boolean {
   return mode !== "safe";
 }
 
+/** "Off" only applies once the user confirmed this session; until then Safe mode stays on. */
+export function confirmedContent(wanted: ContentMode, adultConfirmed: boolean): ContentMode {
+  return isSafeModeOff(wanted) && !adultConfirmed ? "safe" : wanted;
+}
+
+/**
+ * Safe mode for a model's example pictures opened outside Browse (Installed). Off only when
+ * Settings has it off, the user confirmed this session, and Browse (once opened) has it off too.
+ */
+export function examplesContent(settingsMode: ContentMode | null, adultConfirmed: boolean, browse: Pick<BrowseFilters, "content"> | null): ContentMode {
+  const fromSettings = confirmedContent(settingsMode ?? "safe", adultConfirmed);
+  return browse && !isSafeModeOff(browse.content) ? "safe" : fromSettings;
+}
+
 /**
  * Initial filters. Safe mode: the Settings default, but "Off" only applies once the user
  * confirmed this session (otherwise start with Safe mode on and ask). Price: "Include early
@@ -110,7 +124,7 @@ export function defaultFilters(
 ): BrowseFilters {
   const o = options ?? FALLBACK_OPTIONS;
   const wantedContent = settings?.contentMode ?? o.defaultContent;
-  const content = isSafeModeOff(wantedContent) && !adultConfirmed ? "safe" : wantedContent;
+  const content = confirmedContent(wantedContent, adultConfirmed);
   const price: PriceMode = settings?.showPaid ? "include" : o.defaultPrice;
   return {
     kind: "models",
@@ -160,6 +174,11 @@ export function toggleTag(tags: string[], key: string): string[] {
 export function tagsWithSafeMode(tags: string[], options: Pick<CatalogFilterOptions, "tags">): string[] {
   const offOnly = new Set(options.tags.filter((t) => t.needsSafeModeOff).map((t) => t.key));
   return tags.filter((t) => !offOnly.has(t));
+}
+
+/** Tags Browse shows: the ones that only work with Safe mode off are left out while it is on. */
+export function visibleTags<T extends { needsSafeModeOff?: boolean }>(tags: T[], content: ContentMode): T[] {
+  return isSafeModeOff(content) ? tags : tags.filter((t) => !t.needsSafeModeOff);
 }
 
 /** Normalise free text the way we send it: trimmed, inner whitespace collapsed, capped. */

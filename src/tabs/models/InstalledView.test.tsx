@@ -28,6 +28,9 @@ const api = vi.hoisted(() => ({
   installMissingParts: vi.fn(() => Promise.resolve({ groupId: "g" })),
 }));
 vi.mock("../../lib/api", async (orig) => ({ ...(await orig<typeof import("../../lib/api")>()), ...api }));
+vi.mock("./ModelDetails", () => ({
+  ModelDetails: ({ card, content }: { card: { versionId: number }; content: string }) => <div data-testid="details">{`${card.versionId} ${content}`}</div>,
+}));
 
 import { emitSettingsChanged } from "../../settings/events";
 import { InstalledView } from "./InstalledView";
@@ -155,5 +158,13 @@ describe("InstalledView", () => {
     ]);
     render(<InstalledView onBrowse={() => undefined} />);
     expect(await screen.findByText(/Not connected\. Connect its drive/)).toBeTruthy();
+  });
+
+  it("opens example pictures with Safe mode on until turning it off was confirmed this session", async () => {
+    api.getSettings.mockResolvedValue(settings({ contentMode: "all" }));
+    api.listModels.mockResolvedValue([{ ...model("fits"), civitaiModelId: 7, civitaiVersionId: 70 }]);
+    render(<InstalledView onBrowse={() => undefined} />);
+    fireEvent.click(await screen.findByLabelText("Show Test model"));
+    expect((await screen.findByTestId("details")).textContent).toBe("70 safe");
   });
 });
