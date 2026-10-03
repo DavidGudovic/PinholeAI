@@ -350,6 +350,8 @@ describe("Edit tab", () => {
       store.dispatch({ type: "editLoad", ref: ref("a") });
       store.dispatch({ type: "patchEdit", patch: { mode: "instruction", instruction: "make it evening" } });
     });
+    // The family's settings load on their own: Improve sends the family once they're in.
+    await waitFor(() => expect(store.getState().familyUi.flux1_kontext).toBeTruthy());
     fireEvent.click(await screen.findByRole("button", { name: /Improve/ }));
     await waitFor(() => expect(store.getState().edit.instruction).toBe("make it evening. Warm street lights. Keep the composition unchanged."));
     expect(api.improvePrompt).toHaveBeenCalledWith("make it evening", "flux1_kontext", [], "edit");

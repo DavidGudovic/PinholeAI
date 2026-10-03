@@ -50,10 +50,10 @@ function paste() {
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)));
 
 /** jsdom has no DragEvent/DataTransfer: a plain cancelable event carrying a fake transfer. */
-function drop(target: Element, data: { types: string[]; files?: File[]; uri?: string }) {
+function drop(target: Element, data: { types: string[]; files?: File[]; uri?: string; html?: string }) {
   const e = new Event("drop", { bubbles: true, cancelable: true });
   Object.defineProperty(e, "dataTransfer", {
-    value: { types: data.types, files: data.files ?? [], items: [], dropEffect: "copy", getData: (t: string) => (t === "text/uri-list" ? (data.uri ?? "") : "") },
+    value: { types: data.types, files: data.files ?? [], items: [], dropEffect: "copy", getData: (t: string) => (t === "text/uri-list" ? (data.uri ?? "") : t === "text/html" ? (data.html ?? "") : "") },
   });
   act(() => {
     target.dispatchEvent(e);
@@ -187,7 +187,7 @@ describe("dropped picture", () => {
     expect(screen.getByText(/isn’t a picture Pinhole can open/)).toBeTruthy();
     const e = drop(document.body, { types: ["text/uri-list"], uri: "https://example.com/cat.png" });
     expect(e.defaultPrevented).toBe(true);
-    expect(screen.getByText(/Save the picture first, then drop the file/)).toBeTruthy();
+    expect(screen.getByText(/choose Copy image, then paste it here/)).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -212,5 +212,15 @@ describe("dropped picture", () => {
     render(<div role="dialog" aria-label="Viewer" />);
     act(() => offerDroppedPicture(picture()));
     expect(screen.queryByRole("dialog", { name: /Use the dropped picture for/ })).toBeNull();
+  });
+
+  it("a browser drag holding the picture in a data: address opens the chooser, with nothing downloaded", () => {
+    setup(["txt2img"]);
+    const png = "data:image/png;base64,iVBORw0KGgo=";
+    // With a web address, the markup's src may be a placeholder: not used.
+    drop(document.body, { types: ["text/uri-list", "text/html"], uri: "https://cdn.example.com/real.jpg", html: `<img src="${png}" srcset="https://cdn.example.com/real.jpg">` });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    drop(document.body, { types: ["text/uri-list", "text/html"], uri: "", html: `<meta charset="utf-8"><img alt="" data-src="data:image/png;base64,AAAA" src="${png}">` });
+    expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
   });
 });

@@ -56,7 +56,7 @@ export function PasteChooser() {
     (f) => offer(f, "dropped"),
     (d) => {
       if (d.kind === "not-a-picture") actions.toast("That file isn’t a picture Pinhole can open. Try a PNG, JPEG or WebP.", { ms: 4500 });
-      else if (d.kind === "link") actions.toast("Only the picture’s web address came through. Save the picture first, then drop the file.", { ms: 5000 });
+      else if (d.kind === "link") actions.toast("Only the picture’s web address came through. In the browser, right-click the picture, choose Copy image, then paste it here.", { ms: 5000 });
     },
   );
   useOfferedPicture((f) => {
