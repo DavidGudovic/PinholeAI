@@ -30,6 +30,7 @@ import { ModelDetails } from "./ModelDetails";
 import { useHardware, useOnHardwareChange, useTauriEvent } from "./lib/hooks";
 import { baseName, isCpuOnly, isModelFile, lastUsedText, machinePlain } from "./lib/words";
 import { requestAddonBrowse } from "./lib/session";
+import { takesReference } from "../../lib/state/model";
 import { UseAddonButton } from "./UseAddon";
 import { AddLinkedFolderButton, LinkedFolders } from "./LinkedFolders";
 
@@ -49,6 +50,7 @@ function detailsCard(x: CivitaiLinked, type: string, styleBadge: string | null):
     type,
     baseModel: x.baseModel ?? "",
     familyId: x.familyId,
+    takesReference: false,
     styleBadge,
     creator: null,
     previewUrl: null,
@@ -305,6 +307,11 @@ export function InstalledView({ onBrowse }: { onBrowse: () => void }) {
                       <span className="font-medium text-neutral-900 dark:text-neutral-100">{m.friendlyName}</span>
                       {m.styleBadge && <Badge>{m.styleBadge}</Badge>}
                       {m.isEditModel && <Badge tone="blue">Edit</Badge>}
+                      {!m.isEditModel && takesReference(m) && (
+                        <Badge tone="blue" title="In Create, this model can follow a picture you add under the prompt">
+                          Reference picture
+                        </Badge>
+                      )}
                       {m.linkedFolder && <Badge>In {m.linkedFolder}</Badge>}
                       {m.safeImagesOnly && <Badge>Safe images only</Badge>}
                     </div>

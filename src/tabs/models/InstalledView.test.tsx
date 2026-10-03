@@ -83,6 +83,17 @@ describe("InstalledView", () => {
     expect(await screen.findByText("Tight")).toBeTruthy();
   });
 
+  it("marks Create models that take a reference picture, not edit models", async () => {
+    const klein = { ...model("fits"), id: "kl", friendlyName: "Klein", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"] };
+    const kontext = { ...model("fits"), id: "kx", friendlyName: "Kontext", familyId: "flux1_kontext", modes: ["edit"], isEditModel: true };
+    api.listModels.mockResolvedValue([model("fits"), klein, kontext]);
+    render(<InstalledView onBrowse={() => undefined} />);
+    await screen.findByText("Klein");
+    const badges = screen.getAllByText("Reference picture");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].closest("tr")!.textContent).toContain("Klein");
+  });
+
   it("doesn't refetch when the first save after mount only changes the theme", async () => {
     api.listModels.mockResolvedValue([model("fits")]);
     render(<InstalledView onBrowse={() => undefined} />);

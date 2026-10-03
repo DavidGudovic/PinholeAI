@@ -115,6 +115,29 @@ pub fn family_id(_registry: &Registry, f: &Family) -> String {
     f.id.clone()
 }
 
+/// The family makes pictures from a prompt and can also follow a reference
+/// picture (models.yaml `modes` with both `txt2img` and `edit`): Create's
+/// reference picture works with it.
+pub fn takes_reference(f: &Family) -> bool {
+    let has = |m: &str| f.modes.iter().any(|x| x == m);
+    has("txt2img") && has("edit")
+}
+
+/// CivitAI base models whose families all take a reference picture (see
+/// [`takes_reference`]). Sorted, no duplicates.
+pub fn reference_base_models(registry: &Registry) -> Vec<String> {
+    let set: BTreeSet<String> = registry
+        .families()
+        .flat_map(|f| f.civitai_base_models.iter())
+        .map(|b| b.trim().to_string())
+        .filter(|b| {
+            let fams = registry.families_for_base_model(b);
+            !fams.is_empty() && fams.iter().all(|f| takes_reference(f))
+        })
+        .collect();
+    set.into_iter().collect()
+}
+
 pub fn unsupported_message(base: Option<&str>) -> String {
     match base {
         Some(b) => format!("Pinhole can't run {b} models yet."),
@@ -644,6 +667,28 @@ mod tests {
         assert!(flux.contains(&"Flux.1 D".to_string()), "{flux:?}");
         assert!(!flux.contains(&"SDXL 1.0".to_string()));
         assert!(lora_base_models(&reg, "no_such_family").is_empty());
+    }
+
+    #[test]
+    fn reference_families_come_from_modes() {
+        let reg = crate::testkit::registry();
+        let bases = reference_base_models(&reg);
+        for b in [
+            "Flux.2 Klein 4B",
+            "Flux.2 Klein 9B-base",
+            "Flux.2 D",
+            "Qwen 2.1",
+        ] {
+            assert!(bases.contains(&b.to_string()), "{b} in {bases:?}");
+        }
+        // "Qwen" is Qwen-Image and Qwen Image Edit: neither makes a picture from a prompt
+        // and follows a reference picture.
+        for b in ["Qwen", "Flux.1 Kontext", "Flux.1 D", "SDXL 1.0", "SD 1.5"] {
+            assert!(!bases.contains(&b.to_string()), "{b} not in {bases:?}");
+        }
+        assert!(takes_reference(reg.family("flux2_klein_4b_base").unwrap()));
+        assert!(!takes_reference(reg.family("flux1_kontext").unwrap()));
+        assert!(!takes_reference(reg.family("sdxl").unwrap()));
     }
 
     #[test]

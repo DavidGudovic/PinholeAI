@@ -186,6 +186,10 @@ pub enum TagRule {
     Match,
     /// The models Safe mode hides (see [`crate::safe`]). Only useful with Safe mode off.
     MadeForAdults,
+    /// Models that can follow a reference picture in Create. The base models come
+    /// from models.yaml (see [`CatalogFilters::with_reference_base_models`]); the
+    /// card's own family decides in the end (see [`crate::cards::card_or_hidden`]).
+    TakesReference,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -223,6 +227,11 @@ impl TagFilter {
     fn matches(&self, m: &Model, safe: &SafeFilter) -> bool {
         match self.rule {
             TagRule::MadeForAdults => safe.adult_reason(m).is_some(),
+            TagRule::TakesReference => m.model_versions.iter().any(|v| {
+                self.base_models
+                    .iter()
+                    .any(|b| b.eq_ignore_ascii_case(v.base_model.trim()))
+            }),
             TagRule::Match => {
                 m.tags
                     .iter()
@@ -547,6 +556,29 @@ impl CatalogFilters {
 
     pub fn tag(&self, key: &str) -> Option<&TagFilter> {
         self.tags.iter().find(|t| t.key == key)
+    }
+
+    /// Fills the `takes_reference` tags with the CivitAI base models of the families
+    /// that take a reference picture ([`crate::families::reference_base_models`]),
+    /// which also limits the CivitAI request to them.
+    pub fn with_reference_base_models(mut self, base_models: &[String]) -> Self {
+        for t in self
+            .tags
+            .iter_mut()
+            .filter(|t| t.rule == TagRule::TakesReference)
+        {
+            t.base_models = base_models.to_vec();
+            t.api_base_models = base_models.to_vec();
+        }
+        self
+    }
+
+    /// Whether a picked tag asks for models that take a reference picture.
+    pub fn wants_reference(&self, q: &BrowseQuery) -> bool {
+        q.tags
+            .iter()
+            .filter_map(|k| self.tag(k))
+            .any(|t| t.rule == TagRule::TakesReference)
     }
 
     /// Whether the picked tags can match anything within `base_models`: every
@@ -1022,6 +1054,33 @@ pub(crate) mod tests {
             ["SDXL 1.0", "Qwen", "Flux.1 Kontext"],
             "other tags don't narrow"
         );
+    }
+
+    #[test]
+    fn reference_tag_asks_only_for_reference_base_models() {
+        let bases = vec![
+            "SDXL 1.0".to_string(),
+            "Flux.2 D".to_string(),
+            "Qwen 2.1".to_string(),
+        ];
+        let q = BrowseQuery {
+            tags: vec!["reference".into()],
+            compatible_only: false,
+            ..Default::default()
+        };
+        // Before the registry fills it in, the tag narrows nothing and matches nothing.
+        let f = filters();
+        assert!(get(&f.query_params(&q, &bases, None), "baseModels").is_empty());
+        let f = f.with_reference_base_models(&["Flux.2 D".to_string(), "Qwen 2.1".to_string()]);
+        assert_eq!(
+            get(&f.query_params(&q, &bases, None), "baseModels"),
+            ["Flux.2 D", "Qwen 2.1"]
+        );
+        let o = f.options();
+        let tag = o.tags.iter().find(|t| t.key == "reference").unwrap();
+        assert_eq!(tag.label, "Reference picture");
+        assert!(!tag.needs_safe_mode_off);
+        assert!(!f.wants_reference(&BrowseQuery::default()));
     }
 
     #[test]

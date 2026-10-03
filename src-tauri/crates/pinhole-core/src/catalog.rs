@@ -35,7 +35,8 @@ pub fn filters(core: &AppCore) -> CoreResult<Arc<CatalogFilters>> {
         .map_err(|e| {
             CoreError::invalid("Pinhole's catalog settings couldn't be loaded. Reinstall Pinhole.")
                 .with_details(e.to_string())
-        })?;
+        })?
+        .with_reference_base_models(&families::reference_base_models(&core.registry()));
     Ok(core.models.filters.get_or_init(|| Arc::new(loaded)).clone())
 }
 
