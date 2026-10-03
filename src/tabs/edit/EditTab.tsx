@@ -36,7 +36,7 @@ import { ApplyBar } from "./ApplyBar";
 import { EditFineTune } from "./EditFineTune";
 import { EditHistory } from "./EditHistory";
 import { EditModePicker } from "./EditModePicker";
-import { EditNotice } from "./EditNotice";
+import { PhotoNotice } from "../../components/PhotoNotice";
 import { EditToolbar } from "./EditToolbar";
 import { InstructionFields } from "./InstructionFields";
 import type { MaskHandle } from "./MaskCanvas";
@@ -393,7 +393,7 @@ export function EditTab() {
         className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
       >
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-4 pb-5">
-          <EditNotice rootId={e.chain[0]?.imageId} />
+          <PhotoNotice imageId={e.chain[0]?.imageId} verb="edit" />
           <EditModePicker
             e={e}
             mode={mode}

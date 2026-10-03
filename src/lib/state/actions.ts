@@ -487,9 +487,7 @@ export function makeActions(store: Store) {
     const usable = (m: InstalledModel | null) => !!m && takesReference(m) && !m.missingComponents.length && m.fit !== "tooBig";
     const other = referenceModel(s.models);
     const able = takesReference(current) ? current : usable(other) ? other : null;
-    // A picture the user added goes through Edit, which shows its notice about photos of people.
-    const imported = s.results.find((r) => r.id === id)?.origin === "imported";
-    if (able && !imported) {
+    if (able) {
       if (able !== current) dispatch({ type: "selectModel", modelId: able.id });
       dispatch({ type: "createSetRef", ref });
       setTab("create");

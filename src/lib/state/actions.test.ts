@@ -162,12 +162,11 @@ describe("same character", () => {
     expect(store.getState().tab).toBe("edit");
   });
 
-  it("sends a picture the user added to Edit even when Create could use it", () => {
+  it("uses a picture the user added as Create's reference picture too", () => {
     const { store, actions } = withResult([model, klein], "imported");
     store.dispatch({ type: "patchCreate", patch: { modelId: "k" } });
     actions.sameCharacter("a");
-    expect(store.getState().tab).toBe("edit");
-    expect(store.getState().create.refImageId).toBeNull();
+    expect(store.getState()).toMatchObject({ tab: "create", create: { modelId: "k", refImageId: "a" } });
   });
 
   it("opens Describe a change in Edit when no Create model can take one", () => {
