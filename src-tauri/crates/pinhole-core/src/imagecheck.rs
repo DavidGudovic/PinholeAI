@@ -372,7 +372,7 @@ pub const SAFE_ONLY_MARKED_MESSAGE: &str =
 pub const SAFE_ONLY_UNCONFIRMED_MESSAGE: &str =
     "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate pictures.";
 pub const SAFE_ONLY_EARLIER_MESSAGE: &str =
-    "This started from a picture made with a safe-images-only model, so it can't become intimate.";
+    "This comes from a picture made with a safe-images-only model, so it can't be intimate.";
 
 /// The sentence shown when the image check blocks a picture.
 fn block_message(rule: Rule, safe: Option<SafeOnly>) -> &'static str {

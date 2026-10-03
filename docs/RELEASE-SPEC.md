@@ -249,8 +249,8 @@ order is shown: rule 2, rule 1, rule 3.
 - Rule 3, a model or add-on in use isn't cleared by a lookup (or isn't installed any more):
   "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate
   pictures."
-- Rule 3, only a picture it was made from was under the rule: "This started from a picture made
-  with a safe-images-only model, so it can't become intimate."
+- Rule 3, only a picture it was made from (or, in Describe, the picture itself) was under the
+  rule: "This comes from a picture made with a safe-images-only model, so it can't be intimate."
 - Text check, under-18 and sexual terms: "This asks for something the usage guidelines don't
   allow." (`text_check::BLOCKED_MESSAGE`). Document or money copy: "Pinhole doesn't make copies
   of IDs, documents or money." (`text_check::DOCUMENT_MESSAGE`).
