@@ -833,8 +833,8 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
   - While Safe mode is Off, a fixed set of words (`generate::SAFE_OFF_NEGATIVE`) is added at
     the end of the negative prompt, in Create and Edit, for families that use negatives. It
     can't be turned off; the user's own negative prompt still comes first. Measured on clothed
-    portraits from an Illustrious model (2026-10-03, same seeds): faces read 5.3 years older on
-    average on the image check's age estimate.
+    portraits from an Illustrious model (2026-10-03, 4 seeds, same seed with and without): faces
+    read 4.3 years older on average on the image check's age estimate (26.1 to 30.4).
 - The Fine-tune drawer shows a read-only "Final prompt sent to the model" preview so the user
   can see exactly what was combined.
 - In the Edit tab, a style can be applied to an instruction edit ("make it look like: {style}")
