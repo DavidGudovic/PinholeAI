@@ -68,7 +68,7 @@ function familyUi(familyId: string): FamilyUi {
   const known = FAMILY_UI[familyId];
   if (known) return known;
   const isEdit = /edit|kontext/.test(familyId);
-  return { ...FAMILY_UI.sdxl, familyId, label: familyId.replace(/_/g, " "), isEditFamily: isEdit, modes: isEdit ? ["edit"] : ["txt2img", "img2img"] };
+  return { ...FAMILY_UI.sdxl, seamless: false, familyId, label: familyId.replace(/_/g, " "), isEditFamily: isEdit, modes: isEdit ? ["edit"] : ["txt2img", "img2img"] };
 }
 
 // ---------------------------------------------------------------- painting

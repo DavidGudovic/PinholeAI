@@ -325,7 +325,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
               <Toggle
                 checked={ft.seamless ?? false}
                 onChange={(v) => set({ seamless: v || null })}
-                label={<span className="text-sm">Edges join up when the picture is repeated, for patterns and textures. Switching it reloads the model.</span>}
+                label={<span className="text-sm">Edges join up when repeated, for patterns and textures. Switching it reloads the model.</span>}
               />
             </Row>
           )}
