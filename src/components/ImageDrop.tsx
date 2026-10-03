@@ -1,10 +1,12 @@
 // Drop / paste / pick an image. HTML5 drag & drop (Tauri's native drag-drop is
 // disabled), clipboard paste of image files, and a file picker. Bytes go
-// straight to Rust (`import_image`); nothing is written to disk.
+// straight to Rust (`import_image`); nothing is written to disk. A picture dropped
+// where no drop area takes it is handled like a pasted one.
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { ImagePlus } from "lucide-react";
 import { clipboardImage } from "../lib/api";
 import { isTauri } from "../lib/mock";
+import { onStrayDrop } from "../lib/platform";
 import { imageFromTransfer } from "../lib/state/images";
 import { modKey } from "../lib/state/platform";
 import { Button, cx, focusRing } from "./ui";
@@ -67,6 +69,67 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
   }, [active]);
+}
+
+/** What happened when something was dropped where no drop area takes it. */
+export type StrayDrop = { kind: "picture"; file: File } | { kind: "not-a-picture" } | { kind: "link" } | { kind: "ignored" };
+
+/** Reads a drop that no drop area took: a picture file, another file, or a web link with no file. */
+export function readStrayDrop(dt: DataTransfer): StrayDrop {
+  const f = imageFromTransfer(dt);
+  if (f) return { kind: "picture", file: f };
+  const types = Array.from(dt.types ?? []);
+  if (types.includes("Files")) return { kind: "not-a-picture" };
+  // A picture dragged out of a web browser can arrive as its web address only (Linux).
+  const url = types.includes("text/uri-list") ? dt.getData("text/uri-list") : "";
+  if (/^https?:/im.test(url)) return { kind: "link" };
+  return { kind: "ignored" };
+}
+
+/**
+ * Pictures dropped anywhere in the window outside a drop area (and not while a dialog is open,
+ * like paste). `onOther` gets the drops that carry no picture.
+ */
+export function useImageDrop(onFile: (f: File) => void, onOther: (d: Exclude<StrayDrop, { kind: "picture" }>) => void) {
+  const cb = useRef({ onFile, onOther });
+  useEffect(() => {
+    cb.current = { onFile, onOther };
+  });
+  useEffect(
+    () =>
+      onStrayDrop((dt) => {
+        if (document.querySelector("[role=dialog]")) return;
+        const d = readStrayDrop(dt);
+        if (d.kind === "picture") cb.current.onFile(d.file);
+        else cb.current.onOther(d);
+      }),
+    [],
+  );
+}
+
+type Offer = (f: File) => void;
+const offers = new Set<Offer>();
+
+/** Hands a dropped picture to the paste chooser, from a drop area that didn't use it. */
+export function offerDroppedPicture(f: File) {
+  // Like paste and other drops: not while a dialog (the full-size viewer, the chooser) is open.
+  if (document.querySelector("[role=dialog]")) return;
+  offers.forEach((o) => o(f));
+}
+
+/** Pictures handed over with `offerDroppedPicture`. */
+export function useOfferedPicture(onFile: Offer) {
+  const cb = useRef(onFile);
+  useEffect(() => {
+    cb.current = onFile;
+  });
+  useEffect(() => {
+    const o: Offer = (f) => cb.current(f);
+    offers.add(o);
+    return () => {
+      offers.delete(o);
+    };
+  }, []);
 }
 
 /** Wraps children in a drop target; shows an overlay while dragging an image over it. */

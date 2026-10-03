@@ -1,5 +1,6 @@
-// A picture pasted with Ctrl/Cmd+V anywhere in the app: ask what it's for (Create's reference
-// picture, Edit or Describe), then import it the same way as a dropped or chosen file.
+// A picture pasted with Ctrl/Cmd+V anywhere in the app, or dropped where no drop area takes it:
+// ask what it's for (Create's reference picture, Edit or Describe), then import it the same way
+// as a chosen file.
 import { useState } from "react";
 import { ImagePlus, ScanText, WandSparkles } from "lucide-react";
 import * as api from "../lib/api";
@@ -7,7 +8,7 @@ import { useActions } from "../lib/state/AppProvider";
 import { editBusy, takesReference, unsavedEditIds, type TabId } from "../lib/state/model";
 import { useAppState, useStore } from "../lib/state/store";
 import type { CoreError } from "../lib/types";
-import { useImagePaste } from "./ImageDrop";
+import { useImageDrop, useImagePaste, useOfferedPicture } from "./ImageDrop";
 import { Dialog, ErrorNotice, Spinner, cx, focusRing } from "./ui";
 
 export type PasteTarget = "reference" | "edit" | "describe";
@@ -41,12 +42,25 @@ export function PasteChooser() {
   const actions = useActions();
   const store = useStore();
   const [file, setFile] = useState<File | null>(null);
+  const [how, setHow] = useState<"pasted" | "dropped">("pasted");
   const [busy, setBusy] = useState<PasteTarget | null>(null);
   const [error, setError] = useState<CoreError | null>(null);
 
-  useImagePaste(true, (f) => {
+  const offer = (f: File, h: "pasted" | "dropped") => {
     setError(null);
+    setHow(h);
     setFile(f);
+  };
+  useImagePaste(true, (f) => offer(f, "pasted"));
+  useImageDrop(
+    (f) => offer(f, "dropped"),
+    (d) => {
+      if (d.kind === "not-a-picture") actions.toast("That file isn’t a picture Pinhole can open. Try a PNG, JPEG or WebP.", { ms: 4500 });
+      else if (d.kind === "link") actions.toast("Only the picture’s web address came through. Save the picture first, then drop the file.", { ms: 5000 });
+    },
+  );
+  useOfferedPicture((f) => {
+    if (!busy) offer(f, "dropped");
   });
 
   const targets = pasteTargets(referenceShown);
@@ -89,7 +103,7 @@ export function PasteChooser() {
   };
 
   return (
-    <Dialog open={!!file} onClose={close} title="Use the pasted picture for…">
+    <Dialog open={!!file} onClose={close} title={`Use the ${how} picture for…`}>
       <div className="grid gap-2">
         {targets.map((t) => {
           const Icon = ICON[t];
