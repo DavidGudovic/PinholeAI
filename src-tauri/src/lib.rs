@@ -3,6 +3,8 @@
 //! list (see `area_commands!`), so adding a command doesn't touch this file.
 
 mod commands;
+#[cfg(windows)]
+mod webview2_env;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -68,6 +70,16 @@ fn create_main_window(app: &AppHandle, webview_dir: Option<PathBuf>) -> tauri::R
         // (unsaved pictures would be lost, and a web page would load outside the Rust client).
         .on_navigation(app_url_allowed)
         .incognito(!under_webdriver());
+    // Windows: our own WebView2 environment, so crash dumps stay on the computer.
+    #[cfg(windows)]
+    {
+        let dir = webview_dir
+            .clone()
+            .or_else(|| app.path().app_local_data_dir().ok());
+        if let Ok(env) = webview2_env::create(dir.as_deref()) {
+            builder = builder.with_environment(env);
+        }
+    }
     if let Some(dir) = webview_dir {
         builder = builder.data_directory(dir);
     }
