@@ -225,6 +225,9 @@ pub struct ResultImage {
     /// Upscaled pictures: which upscaler made it, `photo`, `photo_texture` or `drawing`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upscaler: Option<String>,
+    /// Made with "Repeats without seams": its edges join up when repeated.
+    #[serde(default)]
+    pub seamless: bool,
     /// The size the picture was made at, before hires fix or an upscale enlarged it: what
     /// "settings (no prompt)" records, so reusing them makes the same picture again.
     #[serde(skip)]
@@ -959,10 +962,15 @@ async fn generate_inner(
         &hw,
         req.mode == GenMode::Edit || !ref_images.is_empty(),
     )?;
+    // "Repeats without seams" is a launch flag in sd-server: a job with it on (or the
+    // first job after it) restarts the engine, with the usual loading progress.
+    let seamless =
+        wiring::seamless_launch(&prep.family, &req.fine_tune, req.mode) && ref_images.is_empty();
     let extras = LaunchExtras {
         lora_dir: Some(core.data.models(ModelKind::Lora)),
         upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),
         vae_tiling: None,
+        seamless,
         use_taesd: false,
     };
     let wiring_args = wiring::launch_args(&reg, &files, &hw, &extras);
@@ -1287,6 +1295,7 @@ async fn generate_inner(
             parent_id: parent_id.clone(),
             origin: Origin::of_result(inputs.pictures().iter().map(|i| &i.origin)),
             upscaler: None,
+            seamless,
             // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
             base_size: fix.is_none().then_some((width, height)),
         };
@@ -1677,6 +1686,7 @@ async fn upscale_inner(
                 lora_dir: Some(core.data.models(ModelKind::Lora)),
                 upscalers_dir: Some(core.data.models(ModelKind::Upscaler)),
                 vae_tiling: None,
+                seamless: false,
                 use_taesd: false,
             };
             let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
@@ -1778,10 +1788,13 @@ async fn upscale_inner(
         parent_id: None,
         origin: src.origin,
         upscaler: None,
+        seamless: false,
         base_size: None,
     });
     meta.base_size = meta.base_size.or(Some((src.width, src.height)));
     meta.upscaler = Some(style.to_string());
+    // The upscaler doesn't wrap around the edges, so they may no longer join exactly.
+    meta.seamless = false;
     meta.id = uuid::Uuid::new_v4().to_string();
     meta.kind = ResultKind::Upscaled;
     meta.origin = src.origin;
@@ -2090,6 +2103,7 @@ mod tests {
             parent_id: None,
             origin: Origin::Generated,
             upscaler: None,
+            seamless: false,
             base_size: Some((1, 2)),
         };
         let v = serde_json::to_value(&r).unwrap();

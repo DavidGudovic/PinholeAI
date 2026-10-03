@@ -315,6 +315,10 @@ pub struct LaunchExtras {
     /// profile's `--vae-tiling`. Prefer the per-request value from
     /// [`ResolvedParams::vae_tiling`]: changing launch args restarts the engine.
     pub vae_tiling: Option<bool>,
+    /// `--circular`: the picture's edges join up left/right and top/bottom.
+    /// sd-server only reads it at launch (not per request), so turning it on
+    /// or off restarts the engine. See [`seamless_launch`].
+    pub seamless: bool,
     /// Enable TAESD preview decoding if the family has one installed.
     /// Only honoured when `engine_features.taesd_preview` is true (see models.yaml).
     pub use_taesd: bool,
@@ -604,6 +608,9 @@ pub fn launch_args(
         Some(false) => args.remove("--vae-tiling"),
         None => {}
     }
+    if extras.seamless {
+        args.set("--circular", None);
+    }
 
     if let Some(dir) = &extras.lora_dir {
         args.set("--lora-model-dir", Some(path_arg(dir)));
@@ -670,6 +677,8 @@ pub struct FineTune {
     pub hires_scale: Option<f32>,
     pub hires_denoise: Option<f32>,
     pub vae_tiling: Option<bool>,
+    /// "Repeats without seams": Create only, families with [`Family::seamless`].
+    pub seamless: Option<bool>,
     pub negative_prompt: Option<String>,
     /// Add the family's `auto_prompt_prefix` (e.g. Pony score tags). Default true.
     pub auto_prompt_prefix: Option<bool>,
@@ -980,6 +989,15 @@ pub struct FamilyUi {
     /// `stick_default` for edit families). Differs from `stick_default` for
     /// families that both generate and edit (Qwen-Image 2.1, FLUX.2).
     pub stay_close_default: f32,
+    /// Offer "Repeats without seams" in Fine-tune ([`Family::seamless`]).
+    pub seamless: bool,
+}
+
+/// Whether a job launches sd-server with `--circular`: Fine-tune "Repeats
+/// without seams" is on, the family supports it, and the job makes a new
+/// picture (Create). Edits, restyles, Fix details and Extend never do.
+pub fn seamless_launch(family: &Family, fine: &FineTune, mode: GenMode) -> bool {
+    family.seamless && mode == GenMode::Txt2img && fine.seamless == Some(true)
 }
 
 /// `true` for dedicated instruction-edit families (`role: edit`, or `edit` is
@@ -1075,5 +1093,6 @@ pub fn family_ui(registry: &Registry, family: &Family) -> FamilyUi {
         is_edit_family: edit,
         stay_close_shown,
         stay_close_default,
+        seamless: family.seamless,
     }
 }

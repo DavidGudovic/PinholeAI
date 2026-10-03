@@ -68,7 +68,7 @@ function familyUi(familyId: string): FamilyUi {
   const known = FAMILY_UI[familyId];
   if (known) return known;
   const isEdit = /edit|kontext/.test(familyId);
-  return { ...FAMILY_UI.sdxl, familyId, label: familyId.replace(/_/g, " "), isEditFamily: isEdit, modes: isEdit ? ["edit"] : ["txt2img", "img2img"] };
+  return { ...FAMILY_UI.sdxl, seamless: false, familyId, label: familyId.replace(/_/g, " "), isEditFamily: isEdit, modes: isEdit ? ["edit"] : ["txt2img", "img2img"] };
 }
 
 // ---------------------------------------------------------------- painting
@@ -319,6 +319,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
         scheduler: req.fineTune.scheduler ?? ui.defaultScheduler,
         parentId: src ? (req.refImageIds?.[0] ?? req.initImageId ?? null) : null,
         origin,
+        ...(ui.seamless && req.mode === "txt2img" && req.fineTune.seamless ? { seamless: true } : {}),
       };
       session.set(id, { bytes: await toPng(c), width: w, height: h, seed, meta });
       images.push(meta);
