@@ -116,9 +116,9 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            pinhole_core::update::cleanup_after_update(&exe_dir());
             let shipped = shipped_paths(&handle);
             let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
+            pinhole_core::update::cleanup_after_update(&exe_dir(), &data.root);
             // Under WebDriver the (non-incognito) profile stays inside the test's Data/.
             let webview_dir =
                 (data.portable || under_webdriver()).then(|| data.root.join("webview"));

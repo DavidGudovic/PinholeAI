@@ -13,7 +13,7 @@ downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on
 
 ## Status (v1.0.3)
 - The app is feature-complete (milestones M0–M6 done). v1.0.0 is the first GitHub release
-  (2026-10-01); v1.0.1 and v1.0.2 followed the same day (safety and model-trust fixes, then signed updates, stronger checks and Browse and Settings fixes); v1.0.3 on 2026-10-02 (picture paste, Add detail for faces, upscaler choice, Side by side, Improve in Edit, queued Upscale).
+  (2026-10-01); v1.0.1 and v1.0.2 followed the same day (safety and model-trust fixes, then signed updates, stronger checks and Browse and Settings fixes); v1.0.3 on 2026-10-03 (picture paste, Add detail for faces, upscaler choice, Side by side, Improve in Edit, queued Upscale).
   `RELEASE-SPEC.md` §12 lists what is still open. In-app updates open the release page until
   a signing key is set up (`src-tauri/update-key.pub` + the `PINHOLE_UPDATE_KEY` secret).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and

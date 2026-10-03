@@ -12,7 +12,10 @@
 //!   overwritten), relaunch. `Data/` is never touched.
 //! * Linux AppImage (`$APPIMAGE`): download the new AppImage next to the old one and
 //!   rename it over it (shortcuts keep working), relaunch.
-//! * Anything else (the .deb, dev builds): the UI opens the release page instead.
+//! * Linux .deb (`/usr/bin/pinhole` owned by the `pinhole` package): download the new
+//!   .deb into the Data folder and install it with `pkexec apt-get install`, which asks
+//!   for the password; relaunch.
+//! * Anything else (dev builds, copies run from elsewhere): the UI opens the release page.
 //!
 //! Trust: the release's `SHA256SUMS.txt` must carry a valid signature
 //! (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) from the maintainer's
@@ -47,6 +50,11 @@ pub const STAGING_DIR: &str = ".pinhole-update";
 /// Staging folder for the Windows installer, inside the OS temp dir.
 const INSTALLER_STAGING_DIR: &str = "pinhole-update";
 const PRODUCT: &str = "Pinhole";
+/// Where the .deb installs Pinhole, and dpkg's file list for the `pinhole` package.
+const DEB_EXE: &str = "/usr/bin/pinhole";
+const DEB_FILE_LIST: &str = "/var/lib/dpkg/info/pinhole.list";
+/// Runs the .deb install as root after asking for the password.
+const PKEXEC: &str = "/usr/bin/pkexec";
 
 /// The maintainer's update-signing public key: the `.pub` file `tauri signer generate`
 /// writes (base64, one line). Empty = no key, so no in-app install.
@@ -70,7 +78,8 @@ pub enum InstallMode {
     Installer,
     Portable,
     AppImage,
-    /// Can't replace itself (the .deb, dev builds): open the release page.
+    Deb,
+    /// Can't replace itself (dev builds, copies run from elsewhere): open the release page.
     Manual,
 }
 
@@ -108,9 +117,19 @@ pub const INSTALLER_ARGS: &[&str] = &["/P", "/UPDATE", "/R"];
 /// Where and how this copy is installed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    Installer { staging: PathBuf },
-    Portable { app_dir: PathBuf },
-    AppImage { file: PathBuf },
+    Installer {
+        staging: PathBuf,
+    },
+    Portable {
+        app_dir: PathBuf,
+    },
+    AppImage {
+        file: PathBuf,
+    },
+    /// Installed from the .deb; the download is kept in `staging` (inside the Data folder).
+    Deb {
+        staging: PathBuf,
+    },
     Manual,
 }
 
@@ -120,6 +139,7 @@ impl Target {
             Target::Installer { .. } => InstallMode::Installer,
             Target::Portable { .. } => InstallMode::Portable,
             Target::AppImage { .. } => InstallMode::AppImage,
+            Target::Deb { .. } => InstallMode::Deb,
             Target::Manual => InstallMode::Manual,
         }
     }
@@ -131,6 +151,7 @@ impl Target {
                 Some(format!("{PRODUCT}-{version}-windows-x64-portable.zip"))
             }
             Target::AppImage { .. } => Some(format!("{PRODUCT}-{version}-linux-x86_64.AppImage")),
+            Target::Deb { .. } => Some(format!("{PRODUCT}-{version}-linux-amd64.deb")),
             Target::Manual => None,
         }
     }
@@ -140,6 +161,7 @@ impl Target {
             Target::Installer { staging } => Some(staging.clone()),
             Target::Portable { app_dir } => Some(app_dir.join(STAGING_DIR)),
             Target::AppImage { file } => file.parent().map(|p| p.join(STAGING_DIR)),
+            Target::Deb { staging } => Some(staging.clone()),
             Target::Manual => None,
         }
     }
@@ -156,6 +178,10 @@ pub struct Environment {
     /// The Data folder is the portable one next to the exe.
     pub portable_data: bool,
     pub temp_dir: PathBuf,
+    /// The running exe is the .deb's `/usr/bin/pinhole` and `pkexec` is there.
+    pub deb_installed: bool,
+    /// The Data folder (the .deb's download goes there: a folder only this user can change).
+    pub data_dir: PathBuf,
 }
 
 impl Environment {
@@ -171,6 +197,10 @@ impl Environment {
             exe_dir,
             appimage: std::env::var_os("APPIMAGE").map(PathBuf::from),
             temp_dir: std::env::temp_dir(),
+            deb_installed: std::env::current_exe().is_ok_and(|p| p == Path::new(DEB_EXE))
+                && Path::new(DEB_FILE_LIST).is_file()
+                && Path::new(PKEXEC).is_file(),
+            data_dir: core.data.root.clone(),
         }
     }
 }
@@ -206,6 +236,10 @@ pub fn detect_target_with(env: &Environment) -> Target {
                 Target::Manual
             }
         }
+        // The .deb first: a copy started from inside another AppImage inherits its $APPIMAGE.
+        "linux" if env.deb_installed => Target::Deb {
+            staging: env.data_dir.join(STAGING_DIR),
+        },
         "linux" => match &env.appimage {
             Some(file) if file.is_file() && file.parent().is_some_and(writable_dir) => {
                 Target::AppImage { file: file.clone() }
@@ -571,7 +605,7 @@ async fn install_inner(
         url: file_url,
         headers: Vec::new(),
         dest: staging.join(&name),
-        sha256: Some(sha256),
+        sha256: Some(sha256.clone()),
         size_bytes: Some(asset.size),
         label: format!("{PRODUCT} {wanted}"),
         ..Default::default()
@@ -613,7 +647,89 @@ async fn install_inner(
                 })??;
             Ok(Prepared::Relaunch(file))
         }
+        Target::Deb { staging } => {
+            let res = tokio::task::spawn_blocking(move || install_deb(&downloaded, &sha256))
+                .await
+                .map_err(|e| {
+                    CoreError::internal("The update stopped unexpectedly. Try again.")
+                        .with_details(e.to_string())
+                })?;
+            let _ = std::fs::remove_dir_all(&staging);
+            res?;
+            // The password dialog can stay open a while: work started meanwhile isn't cut off.
+            if ensure_idle(core, Some(&group)).is_err() {
+                return Err(CoreError::new(
+                    "update_restart",
+                    "The update is installed. Close Pinhole and open it again when your picture or download is done.",
+                ));
+            }
+            Ok(Prepared::Relaunch(PathBuf::from(DEB_EXE)))
+        }
         Target::Manual => unreachable!("manual targets return early"),
+    }
+}
+
+/// `pkexec apt-get install -y <file>`: the system asks for the password, apt installs the
+/// package (and anything new it depends on).
+pub fn deb_install_command(file: &Path) -> std::process::Command {
+    let mut c = std::process::Command::new(PKEXEC);
+    c.args(["/usr/bin/apt-get", "install", "-y", "-q"])
+        .arg(file);
+    c
+}
+
+fn install_deb(file: &Path, sha256: &str) -> CoreResult<()> {
+    use sha2::Digest;
+    // Checked again right before it is handed to apt.
+    let bytes = std::fs::read(file).map_err(update_failed)?;
+    if !hex::encode(sha2::Sha256::digest(&bytes)).eq_ignore_ascii_case(sha256) {
+        return Err(CoreError::new(
+            "hash_mismatch",
+            "The downloaded package changed after it was checked, so Pinhole won't install it.",
+        ));
+    }
+    let out = deb_install_command(file)
+        .output()
+        .map_err(|e| deb_failed(None, &e.to_string()))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let tail: String = String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .rev()
+        .take(10)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<Vec<_>>()
+        .join("\n");
+    Err(deb_failed(out.status.code(), &tail))
+}
+
+/// pkexec exits with 126 when the password dialog is closed and 127 when the password is
+/// refused or no dialog can be shown; apt exits with 100, saying "lock" when another program
+/// is installing software.
+fn deb_failed(code: Option<i32>, details: &str) -> CoreError {
+    match code {
+        Some(126) => CoreError::new(
+            "cancelled_auth",
+            "The update wasn't installed because the password dialog was closed. Nothing was changed.",
+        ),
+        Some(127) => CoreError::new(
+            "cancelled_auth",
+            "The update wasn't installed: the password wasn't accepted, or this system couldn't ask for it. Open the download page to install it by hand.",
+        )
+        .with_details(details.to_string()),
+        Some(100) if details.contains("lock") => CoreError::new(
+            "busy",
+            "Another program is installing software right now. Try again in a few minutes.",
+        )
+        .with_details(details.to_string()),
+        _ => CoreError::new(
+            "io",
+            "The new package couldn't be installed. Open the download page and install it from there.",
+        )
+        .with_details(details.to_string()),
     }
 }
 
@@ -733,8 +849,8 @@ fn unpack_portable(zip_path: &Path, out: &Path) -> CoreResult<()> {
 
 /// Remove leftovers of a finished (or abandoned) update. Best effort: the old exe
 /// of a portable update may still be exiting; the next start tries again.
-pub fn cleanup_after_update(exe_dir: &Path) {
-    let mut dirs = vec![exe_dir.join(STAGING_DIR)];
+pub fn cleanup_after_update(exe_dir: &Path, data_dir: &Path) {
+    let mut dirs = vec![exe_dir.join(STAGING_DIR), data_dir.join(STAGING_DIR)];
     if cfg!(windows) {
         dirs.push(std::env::temp_dir().join(INSTALLER_STAGING_DIR));
     }
@@ -918,6 +1034,8 @@ mod tests {
             appimage: None,
             portable_data: false,
             temp_dir: dir.join("tmp"),
+            deb_installed: false,
+            data_dir: dir.join("Data"),
         }
     }
 
@@ -948,14 +1066,70 @@ mod tests {
         // Dev builds never replace themselves.
         e.debug_build = true;
         assert_eq!(detect_target_with(&e), Target::Manual);
-        // Linux: only an AppImage can update itself.
+        // Linux: an AppImage or the .deb update themselves.
         assert_eq!(detect_target_with(&env("linux", dir)), Target::Manual);
+        let mut deb = env("linux", dir);
+        deb.deb_installed = true;
+        assert_eq!(
+            detect_target_with(&deb),
+            Target::Deb {
+                staging: dir.join("Data").join(STAGING_DIR)
+            }
+        );
+        // An $APPIMAGE inherited from another app doesn't make the .deb an AppImage.
+        let other = dir.join("Terminal.AppImage");
+        std::fs::write(&other, b"").unwrap();
+        deb.appimage = Some(other);
+        assert!(matches!(detect_target_with(&deb), Target::Deb { .. }));
+        assert_eq!(
+            Target::Deb {
+                staging: dir.into()
+            }
+            .asset_name("1.0.3")
+            .as_deref(),
+            Some("Pinhole-1.0.3-linux-amd64.deb")
+        );
         let img = dir.join("Pinhole.AppImage");
         std::fs::write(&img, b"").unwrap();
         let mut l = env("linux", dir);
         l.appimage = Some(img.clone());
         assert_eq!(detect_target_with(&l), Target::AppImage { file: img });
         assert_eq!(detect_target_with(&env("macos", dir)), Target::Manual);
+    }
+
+    #[test]
+    fn the_deb_is_installed_with_pkexec_and_apt() {
+        let c = deb_install_command(Path::new(
+            "/home/u/Data/.pinhole-update/Pinhole-1.0.4-linux-amd64.deb",
+        ));
+        assert_eq!(c.get_program(), "/usr/bin/pkexec");
+        let args: Vec<_> = c
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "/usr/bin/apt-get",
+                "install",
+                "-y",
+                "-q",
+                "/home/u/Data/.pinhole-update/Pinhole-1.0.4-linux-amd64.deb"
+            ]
+        );
+        assert_eq!(deb_failed(Some(126), "").code, "cancelled_auth");
+        assert_eq!(deb_failed(Some(127), "").code, "cancelled_auth");
+        assert_eq!(
+            deb_failed(
+                Some(100),
+                "E: Could not get lock /var/lib/dpkg/lock-frontend"
+            )
+            .code,
+            "busy"
+        );
+        let e = deb_failed(Some(100), "E: broken");
+        assert_eq!(e.code, "io");
+        assert!(e.message.contains("download page"));
     }
 
     #[test]
@@ -1109,8 +1283,14 @@ mod tests {
             b"old exe"
         );
 
-        cleanup_after_update(&app);
+        let data = tmp.path().join("Data");
+        std::fs::create_dir_all(data.join(STAGING_DIR)).unwrap();
+        cleanup_after_update(&app, &data);
         assert!(!app.join(STAGING_DIR).exists());
+        assert!(
+            !data.join(STAGING_DIR).exists(),
+            "a .deb download left in Data"
+        );
     }
 
     #[test]

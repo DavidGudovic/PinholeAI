@@ -1,0 +1,40 @@
+# Sets an existing release's text to docs/release-notes/<version>.md from main, for a release
+# whose text changed after it was published. New releases get the same file from Release.
+name: Release notes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v1.0.3"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  notes:
+    name: Set release text
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set the release text from docs/release-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::Tag $TAG should look like v1.0.3"; exit 1 ;;
+          esac
+          notes="docs/release-notes/${TAG#v}.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::$notes is missing or empty."
+            exit 1
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"

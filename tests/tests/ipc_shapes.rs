@@ -630,6 +630,17 @@ async fn rust_json_matches_types_ts() {
     settings.offline = true;
     app::set_settings(&core, settings).unwrap();
     let _ = models::install_recommended(&core, "realistic").await;
+    // The recommendation depends on this computer's memory: queue one directly as well.
+    core.downloads.enqueue_kind(
+        "Test model".into(),
+        pinhole_net::download::DownloadKind::Model,
+        vec![pinhole_net::download::DownloadSpec {
+            url: "https://huggingface.co/test/test/resolve/main/m.safetensors".into(),
+            dest: other.path().join("m.safetensors"),
+            label: "m.safetensors".into(),
+            ..Default::default()
+        }],
+    );
     c.check("GroupStatus", &pinhole_core::downloads::list(&core));
 
     // Events, as the Tauri bridge sends them (the `payload` part).
