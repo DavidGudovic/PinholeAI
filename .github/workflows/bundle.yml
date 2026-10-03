@@ -118,6 +118,22 @@ jobs:
           fi
           ls -la release-assets
 
+      # The app starts and its window loads: a copy of the portable build runs for 30 s
+      # (from a temporary folder, so the uploaded build gets no Data folder).
+      - name: Start the app once (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'start-check'
+          Copy-Item -Recurse portable/Pinhole $dir
+          $p = Start-Process -FilePath (Join-Path $dir 'Pinhole.exe') -PassThru
+          Start-Sleep -Seconds 30
+          if ($p.HasExited) { throw "Pinhole stopped within 30 s (exit code $($p.ExitCode))" }
+          $wv = @(Get-Process msedgewebview2 -ErrorAction SilentlyContinue)
+          if ($wv.Count -eq 0) { throw "Pinhole is running but no WebView2 process started" }
+          Write-Host "Pinhole is running with $($wv.Count) WebView2 processes"
+          Stop-Process -Id $p.Id -Force
+
       - name: Upload ${{ matrix.artifact }}
         uses: actions/upload-artifact@v4
         with:
