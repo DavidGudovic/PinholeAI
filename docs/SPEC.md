@@ -270,7 +270,7 @@ active model family):
 
 **Fine-tune** drawer (collapsed by default): negative prompt (only for families that use it),
 sampler, scheduler, steps, CFG, seed, flow shift, clip skip, hires fix, LoRAs with weights,
-VAE tiling. Each field shows the registry default and a "reset" button. The LoRA list's **Add**
+VAE tiling, Repeats without seams. Each field shows the registry default and a "reset" button. The LoRA list's **Add**
 menu lists installed style add-ons that work with the current model and ends with **Find add-ons
 for <model>…**, which opens Models → Browse on style add-ons for that model.
 
@@ -285,6 +285,15 @@ none are saved, e.g. an add-on added from disk) lets the user type the add-on's 
 which replace CivitAI's list in `installed.json` (add-on metadata, never prompt text). × removes it. An add-on made for another architecture stays in the list
 greyed out with "Made for SDXL models, so it isn't used with this one" and is left out of the
 request. Nothing is shown when no add-on is in use.
+
+**Repeats without seams** (Fine-tune, off by default, stored in presets like the other Fine-tune
+values): the picture's left and right edges and its top and bottom edges join up, so it can be
+repeated as a pattern or texture. Shown only for families with `seamless: true` in the registry
+(SD 1.5 and SDXL, both checked with a 2×2 tile on CPU). It applies to new pictures in Create only;
+edits, restyles, Fix details and Extend never use it. sd-server reads it at launch (`--circular`),
+not per request, so the first picture after switching it on or off restarts the engine with the
+usual loading progress. A result made this way gets a **Show tiled** button that shows it 2×2 in
+the preview, and its settings line says "repeats without seams".
 
 **Named sizes** (Fine-tune, above Width and Height): **My screen** (the monitor's shape), **Phone**
 (9:16), **Instagram** (4:5) and **Thumbnail** (16:9). One click sets Width and Height to that shape at

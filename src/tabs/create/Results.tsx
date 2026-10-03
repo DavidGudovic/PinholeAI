@@ -9,6 +9,7 @@ import {
   Images,
   Layers,
   ChevronDown,
+  Grid2x2,
   Maximize2,
   PanelsLeftRight,
   ScanText,
@@ -155,6 +156,10 @@ function Preview({
   const compareImg = useAppState((s) => (compare ? s.images[compare.id] : undefined));
   const [sideBySide, setSideBySide] = useState(!!compare);
   const [pickModel, setPickModel] = useState(false);
+  // "Show tiled": a picture made with "Repeats without seams", four times, edges touching.
+  const [tiledFor, setTiledFor] = useState<string | null>(null);
+  const tiled = !!result.seamless && tiledFor === result.id;
+  const tiledUrl = useTiledUrl(img.url, result.width, result.height, tiled);
   const unsavedCount = useAppState((s) => unsavedIds(s).length);
   // Joined to a string so the selector returns a stable value.
   const sheet = useAppState((s) => sheetIds(s, result.id).join(" "));
@@ -190,8 +195,8 @@ function Preview({
           />
         ) : (
           <img
-            src={img.url}
-            alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}`}
+            src={tiledUrl ?? img.url}
+            alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}${tiledUrl ? ", shown tiled 2×2" : ""}`}
             className="max-h-full max-w-full rounded-lg object-contain shadow-lg ring-1 ring-black/5 dark:ring-white/10"
             draggable={false}
             onDoubleClick={onExpand}
@@ -303,6 +308,17 @@ function Preview({
             onClick={() => setSideBySide((v) => !v)}
           >
             <PanelsLeftRight className="h-4 w-4" />
+          </IconButton>
+        )}
+        {result.seamless && (
+          <IconButton
+            label="Show tiled"
+            variant="secondary"
+            className={tiled ? "ring-2 ring-amber-500" : undefined}
+            aria-pressed={tiled}
+            onClick={() => setTiledFor(tiled ? null : result.id)}
+          >
+            <Grid2x2 className="h-4 w-4" />
           </IconButton>
         )}
         <IconButton
@@ -505,3 +521,40 @@ const Strip = memo(function Strip({
     </div>
   );
 });
+
+const TILED_MAX_SIDE = 4096;
+
+/** The picture at `url` drawn 2×2 into one image (object URL), while `on`. */
+function useTiledUrl(url: string, width: number, height: number, on: boolean): string | null {
+  const [tiledUrl, setTiledUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    let made: string | null = null;
+    let live = true;
+    const pic = new Image();
+    pic.onload = () => {
+      // A preview only: at most 4096 px a side, well inside every webview's canvas limit.
+      const scale = Math.min(1, TILED_MAX_SIDE / (2 * Math.max(width, height)));
+      const w = Math.max(1, Math.round(width * scale));
+      const h = Math.max(1, Math.round(height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w * 2;
+      canvas.height = h * 2;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      for (const [x, y] of [[0, 0], [w, 0], [0, h], [w, h]]) ctx.drawImage(pic, x, y, w, h);
+      canvas.toBlob((blob) => {
+        if (!blob || !live) return;
+        made = URL.createObjectURL(blob);
+        setTiledUrl(made);
+      });
+    };
+    pic.src = url;
+    return () => {
+      live = false;
+      if (made) URL.revokeObjectURL(made);
+      setTiledUrl(null);
+    };
+  }, [url, width, height, on]);
+  return on ? tiledUrl : null;
+}

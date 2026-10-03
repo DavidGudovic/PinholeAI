@@ -53,10 +53,12 @@ const FIXTURES: Record<string, FamilyUi> = {
     defaultCfg: 7,
     defaultNegativePrompt: "lowres, blurry, bad anatomy, extra fingers, watermark, text",
     hiresAtBest: true,
+    seamless: true,
   },
-  sdxl: base,
+  sdxl: { ...base, seamless: true },
   sdxl_pony: {
     ...base,
+    seamless: true,
     familyId: "sdxl_pony",
     label: "SDXL · Pony",
     stickRange: [4, 8],
@@ -69,6 +71,7 @@ const FIXTURES: Record<string, FamilyUi> = {
   },
   sdxl_illustrious: {
     ...base,
+    seamless: true,
     familyId: "sdxl_illustrious",
     label: "SDXL · Illustrious / NoobAI",
     stickRange: [4, 8],

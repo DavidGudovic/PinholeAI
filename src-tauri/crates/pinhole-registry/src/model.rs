@@ -104,6 +104,10 @@ pub struct Family {
     /// usable GPU, whatever the file size (SD 1.5). See [`crate::vram::fit_cpu`].
     #[serde(default)]
     pub cpu_friendly: bool,
+    /// Create can make pictures whose edges join up when repeated (sd-server
+    /// `--circular`). Only set for families checked with a 2×2 tile.
+    #[serde(default)]
+    pub seamless: bool,
     /// `txt2img` | `img2img` | `inpaint` | `edit`
     #[serde(default)]
     pub modes: Vec<String>,
