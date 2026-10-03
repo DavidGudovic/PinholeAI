@@ -488,8 +488,11 @@ export function referencedImageIds(
 ): Set<string> {
   const ids = new Set<string>();
   if (s.create?.refImageId) ids.add(s.create.refImageId);
-  // "Variations" re-sends a batch's reference picture.
-  for (const b of Object.values(s.batches ?? {})) for (const id of b.request.refImageIds ?? []) ids.add(id);
+  // "Variations" re-sends a batch's reference picture (and "Close to this one" its source).
+  for (const b of Object.values(s.batches ?? {})) {
+    for (const id of b.request.refImageIds ?? []) ids.add(id);
+    if (b.request.initImageId) ids.add(b.request.initImageId);
+  }
   for (const id of s.job?.imageIds ?? []) ids.add(id);
   for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);

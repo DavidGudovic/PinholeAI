@@ -301,6 +301,39 @@ describe("Results", () => {
     expect(items[0].textContent).toContain("2048×2048");
   });
 
+  const batchRequest = (quality: "fast" | "balanced" | "best"): GenerateRequest => ({
+    modelId: "m",
+    mode: "txt2img",
+    prompt: "a lighthouse",
+    styleId: null,
+    dials: { shape: "square", quality, stick: 0.5, count: 1 },
+    fineTune: {},
+    loras: [],
+    addTriggerWords: true,
+  });
+  const storeWithBatch = (quality: "fast" | "balanced" | "best", r = result("n", 512, 512)) => {
+    const store = createStore();
+    store.dispatch({ type: "addResults", batch: { id: "b1", request: batchRequest(quality) }, images: [r], refs: [{ id: r.id, url: `blob:${r.id}`, width: r.width, height: r.height }] });
+    return store;
+  };
+
+  it("offers Finish at Best quality first in Upscale for a picture made below Best", () => {
+    const store = storeWithBatch("fast");
+    withApp(store, <Results />);
+    fireEvent.click(screen.getByRole("button", { name: /Upscale/ }));
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent?.replace(/(Best quality|Upscale \d×).*/, "$1"))).toEqual(["Finish at Best quality", "Upscale 2×", "Upscale 4×"]);
+  });
+
+  it("offers no Finish at Best quality for pictures made at Best, without settings, or upscaled", () => {
+    for (const store of [storeWithBatch("best"), storeWithResults(result("n", 512, 512)), storeWithBatch("fast", { ...result("u", 1024, 1024, "o"), kind: "upscaled" })]) {
+      withApp(store, <Results />);
+      fireEvent.click(screen.getByRole("button", { name: /Upscale/ }));
+      expect(screen.queryByRole("menuitem", { name: /Finish at Best/ })).toBeNull();
+      cleanup();
+    }
+  });
+
   it("keeps Upscale available while a picture is being made, and says it waits", () => {
     const store = storeWithResults(result("n", 1024, 1024));
     store.dispatch({ type: "jobStart", kind: "create", at: 0, count: 1 });
@@ -429,13 +462,15 @@ describe("reference picture", () => {
     expect(screen.queryByTestId("side-by-side")).toBeNull();
   });
 
-  it("More like this holds Variations and Same character; Describe stays a button", () => {
+  it("More like this holds Close to this one, Variations, Same character and On another model; Describe stays a button", () => {
     const store = storeWithResults(result("a", 64, 64));
     withApp(store, <Results />);
     expect(screen.queryByRole("button", { name: /Same character/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
-    expect(screen.getByRole("menuitem", { name: /Same character/ })).toBeTruthy();
-    // No batch for this result, so no Variations.
+    const items = screen.getAllByRole("menuitem");
+    expect(items.map((i) => i.textContent?.match(/^(Close to this one|Variations|Same character|On another model…)/)?.[0])).toEqual(["Close to this one", "Variations", "Same character", "On another model…"]);
+    // No batch for this result, so no Close to this one or Variations.
+    expect((screen.getByRole("menuitem", { name: /Close to this one/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("menuitem", { name: /Variations/ }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Describe/ }));
     expect(store.getState().tab).toBe("describe");

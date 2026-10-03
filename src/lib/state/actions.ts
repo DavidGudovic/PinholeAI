@@ -28,7 +28,7 @@ import {
 } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
 import { expandChoices } from "./choices";
-import { buildCreateRequest, buildEditRequest, otherModelRequest, randomSeed, variationRequest } from "./request";
+import { buildCreateRequest, buildEditRequest, closeRequest, finishRequest, otherModelRequest, randomSeed, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseFolder, chooseSavePath, closeWindow, copyText, notifyDone, primeSound, windowInBackground } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
@@ -329,15 +329,37 @@ export function makeActions(store: Store) {
 
   function runBatch(req: GenerateRequest) {
     const model = (get().models ?? []).find((m) => m.id === req.modelId);
-    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count, req.refImageIds ?? []), async () => req);
+    const imageIds = [...(req.initImageId ? [req.initImageId] : []), ...(req.refImageIds ?? [])];
+    return queueBatch(req.dials.count, queueEntry("create", req.prompt, model, req.dials.count, imageIds), async () => req);
+  }
+
+  function batchOf(resultId: string) {
+    const s = get();
+    const batch = s.batches[s.resultBatch[resultId] ?? ""];
+    if (!batch) throw { code: "not_found", message: "The settings for this image are no longer in memory. Generate again from the Create tab.", details: null } as CoreError;
+    return batch;
   }
 
   /** Same prompt and settings, new seeds. */
   async function variations(resultId: string) {
-    const s = get();
-    const batch = s.batches[s.resultBatch[resultId] ?? ""];
-    if (!batch) throw { code: "not_found", message: "The settings for this image are no longer in memory. Generate again from the Create tab.", details: null } as CoreError;
-    await runBatch(variationRequest(batch.request));
+    await runBatch(variationRequest(batchOf(resultId).request));
+  }
+
+  /** "Close to this one": How many new pictures that keep this one's layout and change the details. */
+  async function closeTo(resultId: string) {
+    const batch = batchOf(resultId);
+    const result = get().results.find((r) => r.id === resultId);
+    if (!result) return;
+    const req = closeRequest(batch.request, result);
+    await runBatch({ ...req, dials: { ...req.dials, count: get().create.count } });
+  }
+
+  /** "Finish at Best quality": this picture again at Best, same seed and settings. */
+  async function finishAtBest(resultId: string) {
+    const batch = batchOf(resultId);
+    const result = get().results.find((r) => r.id === resultId);
+    const req = result ? finishRequest(batch.request, result.seed) : null;
+    if (req) await runBatch(req);
   }
 
   /**
@@ -380,7 +402,7 @@ export function makeActions(store: Store) {
     const batch = batchId ? get().batches[batchId] : undefined;
     // An "Also apply to…" result's upscale joins its run too (for Save as one sheet).
     const group = get().resultGroup[resultId];
-    const imageIds = [resultId, ...(batch?.request.refImageIds ?? [])];
+    const imageIds = [resultId, ...(batch?.request.initImageId ? [batch.request.initImageId] : []), ...(batch?.request.refImageIds ?? [])];
     try {
       await enqueue(upscaleEntry("upscale", resultId, factor, imageIds), () =>
         withJob("upscale", async () => {
@@ -980,6 +1002,8 @@ export function makeActions(store: Store) {
     runBatch,
     removeQueued,
     variations,
+    closeTo,
+    finishAtBest,
     onOtherModel,
     upscale,
     cancel,
