@@ -153,6 +153,18 @@ export function tagsFor(f: Pick<BrowseFilters, "tags">): string[] {
   return [...new Set(f.tags)].sort();
 }
 
+/** The Reference picture tag: shown as its own switch, not with the other tags. */
+export const REFERENCE_TAG = "reference";
+
+/**
+ * Filters set under "More filters" (tags other than Reference picture, Price, Commercial use,
+ * Hide anime): the count on the closed toggle, and whether it opens.
+ */
+export function moreFiltersCount(f: BrowseFilters, defaults: Pick<BrowseFilters, "price">): number {
+  const tags = tagsFor(f).filter((t) => t !== REFERENCE_TAG).length;
+  return tags + (f.price !== defaults.price ? 1 : 0) + (f.commercialOnly ? 1 : 0) + (f.hideAnime ? 1 : 0);
+}
+
 /** Pick or unpick one tag. */
 export function toggleTag(tags: string[], key: string): string[] {
   return tags.includes(key) ? tags.filter((t) => t !== key) : [...tags, key];

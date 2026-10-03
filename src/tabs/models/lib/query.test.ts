@@ -10,6 +10,7 @@ import {
   isSafeModeOff,
   isVideoFile,
   mergePage,
+  moreFiltersCount,
   NO_TOTALS,
   normalizeSearch,
   resultsSummary,
@@ -233,5 +234,14 @@ describe("Safe mode outside Browse", () => {
   it("leaves out tags that need Safe mode off while it is on", () => {
     expect(visibleTags(FALLBACK_OPTIONS.tags, "safe").some((t) => t.needsSafeModeOff)).toBe(false);
     expect(visibleTags(FALLBACK_OPTIONS.tags, "all")).toEqual(FALLBACK_OPTIONS.tags);
+  });
+});
+
+describe("moreFiltersCount", () => {
+  it("counts the folded filters that are set, not Reference picture", () => {
+    const d = defaultFilters(null, null, false);
+    expect(moreFiltersCount(d, d)).toBe(0);
+    expect(moreFiltersCount({ ...d, tags: ["reference"] }, d)).toBe(0);
+    expect(moreFiltersCount({ ...d, tags: ["reference", "portraits", "food"], commercialOnly: true, hideAnime: true, price: d.price === "free" ? "include" : "free" }, d)).toBe(5);
   });
 });
