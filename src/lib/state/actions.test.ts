@@ -1103,6 +1103,15 @@ describe("Also apply to…", () => {
     expect(sheetIds(s, "rb")).toEqual(["ra", "rb", "rc"]);
   });
 
+  it("Describe a change leaves image 2 out of the other pictures", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetAlso", refs: [ref("b"), ref("c")] });
+    store.dispatch({ type: "patchEdit", patch: { secondImageId: "b", instruction: "make it night" } });
+    void actions.runEdit({ mode: "instruction", model, mask: null, size: [64, 64], alsoSize: (w, h) => [w, h] }).catch(() => undefined);
+    expect(store.getState().queue.map((q) => q.imageIds[0])).toEqual(["c"]);
+  });
+
   it("Cancel stops the whole run; the other pictures don't lock the history", async () => {
     const { store, actions } = setup();
     store.dispatch({ type: "editLoad", ref: ref("a") });

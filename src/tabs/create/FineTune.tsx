@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
-import { namedSizes, referenceSize, screenPixels, sizeForRatio } from "../../lib/sizes";
+import { fillReferenceSize, namedSizes, referenceSize, screenPixels, sizeForRatio } from "../../lib/sizes";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
 import { asCoreError, previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
@@ -177,7 +177,8 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
 
   const stickPos = c.stick ?? defaultStickPosition(ui);
   const steps = ui ? ui.qualitySteps[qualityIndex(c.quality)] : null;
-  const [sw, sh] = referenceSize(c, ref, ui) ?? ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape];
+  const refSize = referenceSize(c, ref, ui);
+  const [sw, sh] = refSize ? fillReferenceSize(ft.width, ft.height, refSize) : (ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape]);
   const cfgDefault = ui ? (ui.stickMapsTo === "cfg" && ui.showStick ? stickValue(ui, stickPos) : ui.defaultCfg) : null;
   const guidanceDefault = ui ? (ui.stickMapsTo === "guidance" ? stickValue(ui, stickPos) : ui.defaultGuidance) : null;
   const showGuidance = !ui || ui.stickMapsTo === "guidance" || ui.defaultGuidance != null;
