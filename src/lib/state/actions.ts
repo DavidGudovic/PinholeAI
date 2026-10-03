@@ -233,7 +233,8 @@ export function makeActions(store: Store) {
       async () => {
         dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
-        return buildCreateRequest({ ...create, prompt: prompts[0] }, { ui, loras, model, settings });
+        const ref = create.refImageId ? s.images[create.refImageId] : null;
+        return buildCreateRequest({ ...create, prompt: prompts[0] }, { ui, loras, model, settings, ref });
       },
     );
   }
@@ -255,10 +256,11 @@ export function makeActions(store: Store) {
             const nonce = get().sessionNonce;
             dispatch({ type: "pushPrompt", prompt: create.prompt });
             const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+            const ref = create.refImageId ? get().images[create.refImageId] : null;
             let failed: CoreError | null = null;
             for (const [i, prompt] of prompts.entries()) {
               const c = { ...create, prompt, count: 1 as const, fineTune: { ...create.fineTune, seed } };
-              const req = buildCreateRequest(c, { ui, loras, model, settings });
+              const req = buildCreateRequest(c, { ui, loras, model, settings, ref });
               try {
                 const { images, refs } = await generateNow(req, nonce);
                 if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });

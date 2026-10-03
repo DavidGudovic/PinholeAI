@@ -308,8 +308,13 @@ or "the same character somewhere else". Shown only for models whose architecture
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
 file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
 (Ctrl/Cmd+V, see §5) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
-`ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
-result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
+`ref_images[0]` of a txt2img request, and the result has no "parent" (it isn't an edit). While a
+picture is set, the Shape dial has a full-width **Same as reference** chip under the four shapes: the
+reference picture's shape at the model's Square area (the same rule as Named sizes), so the memory
+need is unchanged; Width and Height typed in Fine-tune still win. Adding a picture picks it when the
+shape is still Square and no size was typed, and the slot says "Shape: same as this picture."; picking
+another shape (or a preset or pasted settings with a shape) takes over, and removing the picture goes
+back to the Shape dial. It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
 it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
 picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
@@ -378,8 +383,9 @@ the picture, with their Fits/Tight badge; models that are too big or not fully s
 out, and when the picture used a reference picture only models that take one are listed. Picking
 one runs the same prompt, style, shape, Quality, reference picture and seed there as a queued job
 (the model switch restarts sd-server with progress, as usual). Settings that belong to one family
-(sampler, steps, CFG, size, Stick to prompt) use the new model's defaults, and add-ons that don't
-work with it are left out. The new picture opens side by side with the first one, each labelled
+(sampler, steps, CFG, Stick to prompt) use the new model's defaults, a set size (a named size,
+Same as reference) keeps its shape at the new model's usual size, Hires fix on or off carries
+over, and add-ons that don't work with it are left out. The new picture opens side by side with the first one, each labelled
 with its model's name; the side-by-side button switches between the two views.
 
 **Upscale** runs a 4× ESRGAN model in sd-server (2× = 4× then halved). There are three, all

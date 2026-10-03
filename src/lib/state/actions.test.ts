@@ -932,7 +932,7 @@ describe("on another model", () => {
   it("runs the same prompt, seed and shape on the other model, without the first model's own settings", async () => {
     const { store, actions } = setup();
     store.dispatch({ type: "setModels", models: [model, other] });
-    store.dispatch({ type: "patchCreate", patch: { shape: "portrait", count: 2, fineTune: { sampler: "euler", steps: 30, width: 512, negativePrompt: "blur" } } });
+    store.dispatch({ type: "patchCreate", patch: { shape: "portrait", count: 2, fineTune: { sampler: "euler", steps: 30, width: 512, height: 1024, negativePrompt: "blur" } } });
     const first = actions.generateCreate();
     await tick();
     pending!({ images: [{ ...img("a"), seed: 42 }, img("b")] } as GenerateResult);
@@ -948,7 +948,11 @@ describe("on another model", () => {
     await run;
     const req = vi.mocked(apiMod.generate).mock.calls[1][0];
     expect(req).toMatchObject({ modelId: "o", prompt: "a lighthouse", dials: { shape: "portrait", count: 1 } });
-    expect(req.fineTune).toEqual({ seed: 42, negativePrompt: "blur" });
+    const { width, height, ...rest } = req.fineTune;
+    expect(rest).toEqual({ seed: 42, negativePrompt: "blur" });
+    // The set size keeps its shape, at the new model's usual size.
+    expect(width! / height!).toBeCloseTo(0.5, 1);
+    expect(width! * height!).toBeGreaterThan(512 * 1024 * 0.9);
     const s = store.getState();
     expect(s.selectedResultId).toBe("c");
     expect(s.batches[s.resultBatch["c"]].compareWith).toBe("a");

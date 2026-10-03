@@ -1,6 +1,7 @@
 // Pure builders: app state → GenerateRequest, presets ↔ Create params.
 // PRIVACY: requests contain prompt text — memory only. Presets never do.
 
+import { referenceSize, sizeForRatio } from "../sizes";
 import { DEFAULT_SHAPE_SIZES, defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
 import type {
   Dials,
@@ -83,15 +84,21 @@ export function activeLoras(c: Pick<CreateParams, "loras">, loras: InstalledLora
 
 export function buildCreateRequest(
   c: CreateParams,
-  opts: { ui: FamilyUi | null; loras: InstalledLora[]; model: InstalledModel; settings: Settings | null },
+  opts: { ui: FamilyUi | null; loras: InstalledLora[]; model: InstalledModel; settings: Settings | null; ref?: ImgRef | null },
 ): GenerateRequest {
+  const fineTune = effectiveFineTune(c.fineTune, opts.ui);
+  const refSize = referenceSize(c, opts.ref, opts.ui);
+  if (refSize) {
+    fineTune.width ??= refSize[0];
+    fineTune.height ??= refSize[1];
+  }
   return {
     modelId: opts.model.id,
     mode: "txt2img",
     prompt: c.prompt.trim(),
     styleId: c.styleId,
     dials: createDials(c, opts.ui),
-    fineTune: effectiveFineTune(c.fineTune, opts.ui),
+    fineTune,
     loras: activeLoras(c, opts.loras, opts.model, opts.settings?.addTriggerWords ?? true),
     addTriggerWords: true,
     ...(c.refImageId ? { refImageIds: [c.refImageId] } : {}),
@@ -111,19 +118,23 @@ export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
 /**
  * "On another model": the same prompt, style, shape, quality, reference picture and seed on
  * `model` (and Hires fix on or off as it was). Settings that belong to one model family
- * (sampler, steps, size, Stick to prompt position, prompt prefix) go back to `model`'s defaults, and add-ons that don't work with it are left out.
+ * (sampler, steps, Stick to prompt position, prompt prefix) go back to `model`'s defaults, a set
+ * size keeps its shape at `model`'s usual size, and add-ons that don't work with it are left out.
  */
 export function otherModelRequest(
   req: GenerateRequest,
   seed: number,
   opts: { model: InstalledModel; ui: FamilyUi | null; loras: InstalledLora[] },
 ): GenerateRequest {
-  const { negativePrompt, vaeTiling, hires } = req.fineTune;
+  const { negativePrompt, vaeTiling, hires, width: w, height: h } = req.fineTune;
+  const fineTune = effectiveFineTune({ negativePrompt, vaeTiling, hires, seed }, opts.ui);
+  // A set size (a named size, Same as reference): the same shape at the new model's own size.
+  if (w && h) [fineTune.width, fineTune.height] = sizeForRatio(w / h, opts.ui);
   return {
     ...req,
     modelId: opts.model.id,
     dials: { ...req.dials, stick: defaultStickPosition(opts.ui), count: 1 },
-    fineTune: effectiveFineTune({ negativePrompt, vaeTiling, hires, seed }, opts.ui),
+    fineTune,
     loras: req.loras.filter((u) => {
       const l = opts.loras.find((x) => x.id === u.loraId);
       return !!l && loraCompatible(l, opts.model.familyId);
@@ -339,7 +350,8 @@ function presetBaseFor(c: CreateParams, patch: Partial<CreateParams>): PresetBas
     (before as Record<string, unknown>)[k] = k in (prev?.before ?? {}) ? prev!.before[k] : c[k];
     (applied as Record<string, unknown>)[k] = patch[k];
   }
-  return { before: { ...prev?.before, ...before }, applied };
+  const refShape = prev && "shape" in prev.before ? prev.refShape : "shape" in patch ? c.refShape : prev?.refShape;
+  return { before: { ...prev?.before, ...before }, applied, ...(refShape ? { refShape } : {}) };
 }
 
 /**
@@ -360,6 +372,7 @@ export function clearPreset(
     if (!sameValue(cur, app)) continue;
     (out as Record<string, unknown>)[k] = base.before[k];
   }
+  if ("shape" in out && base.refShape && c.refImageId) out.refShape = true;
   if (out.fineTune) {
     out.fineTune = withoutNegative(out.fineTune);
     if (c.fineTune.negativePrompt) out.fineTune.negativePrompt = c.fineTune.negativePrompt;

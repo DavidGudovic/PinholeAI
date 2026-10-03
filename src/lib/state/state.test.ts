@@ -416,6 +416,50 @@ describe("requests", () => {
     expect(buildCreateRequest(s.create, { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null }).refImageIds).toBeUndefined();
   });
 
+  it("makes Create's picture the reference picture's shape with Same as reference", () => {
+    const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], fit: "fits" });
+    const tall: ImgRef = { id: "t", url: "blob:t", width: 900, height: 1600 };
+    const opts = { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null, ref: tall };
+
+    // Added with the default shape: switches to Same as reference, at the model's Square area.
+    let s = run(withModels(), { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // Width and Height typed in Fine-tune still win.
+    s = run(s, { type: "setFineTune", patch: { width: 1024 } });
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1344 });
+
+    // Picking a shape takes over; choosing Same as reference again clears the typed size.
+    s = run(s, { type: "setDial", dial: "shape", value: "landscape" });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, opts).fineTune.width).toBeUndefined();
+    s = run(s, { type: "setFineTune", patch: { width: 640 } }, { type: "createRefShape" });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // A preset's shape takes over too, and None brings Same as reference back.
+    const preset = { ...presetFromCreate("p", { ...s.create, shape: "wide" }, { model: k, loras: [] }), id: "p" };
+    const lists = { models: [k], loras: [], styleIds: [] };
+    s = run(s, { type: "patchCreate", patch: applyPreset(preset, s.create, lists).patch });
+    expect(s.create).toMatchObject({ shape: "wide", refShape: false });
+    s = run(s, { type: "patchCreate", patch: clearPreset(s.create, lists) });
+    expect(s.create.refShape).toBe(true);
+    s = run(s, { type: "patchCreate", patch: { shape: "wide" } });
+    expect(s.create.refShape).toBe(false);
+
+    // A shape picked before the picture is added stays.
+    s = run(withModels(), { type: "setDial", dial: "shape", value: "portrait" }, { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(false);
+
+    // Removing the picture or Reset goes back to the Shape dial.
+    s = run(withModels(), { type: "createSetRef", ref: tall }, { type: "createSetRef", ref: null });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, { ...opts, ref: null }).fineTune.width).toBeUndefined();
+    s = run(s, { type: "createSetRef", ref: tall }, { type: "clearSession" });
+    expect(s.create.refShape).toBe(false);
+  });
+
   it("sends the Edit tab's add-ons that fit the edit's model, with their trigger words", () => {
     const style = { ...lora("l1", "sdxl"), trainedWords: ["zxc_style"] };
     const other = lora("l2", "flux1_dev");
