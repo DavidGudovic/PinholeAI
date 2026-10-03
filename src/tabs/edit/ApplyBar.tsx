@@ -8,7 +8,7 @@ import type { CoreError } from "../../lib/types";
 import type { EditMode } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 
-const EDIT_JOBS = ["edit", "editUpscale"] as const;
+const EDIT_JOBS = ["edit", "editUpscale", "editMore"] as const;
 
 export function ApplyBar({
   mode,
@@ -20,6 +20,7 @@ export function ApplyBar({
   myJob,
   queues,
   canRun,
+  pictures = 1,
   onRun,
   cancelling,
   onCancel,
@@ -36,6 +37,8 @@ export function ApplyBar({
   myJob: boolean;
   queues: boolean;
   canRun: boolean;
+  /** How many pictures Apply edits (with "Also apply to…"). */
+  pictures?: number;
   onRun: () => void;
   cancelling: boolean;
   onCancel: () => Promise<void>;
@@ -68,14 +71,18 @@ export function ApplyBar({
           {queues
             ? "Add to queue"
             : mode === "instruction"
-              ? "Apply edit"
+              ? pictures > 1
+                ? `Apply edit to ${pictures} pictures`
+                : "Apply edit"
               : fixing
                 ? painted
                   ? "Fix details"
                   : "Add detail"
                 : extending
                   ? "Extend"
-                  : "Restyle"}
+                  : pictures > 1
+                    ? `Restyle ${pictures} pictures`
+                    : "Restyle"}
           <span className="ml-1 inline-flex gap-0.5 opacity-70">
             <Kbd>{modKey}</Kbd>
             <Kbd>Enter</Kbd>

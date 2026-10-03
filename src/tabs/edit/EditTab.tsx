@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DropTarget, DropZone, useFilePicker } from "../../components/ImageDrop";
 import { CheckReadings } from "../../components/CheckReadings";
+import { SessionChoices, useSessionPictures } from "../../components/SessionPictures";
 import { useUpscaler } from "../../components/UpscalerChoice";
 import { StylePicker } from "../../components/StylePicker";
 import { Spinner } from "../../components/ui";
@@ -22,6 +23,7 @@ import {
   isEditJob,
   willQueue,
   type EditMode,
+  type ImgRef,
 } from "../../lib/state/model";
 import {
   buildEditRequest,
@@ -32,10 +34,12 @@ import {
 } from "../../lib/state/request";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "../create/AddonChips";
+import { AlsoApply } from "./AlsoApply";
 import { ApplyBar } from "./ApplyBar";
 import { EditFineTune } from "./EditFineTune";
 import { EditHistory } from "./EditHistory";
 import { EditModePicker } from "./EditModePicker";
+import { EditModelLine } from "./EditModelLine";
 import { PhotoNotice } from "../../components/PhotoNotice";
 import { EditToolbar } from "./EditToolbar";
 import { InstructionFields } from "./InstructionFields";
@@ -100,6 +104,17 @@ export function EditTab() {
   // "Add another image": only models that combine two images (Qwen Image Edit, FLUX.2).
   const second = e.secondImageId ? images[e.secondImageId] : undefined;
   const twoImages = mode === "instruction" && !!second;
+  // "Also apply to…": Describe a change and Restyle only (no brush: each picture is different).
+  const alsoMode = mode === "instruction" || mode === "restyle";
+  const also = useMemo(
+    () => {
+      // Not the picture shown now (the history may have moved to one of them).
+      const shown = e.chain[e.index]?.imageId;
+      return alsoMode ? e.alsoIds.map((id) => images[id]).filter((r): r is ImgRef => !!r && r.id !== shown) : [];
+    },
+    [alsoMode, e.alsoIds, e.chain, e.index, images],
+  );
+  const batching = also.length > 0;
   const edits = useMemo(
     () => editModels(models, twoImages),
     [models, twoImages],
@@ -179,6 +194,35 @@ export function EditTab() {
     }
   };
   const secondPicker = useFilePicker((f) => void loadSecond(f));
+  // This session's pictures: another one to edit (not the one shown), or image 2 (not image 1).
+  const sessionPics = useSessionPictures([node?.imageId]);
+  const pickSession = (id: string) => {
+    setError(null);
+    actions.sendToEdit(id);
+  };
+  const pickSecond = (id: string) => {
+    const ref = store.getState().images[id];
+    if (!ref) return;
+    if (editBusy(store.getState())) {
+      actions.toast("Wait for the edits in progress to finish first.");
+      return;
+    }
+    setError(null);
+    dispatch({ type: "editSetSecond", ref });
+  };
+  // "Also apply to…": this session's pictures, not the one shown (nor image 2 while it is used).
+  const alsoOptions = useSessionPictures([node?.imageId, twoImages ? e.secondImageId : null], 24);
+  const loadAlso = async (files: File[]) => {
+    setError(null);
+    setImporting(true);
+    try {
+      await actions.importAlsoToEdit(files);
+    } catch (err) {
+      setError(api.asCoreError(err));
+    } finally {
+      setImporting(false);
+    }
+  };
 
   // A new current image means a new mask.
   useEffect(() => {
@@ -216,7 +260,7 @@ export function EditTab() {
     try {
       const m = again
         ? (masks.current.get(current.id) ?? null)
-        : maskOn && painted && !twoImages
+        : maskOn && painted && !twoImages && !batching
           ? ((await mask.current?.exportPng()) ?? null)
           : null;
       const outFrom = editOutputSize(
@@ -235,6 +279,7 @@ export function EditTab() {
         // one queued behind another is added after its result instead of replacing it.
         from: again ? from : undefined,
         newSeed: again,
+        alsoSize: batching && !again ? (w, h) => editOutputSize(w, h, size, sizeMultiple(model.familyId)) : undefined,
       });
       running.current = false;
       await done;
@@ -400,6 +445,8 @@ export function EditTab() {
             autoEdit={autoEdit}
             dispatch={dispatch}
           />
+          {/* Opened in Restyle only because no edit model is installed. */}
+          {e.mode == null && !autoEditOne && models && !noGpu && <EditModelLine />}
 
           {mode === "instruction" ? (
             <InstructionFields
@@ -433,6 +480,8 @@ export function EditTab() {
               second={second}
               pickerInput={secondPicker.input}
               onPick={secondPicker.open}
+              sessionPictures={sessionPics}
+              onPickSession={(p) => pickSecond(p.id)}
               myJob={myJob}
               locked={locked}
               importing={importing}
@@ -456,7 +505,17 @@ export function EditTab() {
             )}
           </div>
 
-          {!twoImages && !extending && (
+          {alsoMode && current && (
+            <AlsoApply
+              picked={also}
+              choices={alsoOptions}
+              disabled={importing}
+              onFiles={(files) => void loadAlso(files)}
+              dispatch={dispatch}
+            />
+          )}
+
+          {!twoImages && !extending && !batching && (
             <MaskControls
               fixing={fixing}
               maskOn={maskOn}
@@ -500,6 +559,7 @@ export function EditTab() {
           myJob={myJob}
           queues={queues}
           canRun={canRun}
+          pictures={1 + also.length}
           onRun={() => void run()}
           cancelling={cancelling}
           onCancel={async () => {
@@ -532,6 +592,12 @@ export function EditTab() {
               busy={importing}
             >
               {importing && <Spinner className="mt-3 h-4 w-4" />}
+              <SessionChoices
+                pictures={sessionPics}
+                title="Edit this picture"
+                disabled={importing}
+                onPick={(p) => pickSession(p.id)}
+              />
             </DropZone>
           </div>
         ) : (
@@ -560,6 +626,8 @@ export function EditTab() {
               compareWith={compareWith}
               setCompareWith={setCompareWith}
               onPickImage={picker.open}
+              sessionPictures={sessionPics}
+              onPickSession={(p) => pickSession(p.id)}
               onUpscale={(f) => void upscale(f)}
               runAction={runAction}
               onCopy={() =>

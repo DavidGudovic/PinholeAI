@@ -7,12 +7,14 @@ import { ModelPicker } from "../../components/ModelPicker";
 import { QueueButton } from "../../components/QueueButton";
 import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
+import { SetupCard } from "../../components/SetupCard";
 import { useHardware } from "../models/lib/hooks";
 import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
 import type { CoreError, GroupStatus } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
+import { choiceCount, MAX_CHOICE_PICTURES } from "../../lib/state/choices";
 import { createModels, isActiveDownload, willQueue } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
@@ -51,6 +53,7 @@ function NoModels() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-6 py-10">
+        <SetupCard needsModel className="mx-auto mb-6 max-w-xl" />
         <div className="mb-6 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
             <Sparkles className="h-6 w-6" />
@@ -73,6 +76,28 @@ function NoModels() {
 }
 
 const CREATE_JOBS = ["create", "upscale"] as const;
+
+/** Pictures the prompt's `{a|b}` choices make. Only these subscribe to the prompt, not the whole sidebar. */
+function useChoices() {
+  const prompt = useAppState((s) => s.create.prompt);
+  return useMemo(() => choiceCount(prompt), [prompt]);
+}
+
+export function GenerateLabel({ queues }: { queues: boolean }) {
+  const choices = useChoices();
+  const n = choices ? ` ${choices.count}` : "";
+  return <>{queues ? `Add${n} to queue` : `Generate${n}`}</>;
+}
+
+export function ChoicesNote() {
+  const choices = useChoices();
+  if (!choices || choices.count >= choices.total) return null;
+  return (
+    <p className="text-center text-xs text-neutral-500">
+      Makes the first {choices.count} of {choices.total} combinations. {MAX_CHOICE_PICTURES} is the most for one Generate.
+    </p>
+  );
+}
 
 function CreateWorkspace() {
   const models = useAppState((s) => s.models);
@@ -148,6 +173,7 @@ function CreateWorkspace() {
     <div className="grid h-full grid-cols-[minmax(360px,420px)_minmax(0,1fr)]">
       <aside aria-label="Create settings" className="flex min-h-0 flex-col border-r border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900">
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 pt-4 pb-5">
+          <SetupCard needsModel={false} />
           <div className="flex items-stretch gap-2">
             <div className="min-w-0 flex-1">
               <ModelPicker models={usable} value={modelId} onChange={(id) => dispatch({ type: "selectModel", modelId: id })} />
@@ -180,7 +206,7 @@ function CreateWorkspace() {
           <div className="flex gap-2">
             <Button variant="primary" size="lg" className="min-w-0 flex-1" disabled={!model} onClick={() => void generate()}>
               {queues ? <ListPlus className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-              {queues ? "Add to queue" : "Generate"}
+              <GenerateLabel queues={queues} />
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
@@ -188,6 +214,7 @@ function CreateWorkspace() {
             </Button>
             <QueueButton />
           </div>
+          <ChoicesNote />
           {jobKind === "edit" && <p className="text-center text-xs text-neutral-500">Busy with an edit. Generate waits for it to finish.</p>}
           {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void generate()} />}
         </div>

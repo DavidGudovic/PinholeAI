@@ -46,6 +46,8 @@ vi.mock("./platform", async (orig) => {
 const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
+const { CLOSE_STRENGTH } = await import("./request");
+const { ALSO_MAX, editBusy, sheetIds } = await import("./model");
 
 const model: InstalledModel = {
   id: "m",
@@ -852,5 +854,319 @@ describe("done alert", () => {
     pending!({ images: [img("c")] } as GenerateResult);
     await two;
     expect(notifyDone).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Close to this one and Finish at Best quality", () => {
+  it("Close to this one restyles the picture with the batch's settings, How many times, and keeps its source", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "fast", fineTune: { seed: 9 } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), width: 96, height: 64 }] } as GenerateResult);
+    await first;
+    store.dispatch({ type: "patchCreate", patch: { count: 2 } });
+    const close = actions.closeTo("a");
+    await tick();
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ mode: "img2img", prompt: "a lighthouse", modelId: "m", initImageId: "a", strength: CLOSE_STRENGTH, refImageIds: [] });
+    expect(req.dials).toMatchObject({ quality: "fast", count: 2 });
+    expect(req.fineTune.seed).toBeUndefined();
+    expect([req.fineTune.width, req.fineTune.height]).toEqual([96, 64]);
+    expect(store.getState().queue).toEqual([]);
+    pending!({ images: [img("c1"), img("c2")] } as GenerateResult);
+    await close;
+    // The new batch holds its source, so Variations of it still work after it is removed.
+    actions.removeResult("a");
+    expect(store.getState().images.a).toBeDefined();
+    const again = actions.variations("c1");
+    await tick();
+    expect(vi.mocked(apiMod.generate).mock.calls[2][0]).toMatchObject({ mode: "img2img", initImageId: "a" });
+    pending!({ images: [img("c3")] } as GenerateResult);
+    await again;
+    // A queued upscale of a Close picture holds the source too.
+    const job = actions.variations("c1");
+    await tick();
+    const up = actions.upscale("c1", 2);
+    expect(store.getState().queue[0].imageIds).toEqual(["c1", "a"]);
+    pending!({ images: [img("c4")] } as GenerateResult);
+    await job;
+    await tick();
+    pendingUpscale!(img("u"));
+    await up;
+  });
+
+  it("Finish at Best quality re-makes one picture at Best with its own seed", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "balanced", count: 2, fineTune: { steps: 8 } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), seed: 40 }, { ...img("b"), seed: 41 }] } as GenerateResult);
+    await first;
+    const finish = actions.finishAtBest("b");
+    await tick();
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ mode: "txt2img", prompt: "a lighthouse", modelId: "m" });
+    expect(req.dials).toMatchObject({ quality: "best", count: 1 });
+    expect(req.fineTune.seed).toBe(41);
+    expect(req.fineTune.steps).toBeUndefined();
+    pending!({ images: [img("f")] } as GenerateResult);
+    await finish;
+  });
+
+  it("Finish at Best quality does nothing for a picture already made at Best", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "best" } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    await actions.finishAtBest("a");
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("choices in braces", () => {
+  const calls = () => vi.mocked(apiMod.generate).mock.calls.map((c) => c[0]);
+
+  it("makes one picture per choice as one job, with one seed, keeping the typed prompt in history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "a {red|blue|green} car", count: 4 } });
+    const run = actions.generateCreate();
+    await tick();
+    expect(store.getState().job?.count).toBe(3);
+    for (const [i, id] of ["a", "b", "c"].entries()) {
+      await tick();
+      pending!({ images: [img(id)] } as GenerateResult);
+      await tick();
+      await tick();
+      expect(store.getState().job?.count ?? 0).toBe(2 - i);
+    }
+    await run;
+    expect(calls().map((r) => r.prompt)).toEqual(["a red car", "a blue car", "a green car"]);
+    expect(calls().every((r) => r.dials.count === 1)).toBe(true);
+    const seeds = new Set(calls().map((r) => r.fineTune.seed));
+    expect(seeds.size).toBe(1);
+    expect(typeof [...seeds][0]).toBe("number");
+    expect(store.getState().results.map((r) => r.id)).toEqual(["c", "b", "a"]);
+    // Each picture's Variations use its own prompt.
+    const s = store.getState();
+    expect(s.batches[s.resultBatch["b"]].request.prompt).toBe("a blue car");
+    expect(s.promptHistory).toEqual(["a {red|blue|green} car"]);
+    expect(s.job).toBeNull();
+  });
+
+  it("keeps making the other choices when one fails, then shows the error", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}" } });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await tick();
+    await tick();
+    pendingFail!({ code: "invalid", message: "No.", details: null });
+    await tick();
+    await tick();
+    pending!({ images: [img("c")] } as GenerateResult);
+    await expect(run).rejects.toMatchObject({ code: "invalid" });
+    expect(calls().map((r) => r.prompt)).toEqual(["a", "b", "c"]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["c", "a"]);
+  });
+
+  it("refuses choices that leave nothing to make", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{|}" } });
+    await expect(actions.generateCreate()).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
+  });
+
+  it("uses the locked seed, and Cancel keeps the pictures already made", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c}", fineTune: { seed: 7 } } });
+    const run = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await tick();
+    await tick();
+    await actions.cancel();
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await run;
+    expect(calls().map((r) => r.fineTune.seed)).toEqual([7, 7]);
+    expect(store.getState().results.map((r) => r.id)).toEqual(["a"]);
+    expect(store.getState().job).toBeNull();
+  });
+});
+
+describe("on another model", () => {
+  const other: InstalledModel = { ...model, id: "o", friendlyName: "Other" };
+
+  it("runs a Close to this one picture's prompt on its own there", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models: [model, other] });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    const close = actions.closeTo("a");
+    await tick();
+    pending!({ images: [{ ...img("c"), seed: 5 }] } as GenerateResult);
+    await close;
+    store.dispatch({ type: "setModels", models: [model, other] });
+    const run = actions.onOtherModel("c", "o");
+    await tick();
+    pending!({ images: [img("d")] } as GenerateResult);
+    await run;
+    const req = vi.mocked(apiMod.generate).mock.calls[2][0];
+    expect(req).toMatchObject({ modelId: "o", mode: "txt2img", initImageId: null, strength: null });
+    expect(req.fineTune.seed).toBe(5);
+  });
+
+  it("runs the same prompt, seed and shape on the other model, without the first model's own settings", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models: [model, other] });
+    store.dispatch({ type: "patchCreate", patch: { shape: "portrait", count: 2, fineTune: { sampler: "euler", steps: 30, width: 512, height: 1024, negativePrompt: "blur" } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), seed: 42 }, img("b")] } as GenerateResult);
+    await first;
+    await tick();
+    // The refresh after a job reads the (empty) fake model list.
+    store.dispatch({ type: "setModels", models: [model, other] });
+
+    const run = actions.onOtherModel("a", "o");
+    await tick();
+    expect(store.getState().job?.count).toBe(1);
+    pending!({ images: [img("c")] } as GenerateResult);
+    await run;
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ modelId: "o", prompt: "a lighthouse", dials: { shape: "portrait", count: 1 } });
+    const { width, height, ...rest } = req.fineTune;
+    expect(rest).toEqual({ seed: 42, negativePrompt: "blur" });
+    // The set size keeps its shape, at the new model's usual size.
+    expect(width! / height!).toBeCloseTo(0.5, 1);
+    expect(width! * height!).toBeGreaterThan(512 * 1024 * 0.9);
+    const s = store.getState();
+    expect(s.selectedResultId).toBe("c");
+    expect(s.batches[s.resultBatch["c"]].compareWith).toBe("a");
+  });
+
+  it("refuses a model that can't use the picture's reference picture", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: { id: "b", request: { modelId: "m", prompt: "p", refImageIds: ["r"] } as never }, images: [img("a")], refs: [ref("a")] });
+    store.dispatch({ type: "setModels", models: [model, other] });
+    await expect(actions.onOtherModel("a", "o")).rejects.toMatchObject({ code: "invalid" });
+    expect(apiMod.generate).not.toHaveBeenCalled();
+  });
+
+  it("says when the picture's settings are gone", async () => {
+    const { actions } = setup();
+    await expect(actions.onOtherModel("x", "o")).rejects.toMatchObject({ code: "not_found" });
+  });
+});
+
+describe("Also apply to…", () => {
+  it("queues the same edit on each picture after the shown one; the run's results go to Create together", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetAlso", refs: [ref("b"), ref("c")] });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const sizes: [number, number][] = [];
+    const run = actions.runEdit({
+      mode: "restyle",
+      model,
+      mask: null,
+      size: [64, 64],
+      alsoSize: (w, h) => (sizes.push([w, h]), [w, h]),
+    });
+    // The list is handed to the queue: the pictures stay held by it.
+    expect(store.getState().edit.alsoIds).toEqual([]);
+    expect(store.getState().queue.map((q) => q.imageIds)).toEqual([["b"], ["c"]]);
+    expect(store.getState().images.b).toBeDefined();
+    await tick();
+    pending!({ images: [img("ra")] } as GenerateResult);
+    await run;
+    for (const out of ["rb", "rc"]) {
+      await tick();
+      await tick();
+      pending!({ images: [img(out)] } as GenerateResult);
+    }
+    await tick();
+    await tick();
+    const calls = vi.mocked(apiMod.generate).mock.calls.map((c) => c[0]);
+    expect(calls.map((r) => r.initImageId)).toEqual(["a", "b", "c"]);
+    expect(calls.map((r) => r.maskImageId ?? null)).toEqual([null, null, null]);
+    expect(sizes).toEqual([[64, 64], [64, 64]]);
+    const s = store.getState();
+    expect(s.edit.chain.map((n) => n.imageId)).toEqual(["a", "ra"]);
+    expect(s.results.map((r) => r.id)).toEqual(["rc", "rb", "ra"]);
+    expect(new Set(["ra", "rb", "rc"].map((id) => s.resultGroup[id])).size).toBe(1);
+    expect(sheetIds(s, "rb")).toEqual(["ra", "rb", "rc"]);
+  });
+
+  it("Cancel stops the whole run; the other pictures don't lock the history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetAlso", refs: [ref("b"), ref("c")] });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const run = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64], alsoSize: (w, h) => [w, h] });
+    expect(store.getState().queue.map((q) => q.kind)).toEqual(["editMore", "editMore"]);
+    await tick();
+    pending!({ images: [img("ra")] } as GenerateResult);
+    await run;
+    await tick();
+    // Picture b runs now; the history is free again.
+    expect(store.getState().job?.kind).toBe("editMore");
+    expect(editBusy(store.getState())).toBe(false);
+    await actions.cancel();
+    expect(store.getState().queue).toEqual([]);
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await tick();
+    await tick();
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(2);
+    expect(store.getState().job).toBeNull();
+  });
+
+  it("Try again redoes only the shown picture", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const first = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64] });
+    await tick();
+    pending!({ images: [img("r")] } as GenerateResult);
+    await first;
+    store.dispatch({ type: "editSetAlso", refs: [ref("b")] });
+    const again = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64], from: 0, newSeed: true, alsoSize: (w, h) => [w, h] });
+    expect(store.getState().queue).toEqual([]);
+    await tick();
+    pending!({ images: [img("r2")] } as GenerateResult);
+    await again;
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(2);
+    expect(store.getState().edit.alsoIds).toEqual(["b"]);
+  });
+
+  it("adds picture files up to the limit", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    let n = 0;
+    vi.mocked(apiMod.importImage).mockImplementation(async () => ({ id: `f${n++}`, width: 8, height: 8 }) as never);
+    const files = Array.from({ length: ALSO_MAX + 2 }, () => new Blob([new Uint8Array(4)]));
+    await actions.importAlsoToEdit(files);
+    expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
+    await actions.importAlsoToEdit([new Blob([new Uint8Array(4)])]);
+    expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
+  });
+});
+
+describe("Save as one sheet", () => {
+  it("asks where and saves the pictures as one", async () => {
+    const { store, actions } = setup();
+    const saveSheetAs = vi.spyOn(apiMod, "saveSheetAs").mockResolvedValue({ path: "/x/sheet.png" });
+    const platform = await import("./platform");
+    vi.spyOn(platform, "canSaveAs").mockReturnValue(true);
+    vi.spyOn(platform, "chooseSavePath").mockResolvedValue("/x/sheet.png");
+    await actions.saveSheet(["a", "b"]);
+    expect(saveSheetAs).toHaveBeenCalledWith(["a", "b"], "/x/sheet.png");
+    // The pictures themselves still count as unsaved.
+    expect(store.getState().saved).toEqual({});
   });
 });

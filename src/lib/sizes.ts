@@ -33,11 +33,32 @@ export function namedSizes(screen: { width: number; height: number } | null): Na
 
 const snap = (n: number) => Math.min(MAX_SIDE, Math.max(MIN_SIDE, Math.round(n / 64) * 64));
 
-/** Width and height for `ratio` with about the same area as the model's Square shape. */
+/** Longest side over shortest side that a picture can be made at (MAX_ASPECT in the Rust size rules). */
+export const MAX_ASPECT = 3;
+
+/** Width and height for `ratio` (kept within 1:3 … 3:1) with about the same area as the model's Square shape. */
 export function sizeForRatio(ratio: number, ui: Pick<FamilyUi, "shapes"> | null): [number, number] {
+  ratio = Math.min(MAX_ASPECT, Math.max(1 / MAX_ASPECT, ratio));
   const [sw, sh] = ui?.shapes.square ?? [1024, 1024];
   const area = sw * sh;
-  return [snap(Math.sqrt(area * ratio)), snap(Math.sqrt(area / ratio))];
+  const w = snap(Math.sqrt(area * ratio));
+  const h = snap(Math.sqrt(area / ratio));
+  // Rounding can push the shape past MAX_ASPECT; trim the long side back to it.
+  const cap = (long: number, short: number) => Math.min(long, Math.floor((short * MAX_ASPECT) / 64) * 64);
+  return w >= h ? [cap(w, h), h] : [w, cap(h, w)];
+}
+
+/**
+ * Create's size for "Same as reference": the reference picture's shape at the model's usual area,
+ * or null when that shape isn't in use. Width and Height typed in Fine-tune still win.
+ */
+export function referenceSize(
+  c: { refShape: boolean; refImageId: string | null },
+  ref: { width: number; height: number } | null | undefined,
+  ui: Pick<FamilyUi, "shapes"> | null,
+): [number, number] | null {
+  if (!c.refShape || !c.refImageId || !ref || !(ref.width > 0 && ref.height > 0)) return null;
+  return sizeForRatio(ref.width / ref.height, ui);
 }
 
 /** The monitor's size in real pixels, or null when the WebView doesn't say. */

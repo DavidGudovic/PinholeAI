@@ -7,11 +7,12 @@ import { takesReference } from "../../lib/state/model";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { cx, focusRing } from "../../components/ui";
 
-export type TipId = "keep" | "variations" | "styles" | "paste" | "reference" | "shortcuts";
+export type TipId = "keep" | "variations" | "choices" | "styles" | "paste" | "reference" | "shortcuts";
 
 export const TIPS: Record<TipId, string> = {
   keep: "Like this one? Turn on “Keep this look” under the dials to reuse its starting point while you change the prompt.",
   variations: "Variations makes more pictures from the same prompt, each with a new random start.",
+  choices: "Write {red|blue|green} in the prompt to get one picture for each choice.",
   styles: "Wording you use a lot? Save it as a Style next to the prompt box and pick it any time.",
   paste: "Found a picture you like on CivitAI? “Paste from CivitAI” fills in its prompt and settings.",
   reference: "This model can follow a reference picture. Drop one under the prompt, then say how to use it.",
@@ -22,7 +23,7 @@ export const TIPS: Record<TipId, string> = {
 export function eligibleTips(o: { hasBatch: boolean; canReference: boolean }): TipId[] {
   const out: TipId[] = ["keep"];
   if (o.hasBatch) out.push("variations");
-  out.push("styles", "paste");
+  out.push("choices", "styles", "paste");
   if (o.canReference) out.push("reference");
   out.push("shortcuts");
   return out;

@@ -42,6 +42,8 @@ export type PresetSettings = Partial<Pick<CreateParams, PresetKey>>;
 export interface PresetBase {
   before: PresetSettings;
   applied: PresetSettings;
+  /** "Same as reference" was on before the preset's shape replaced it. */
+  refShape?: boolean;
 }
 
 export interface CreateParams {
@@ -62,12 +64,16 @@ export interface CreateParams {
   loras: LoraUse[];
   /** Optional reference picture ("in the style of this picture"); session RAM. Never in presets. */
   refImageId: string | null;
+  /** Shape follows the reference picture ("Same as reference"); only while a reference picture is set. Never in presets. */
+  refShape: boolean;
 }
 
 /** The request behind a batch of results — used by "Variations". prompt-bearing, memory only. */
 export interface Batch {
   id: string;
   request: GenerateRequest;
+  /** "On another model": the result these pictures were made to compare with. */
+  compareWith?: string;
 }
 
 /** "fix" = Fix details: redraw a painted spot at the model's size and blend it back. "extend" = Extend: grow the canvas and draw the new space. */
@@ -115,6 +121,8 @@ export interface EditParams {
   loras: LoraUse[];
   /** Optional second image for "Describe a change" (image 2); session RAM like the chain. */
   secondImageId: string | null;
+  /** "Also apply to…": more pictures that get the same edit, each as its own queued job. Session RAM. */
+  alsoIds: string[];
   /** null = the Create tab's model. */
   restyleModelId: string | null;
   quality: Quality;
@@ -128,11 +136,16 @@ export interface DescribeParams {
   text: string;
 }
 
-/** "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results). */
-export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "describe";
+/**
+ * "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results).
+ * "editMore" = one "Also apply to…" picture (its result goes to Create's results; the history is left alone).
+ */
+export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "editMore" | "describe";
 
 /** A job that belongs to the Edit tab (it locks the edit history while it runs). */
-export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
+export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale" || kind === "editMore";
+/** A job whose result joins the edit history (it locks the history while it runs or waits). */
+const historyJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
 
 export interface Job {
   kind: JobKind;
@@ -157,6 +170,8 @@ export interface QueuedJob {
   detail: string;
   /** Session images it reads (kept until it has run). */
   imageIds: string[];
+  /** The "Also apply to…" run it belongs to. */
+  group?: string;
 }
 
 export interface Toast {
@@ -185,6 +200,8 @@ export interface AppState {
   batches: Record<string, Batch>;
   /** result image id → batch id */
   resultBatch: Record<string, string>;
+  /** result image id → the run it came in with when that is more than its batch (one "Also apply to…" edit, or choices in braces). */
+  resultGroup: Record<string, string>;
   /** image id → where it was saved this session (paths only). Drives the "unsaved pictures" warning. */
   saved: Record<string, string>;
   /** Prompts sent this session, oldest first. Memory only; Up/Down in the prompt box. */
@@ -217,6 +234,7 @@ export const initialCreate = (): CreateParams => ({
   fineTune: {},
   loras: [],
   refImageId: null,
+  refShape: false,
 });
 
 export const initialEdit = (): EditParams => ({
@@ -235,6 +253,7 @@ export const initialEdit = (): EditParams => ({
   editModelId: null,
   loras: [],
   secondImageId: null,
+  alsoIds: [],
   restyleModelId: null,
   quality: "balanced",
   seed: null,
@@ -259,6 +278,7 @@ export function initialState(): AppState {
     selectedResultId: null,
     batches: {},
     resultBatch: {},
+    resultGroup: {},
     saved: {},
     promptHistory: [],
     leave: null,
@@ -290,12 +310,15 @@ export type Action =
   | { type: "patchCreate"; patch: Partial<CreateParams> }
   | { type: "setFineTune"; patch: Partial<FineTune> }
   | { type: "setDial"; dial: "shape"; value: Shape }
+  /** "Same as reference": the shape follows Create's reference picture; clears a Fine-tune width/height. */
+  | { type: "createRefShape" }
   | { type: "setDial"; dial: "quality"; value: Quality }
   | { type: "setDial"; dial: "stick"; value: number | null }
   | { type: "setDial"; dial: "count"; value: 1 | 2 | 4 }
   | { type: "selectModel"; modelId: string | null }
   | { type: "keepLook"; on: boolean }
-  | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[] }
+  /** `group`: results that came in one run across batches (one "Also apply to…" edit, or choices in braces). */
+  | { type: "addResults"; batch: Batch | null; images: ResultImage[]; refs: ImgRef[]; group?: string }
   | { type: "selectResult"; id: string | null }
   | { type: "removeResult"; id: string }
   | { type: "markSaved"; entries: { id: string; path: string }[] }
@@ -303,6 +326,8 @@ export type Action =
   | { type: "askLeave"; what: LeaveKind | null }
   | { type: "jobStart"; kind: JobKind; at: number; count?: number; imageIds?: string[] }
   | { type: "jobProgress"; progress: GenerationProgress }
+  /** Pictures the running job still has to make (a Generate with choices makes them one by one). */
+  | { type: "jobCount"; count: number }
   | { type: "jobEnd" }
   | { type: "queueAdd"; job: QueuedJob }
   | { type: "queueRemove"; id: string }
@@ -314,6 +339,8 @@ export type Action =
   | { type: "editDelete"; index: number }
   | { type: "editClear" }
   | { type: "editSetSecond"; ref: ImgRef | null }
+  /** The "Also apply to…" pictures, in order (replaces the list). */
+  | { type: "editSetAlso"; refs: ImgRef[] }
   | { type: "createSetRef"; ref: ImgRef | null }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
@@ -404,14 +431,68 @@ export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "ima
   return [...ids].filter((id) => s.images[id] && !s.saved[id]);
 }
 
+/**
+ * Pictures made this session that are still in memory (Create results and Edit results), newest
+ * first, for the "From this session" choices. Create results keep the strip's order; each Edit
+ * result goes before the results that arrived before it (`images` keeps the order pictures arrived in).
+ */
+export function sessionPictures(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
+  const skip = new Set(exclude.filter(Boolean));
+  const rank = new Map(Object.keys(s.images).map((id, i) => [id, i]));
+  const results = s.results.map((r) => r.id).filter((id) => rank.has(id));
+  const inResults = new Set(results);
+  const edits = s.edit.chain
+    .filter((n) => n.meta && rank.has(n.imageId) && !inResults.has(n.imageId))
+    .map((n) => n.imageId)
+    .sort((a, b) => rank.get(b)! - rank.get(a)!);
+  const out: string[] = [];
+  let e = 0;
+  for (const id of results) {
+    while (e < edits.length && rank.get(edits[e])! > rank.get(id)!) out.push(edits[e++]);
+    out.push(id);
+  }
+  out.push(...edits.slice(e));
+  return [...new Set(out)].filter((id) => !skip.has(id)).map((id) => s.images[id]);
+}
+
+/** Most pictures one "Also apply to…" takes. */
+export const ALSO_MAX = 16;
+/** "Save as one sheet" takes 2 to this many pictures. */
+export const SHEET_MAX = 8;
+
+/**
+ * The pictures "Save as one sheet" puts together for result `id`: the results that came in the
+ * same run (its batch, one "Also apply to…" edit, or one Generate with choices in braces), oldest first, at most SHEET_MAX. Upscales
+ * join the run they were made from but only go with other upscales. Empty when there are fewer than 2.
+ */
+export function sheetIds(s: Pick<AppState, "results" | "resultBatch" | "resultGroup" | "images">, id: string): string[] {
+  const group = s.resultGroup[id] ?? s.resultBatch[id];
+  const me = s.results.find((r) => r.id === id);
+  if (!group || !me) return [];
+  const upscaled = me.kind === "upscaled";
+  // In the order they arrived (`images` keeps it): a batch in its own order, then later runs.
+  const rank = new Map(Object.keys(s.images).map((k, i) => [k, i]));
+  const ids = s.results
+    .filter((r) => (s.resultGroup[r.id] ?? s.resultBatch[r.id]) === group && (r.kind === "upscaled") === upscaled && rank.has(r.id))
+    .map((r) => r.id)
+    .sort((a, b) => rank.get(a)! - rank.get(b)!);
+  // The newest SHEET_MAX, keeping the one picked.
+  let out = ids.slice(-SHEET_MAX);
+  if (!out.includes(id)) out = [...ids.slice(-(SHEET_MAX - 1)), id].sort((a, b) => ids.indexOf(a) - ids.indexOf(b));
+  return out.length >= 2 ? out : [];
+}
+
 /** Every session image id the UI still shows. */
 export function referencedImageIds(
   s: Pick<AppState, "results" | "edit" | "describe"> & Partial<Pick<AppState, "queue" | "job" | "create" | "batches">>,
 ): Set<string> {
   const ids = new Set<string>();
   if (s.create?.refImageId) ids.add(s.create.refImageId);
-  // "Variations" re-sends a batch's reference picture.
-  for (const b of Object.values(s.batches ?? {})) for (const id of b.request.refImageIds ?? []) ids.add(id);
+  // "Variations" re-sends a batch's reference picture (and "Close to this one" its source).
+  for (const b of Object.values(s.batches ?? {})) {
+    for (const id of b.request.refImageIds ?? []) ids.add(id);
+    if (b.request.initImageId) ids.add(b.request.initImageId);
+  }
   for (const id of s.job?.imageIds ?? []) ids.add(id);
   for (const q of s.queue ?? []) for (const id of q.imageIds) ids.add(id);
   for (const r of s.results) ids.add(r.id);
@@ -420,6 +501,7 @@ export function referencedImageIds(
     if (n.secondImageId) ids.add(n.secondImageId);
   }
   if (s.edit.secondImageId) ids.add(s.edit.secondImageId);
+  for (const id of s.edit.alsoIds ?? []) ids.add(id);
   if (s.describe.imageId) ids.add(s.describe.imageId);
   return ids;
 }
@@ -465,7 +547,7 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 /** An edit is running or waiting: the edit history stays put until they are done. */
-export const editBusy = (s: Pick<AppState, "job" | "queue">) => isEditJob(s.job?.kind) || s.queue.some((q) => isEditJob(q.kind));
+export const editBusy = (s: Pick<AppState, "job" | "queue">) => historyJob(s.job?.kind) || s.queue.some((q) => historyJob(q.kind));
 
 /** A new Generate/Edit/Upscale press waits in the queue. */
 export const willQueue = (s: Pick<AppState, "job" | "queue">) => !!s.job || s.queue.length > 0;
@@ -533,7 +615,16 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, downloads: s.downloads.filter(isActiveDownload) };
 
     case "patchCreate":
-      return { ...s, create: { ...s.create, ...a.patch, ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}) } };
+      return {
+        ...s,
+        create: {
+          ...s.create,
+          // A preset or pasted settings that pick a shape take over from "Same as reference".
+          ...("shape" in a.patch ? { refShape: false } : {}),
+          ...a.patch,
+          ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}),
+        },
+      };
     case "setFineTune": {
       const ft = compactFineTune({ ...s.create.fineTune, ...a.patch });
       return { ...s, create: { ...s.create, fineTune: ft } };
@@ -544,6 +635,7 @@ function inner(s: AppState, a: Action): AppState {
       // Moving a simple dial hands control back to it: clear the matching Fine-tune override.
       if (a.dial === "shape") {
         c.shape = a.value;
+        c.refShape = false;
         delete ft.width;
         delete ft.height;
       } else if (a.dial === "quality") {
@@ -587,6 +679,8 @@ function inner(s: AppState, a: Action): AppState {
       const batches = a.batch ? { ...s.batches, [a.batch.id]: a.batch } : s.batches;
       const resultBatch = { ...s.resultBatch };
       if (a.batch) for (const im of a.images) resultBatch[im.id] = a.batch.id;
+      const resultGroup = a.group ? { ...s.resultGroup } : s.resultGroup;
+      if (a.group) for (const im of a.images) resultGroup[im.id] = a.group;
       return {
         ...s,
         images: withRefs(s.images, a.refs),
@@ -594,6 +688,7 @@ function inner(s: AppState, a: Action): AppState {
         selectedResultId: a.images[0]?.id ?? s.selectedResultId,
         batches,
         resultBatch,
+        resultGroup,
       };
     }
     case "selectResult": {
@@ -633,6 +728,8 @@ function inner(s: AppState, a: Action): AppState {
       };
     case "jobProgress":
       return s.job ? { ...s, job: { ...s.job, progress: a.progress } } : s;
+    case "jobCount":
+      return s.job ? { ...s, job: { ...s.job, count: a.count } } : s;
     case "jobEnd":
       return s.job ? { ...s, job: null } : s;
     case "queueAdd":
@@ -644,7 +741,13 @@ function inner(s: AppState, a: Action): AppState {
       return {
         ...s,
         images: withRefs(s.images, [a.ref]),
-        edit: { ...s.edit, chain: [{ imageId: a.ref.id, label: "Original", meta: null }], index: 0 },
+        edit: {
+          ...s.edit,
+          chain: [{ imageId: a.ref.id, label: "Original", meta: null }],
+          index: 0,
+          // The picture being edited isn't also one of the others.
+          alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref.id),
+        },
       };
     case "editPush": {
       if (!s.edit.chain.length) return inner(s, { type: "editLoad", ref: a.ref });
@@ -676,12 +779,26 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, edit: { ...s.edit, chain: [], index: 0 } };
     case "editSetSecond":
       return a.ref
-        ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id } }
+        ? { ...s, images: withRefs(s.images, [a.ref]), edit: { ...s.edit, secondImageId: a.ref.id, alsoIds: s.edit.alsoIds.filter((id) => id !== a.ref!.id) } }
         : { ...s, edit: { ...s.edit, secondImageId: null } };
-    case "createSetRef":
-      return a.ref
-        ? { ...s, images: withRefs(s.images, [a.ref]), create: { ...s.create, refImageId: a.ref.id } }
-        : { ...s, create: { ...s.create, refImageId: null } };
+    case "editSetAlso": {
+      const shown = s.edit.chain[s.edit.index]?.imageId;
+      const refs = a.refs.filter((r, i) => r.id !== shown && a.refs.findIndex((o) => o.id === r.id) === i).slice(0, ALSO_MAX);
+      return { ...s, images: withRefs(s.images, refs), edit: { ...s.edit, alsoIds: refs.map((r) => r.id) } };
+    }
+    case "createRefShape": {
+      const ft = { ...s.create.fineTune };
+      delete ft.width;
+      delete ft.height;
+      return { ...s, create: { ...s.create, refShape: true, fineTune: ft } };
+    }
+    case "createSetRef": {
+      if (!a.ref) return { ...s, create: { ...s.create, refImageId: null, refShape: false } };
+      const c = s.create;
+      // A new reference picture sets the shape to "Same as reference" unless a shape or size was picked.
+      const auto = !c.refImageId && c.shape === "square" && c.fineTune.width == null && c.fineTune.height == null;
+      return { ...s, images: withRefs(s.images, [a.ref]), create: { ...c, refImageId: a.ref.id, refShape: c.refShape || auto } };
+    }
     case "patchEdit":
       return { ...s, edit: { ...s.edit, ...a.patch } };
     case "describeLoad":
@@ -702,11 +819,12 @@ function inner(s: AppState, a: Action): AppState {
         images: {},
         // The preset goes with its Fine-tune values (cleared here); its saved "before"
         // settings can also hold an earlier negative prompt.
-        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
+        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null, refShape: false },
         results: [],
         selectedResultId: null,
         batches: {},
         resultBatch: {},
+        resultGroup: {},
         saved: {},
         promptHistory: [],
         leave: null,

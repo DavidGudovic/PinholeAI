@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
 import { styleById } from "./library";
-import { mockFlags, mockSettings } from "./app";
+import { mockFlags, mockSettings, saveFolderInfo } from "./app";
 import { touchLastUsed } from "./models";
 import { FAMILY_UI } from "../state/familyFixtures";
 import type {
@@ -241,7 +241,8 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     const stickVal = ui.stickRange[0] + Math.min(1, Math.max(0, req.dials.stick)) * (ui.stickRange[1] - ui.stickRange[0]);
     const cfg = Math.max(1, req.fineTune.cfg ?? (ui.stickMapsTo === "cfg" && ui.showStick ? stickVal : ui.defaultCfg));
     const guidance = req.fineTune.guidance ?? (ui.stickMapsTo === "guidance" ? stickVal : ui.defaultGuidance);
-    const count = req.mode === "txt2img" ? req.dials.count : 1;
+    // Like Rust: Edit, Fix details and Extend make one picture; Create and plain img2img make How many.
+    const count = req.mode === "txt2img" || (req.mode === "img2img" && !req.fixDetails && !req.extend) ? req.dials.count : 1;
     const baseSeed = req.fineTune.seed ?? Math.floor(Math.random() * 2 ** 31);
 
     const src = req.mode === "edit" ? session.get(req.refImageIds?.[0] ?? "") : req.mode === "img2img" ? session.get(req.initImageId ?? "") : undefined;
@@ -433,7 +434,7 @@ const table: MockTable = {
   save_image: async (a) => {
     const im = mustGet(a.id);
     await sleep(150);
-    return { path: `~/.local/share/pinhole/Data/outputs/pinhole_${stamp()}_${im.seed}.png` };
+    return { path: `${saveFolderInfo().path}\\pinhole_${stamp()}_${im.seed}.png` };
   },
   save_image_as: async (a) => {
     mustGet(a.id);
@@ -444,6 +445,13 @@ const table: MockTable = {
     const ids = a.ids as string[];
     await sleep(150);
     return { saved: ids.map((id) => ({ id, path: `${String(a.dir)}/pinhole_${stamp()}_${mustGet(id).seed}.png` })), failed: 0 };
+  },
+  save_sheet_as: async (a) => {
+    const ids = a.ids as string[];
+    if (ids.length < 2) throw { code: "invalid", message: "Pick at least two pictures for a sheet.", details: null };
+    ids.forEach(mustGet);
+    await sleep(150);
+    return { path: String(a.path) };
   },
   copy_image: async (a) => {
     const im = mustGet(a.id);

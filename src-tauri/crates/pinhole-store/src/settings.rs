@@ -40,6 +40,10 @@ pub struct Settings {
     /// `Data/models/`. Only changed by moving the models (`set_models_folder`
     /// in pinhole-core), never by a plain settings save.
     pub models_folder: Option<String>,
+    /// Folder Save writes to (Settings → Saved pictures), absolute; `None` = the default
+    /// (`Pictures/Pinhole`, or `Data/outputs/` for a portable copy). Only changed by
+    /// `set_save_folder` in pinhole-core, never by a plain settings save.
+    pub save_folder: Option<String>,
     /// Helper model for Describe: `auto` or a `captioner.helpers` id.
     pub describe_model: String,
     /// Helper model for "Improve my prompt": `auto` or a `captioner.helpers` id.
@@ -75,6 +79,7 @@ impl Default for Settings {
             engine_backend: "auto".into(),
             text_encoder_on_cpu: "auto".into(),
             models_folder: None,
+            save_folder: None,
             describe_model: "auto".into(),
             improve_model: "auto".into(),
             upscaler: "auto".into(),
@@ -145,10 +150,12 @@ impl Settings {
             .retain(|id| !id.trim().is_empty() && id.len() <= 64);
         self.accepted_licenses.sort();
         self.accepted_licenses.dedup();
-        self.models_folder = self
-            .models_folder
-            .filter(|p| std::path::Path::new(p.trim()).is_absolute())
-            .map(|p| p.trim().to_string());
+        for folder in [&mut self.models_folder, &mut self.save_folder] {
+            *folder = folder
+                .take()
+                .filter(|p| std::path::Path::new(p.trim()).is_absolute())
+                .map(|p| p.trim().to_string());
+        }
         self
     }
 
@@ -284,6 +291,14 @@ mod tests {
                 }
                 .into(),
             ),
+            save_folder: Some(
+                if cfg!(windows) {
+                    r"C:\Users\Maya\Pictures\Wallpapers"
+                } else {
+                    "/home/maya/Pictures/Wallpapers"
+                }
+                .into(),
+            ),
         };
         save(&d, &s).unwrap();
         assert_eq!(load(&d).unwrap(), s);
@@ -375,6 +390,22 @@ mod tests {
         assert_eq!(s.text_encoder_on_cpu, "auto");
         assert_eq!(s.upscaler, "auto");
         assert_eq!(s.vram_override_gb, None);
+        // A Saved pictures folder must be a full path.
+        for bad in ["Pictures", "  ", "./out"] {
+            let s = Settings {
+                save_folder: Some(bad.into()),
+                ..Settings::default()
+            }
+            .normalized();
+            assert_eq!(s.save_folder, None, "{bad:?}");
+        }
+        let full = std::env::temp_dir().join("Pinhole pictures");
+        let s = Settings {
+            save_folder: Some(format!(" {} ", full.display())),
+            ..Settings::default()
+        }
+        .normalized();
+        assert_eq!(s.save_folder, Some(full.display().to_string()));
         for old in ["include_18plus", "only_18plus"] {
             let s = Settings {
                 content_mode: old.into(),

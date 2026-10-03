@@ -161,6 +161,19 @@ pub async fn save_images_to(
         .map_err(join_err)?
 }
 
+/// "Save as one sheet": 2–8 session pictures as one grid picture, at a path from the save dialog.
+#[tauri::command]
+pub async fn save_sheet_as(
+    core: Core<'_>,
+    ids: Vec<String>,
+    path: String,
+) -> Result<SavedImage, CoreError> {
+    let core = core.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || session::save_sheet_as(&core, &ids, &path))
+        .await
+        .map_err(join_err)?
+}
+
 #[tauri::command]
 pub async fn copy_image(
     app: tauri::AppHandle,
@@ -250,6 +263,7 @@ super::area_commands![
     save_image,
     save_image_as,
     save_images_to,
+    save_sheet_as,
     copy_image,
     clipboard_image,
     discard_image,
