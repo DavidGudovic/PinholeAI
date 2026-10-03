@@ -16,6 +16,7 @@ const HOW: Record<string, string> = {
   installer: "Pinhole downloads the new installer, checks it and runs it." + RESTART,
   portable: "Pinhole downloads the new version, checks it and swaps it in. Your Data folder is not touched." + RESTART,
   appImage: "Pinhole downloads the new AppImage, checks it and replaces this one." + RESTART,
+  deb: "Pinhole downloads the new package and checks it. Ubuntu then asks for your password to install it." + RESTART,
   manual: "Download the new version from the release page.",
 };
 

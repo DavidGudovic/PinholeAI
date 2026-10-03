@@ -61,6 +61,11 @@ jobs:
           if [ "$pkg" != "$version" ]; then
             echo "::warning::package.json version $pkg differs from tauri.conf.json $version"
           fi
+          notes="docs/release-notes/$version.md"
+          if [ ! -s "$notes" ]; then
+            echo "::error::$notes is missing or empty. It is the release's text on GitHub: write it before releasing."
+            exit 1
+          fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
@@ -182,24 +187,8 @@ jobs:
           draft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft }}
           # A version with a suffix (1.1.0-rc.1) is a pre-release.
           prerelease: ${{ contains(needs.check.outputs.version, '-') }}
-          # The body below is the whole release note (no automatic list of pull requests).
+          # The release text is docs/release-notes/<version>.md (no automatic list of pull requests).
           generate_release_notes: false
           fail_on_unmatched_files: true
           files: upload/*
-          body: |
-            ## Download
-
-            | System | File |
-            |---|---|
-            | Windows 10/11 (x64) — installer | `Pinhole-${{ needs.check.outputs.version }}-windows-x64-setup.exe` |
-            | Windows 10/11 (x64) — portable | `Pinhole-${{ needs.check.outputs.version }}-windows-x64-portable.zip` (unzip, run `Pinhole.exe`; data stays in `Data/`) |
-            | Linux x86_64 | `Pinhole-${{ needs.check.outputs.version }}-linux-x86_64.AppImage` or `.deb` |
-
-            Windows 10 needs the Microsoft Edge WebView2 Runtime (the installer adds it if missing; Windows 11 has it).
-            The downloadable image engine (stable-diffusion.cpp) for Linux requires Ubuntu 24.04 or newer (glibc 2.38+).
-            Verify downloads with `sha256sum -c SHA256SUMS.txt`.
-
-            No model weights or engine binaries are bundled: Pinhole downloads the engine for your GPU and the models you pick, once, on first run.
-            Windows SmartScreen may warn because the app isn't code-signed yet: choose **More info → Run anyway**.
-
-            Pinhole shows its usage guidelines when it first opens, and each model's licence before download. How the safeguards work: [SAFETY.md](https://github.com/${{ github.repository }}/blob/main/SAFETY.md).
+          body_path: repo/docs/release-notes/${{ needs.check.outputs.version }}.md

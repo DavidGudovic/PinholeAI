@@ -789,7 +789,7 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Theme (system / light / dark)
 - Updates: **Check for updates** (never automatic). When a newer GitHub release exists:
   **Open download page**. **Update and restart** (Windows installer, Windows portable, Linux
-  AppImage) is built but switched off until release files are signed. See §13.
+  AppImage, Linux .deb) installs it when the release's files are signed. See §13.
 
 ---
 
@@ -848,6 +848,9 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   Tags multi-select needs Safe mode off (`docs/RELEASE-SPEC.md` §5).
 - **Distribution**: GitHub releases from v1.0.0 (a free app; `docs/RELEASE-SPEC.md` sets the
   rules every public build follows).
+  A release's text on GitHub is `docs/release-notes/<version>.md`: the Release workflow refuses to
+  run without it and publishes it as the release text. The "Release notes" workflow sets an
+  existing release's text from the same file.
 - **Updates** (manual only): **Update and restart** needs a release whose `SHA256SUMS.txt` is
   signed (`SHA256SUMS.txt.sig`, minisign via `tauri signer sign`) with the maintainer's key. The
   public key is built into the app from `src-tauri/update-key.pub`; the private key is only the
@@ -868,7 +871,10 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   picture is being made or other downloads run (the restart would lose them). Windows installer: the engines stop and the
   NSIS setup runs passively (`/P /UPDATE /R`) and reopens Pinhole. Windows portable: the zip's files
   (never `Data/`) are swapped in beside the running exe and it relaunches. Linux AppImage: the new
-  AppImage is renamed over the old one and relaunches. Leftovers (`.pinhole-update/`) are removed on
+  AppImage is renamed over the old one and relaunches. Linux .deb (the running exe is
+  `/usr/bin/pinhole` from the `pinhole` package, and `pkexec` is installed): the new .deb is downloaded
+  into `Data/.pinhole-update/` and installed with `pkexec apt-get install -y`, which asks for the
+  password; then Pinhole relaunches. A closed password dialog leaves the old version in place. Leftovers (`.pinhole-update/`) are removed on
   the next start. The check and the downloads are unauthenticated (public release API and
   download URLs). If GitHub answers 404 (releases can't be seen), the app says so and offers the
   release page. Earlier builds could store a GitHub token in the keychain; the first start after

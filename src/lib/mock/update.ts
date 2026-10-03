@@ -1,6 +1,6 @@
 // Mock handlers for Settings → Updates. See ./index.ts.
 //
-// URL flag: ?update=none | manual (default, while in-app updates are off) | installer | portable | appImage | private (GitHub 404)
+// URL flag: ?update=none | manual (default, while in-app updates are off) | installer | portable | appImage | deb | private (GitHub 404)
 import type { MockTable } from "./index";
 import type { CoreError, UpdateCheck, UpdateInstallMode } from "../types";
 import { mockSettings } from "./app";
@@ -11,7 +11,7 @@ const offlineError: CoreError = { code: "offline", message: "Offline mode is on.
 
 function mode(): UpdateInstallMode | "none" {
   const v = new URLSearchParams(typeof location !== "undefined" ? location.search : "").get("update");
-  return v === "none" || v === "portable" || v === "appImage" || v === "installer" ? v : "manual";
+  return v === "none" || v === "portable" || v === "appImage" || v === "deb" || v === "installer" ? v : "manual";
 }
 
 const table: MockTable = {
