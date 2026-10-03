@@ -231,8 +231,8 @@ paste event carries no data, so the picture is read from the system clipboard th
 A picture dropped on the window opens the same chooser, wherever no drop area takes it (the Edit and
 Describe tabs and the reference slot take it directly; a picture without saved settings dropped on
 Create's results area goes to the chooser). A picture dragged out of a web browser works when the browser
-hands over the file (Windows); when only its web address comes through (usually Linux), a short note says
-to save it first. A file that isn't a picture gets a short note too. Nothing is downloaded from a dropped
+hands over the file (Windows), or when the page holds the picture in a data: address (read in the app);
+when only its web address comes through (usually Linux), a short note says to use Copy image and paste. A file that isn't a picture gets a short note too. Nothing is downloaded from a dropped
 link.
 
 ### 5.1 Create (txt2img)

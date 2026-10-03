@@ -80,10 +80,32 @@ export function readStrayDrop(dt: DataTransfer): StrayDrop {
   if (f) return { kind: "picture", file: f };
   const types = Array.from(dt.types ?? []);
   if (types.includes("Files")) return { kind: "not-a-picture" };
-  // A picture dragged out of a web browser can arrive as its web address only (Linux).
+  // A picture dragged out of a web browser can arrive as its address only (Linux). When the page
+  // holds the picture itself in a data: address, it is read from there; nothing is downloaded.
   const url = types.includes("text/uri-list") ? dt.getData("text/uri-list") : "";
+  const html = types.includes("text/html") ? dt.getData("text/html") : "";
+  const inline = pictureFromDataUrl(url.trim()) ?? pictureFromDataUrl(/<img\b[^>]*\bsrc\s*=\s*["']?(data:[^"'\s>]+)/i.exec(html)?.[1] ?? "");
+  if (inline) return { kind: "picture", file: inline };
   if (/^https?:/im.test(url)) return { kind: "link" };
   return { kind: "ignored" };
+}
+
+/** Same limit as adding a picture (Rust refuses bigger ones anyway). */
+const MAX_INLINE_BYTES = 64 * 1024 * 1024;
+
+/** A PNG, JPEG or WebP held in a base64 data: address, or null. */
+export function pictureFromDataUrl(url: string): File | null {
+  const m = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=\s]+)$/i.exec(url);
+  if (!m || (m[2].length * 3) / 4 > MAX_INLINE_BYTES) return null;
+  try {
+    const bin = atob(m[2].replace(/\s+/g, ""));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const type = m[1].toLowerCase();
+    return new File([bytes], `dropped.${type.slice(6).replace("jpeg", "jpg")}`, { type });
+  } catch {
+    return null;
+  }
 }
 
 /**

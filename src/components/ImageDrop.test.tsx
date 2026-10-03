@@ -50,3 +50,17 @@ describe("drops outside a drop area", () => {
     expect(drag("drop", screen.getByText("Models"), { types: ["text/uri-list"] }).defaultPrevented).toBe(false);
   });
 });
+
+describe("picture in a data: address", () => {
+  it("reads PNG, JPEG and WebP only, and keeps the bytes", async () => {
+    const { pictureFromDataUrl } = await import("./ImageDrop");
+    const f = pictureFromDataUrl("data:image/png;base64,iVBORw0KGgo=");
+    expect(f?.type).toBe("image/png");
+    expect(Array.from(new Uint8Array(await f!.arrayBuffer())).slice(0, 4)).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(pictureFromDataUrl("data:image/jpeg;base64,/9j/")?.name).toBe("dropped.jpg");
+    expect(pictureFromDataUrl("data:image/svg+xml;base64,PHN2Zz4=")).toBeNull();
+    expect(pictureFromDataUrl("data:text/html;base64,PGI+")).toBeNull();
+    expect(pictureFromDataUrl("https://example.com/a.png")).toBeNull();
+    expect(pictureFromDataUrl("data:image/png;base64,***")).toBeNull();
+  });
+});
