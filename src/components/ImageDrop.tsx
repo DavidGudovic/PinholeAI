@@ -58,9 +58,10 @@ export function useImagePaste(active: boolean, onFile: (f: File) => void) {
         cb.current(f);
         return;
       }
-      // The Linux WebView (WebKitGTK) gives the paste event no data at all, even with a picture
-      // on the clipboard: read it through the app. In a text box only a picture without text.
-      if (types.length === 0 && isTauri()) {
+      // The Linux WebView (WebKitGTK) never hands over a clipboard picture: the paste event has
+      // no data, or only the page markup next to it (a browser's Copy image). Read it through the
+      // app. In a text box only a picture without text.
+      if (!types.includes("text/plain") && isTauri()) {
         void clipboardImage(editable)
           .then((p) => p && cb.current(p))
           .catch(() => undefined);
