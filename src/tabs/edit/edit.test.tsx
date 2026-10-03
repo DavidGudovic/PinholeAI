@@ -62,6 +62,7 @@ const { installMocks } = await import("../../lib/mock");
 const { AppProvider, runPrimaryAction } = await import("../../lib/state/AppProvider");
 const { createStore } = await import("../../lib/state/store");
 const { EditTab } = await import("./EditTab");
+const { resetEditModelLine } = await import("./EditModelLine");
 const { CompareView } = await import("./CompareView");
 const { DescribeTab } = await import("../describe/DescribeTab");
 
@@ -383,6 +384,65 @@ describe("Edit tab", () => {
     await flush();
     expect(screen.queryByText("Kontext card")).toBeNull();
     expect(screen.getByRole("button", { name: "Remove image 2" })).toBeTruthy();
+    recommended.mockRestore();
+    vi.mocked(api.listModels).mockImplementation(async () => [model]);
+  });
+
+  it("opened in Restyle without an edit model, offers the edit model in one line until closed", async () => {
+    resetEditModelLine();
+    const editPick = { role: "edit", roleLabel: "Edit", title: "Edit card", familyId: "qwen_image_edit_2511", goodAt: null, downloadBytes: 15e9, vram: null, fit: "fits", installed: false, quant: null, licenseNote: null, unavailableReason: null, note: null } as never;
+    const recommended = vi.spyOn(api, "getRecommended").mockResolvedValue([editPick]);
+    const install = vi.spyOn(api, "installRecommended").mockResolvedValue({ groupId: "g1" });
+    const line = /To change one thing and keep the rest, get the edit model/;
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    const view = render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    expect((await screen.findByText(line)).textContent).toContain("15");
+    fireEvent.click(screen.getByRole("button", { name: "Get Edit card" }));
+    await waitFor(() => expect(install).toHaveBeenCalledWith("edit"));
+    // Picking Restyle on purpose hides it; it's only for the automatic pick.
+    act(() => store.dispatch({ type: "patchEdit", patch: { mode: "restyle" } }));
+    expect(screen.queryByText(line)).toBeNull();
+    act(() => store.dispatch({ type: "patchEdit", patch: { mode: null } }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close" }));
+    expect(screen.queryByText(line)).toBeNull();
+    // Closed for the rest of the session, also after the tab is shown again.
+    view.unmount();
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(screen.queryByText(line)).toBeNull();
+    recommended.mockRestore();
+    install.mockRestore();
+    resetEditModelLine();
+  });
+
+  it("doesn't offer the edit model once one is installed", async () => {
+    resetEditModelLine();
+    const recommended = vi.spyOn(api, "getRecommended").mockResolvedValue([
+      { role: "edit", roleLabel: "Edit", title: "Edit card", familyId: "x", goodAt: null, downloadBytes: 1, vram: null, fit: "fits", installed: false, quant: null, licenseNote: null, unavailableReason: null, note: null } as never,
+    ]);
+    const edit = { ...model, id: "qe", familyId: "qwen_image_edit_2511", modes: ["edit"], isEditModel: true, fit: "fits" } as InstalledModel;
+    vi.mocked(api.listModels).mockImplementation(async () => [model, edit]);
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(2));
+    await flush();
+    expect(screen.getByText("Picked automatically — you have an edit model.")).toBeTruthy();
+    expect(screen.queryByText(/get the edit model/)).toBeNull();
     recommended.mockRestore();
     vi.mocked(api.listModels).mockImplementation(async () => [model]);
   });

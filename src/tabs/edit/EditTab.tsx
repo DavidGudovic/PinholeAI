@@ -36,6 +36,7 @@ import { ApplyBar } from "./ApplyBar";
 import { EditFineTune } from "./EditFineTune";
 import { EditHistory } from "./EditHistory";
 import { EditModePicker } from "./EditModePicker";
+import { EditModelLine } from "./EditModelLine";
 import { PhotoNotice } from "../../components/PhotoNotice";
 import { EditToolbar } from "./EditToolbar";
 import { InstructionFields } from "./InstructionFields";
@@ -400,6 +401,8 @@ export function EditTab() {
             autoEdit={autoEdit}
             dispatch={dispatch}
           />
+          {/* Opened in Restyle only because no edit model is installed. */}
+          {e.mode == null && !autoEditOne && models && !noGpu && <EditModelLine />}
 
           {mode === "instruction" ? (
             <InstructionFields

@@ -1,5 +1,5 @@
 // Simple dials (SPEC §5.1): Shape · Quality · Stick to prompt · How many · Keep this look.
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { Segmented, Slider, Toggle, cx, focusRing } from "../../components/ui";
 import { DEFAULT_SHAPE_SIZES, SHAPE_LABEL, defaultStickPosition, stickValue } from "../../lib/paste/map";
@@ -53,6 +53,7 @@ export function ShapeChip({
   disabled?: boolean;
   inset?: boolean;
 }) {
+  const labelRef = useFitText(label);
   const max = 18;
   const iw = w >= h ? max : Math.round((max * w) / h);
   const ih = h >= w ? max : Math.round((max * h) / w);
@@ -84,9 +85,29 @@ export function ShapeChip({
           {inset && <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: iw / 2, height: ih / 2 }} />}
         </span>
       </span>
-      <span className="max-w-full truncate px-0.5">{label}</span>
+      <span ref={labelRef} className="max-w-full truncate">{label}</span>
     </button>
   );
+}
+
+/** Shrinks a one-line label's text a little when it is wider than its box (a wide system font in a narrow column). */
+function useFitText(label: ReactNode) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const fit = () => {
+      el.style.fontSize = "";
+      if (el.scrollWidth <= el.clientWidth) return;
+      const size = parseFloat(getComputedStyle(el).fontSize);
+      el.style.fontSize = `${Math.max(10, Math.floor(size * (el.clientWidth / el.scrollWidth) * 10) / 10)}px`;
+    };
+    fit();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
+    ro?.observe(el.parentElement ?? el);
+    return () => ro?.disconnect();
+  }, [label]);
+  return ref;
 }
 
 export function Dials({ ui }: { ui: FamilyUi | null }) {
