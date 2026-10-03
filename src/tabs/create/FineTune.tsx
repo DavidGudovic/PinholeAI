@@ -11,7 +11,8 @@ import { useActions } from "../../lib/state/AppProvider";
 import { useDebounced } from "../../lib/state/hooks";
 import { DEFAULT_LORA_WEIGHT, loraCompatible } from "../../lib/state/model";
 import { requestAddonBrowse } from "../models/lib/session";
-import { buildCreateRequest } from "../../lib/state/request";
+import { expandChoices } from "../../lib/state/choices";
+import { buildCreateRequest, randomSeed } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
 import { UpscalerSelect, useUpscaler } from "../../components/UpscalerChoice";
@@ -272,7 +273,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
           <Row label="Seed" htmlFor="ft-seed" def="random" changed={ft.seed != null} onReset={() => set({ seed: null })}>
             <div className="flex gap-1.5">
               <NumberInput id="ft-seed" integer min={0} value={ft.seed} placeholder="Random" onChange={(v) => set({ seed: v })} />
-              <IconButton label="Pick a random seed" variant="secondary" onClick={() => set({ seed: Math.floor(Math.random() * 2 ** 31) })}>
+              <IconButton label="Pick a random seed" variant="secondary" onClick={() => set({ seed: randomSeed() })}>
                 <Dices className="h-4 w-4" />
               </IconButton>
             </div>
@@ -461,8 +462,18 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
   const loras = useAppState((s) => s.loras);
   const settings = useAppState((s) => s.settings);
   const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
-  const req = useMemo(() => (model ? buildCreateRequest(c, { ui, loras, model, settings, ref }) : null), [c, ui, loras, model, settings, ref]);
-  return <PromptPreview req={c.prompt.trim() ? req : null} empty="Type a prompt to see exactly what is sent." />;
+  // With {a|b} choices: the first prompt they make.
+  const choices = useMemo(() => expandChoices(c.prompt).prompts, [c.prompt]);
+  const req = useMemo(
+    () => (model && choices.length ? buildCreateRequest({ ...c, prompt: choices[0] }, { ui, loras, model, settings, ref }) : null),
+    [c, choices, ui, loras, model, settings, ref],
+  );
+  return (
+    <>
+      <PromptPreview req={c.prompt.trim() ? req : null} empty="Type a prompt to see exactly what is sent." />
+      {choices.length > 1 && <p className="mt-1 text-[11px] text-neutral-500">The first of the {choices.length} prompts your choices in braces make.</p>}
+    </>
+  );
 }
 
 /**
