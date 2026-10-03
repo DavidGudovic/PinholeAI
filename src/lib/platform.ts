@@ -1,9 +1,11 @@
 // The Linux WebView is WebKitGTK. With NVIDIA drivers it repaints `backdrop-filter` on
 // every scroll frame (laggy Models list and details page) and draws an image that zooms
 // inside a CSS column layout as a gray box on hover. On Linux only, these rules switch
-// both off; Windows (WebView2) keeps them. Browse cards also drop their shadow and their
-// pulsing placeholders there: repainting ~100 shadows and pulses per scroll frame made
-// scrolling the grid lag (measured in WebKitGTK 2.52: average frame 57 ms → 22 ms).
+// both off; Windows (WebView2) keeps them. Browse cards also drop their shadows (the card's
+// and its buttons', except a keyboard focus ring), their pulsing placeholders and the rounded
+// corners of the card box itself (its frame and picture stay rounded, so it looks the same
+// without the shadow): WebKitGTK repaints every card on screen for each scroll frame, and
+// shadows and a rounded clip around a whole card are among the slowest things to repaint.
 export const WEBKITGTK_CSS = `
 html.webkitgtk *, html.webkitgtk *::before, html.webkitgtk *::after {
   -webkit-backdrop-filter: none !important;
@@ -14,7 +16,11 @@ html.webkitgtk .pinhole-hover-zoom {
   transform: none !important;
   transition: none !important;
 }
-html.webkitgtk .pinhole-card {
+html.webkitgtk article.pinhole-card {
+  border-radius: 0 !important;
+}
+html.webkitgtk .pinhole-card,
+html.webkitgtk .pinhole-card button:not(:focus-visible) {
   box-shadow: none !important;
   transition: none !important;
 }

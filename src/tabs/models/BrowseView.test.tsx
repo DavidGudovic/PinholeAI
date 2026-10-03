@@ -182,3 +182,36 @@ describe("BrowseView follows Safe mode turned on in Settings", () => {
     await waitFor(() => expect(getLastFilters()).toMatchObject({ content: "safe", tags: [] }));
   });
 });
+
+describe("BrowseView grid", () => {
+  it("keeps only the rows near the screen in the page once it knows its width", async () => {
+    class FakeRO {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", FakeRO);
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1552);
+    const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(900);
+    try {
+      rememberFilters(defaultFilters(null, null, false));
+      const { container } = render(
+        <StoreContext.Provider value={createStore()}>
+          <ScrollRootContext.Provider value={document.createElement("div")}>
+            <BrowseView settings={null} onShowInstalled={() => undefined} />
+          </ScrollRootContext.Provider>
+        </StoreContext.Provider>,
+      );
+      await screen.findByRole("button", { name: "Show Juggernaut XL details" }, { timeout: 5000 });
+      // Cards sit in rows of the virtual grid, not in one grid with every card.
+      const rows = container.querySelectorAll("[data-row]");
+      expect(rows.length).toBeGreaterThan(0);
+      for (const card of screen.getAllByRole("article")) expect(card.closest("[data-row]")).not.toBeNull();
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+      vi.unstubAllGlobals();
+      vi.stubGlobal("IntersectionObserver", FakeIO);
+    }
+  }, 15_000);
+});

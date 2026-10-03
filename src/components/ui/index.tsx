@@ -96,14 +96,16 @@ export function Card({ className = "", children }: { className?: string; childre
 
 export function Badge({ tone = "neutral", title, children }: { tone?: "neutral" | "green" | "amber" | "red" | "blue"; title?: string; children: ReactNode }) {
   const tones = {
-    neutral: "bg-neutral-100 text-neutral-700 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:ring-neutral-700",
-    green: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:ring-emerald-900",
-    amber: "bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:ring-amber-900",
-    red: "bg-red-50 text-red-800 ring-red-200 dark:bg-red-950/60 dark:text-red-300 dark:ring-red-900",
-    blue: "bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:ring-sky-900",
+    neutral: "bg-neutral-100 text-neutral-700 border-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:border-neutral-700",
+    green: "bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-900",
+    amber: "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900",
+    red: "bg-red-50 text-red-800 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-900",
+    blue: "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-900",
   };
   return (
-    <span title={title} className={cx("inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4 ring-1 ring-inset", tones[tone])}>
+    // A 1px border inside the same outer size (not an inset ring: that is a box-shadow, which
+    // WebKitGTK repaints slowly when many badges scroll by).
+    <span title={title} className={cx("inline-flex items-center whitespace-nowrap rounded-md border px-[5px] py-px text-[11px] font-medium leading-4", tones[tone])}>
       {children}
     </span>
   );

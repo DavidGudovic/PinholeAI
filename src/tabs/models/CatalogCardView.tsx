@@ -93,14 +93,18 @@ export const CatalogCardView = memo(function CatalogCardView({
 
   return (
     // content-visibility: the browser skips layout/paint for cards far off screen.
-    // pinhole-card: no shadow or pulse on Linux (lib/platform.ts).
-    <article className="pinhole-card flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900">
+    // The border and background are drawn by a frame behind the content, and only the picture
+    // is clipped to the rounded corners, not the whole card (on Linux the card itself has
+    // square corners and no shadow, see lib/platform.ts: WebKitGTK repaints every card on
+    // screen for each scroll frame, and a rounded clip around a card is slow to repaint).
+    <article className="pinhole-card relative isolate flex flex-col rounded-xl p-px shadow-sm transition-shadow [contain-intrinsic-size:auto_440px] [content-visibility:auto] hover:shadow-md">
+      <div aria-hidden className="absolute inset-0 -z-10 rounded-xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900" />
       <button
         ref={ref}
         type="button"
         onClick={() => onOpen(card)}
         aria-label={`Show ${card.name} details`}
-        className="relative block aspect-[4/5] w-full cursor-pointer overflow-hidden bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none focus-visible:ring-inset dark:bg-neutral-800"
+        className="relative block aspect-[4/5] w-full cursor-pointer overflow-hidden rounded-t-[11px] bg-neutral-100 focus-visible:ring-2 focus-visible:ring-amber-500/70 focus-visible:outline-none focus-visible:ring-inset dark:bg-neutral-800"
       >
         {preview.src ? (
           <img src={preview.src} alt="" draggable={false} decoding="async" className={`h-full w-full object-cover ${blur ? "scale-125 blur-2xl" : ""}`} />
