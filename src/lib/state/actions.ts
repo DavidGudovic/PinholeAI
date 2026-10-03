@@ -316,7 +316,7 @@ export function makeActions(store: Store) {
     // upscale still work.
     const batchId = get().resultBatch[resultId];
     const batch = batchId ? get().batches[batchId] : undefined;
-    const imageIds = [resultId, ...(batch?.request.refImageIds ?? [])];
+    const imageIds = [resultId, ...(batch?.request.initImageId ? [batch.request.initImageId] : []), ...(batch?.request.refImageIds ?? [])];
     try {
       await enqueue(upscaleEntry("upscale", resultId, factor, imageIds), () =>
         withJob("upscale", async () => {

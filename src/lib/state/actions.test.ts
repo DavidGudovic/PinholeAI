@@ -883,11 +883,21 @@ describe("Close to this one and Finish at Best quality", () => {
     expect(vi.mocked(apiMod.generate).mock.calls[2][0]).toMatchObject({ mode: "img2img", initImageId: "a" });
     pending!({ images: [img("c3")] } as GenerateResult);
     await again;
+    // A queued upscale of a Close picture holds the source too.
+    const job = actions.variations("c1");
+    await tick();
+    const up = actions.upscale("c1", 2);
+    expect(store.getState().queue[0].imageIds).toEqual(["c1", "a"]);
+    pending!({ images: [img("c4")] } as GenerateResult);
+    await job;
+    await tick();
+    pendingUpscale!(img("u"));
+    await up;
   });
 
   it("Finish at Best quality re-makes one picture at Best with its own seed", async () => {
     const { store, actions } = setup();
-    store.dispatch({ type: "patchCreate", patch: { quality: "balanced", count: 2 } });
+    store.dispatch({ type: "patchCreate", patch: { quality: "balanced", count: 2, fineTune: { steps: 8 } } });
     const first = actions.generateCreate();
     await tick();
     pending!({ images: [{ ...img("a"), seed: 40 }, { ...img("b"), seed: 41 }] } as GenerateResult);
@@ -898,6 +908,7 @@ describe("Close to this one and Finish at Best quality", () => {
     expect(req).toMatchObject({ mode: "txt2img", prompt: "a lighthouse", modelId: "m" });
     expect(req.dials).toMatchObject({ quality: "best", count: 1 });
     expect(req.fineTune.seed).toBe(41);
+    expect(req.fineTune.steps).toBeUndefined();
     pending!({ images: [img("f")] } as GenerateResult);
     await finish;
   });

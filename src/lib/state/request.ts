@@ -138,7 +138,9 @@ export function closeRequest(req: GenerateRequest, source: Pick<ResultImage, "id
  */
 export function finishRequest(req: GenerateRequest, seed: number): GenerateRequest | null {
   if (req.dials.quality === "best") return null;
-  return { ...req, dials: { ...req.dials, quality: "best", count: 1 }, fineTune: { ...req.fineTune, seed } };
+  // Best's own step count, not a Fine-tune one.
+  const { steps: _steps, ...fineTune } = req.fineTune;
+  return { ...req, dials: { ...req.dials, quality: "best", count: 1 }, fineTune: { ...fineTune, seed } };
 }
 
 /** Output size for an edit: keep the aspect ratio, ≤ ~maxPixels, multiples of `multiple` (16, or 64 for SD families). */
