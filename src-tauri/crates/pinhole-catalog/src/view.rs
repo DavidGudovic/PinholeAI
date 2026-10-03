@@ -61,6 +61,8 @@ pub struct CatalogCard {
     pub kind: String,
     pub base_model: String,
     pub family_id: Option<String>,
+    /// The model can follow a reference picture in Create (never set for style add-ons).
+    pub takes_reference: bool,
     pub style_badge: Option<String>,
     pub creator: Option<String>,
     /// Fetch through `fetch_preview`; never an `<img src>`.

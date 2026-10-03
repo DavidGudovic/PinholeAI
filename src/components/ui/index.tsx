@@ -94,7 +94,7 @@ export function Card({ className = "", children }: { className?: string; childre
   );
 }
 
-export function Badge({ tone = "neutral", children }: { tone?: "neutral" | "green" | "amber" | "red" | "blue"; children: ReactNode }) {
+export function Badge({ tone = "neutral", title, children }: { tone?: "neutral" | "green" | "amber" | "red" | "blue"; title?: string; children: ReactNode }) {
   const tones = {
     neutral: "bg-neutral-100 text-neutral-700 ring-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:ring-neutral-700",
     green: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:ring-emerald-900",
@@ -103,7 +103,7 @@ export function Badge({ tone = "neutral", children }: { tone?: "neutral" | "gree
     blue: "bg-sky-50 text-sky-800 ring-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:ring-sky-900",
   };
   return (
-    <span className={cx("inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4 ring-1 ring-inset", tones[tone])}>
+    <span title={title} className={cx("inline-flex items-center whitespace-nowrap rounded-md px-1.5 py-0.5 text-[11px] font-medium leading-4 ring-1 ring-inset", tones[tone])}>
       {children}
     </span>
   );

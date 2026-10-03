@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { installMocks } from "../../lib/mock";
 import { createStore, StoreContext } from "../../lib/state/store";
 import { ScrollRootContext } from "./lib/preview";
@@ -69,5 +69,25 @@ describe("BrowseView cached pages", () => {
     await new Promise((r) => setTimeout(r, 0)); // let the models-changed event arrive
     show();
     await waitFor(async () => expect((await card("Juggernaut XL")).textContent).not.toContain("Installed"), { timeout: 5000 });
+  }, 15_000);
+});
+
+describe("BrowseView reference picture filter", () => {
+  it("shows only models that take a reference picture, each with the badge", async () => {
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <ScrollRootContext.Provider value={document.createElement("div")}>
+          <BrowseView settings={null} onShowInstalled={() => undefined} />
+        </ScrollRootContext.Provider>
+      </StoreContext.Provider>,
+    );
+    await screen.findByRole("button", { name: "Show Juggernaut XL details" }, { timeout: 5000 });
+    fireEvent.click(screen.getByRole("button", { name: "Reference picture" }));
+    const klein = await screen.findByRole("button", { name: "Show FLUX.2 [klein] 4B details" }, { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Show Juggernaut XL details" })).toBeNull(), { timeout: 5000 });
+    const cards = screen.getAllByRole("article");
+    expect(cards.length).toBeGreaterThan(0);
+    for (const c of cards) expect(within(c).getByText("Reference picture")).toBeTruthy();
+    expect(within(klein.closest("article")!).getByText("Reference picture")).toBeTruthy();
   }, 15_000);
 });
