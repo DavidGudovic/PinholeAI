@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FineTune, InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { alsoChoices, sheetIds, createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, sessionPictures, sheetIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -200,6 +200,15 @@ describe("unsaved pictures and prompt history", () => {
     expect(unsavedIds(s).sort()).toEqual(["b", "e"]);
     s = run(s, { type: "removeResult", id: "b" });
     expect(unsavedIds(s)).toEqual(["e"]);
+  });
+
+  it("this session's pictures: Create and Edit results, newest first, without imported originals", () => {
+    let s = made(withModels());
+    s = run(s, { type: "addResults", batch: null, images: [result("c", 4)], refs: [ref("c")] });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "a", "b"]);
+    expect(sessionPictures(s, ["e", null]).map((p) => p.id)).toEqual(["c", "a", "b"]);
+    s = run(s, { type: "removeResult", id: "a" });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "b"]);
   });
 
   it("Reset forgets what was saved and the prompt history", () => {
@@ -414,6 +423,50 @@ describe("requests", () => {
     s = run(s, { type: "createSetRef", ref: ref("r2") }, { type: "clearSession" });
     expect(s.create.refImageId).toBeNull();
     expect(buildCreateRequest(s.create, { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null }).refImageIds).toBeUndefined();
+  });
+
+  it("makes Create's picture the reference picture's shape with Same as reference", () => {
+    const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], fit: "fits" });
+    const tall: ImgRef = { id: "t", url: "blob:t", width: 900, height: 1600 };
+    const opts = { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null, ref: tall };
+
+    // Added with the default shape: switches to Same as reference, at the model's Square area.
+    let s = run(withModels(), { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // Width and Height typed in Fine-tune still win.
+    s = run(s, { type: "setFineTune", patch: { width: 1024 } });
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1344 });
+
+    // Picking a shape takes over; choosing Same as reference again clears the typed size.
+    s = run(s, { type: "setDial", dial: "shape", value: "landscape" });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, opts).fineTune.width).toBeUndefined();
+    s = run(s, { type: "setFineTune", patch: { width: 640 } }, { type: "createRefShape" });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // A preset's shape takes over too, and None brings Same as reference back.
+    const preset = { ...presetFromCreate("p", { ...s.create, shape: "wide" }, { model: k, loras: [] }), id: "p" };
+    const lists = { models: [k], loras: [], styleIds: [] };
+    s = run(s, { type: "patchCreate", patch: applyPreset(preset, s.create, lists).patch });
+    expect(s.create).toMatchObject({ shape: "wide", refShape: false });
+    s = run(s, { type: "patchCreate", patch: clearPreset(s.create, lists) });
+    expect(s.create.refShape).toBe(true);
+    s = run(s, { type: "patchCreate", patch: { shape: "wide" } });
+    expect(s.create.refShape).toBe(false);
+
+    // A shape picked before the picture is added stays.
+    s = run(withModels(), { type: "setDial", dial: "shape", value: "portrait" }, { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(false);
+
+    // Removing the picture or Reset goes back to the Shape dial.
+    s = run(withModels(), { type: "createSetRef", ref: tall }, { type: "createSetRef", ref: null });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, { ...opts, ref: null }).fineTune.width).toBeUndefined();
+    s = run(s, { type: "createSetRef", ref: tall }, { type: "clearSession" });
+    expect(s.create.refShape).toBe(false);
   });
 
   it("sends the Edit tab's add-ons that fit the edit's model, with their trigger words", () => {
@@ -655,12 +708,6 @@ describe("Also apply to… and sheets", () => {
     expect(s.edit.alsoIds).not.toContain("b");
     s = run(s, { type: "editSetAlso", refs: [] });
     expect(s.images.x0).toBeUndefined();
-  });
-
-  it("offers Create's results and edited steps, without the shown picture", () => {
-    let s = run(initialState(), { type: "addResults", batch: null, images: [res("c1"), res("c2")], refs: [r("c1"), r("c2")] });
-    s = run(s, { type: "editLoad", ref: r("c1") }, { type: "editPush", ref: r("e1"), meta: res("e1") });
-    expect(alsoChoices(s, ["e1"]).map((p) => p.id)).toEqual(["c1", "c2"]);
   });
 
   it("a sheet is the run the picture came in, oldest first, upscales apart, up to 8", () => {

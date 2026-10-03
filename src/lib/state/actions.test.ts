@@ -46,7 +46,7 @@ vi.mock("./platform", async (orig) => {
 const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
-const { ALSO_MAX, sheetIds } = await import("./model");
+const { ALSO_MAX, editBusy, sheetIds } = await import("./model");
 
 const model: InstalledModel = {
   id: "m",
@@ -893,6 +893,29 @@ describe("Also apply to…", () => {
     expect(s.results.map((r) => r.id)).toEqual(["rc", "rb", "ra"]);
     expect(new Set(["ra", "rb", "rc"].map((id) => s.resultGroup[id])).size).toBe(1);
     expect(sheetIds(s, "rb")).toEqual(["ra", "rb", "rc"]);
+  });
+
+  it("Cancel stops the whole run; the other pictures don't lock the history", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "editSetAlso", refs: [ref("b"), ref("c")] });
+    store.dispatch({ type: "patchEdit", patch: { restylePrompt: "watercolor" } });
+    const run = actions.runEdit({ mode: "restyle", model, mask: null, size: [64, 64], alsoSize: (w, h) => [w, h] });
+    expect(store.getState().queue.map((q) => q.kind)).toEqual(["editMore", "editMore"]);
+    await tick();
+    pending!({ images: [img("ra")] } as GenerateResult);
+    await run;
+    await tick();
+    // Picture b runs now; the history is free again.
+    expect(store.getState().job?.kind).toBe("editMore");
+    expect(editBusy(store.getState())).toBe(false);
+    await actions.cancel();
+    expect(store.getState().queue).toEqual([]);
+    pendingFail!({ code: "cancelled", message: "Cancelled.", details: null });
+    await tick();
+    await tick();
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(2);
+    expect(store.getState().job).toBeNull();
   });
 
   it("Try again redoes only the shown picture", async () => {

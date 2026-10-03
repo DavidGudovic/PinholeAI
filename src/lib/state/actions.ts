@@ -237,7 +237,8 @@ export function makeActions(store: Store) {
       async () => {
         dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
-        return buildCreateRequest(create, { ui, loras, model, settings });
+        const ref = create.refImageId ? s.images[create.refImageId] : null;
+        return buildCreateRequest(create, { ui, loras, model, settings, ref });
       },
     );
   }
@@ -465,6 +466,8 @@ export function makeActions(store: Store) {
     }
     if (!confirmed && !confirmReplaceEdit(() => sendToEdit(id, true))) return;
     dispatch({ type: "editLoad", ref });
+    // A picture can't be image 1 and image 2 at once.
+    if (get().edit.secondImageId === id) dispatch({ type: "editSetSecond", ref: null });
     setTab("edit");
   }
 

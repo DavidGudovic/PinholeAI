@@ -42,6 +42,8 @@ export type PresetSettings = Partial<Pick<CreateParams, PresetKey>>;
 export interface PresetBase {
   before: PresetSettings;
   applied: PresetSettings;
+  /** "Same as reference" was on before the preset's shape replaced it. */
+  refShape?: boolean;
 }
 
 export interface CreateParams {
@@ -62,6 +64,8 @@ export interface CreateParams {
   loras: LoraUse[];
   /** Optional reference picture ("in the style of this picture"); session RAM. Never in presets. */
   refImageId: string | null;
+  /** Shape follows the reference picture ("Same as reference"); only while a reference picture is set. Never in presets. */
+  refShape: boolean;
 }
 
 /** The request behind a batch of results — used by "Variations". prompt-bearing, memory only. */
@@ -228,6 +232,7 @@ export const initialCreate = (): CreateParams => ({
   fineTune: {},
   loras: [],
   refImageId: null,
+  refShape: false,
 });
 
 export const initialEdit = (): EditParams => ({
@@ -303,6 +308,8 @@ export type Action =
   | { type: "patchCreate"; patch: Partial<CreateParams> }
   | { type: "setFineTune"; patch: Partial<FineTune> }
   | { type: "setDial"; dial: "shape"; value: Shape }
+  /** "Same as reference": the shape follows Create's reference picture; clears a Fine-tune width/height. */
+  | { type: "createRefShape" }
   | { type: "setDial"; dial: "quality"; value: Quality }
   | { type: "setDial"; dial: "stick"; value: number | null }
   | { type: "setDial"; dial: "count"; value: 1 | 2 | 4 }
@@ -421,13 +428,27 @@ export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "ima
 }
 
 /**
- * Pictures "Also apply to…" offers: Create's results (newest first), then the edited steps in
- * Edit's history, without the ids in `exclude`.
+ * Pictures made this session that are still in memory (Create results and Edit results), newest
+ * first, for the "From this session" choices. Create results keep the strip's order; each Edit
+ * result goes before the results that arrived before it (`images` keeps the order pictures arrived in).
  */
-export function alsoChoices(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
+export function sessionPictures(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
   const skip = new Set(exclude.filter(Boolean));
-  const ids = [...s.results.map((r) => r.id), ...s.edit.chain.filter((n) => n.meta).map((n) => n.imageId).reverse()];
-  return [...new Set(ids)].filter((id) => !skip.has(id) && s.images[id]).map((id) => s.images[id]);
+  const rank = new Map(Object.keys(s.images).map((id, i) => [id, i]));
+  const results = s.results.map((r) => r.id).filter((id) => rank.has(id));
+  const inResults = new Set(results);
+  const edits = s.edit.chain
+    .filter((n) => n.meta && rank.has(n.imageId) && !inResults.has(n.imageId))
+    .map((n) => n.imageId)
+    .sort((a, b) => rank.get(b)! - rank.get(a)!);
+  const out: string[] = [];
+  let e = 0;
+  for (const id of results) {
+    while (e < edits.length && rank.get(edits[e])! > rank.get(id)!) out.push(edits[e++]);
+    out.push(id);
+  }
+  out.push(...edits.slice(e));
+  return [...new Set(out)].filter((id) => !skip.has(id)).map((id) => s.images[id]);
 }
 
 /** Most pictures one "Also apply to…" takes. */
@@ -587,7 +608,16 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, downloads: s.downloads.filter(isActiveDownload) };
 
     case "patchCreate":
-      return { ...s, create: { ...s.create, ...a.patch, ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}) } };
+      return {
+        ...s,
+        create: {
+          ...s.create,
+          // A preset or pasted settings that pick a shape take over from "Same as reference".
+          ...("shape" in a.patch ? { refShape: false } : {}),
+          ...a.patch,
+          ...("presetId" in a.patch && !a.patch.presetId && !("presetBase" in a.patch) ? { presetBase: null } : {}),
+        },
+      };
     case "setFineTune": {
       const ft = compactFineTune({ ...s.create.fineTune, ...a.patch });
       return { ...s, create: { ...s.create, fineTune: ft } };
@@ -598,6 +628,7 @@ function inner(s: AppState, a: Action): AppState {
       // Moving a simple dial hands control back to it: clear the matching Fine-tune override.
       if (a.dial === "shape") {
         c.shape = a.value;
+        c.refShape = false;
         delete ft.width;
         delete ft.height;
       } else if (a.dial === "quality") {
@@ -746,10 +777,19 @@ function inner(s: AppState, a: Action): AppState {
       const refs = a.refs.filter((r, i) => r.id !== shown && a.refs.findIndex((o) => o.id === r.id) === i).slice(0, ALSO_MAX);
       return { ...s, images: withRefs(s.images, refs), edit: { ...s.edit, alsoIds: refs.map((r) => r.id) } };
     }
-    case "createSetRef":
-      return a.ref
-        ? { ...s, images: withRefs(s.images, [a.ref]), create: { ...s.create, refImageId: a.ref.id } }
-        : { ...s, create: { ...s.create, refImageId: null } };
+    case "createRefShape": {
+      const ft = { ...s.create.fineTune };
+      delete ft.width;
+      delete ft.height;
+      return { ...s, create: { ...s.create, refShape: true, fineTune: ft } };
+    }
+    case "createSetRef": {
+      if (!a.ref) return { ...s, create: { ...s.create, refImageId: null, refShape: false } };
+      const c = s.create;
+      // A new reference picture sets the shape to "Same as reference" unless a shape or size was picked.
+      const auto = !c.refImageId && c.shape === "square" && c.fineTune.width == null && c.fineTune.height == null;
+      return { ...s, images: withRefs(s.images, [a.ref]), create: { ...c, refImageId: a.ref.id, refShape: c.refShape || auto } };
+    }
     case "patchEdit":
       return { ...s, edit: { ...s.edit, ...a.patch } };
     case "describeLoad":
@@ -770,7 +810,7 @@ function inner(s: AppState, a: Action): AppState {
         images: {},
         // The preset goes with its Fine-tune values (cleared here); its saved "before"
         // settings can also hold an earlier negative prompt.
-        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null },
+        create: { ...c, prompt: "", presetId: null, presetBase: null, fineTune: compactFineTune({ vaeTiling }), refImageId: null, refShape: false },
         results: [],
         selectedResultId: null,
         batches: {},
