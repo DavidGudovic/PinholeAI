@@ -90,7 +90,9 @@ export function readStrayDrop(dt: DataTransfer): StrayDrop {
   const fromHtml = url.trim() ? "" : (/<img\b[^>]*?\ssrc\s*=\s*["']?(data:[^"'\s>]+)/i.exec(html)?.[1] ?? "");
   const inline = pictureFromDataUrl(url.trim()) ?? pictureFromDataUrl(fromHtml);
   if (inline) return { kind: "picture", file: inline };
-  if (/^(?:https?|data):/im.test(url)) return { kind: "link" };
+  // A data: address that isn't a PNG, JPEG or WebP (or is too big) holds no picture Pinhole can open.
+  if (/^data:/i.test(url.trim()) || fromHtml) return { kind: "not-a-picture" };
+  if (/^https?:/im.test(url)) return { kind: "link" };
   return { kind: "ignored" };
 }
 
@@ -183,11 +185,13 @@ export function DropTarget({ onFile, children, className = "", label = "Drop the
       }}
       onDrop={(e) => {
         if (!hasFiles(e)) return;
-        e.preventDefault();
         depth.current = 0;
         setOver(false);
         const f = imageFromTransfer(e.dataTransfer);
-        if (f) onFile(f);
+        // Anything else goes on to the window's drop handler, which says what Pinhole can open.
+        if (!f) return;
+        e.preventDefault();
+        onFile(f);
       }}
     >
       {children}
