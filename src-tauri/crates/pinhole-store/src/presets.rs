@@ -38,6 +38,7 @@ pub struct PresetFineTune {
     pub height: Option<u32>,
     pub hires: Option<bool>,
     pub vae_tiling: Option<bool>,
+    pub seamless: Option<bool>,
     pub auto_prompt_prefix: Option<bool>,
 }
 
@@ -204,6 +205,7 @@ fn sanitize(p: Preset) -> Result<Preset, StoreError> {
         height: ft.height.filter(|h| (64..=8192).contains(h)),
         hires: ft.hires,
         vae_tiling: ft.vae_tiling,
+        seamless: ft.seamless,
         auto_prompt_prefix: ft.auto_prompt_prefix,
     };
     let loras = p

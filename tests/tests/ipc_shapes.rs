@@ -563,7 +563,7 @@ async fn rust_json_matches_types_ts() {
         "fineTune": {
             "sampler": "euler", "scheduler": "karras", "steps": 20, "cfg": 7.0, "guidance": 3.5,
             "seed": 1, "flowShift": 3.0, "clipSkip": 2, "width": 1024, "height": 1024,
-            "hires": true, "vaeTiling": true, "autoPromptPrefix": true
+            "hires": true, "vaeTiling": true, "seamless": true, "autoPromptPrefix": true
         },
         "loras": [{ "loraId": "l", "civitaiVersionId": 1, "name": "Neon", "weight": 0.8 }],
         "builtin": false
@@ -746,7 +746,7 @@ fn requests(c: &mut Checker) {
     let fine_tune = json!({
         "sampler": "euler", "scheduler": "karras", "steps": 20, "cfg": 7.0, "guidance": 3.5,
         "seed": 1, "flowShift": 3.0, "clipSkip": 2, "width": 1024, "height": 1024,
-        "hires": true, "hiresScale": 1.5, "hiresDenoise": 0.4, "vaeTiling": true,
+        "hires": true, "hiresScale": 1.5, "hiresDenoise": 0.4, "vaeTiling": true, "seamless": true,
         "negativePrompt": "blurry", "autoPromptPrefix": true
     });
     c.request::<GenerateRequest>(

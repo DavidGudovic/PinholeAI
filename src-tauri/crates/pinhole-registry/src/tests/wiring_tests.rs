@@ -479,6 +479,7 @@ fn every_emitted_flag_exists_in_the_engine() {
             lora_dir: Some("/l".into()),
             upscalers_dir: Some("/u".into()),
             vae_tiling: Some(true),
+            seamless: true,
             use_taesd: true,
         };
         for vram in [0.0, 6.0, 10.0, 16.0, 32.0] {
@@ -1320,4 +1321,53 @@ fn big_hires_output_tiles_the_vae() {
     assert!(!at(Some(true), Some(2.0), Some(false)).vae_tiling);
     assert!(!at(Some(false), None, None).vae_tiling);
     assert!(!at(Some(true), Some(1.25), None).vae_tiling, "1.6 MP");
+}
+
+#[test]
+fn seamless_only_for_checked_families_and_new_pictures() {
+    let reg = shipped();
+    for id in [
+        "sd15",
+        "sd15_fast",
+        "sdxl",
+        "sdxl_pony",
+        "sdxl_illustrious",
+        "sdxl_fast",
+    ] {
+        assert!(fam(id).seamless, "{id}");
+        assert!(family_ui(reg, fam(id)).seamless, "{id}");
+    }
+    for id in [
+        "flux1_dev",
+        "z_image_turbo",
+        "qwen_image",
+        "flux2_klein_4b",
+        "sd3",
+    ] {
+        assert!(!fam(id).seamless, "{id}");
+    }
+    let on = FineTune {
+        seamless: Some(true),
+        ..Default::default()
+    };
+    let sd15 = fam("sd15");
+    assert!(seamless_launch(sd15, &on, GenMode::Txt2img));
+    assert!(!seamless_launch(sd15, &on, GenMode::Img2img));
+    assert!(!seamless_launch(sd15, &on, GenMode::Edit));
+    assert!(!seamless_launch(
+        sd15,
+        &FineTune::default(),
+        GenMode::Txt2img
+    ));
+    assert!(!seamless_launch(fam("flux1_dev"), &on, GenMode::Txt2img));
+
+    let s = files("sd15", Layout::AllInOne, "/m/sd15.safetensors", &[]);
+    let with = LaunchExtras {
+        seamless: true,
+        ..Default::default()
+    };
+    assert!(launch_args(reg, &s, &hw(8.0), &with).contains(&"--circular".to_string()));
+    assert!(!launch_args(reg, &s, &hw(8.0), &LaunchExtras::default())
+        .iter()
+        .any(|a| a.starts_with("--circular")));
 }

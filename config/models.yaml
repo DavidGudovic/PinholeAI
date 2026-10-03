@@ -49,6 +49,8 @@
 #   modes:               txt2img / img2img / inpaint / edit (edit = reference image
 #                        + instruction; listed in Edit → "Describe a change").
 #   multi_ref: true      edits can take a second image (Edit's "Add another image").
+#   seamless: true       Create offers "Repeats without seams" (sd-server --circular,
+#                        a launch flag). Only for families checked with a 2×2 tile.
 #   license_accept: <id> the user accepts this licence once (one "I accept",
 #                        shared by families with the same id) before Pinhole
 #                        downloads the family (RELEASE-SPEC §6). Needs a
@@ -337,6 +339,8 @@ families:
     # Small enough to run on the processor when there is no usable GPU
     # (vram.rs fit_cpu: Tight = "runs on the processor — slow").
     cpu_friendly: true
+    # "Repeats without seams" (sd-server --circular): checked on CPU with a 2×2 tile.
+    seamless: true
     modes: [txt2img, img2img, inpaint]
     detect:
       # get_sd_version(): UNet blocks + a CLIP-L token embedding (ne0 768 → SD1;
@@ -400,6 +404,8 @@ families:
     style_template: tags
     vram_gb: { min: 6, recommended: 10 }       # ESTIMATE (min uses VAE tiling)
     activation_gb: 2.0
+    # "Repeats without seams" (sd-server --circular): checked on CPU with a 2×2 tile.
+    seamless: true
     modes: [txt2img, img2img, inpaint]
     detect:
       # get_sd_version(): is_unet && has_multiple_encoders → SDXL (incl. the
