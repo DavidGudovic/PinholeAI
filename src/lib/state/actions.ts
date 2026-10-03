@@ -6,6 +6,7 @@
 import * as api from "../api";
 import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, LoraUse, ResultImage } from "../types";
 import {
+  ALSO_MAX,
   DEFAULT_LORA_WEIGHT,
   editBusy,
   editModels,
@@ -17,6 +18,7 @@ import {
   unsavedIds,
   willQueue,
   type EditMode,
+  type EditParams,
   type ImgRef,
   type JobKind,
   type LeaveKind,
@@ -98,14 +100,17 @@ export function makeActions(store: Store) {
 
   /** Cancel (or Reset) was pressed during the current job, maybe before the engine had it. */
   let cancelRequested = false;
+  /** The "Also apply to…" run the current job belongs to: Cancel stops the whole run. */
+  let runningGroup: string | null = null;
 
   /**
    * Mark a job as running for the whole of `work` (only one at a time). Must be called before
    * the caller's first await, so the queue hands over to the next job without a gap.
    */
-  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[]): Promise<T> {
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[], group?: string): Promise<T> {
     if (get().job) throw busyError();
     cancelRequested = false;
+    runningGroup = group ?? null;
     dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
     let ok = false;
     try {
@@ -139,8 +144,10 @@ export function makeActions(store: Store) {
     const id = uid("q");
     return new Promise<void>((resolve, reject) => {
       waiting.set(id, { run, resolve, reject });
+      // One "Added to the queue" per "Also apply to…" run, not one per picture.
+      const quiet = !!entry.group && get().queue.some((q) => q.group === entry.group);
       dispatch({ type: "queueAdd", job: { ...entry, id } });
-      toast(get().queue.length === 1 ? "Added to the queue. It starts when the current one finishes." : "Added to the queue.", { ms: 2500 });
+      if (!quiet) toast(get().queue.length === 1 ? "Added to the queue. It starts when the current one finishes." : "Added to the queue.", { ms: 2500 });
     });
   }
 
@@ -258,12 +265,14 @@ export function makeActions(store: Store) {
             const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
             const ref = create.refImageId ? get().images[create.refImageId] : null;
             let failed: CoreError | null = null;
+            // One run for Save as one sheet, though each choice keeps its own batch (Variations).
+            const group = prompts.length > 1 ? uid("g") : undefined;
             for (const [i, prompt] of prompts.entries()) {
               const c = { ...create, prompt, count: 1 as const, fineTune: { ...create.fineTune, seed } };
               const req = buildCreateRequest(c, { ui, loras, model, settings, ref });
               try {
                 const { images, refs } = await generateNow(req, nonce);
-                if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+                if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs, ...(group ? { group } : {}) });
               } catch (e) {
                 const err = api.asCoreError(e);
                 if (err.code === "cancelled") throw err;
@@ -369,6 +378,8 @@ export function makeActions(store: Store) {
     // upscale still work.
     const batchId = get().resultBatch[resultId];
     const batch = batchId ? get().batches[batchId] : undefined;
+    // An "Also apply to…" result's upscale joins its run too (for Save as one sheet).
+    const group = get().resultGroup[resultId];
     const imageIds = [resultId, ...(batch?.request.refImageIds ?? [])];
     try {
       await enqueue(upscaleEntry("upscale", resultId, factor, imageIds), () =>
@@ -382,7 +393,7 @@ export function makeActions(store: Store) {
             throw cancelledError();
           }
           const refs = await jobRefs([im], nonce);
-          dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
+          dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs, ...(group ? { group } : {}) });
         }, 1, imageIds),
       );
     } catch (e) {
@@ -393,6 +404,8 @@ export function makeActions(store: Store) {
 
   async function cancel() {
     if (get().job) cancelRequested = true;
+    // The rest of an "Also apply to…" run doesn't start either.
+    if (get().job && runningGroup) for (const q of get().queue) if (q.group === runningGroup) removeQueued(q.id);
     await api.cancelGeneration().catch(() => undefined);
   }
 
@@ -411,6 +424,16 @@ export function makeActions(store: Store) {
     const saved = await api.saveImageAs(id, path);
     dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
     toast(`Saved to ${saved.path}`);
+    return saved;
+  }
+
+  /** "Save as one sheet": the pictures as one grid picture, through the save dialog. Null when cancelled. */
+  async function saveSheet(ids: string[]) {
+    if (ids.length < 2 || !canSaveAs()) return null;
+    const path = await chooseSavePath(`pinhole_sheet_${ids.length}.png`);
+    if (!path) return null;
+    const saved = await api.saveSheetAs(ids, path);
+    toast(`Saved the sheet to ${saved.path}`, { ms: 8000 });
     return saved;
   }
 
@@ -667,6 +690,27 @@ export function makeActions(store: Store) {
 
 
 
+  /** "Also apply to…": add picture files to the list (up to ALSO_MAX in all). */
+  async function importAlsoToEdit(files: Blob[]) {
+    const room = ALSO_MAX - get().edit.alsoIds.length;
+    if (room <= 0 || !files.length) return;
+    const nonce = get().sessionNonce;
+    const got = await Promise.allSettled(files.slice(0, room).map((f) => importBlob(f)));
+    const refs = got.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    if (refs.length && (resetting || get().sessionNonce !== nonce)) {
+      releaseRefs(refs, true);
+      return;
+    }
+    const s = get();
+    if (refs.length) dispatch({ type: "editSetAlso", refs: [...s.edit.alsoIds.map((id) => s.images[id]).filter(Boolean), ...refs] });
+    // Dropped by the list (over the limit, or the picture already being edited): let them go.
+    const kept = new Set(get().edit.alsoIds);
+    releaseRefs(refs.filter((r) => !kept.has(r.id) && !get().images[r.id]), true);
+    const failed = got.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failed) throw api.asCoreError(failed.reason);
+    if (files.length > room) toast(`Up to ${ALSO_MAX} pictures at a time. The rest weren't added.`);
+  }
+
   async function importToDescribe(blob: Blob) {
     const nonce = get().sessionNonce;
     const ref = await importBlob(blob).catch((e) => {
@@ -682,7 +726,16 @@ export function makeActions(store: Store) {
    * `from`: the step to edit (default: the shown one); the result replaces every later step.
    * `newSeed`: ignore a fixed Seed ("Try again").
    */
-  async function runEdit(opts: { mode: EditMode; model: InstalledModel; mask: Blob | null; size: [number, number]; from?: number; newSeed?: boolean }) {
+  async function runEdit(opts: {
+    mode: EditMode;
+    model: InstalledModel;
+    mask: Blob | null;
+    size: [number, number];
+    from?: number;
+    newSeed?: boolean;
+    /** Output size for each "Also apply to…" picture (from its own size). */
+    alsoSize?: (width: number, height: number) => [number, number];
+  }) {
     const s = get();
     const shown = s.edit.index;
     const at = opts.from ?? shown;
@@ -700,9 +753,25 @@ export function makeActions(store: Store) {
     }
     const { edit, loras, settings } = s;
     const second = opts.mode === "instruction" && edit.secondImageId ? [edit.secondImageId] : [];
+    // "Also apply to…" (Describe a change and Restyle, not Try again): each picture is its own
+    // queued edit with the same settings; every result of the run goes to Create's results together.
+    const also =
+      opts.from == null && opts.alsoSize && (opts.mode === "instruction" || opts.mode === "restyle")
+        ? edit.alsoIds.map((id) => s.images[id]).filter((r): r is ImgRef => !!r && r.id !== source.id)
+        : [];
+    const group = also.length ? uid("g") : undefined;
+    let others: Promise<void>[] = [];
+    // Reported once the shown picture's edit is done (or failed), so its error shows first.
+    const reportOthers = () =>
+      void Promise.allSettled(others).then((got) => {
+        const failed = got.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+        if (!failed.length) return;
+        const why = api.asCoreError(failed[0].reason).message;
+        toast(`${failed.length} of ${others.length} other ${others.length === 1 ? "picture" : "pictures"} couldn't be edited. ${why}`, { tone: "error", ms: 10000 });
+      });
     let maskId: string | null = null;
     try {
-      await enqueue(queueEntry("edit", text, opts.model, 1, [source.id, ...second]), () =>
+      const shownDone = enqueue({ ...queueEntry("edit", text, opts.model, 1, [source.id, ...second]), ...(group ? { group } : {}) }, () =>
         // The job (and with it the history lock) starts before the first await.
         withJob(
           "edit",
@@ -734,6 +803,12 @@ export function makeActions(store: Store) {
               const secondImageId = second[0];
               if (opts.from != null || pos === now.index) dispatch({ type: "editPush", ref: refs[0], meta: images[0] ?? null, after: pos, secondImageId });
               else dispatch({ type: "editAppend", ref: refs[0], meta: images[0] ?? null, secondImageId });
+              // With "Also apply to…", it joins the others in Create's results too.
+              if (group && images[0]) dispatch({ type: "addResults", batch: null, images: [images[0]], refs: [refs[0]], group });
+              releaseRefs(refs.slice(1), true);
+            } else if (refs[0] && group && images[0]) {
+              // The history moved on, but the run still has a place for it.
+              dispatch({ type: "addResults", batch: null, images: [images[0]], refs: [refs[0]], group });
               releaseRefs(refs.slice(1), true);
             } else {
               releaseRefs(refs, true);
@@ -742,13 +817,69 @@ export function makeActions(store: Store) {
           },
           1,
           [source.id, ...second],
+          group,
+        ).then(() => undefined),
+      );
+      // Queued behind the shown picture's edit, in the order they were picked. The queue
+      // entries hold the pictures from here, so the list can be cleared.
+      others = also.map((ref) => editOther(ref, opts.mode, opts.model, opts.alsoSize!(ref.width, ref.height), edit, second, group!, text));
+      if (also.length) dispatch({ type: "patchEdit", patch: { alsoIds: [] } });
+      await shownDone;
+    } catch (e) {
+      const err = api.asCoreError(e);
+      if (err.code !== "cancelled") {
+        reportOthers();
+        throw err;
+      }
+    } finally {
+      if (maskId) void api.discardImage(maskId).catch(() => undefined);
+    }
+    reportOthers();
+  }
+
+  /**
+   * One "Also apply to…" picture: the same edit (no mask) queued as its own job. Its result goes to
+   * Create's results with the rest of the run (`group`). Resolves quietly on cancel.
+   */
+  async function editOther(
+    source: ImgRef,
+    mode: EditMode,
+    model: InstalledModel,
+    size: [number, number],
+    edit: EditParams,
+    second: string[],
+    group: string,
+    text: string,
+  ) {
+    try {
+      await enqueue({ ...queueEntry("edit", text, model, 1, [source.id, ...second]), kind: "editMore", group }, () =>
+        withJob(
+          "editMore",
+          async () => {
+            const nonce = get().sessionNonce;
+            const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+            const req = buildEditRequest(edit, {
+              mode,
+              source,
+              model,
+              ui,
+              maskImageId: null,
+              size,
+              loras: get().loras,
+              autoAdd: get().settings?.addTriggerWords ?? true,
+            });
+            const { images, refs } = await generateNow(req, nonce);
+            if (images[0] && refs[0]) dispatch({ type: "addResults", batch: null, images: [images[0]], refs: [refs[0]], group });
+            releaseRefs(refs.slice(1), true);
+          },
+          1,
+          [source.id, ...second],
+          group,
         ).then(() => undefined),
       );
     } catch (e) {
       const err = api.asCoreError(e);
       if (err.code !== "cancelled") throw err;
-    } finally {
-      if (maskId) void api.discardImage(maskId).catch(() => undefined);
     }
   }
 
@@ -872,7 +1003,9 @@ export function makeActions(store: Store) {
     importCreateReference,
     importSecondToEdit,
     importToDescribe,
+    saveSheet,
     runEdit,
+    importAlsoToEdit,
     upscaleEdit,
     autoEditModel,
     clearSession,

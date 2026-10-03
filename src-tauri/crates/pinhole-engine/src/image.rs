@@ -223,6 +223,60 @@ pub fn downscale_2x_box(rgba: &[u8], width: u32, height: u32) -> (Vec<u8>, u32, 
     (out, nw, nh)
 }
 
+/// Largest side of a sheet ("Save as one sheet"); bigger sheets are scaled down to fit.
+pub const SHEET_MAX_SIDE: u32 = 8192;
+
+/// Columns for a sheet of `n` pictures: one row up to 3, then rows of 2, 3 or 4.
+pub fn sheet_columns(n: usize) -> usize {
+    match n {
+        0..=3 => n.max(1),
+        4 => 2,
+        5 | 6 => 3,
+        _ => 4,
+    }
+}
+
+/// Pictures (RGBA8, row-major) side by side in one picture: a grid of equal cells the size of the
+/// largest picture, each picture fitted and centred in its cell, small white gaps between them
+/// and around the edge, no text. Scaled down so neither side is over [`SHEET_MAX_SIDE`].
+pub fn sheet(tiles: &[(Vec<u8>, u32, u32)]) -> (Vec<u8>, u32, u32) {
+    use image::imageops::{self, FilterType};
+    let n = tiles.len().max(1);
+    let cols = sheet_columns(n) as u32;
+    let rows = n.div_ceil(cols as usize) as u32;
+    let cell_w = tiles.iter().map(|t| t.1).max().unwrap_or(1).max(1);
+    let cell_h = tiles.iter().map(|t| t.2).max().unwrap_or(1).max(1);
+    let gap = (cell_w.min(cell_h) / 50).max(8);
+    let full_w = cols * cell_w + (cols + 1) * gap;
+    let full_h = rows * cell_h + (rows + 1) * gap;
+    let scale = (SHEET_MAX_SIDE as f64 / full_w.max(full_h) as f64).min(1.0);
+    let px = |v: u32| ((v as f64 * scale).round() as u32).max(1);
+    let (cw, ch, g) = (px(cell_w), px(cell_h), px(gap));
+    let (w, h) = (cols * cw + (cols + 1) * g, rows * ch + (rows + 1) * g);
+    let mut out = image::RgbaImage::from_pixel(w, h, image::Rgba([255, 255, 255, 255]));
+    for (i, (rgba, tw, th)) in tiles.iter().enumerate() {
+        let Some(tile) = image::RgbaImage::from_raw(*tw, *th, rgba.clone()) else {
+            continue;
+        };
+        // Fit inside the cell, keeping the shape.
+        let fit = (cw as f64 / *tw as f64).min(ch as f64 / *th as f64);
+        let (fw, fh) = (
+            ((*tw as f64 * fit).round() as u32).clamp(1, cw),
+            ((*th as f64 * fit).round() as u32).clamp(1, ch),
+        );
+        let tile = if (fw, fh) == (*tw, *th) {
+            tile
+        } else {
+            imageops::resize(&tile, fw, fh, FilterType::Lanczos3)
+        };
+        let (c, r) = (i as u32 % cols, i as u32 / cols);
+        let x = g + c * (cw + g) + (cw - fw) / 2;
+        let y = g + r * (ch + g) + (ch - fh) / 2;
+        imageops::overlay(&mut out, &tile, i64::from(x), i64::from(y));
+    }
+    (out.into_raw(), w, h)
+}
+
 fn short(s: &str) -> String {
     s.chars().take(200).collect()
 }
@@ -335,5 +389,38 @@ mod tests {
         assert_eq!(small[3], 255);
         let (_, jw, jh) = decode_rgba(&jpeg(9, 4)).unwrap();
         assert_eq!((jw, jh), (9, 4));
+    }
+
+    #[test]
+    fn sheet_puts_pictures_in_a_grid_with_gaps() {
+        let red = ([200u8, 0, 0, 255].repeat(100 * 60), 100, 60);
+        let tiles = [red.clone(), red.clone(), red.clone(), red];
+        let (px, w, h) = sheet(&tiles);
+        // 2×2 cells of 100×60 with 8 px gaps.
+        assert_eq!((w, h), (2 * 100 + 3 * 8, 2 * 60 + 3 * 8));
+        let at = |x: u32, y: u32| &px[((y * w + x) * 4) as usize..((y * w + x) * 4 + 4) as usize];
+        assert_eq!(at(0, 0), [255, 255, 255, 255]);
+        assert_eq!(at(8, 8), [200, 0, 0, 255]);
+        assert_eq!(at(8 + 100, 8), [255, 255, 255, 255]);
+        assert_eq!(at(w - 9, h - 9), [200, 0, 0, 255]);
+    }
+
+    #[test]
+    fn sheet_columns_by_count() {
+        let cols: Vec<usize> = (2..=8).map(sheet_columns).collect();
+        assert_eq!(cols, [2, 3, 2, 3, 3, 4, 4]);
+    }
+
+    #[test]
+    fn sheet_fits_other_shapes_and_stays_under_the_limit() {
+        let wide = ([0u8, 0, 200, 255].repeat(200 * 100), 200, 100);
+        let tall = ([0u8, 200, 0, 255].repeat(100 * 200), 100, 200);
+        let (_, w, h) = sheet(&[wide.clone(), tall]);
+        // Cells take the largest width and height.
+        assert_eq!((w, h), (2 * 200 + 3 * 8, 200 + 2 * 8));
+        let big = (vec![9u8; 4000 * 3000 * 4], 4000, 3000);
+        let (px, w, h) = sheet(&[big.clone(), big.clone(), big]);
+        assert!(w <= SHEET_MAX_SIDE && h <= SHEET_MAX_SIDE);
+        assert_eq!(px.len() as u64, u64::from(w) * u64::from(h) * 4);
     }
 }

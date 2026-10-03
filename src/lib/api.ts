@@ -157,6 +157,8 @@ export const saveImage = (id: string) => invoke<T.SavedImage>("save_image", { id
 export const saveImageAs = (id: string, path: string) => invoke<T.SavedImage>("save_image_as", { id, path });
 /** "Save all": every listed image into a folder the user picked. */
 export const saveImagesTo = (ids: string[], dir: string) => invoke<T.SavedBatch>("save_images_to", { ids, dir });
+/** "Save as one sheet": 2–8 session pictures as one grid picture, at a path from the save dialog. */
+export const saveSheetAs = (ids: string[], path: string) => invoke<T.SavedImage>("save_sheet_as", { ids, path });
 export const copyImage = (id: string) => invoke<void>("copy_image", { id });
 /** The picture on the system clipboard as a PNG file, or null when there is none (or, with
  *  `onlyWithoutText`, when the clipboard also holds text). */

@@ -28,7 +28,7 @@ import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
-import { createModels, takesReference, unsavedIds, type ImgRef } from "../../lib/state/model";
+import { createModels, sheetIds, takesReference, unsavedIds, type ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
 import { TipLine } from "./TipLine";
@@ -150,6 +150,8 @@ function Preview({
   const [sideBySide, setSideBySide] = useState(!!compare);
   const [pickModel, setPickModel] = useState(false);
   const unsavedCount = useAppState((s) => unsavedIds(s).length);
+  // Joined to a string so the selector returns a stable value.
+  const sheet = useAppState((s) => sheetIds(s, result.id).join(" "));
   const [error, setError] = useState<CoreError | null>(null);
 
   const run = async (f: () => Promise<unknown>) => {
@@ -199,6 +201,8 @@ function Preview({
           tab="create"
           unsavedCount={unsavedCount}
           onSaveAll={() => void run(() => actions.saveAll())}
+          sheetCount={sheet ? sheet.split(" ").length : 0}
+          onSaveSheet={() => void run(() => actions.saveSheet(sheet.split(" ")))}
         />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
