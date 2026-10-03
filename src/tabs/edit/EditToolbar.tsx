@@ -11,6 +11,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
+import { PictureButton } from "../../components/SessionPictures";
 import { Button, IconButton, Segmented } from "../../components/ui";
 import type {
   Action,
@@ -37,6 +38,8 @@ export function EditToolbar({
   compareWith,
   setCompareWith,
   onPickImage,
+  sessionPictures,
+  onPickSession,
   onUpscale,
   runAction,
   onCopy,
@@ -61,6 +64,9 @@ export function EditToolbar({
   compareWith: "previous" | "original";
   setCompareWith: (w: "previous" | "original") => void;
   onPickImage: () => void;
+  /** This session's other pictures, offered next to choosing a file. */
+  sessionPictures: ImgRef[];
+  onPickSession: (p: ImgRef) => void;
   onUpscale: (factor: 2 | 4) => void;
   runAction: (f: () => Promise<unknown>) => Promise<void>;
   onCopy: () => void;
@@ -143,17 +149,19 @@ export function EditToolbar({
         </Button>
       )}
       <div className="ml-auto flex items-center gap-1.5">
-        <Button
-          size="sm"
-          variant="ghost"
+        <PictureButton
           disabled={locked}
-          onClick={onPickImage}
+          onFile={onPickImage}
+          onPick={onPickSession}
+          pictures={sessionPictures}
+          pickTitle="Edit this picture"
+          align="end"
           title="Pick another image to edit"
-          aria-label="Another image"
+          ariaLabel="Another image"
         >
           <ImagePlus className="h-3.5 w-3.5" />{" "}
           <span className="hidden xl:inline">Another image</span>
-        </Button>
+        </PictureButton>
         <UpscaleMenu
           size="sm"
           width={current.width}

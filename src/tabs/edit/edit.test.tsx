@@ -87,6 +87,14 @@ afterEach(() => {
 
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)));
 const ref = (id: string) => ({ id, url: `blob:${id}`, width: 64, height: 64 });
+const made = (id: string) => ({ id, width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "M", familyId: "sdxl", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId: null, origin: "generated" as const });
+/** A store with Create results (newest first, like the strip). */
+const withResults = (...ids: string[]) => {
+  const store = createStore();
+  store.dispatch({ type: "addResults", batch: null, images: ids.map(made), refs: ids.map(ref) });
+  return store;
+};
+const sessionThumbs = (name: string) => screen.getAllByRole("button", { name }).map((b) => b.querySelector("img")?.getAttribute("src"));
 
 describe("Edit tab", () => {
   it("shows the Edit notice once, for a picture from the computer only", async () => {
@@ -561,5 +569,91 @@ describe("Describe tab", () => {
     act(() => void runPrimaryAction("describe"));
     await flush();
     expect(api.describeImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("pictures from this session", () => {
+  it("Edit: the empty tab and Another image offer this session's pictures", async () => {
+    const store = withResults("a", "b");
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(screen.getByText("Or use one from this session")).toBeTruthy();
+    expect(sessionThumbs("Edit this picture")).toEqual(["blob:a", "blob:b"]);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit this picture" })[1]);
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+
+    // Another image: a file, or one of the others (not the one shown).
+    fireEvent.click(screen.getByRole("button", { name: "Another image" }));
+    expect(screen.getByRole("menuitem", { name: /Choose a file/ })).toBeTruthy();
+    expect(sessionThumbs("Edit this picture")).toEqual(["blob:a"]);
+    fireEvent.click(screen.getByRole("button", { name: "Edit this picture" }));
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+    expect(api.importImage).not.toHaveBeenCalled();
+  });
+
+  it("Edit: Add another image can use a picture from this session as image 2", async () => {
+    const klein = { ...model, id: "kl", familyId: "flux2_klein_4b", modes: ["txt2img", "img2img", "edit"], multiRef: true, fit: "fits" } as InstalledModel;
+    vi.mocked(api.listModels).mockImplementation(async () => [model, klein]);
+    const store = withResults("a", "b");
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: /Add another image/ }));
+    expect(sessionThumbs("Use as image 2")).toEqual(["blob:b"]);
+    fireEvent.click(screen.getByRole("button", { name: "Use as image 2" }));
+    expect(store.getState().edit.secondImageId).toBe("b");
+    expect(screen.getByRole("button", { name: "Remove image 2" })).toBeTruthy();
+    // Picking image 2 as the picture to edit leaves no image 2 behind (it can't be both).
+    fireEvent.click(screen.getByRole("button", { name: "Another image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit this picture" }));
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["b"]);
+    expect(store.getState().edit.secondImageId).toBeNull();
+    vi.mocked(api.listModels).mockImplementation(async () => [model]);
+  });
+
+  it("Edit: with nothing made this session, Another image opens the file chooser", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("photo") });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(screen.queryByText("Or use one from this session")).toBeNull();
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Another image" }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menuitem", { name: /Choose a file/ })).toBeNull();
+    click.mockRestore();
+  });
+
+  it("Describe: the empty tab and Another image offer this session's pictures", async () => {
+    const store = withResults("a", "b");
+    store.dispatch({ type: "setTab", tab: "describe" });
+    render(
+      <AppProvider store={store}>
+        <DescribeTab />
+      </AppProvider>,
+    );
+    await flush();
+    fireEvent.click(screen.getAllByRole("button", { name: "Describe this picture" })[0]);
+    expect(store.getState().describe.imageId).toBe("a");
+    fireEvent.click(screen.getByRole("button", { name: /Another image/ }));
+    expect(sessionThumbs("Describe this picture")).toEqual(["blob:b"]);
+    fireEvent.click(screen.getByRole("button", { name: "Describe this picture" }));
+    expect(store.getState().describe.imageId).toBe("b");
   });
 });
