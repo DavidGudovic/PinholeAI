@@ -19,7 +19,7 @@ const { installMocks } = await import("../lib/mock");
 const { AppProvider } = await import("../lib/state/AppProvider");
 const { createStore } = await import("../lib/state/store");
 const { PasteChooser, defaultPasteTarget, pasteTargets } = await import("./PasteChooser");
-const { DropTarget } = await import("./ImageDrop");
+const { DropTarget, offerDroppedPicture } = await import("./ImageDrop");
 const { Toasts } = await import("./Toasts");
 const { CreateTab } = await import("../tabs/create/CreateTab");
 const { blockStrayDrops } = await import("../lib/platform");
@@ -178,6 +178,11 @@ describe("dropped picture", () => {
         <Toasts />
       </AppProvider>,
     );
+    // The window takes a link while it's dragged over (else the drop never comes).
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: { types: ["text/uri-list"], dropEffect: "none" } });
+    document.body.dispatchEvent(over);
+    expect((over as Event & { dataTransfer: { dropEffect: string } }).dataTransfer.dropEffect).toBe("copy");
     drop(document.body, { types: ["Files"], files: [new File(["x"], "notes.txt", { type: "text/plain" })] });
     expect(screen.getByText(/isn’t a picture Pinhole can open/)).toBeTruthy();
     const e = drop(document.body, { types: ["text/uri-list"], uri: "https://example.com/cat.png" });
@@ -200,5 +205,12 @@ describe("dropped picture", () => {
     await flush();
     expect(api.readPictureSettings).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
+  });
+
+  it("is not offered while another dialog is open", () => {
+    setup(["txt2img"]);
+    render(<div role="dialog" aria-label="Viewer" />);
+    act(() => offerDroppedPicture(picture()));
+    expect(screen.queryByRole("dialog", { name: /Use the dropped picture for/ })).toBeNull();
   });
 });

@@ -124,6 +124,7 @@ function CreateWorkspace() {
     try {
       const o = await reuseSettingsFrom(file, store, actions);
       if (!o.found) {
+        setReuse(null);
         offerDroppedPicture(file);
         return;
       }

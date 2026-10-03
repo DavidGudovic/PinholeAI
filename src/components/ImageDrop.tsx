@@ -112,6 +112,8 @@ const offers = new Set<Offer>();
 
 /** Hands a dropped picture to the paste chooser, from a drop area that didn't use it. */
 export function offerDroppedPicture(f: File) {
+  // Like paste and other drops: not while a dialog (the full-size viewer, the chooser) is open.
+  if (document.querySelector("[role=dialog]")) return;
   offers.forEach((o) => o(f));
 }
 
