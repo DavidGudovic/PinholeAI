@@ -289,8 +289,18 @@ Upscale reaches the monitor's own resolution.
 **Starter ideas**: while the prompt box is empty, a few plain example chips ("Cabin in the snow",
 "Watercolor fox"…) fill it on click, with a hint to try Improve. Examples stay fictional and safe for work.
 
+**Choices in braces**: `a {red|blue|green} car` makes one picture per combination in one Generate
+(several groups multiply; the first group changes slowest). Only braces holding a `|` count; other
+braces, and everything in a saved Style, stay plain text. Repeated options count once, and How many
+is not used. The pictures share one seed (the locked one, else a new random one), so only the
+choices differ. At most 16 pictures: the button reads "Generate 3" ("Add 3 to queue"), and when
+there are more combinations a line under it says "Makes the first 16 of 30 combinations". The
+prompts are expanded in memory only, run one after another as one queued job, and each one is a
+normal Create request (word check, image check and everything else as for a typed prompt). Prompt
+history keeps the prompt as typed.
+
 **Tip line**: one quiet "Tip" under a picture in Create about a feature that is easy to miss (Keep this
-look, Variations, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
+look, Variations, choices in braces, Styles, Paste from CivitAI, the reference picture, the ? shortcuts list). At most one
 per app session; × closes it, **Don't show tips** (or Settings → Show tips) turns it off for good.
 
 **Reference picture** (optional, under the prompt): "make something in the style of this picture"
@@ -360,8 +370,17 @@ edit model reads natural language); the Safe mode rule, add-on trigger words and
 as in Create.
 
 Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Same character** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
+new seeds) · **Same character** · **On another model…** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
 more than one picture is unsaved.
+
+**On another model…** (under More like this): lists installed models other than the one that made
+the picture, with their Fits/Tight badge; models that are too big or not fully set up are left
+out, and when the picture used a reference picture only models that take one are listed. Picking
+one runs the same prompt, style, shape, Quality, reference picture and seed there as a queued job
+(the model switch restarts sd-server with progress, as usual). Settings that belong to one family
+(sampler, steps, CFG, size, Stick to prompt) use the new model's defaults, and add-ons that don't
+work with it are left out. The new picture opens side by side with the first one, each labelled
+with its model's name; the side-by-side button switches between the two views.
 
 **Upscale** runs a 4× ESRGAN model in sd-server (2× = 4× then halved). There are three, all
 pinned in `models.yaml` and each downloaded the first time it is used: `realesrgan_x4` (photos,

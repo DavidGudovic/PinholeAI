@@ -25,7 +25,8 @@ import {
   type Toast,
 } from "./model";
 import { importBlob, refFromSession, releaseRefs } from "./images";
-import { buildCreateRequest, buildEditRequest, variationRequest } from "./request";
+import { expandChoices } from "./choices";
+import { buildCreateRequest, buildEditRequest, otherModelRequest, randomSeed, variationRequest } from "./request";
 import type { Store } from "./store";
 import { canSaveAs, chooseFolder, chooseSavePath, closeWindow, copyText, notifyDone, primeSound, windowInBackground } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
@@ -224,15 +225,53 @@ export function makeActions(store: Store) {
     }
     const { create, loras, settings } = s;
     const imageIds = create.refImageId ? [create.refImageId] : [];
+    const { prompts } = expandChoices(create.prompt);
+    if (prompts.length > 1) return generateChoices(prompts, model, imageIds);
     await queueBatch(
       create.count,
       queueEntry("create", create.prompt, model, create.count, imageIds),
       async () => {
         dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
-        return buildCreateRequest(create, { ui, loras, model, settings });
+        return buildCreateRequest({ ...create, prompt: prompts[0] }, { ui, loras, model, settings });
       },
     );
+  }
+
+  /**
+   * One picture per prompt made from `{a|b}` choices, as one queued job. They share a seed
+   * (the locked one, else a new random one) so only the choices differ between them.
+   */
+  async function generateChoices(prompts: string[], model: InstalledModel, imageIds: string[]) {
+    const { create, loras, settings } = get();
+    const seed = create.fineTune.seed ?? randomSeed();
+    const entry = queueEntry("create", create.prompt, model, prompts.length, imageIds);
+    try {
+      await enqueue(entry, async () => {
+        await withJob(
+          "create",
+          async () => {
+            const nonce = get().sessionNonce;
+            dispatch({ type: "pushPrompt", prompt: create.prompt });
+            const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+            for (const [i, prompt] of prompts.entries()) {
+              const c = { ...create, prompt, count: 1 as const, fineTune: { ...create.fineTune, seed } };
+              const req = buildCreateRequest(c, { ui, loras, model, settings });
+              const { images, refs } = await generateNow(req, nonce);
+              if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+              dispatch({ type: "jobCount", count: prompts.length - i - 1 });
+            }
+          },
+          prompts.length,
+          entry.imageIds,
+        );
+        void refreshModels().catch(() => undefined);
+      });
+    } catch (e) {
+      const err = api.asCoreError(e);
+      if (err.code === "cancelled") return;
+      throw err;
+    }
   }
 
   function queueEntry(kind: QueuedJob["kind"], prompt: string, model: InstalledModel | undefined, count: number, imageIds: string[] = []): Omit<QueuedJob, "id"> {
@@ -242,7 +281,7 @@ export function makeActions(store: Store) {
   }
 
   /** A Create batch: `makeRequest` runs once the job has started. */
-  async function queueBatch(count: number, entry: Omit<QueuedJob, "id">, makeRequest: () => Promise<GenerateRequest>) {
+  async function queueBatch(count: number, entry: Omit<QueuedJob, "id">, makeRequest: () => Promise<GenerateRequest>, compareWith?: string) {
     try {
       await enqueue(entry, async () => {
         await withJob(
@@ -253,7 +292,7 @@ export function makeActions(store: Store) {
             const { images, refs } = await generateNow(req, nonce);
             // Added while the job still holds its images: the batch keeps its reference picture
             // (for Variations) even if the slot was cleared meanwhile.
-            if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req }, images, refs });
+            if (images.length) dispatch({ type: "addResults", batch: { id: uid("b"), request: req, ...(compareWith ? { compareWith } : {}) }, images, refs });
           },
           count,
           entry.imageIds,
@@ -279,6 +318,29 @@ export function makeActions(store: Store) {
     const batch = s.batches[s.resultBatch[resultId] ?? ""];
     if (!batch) throw { code: "not_found", message: "The settings for this image are no longer in memory. Generate again from the Create tab.", details: null } as CoreError;
     await runBatch(variationRequest(batch.request));
+  }
+
+  /**
+   * "On another model": the result's prompt, seed and shape on `modelId` (queued if a job is
+   * running). The new picture opens side by side with the one it was made from.
+   */
+  async function onOtherModel(resultId: string, modelId: string) {
+    const s = get();
+    const batch = s.batches[s.resultBatch[resultId] ?? ""];
+    const result = s.results.find((r) => r.id === resultId);
+    if (!batch || !result) throw { code: "not_found", message: "The settings for this image are no longer in memory. Generate again from the Create tab.", details: null } as CoreError;
+    const model = (s.models ?? []).find((m) => m.id === modelId);
+    if (!model) throw { code: "not_found", message: "That model isn't installed anymore. Pick another one.", details: null } as CoreError;
+    const imageIds = batch.request.refImageIds ?? [];
+    await queueBatch(
+      1,
+      queueEntry("create", batch.request.prompt, model, 1, imageIds),
+      async () => {
+        const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
+        return otherModelRequest(batch.request, result.seed, { model, ui, loras: get().loras });
+      },
+      resultId,
+    );
   }
 
   /** The queue list's line for an upscale. */
@@ -770,6 +832,7 @@ export function makeActions(store: Store) {
     runBatch,
     removeQueued,
     variations,
+    onOtherModel,
     upscale,
     cancel,
     save,

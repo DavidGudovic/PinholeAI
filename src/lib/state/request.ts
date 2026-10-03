@@ -105,6 +105,32 @@ export function variationRequest(req: GenerateRequest): GenerateRequest {
   return { ...req, fineTune };
 }
 
+/** A random seed in the range the engine picks from when none is set. */
+export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
+
+/**
+ * "On another model": the same prompt, style, shape, quality, reference picture and seed on
+ * `model`. Settings that belong to one model family (sampler, steps, size, Stick to prompt
+ * position) go back to `model`'s defaults, and add-ons that don't work with it are left out.
+ */
+export function otherModelRequest(
+  req: GenerateRequest,
+  seed: number,
+  opts: { model: InstalledModel; ui: FamilyUi | null; loras: InstalledLora[] },
+): GenerateRequest {
+  const { negativePrompt, vaeTiling } = req.fineTune;
+  return {
+    ...req,
+    modelId: opts.model.id,
+    dials: { ...req.dials, stick: defaultStickPosition(opts.ui), count: 1 },
+    fineTune: effectiveFineTune({ negativePrompt, vaeTiling, seed }, opts.ui),
+    loras: req.loras.filter((u) => {
+      const l = opts.loras.find((x) => x.id === u.loraId);
+      return !!l && loraCompatible(l, opts.model.familyId);
+    }),
+  };
+}
+
 /** Output size for an edit: keep the aspect ratio, ≤ ~maxPixels, multiples of `multiple` (16, or 64 for SD families). */
 export function fitEditSize(w: number, h: number, maxPixels = 1024 * 1024, multiple = 16): [number, number] {
   if (!(w > 0 && h > 0)) return [1024, 1024];
