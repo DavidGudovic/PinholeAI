@@ -4,6 +4,7 @@ import { Lock } from "lucide-react";
 import { Segmented, Slider, Toggle, cx, focusRing } from "../../components/ui";
 import { DEFAULT_SHAPE_SIZES, SHAPE_LABEL, defaultStickPosition, stickValue } from "../../lib/paste/map";
 import type { FamilyUi, Quality, Shape } from "../../lib/types";
+import { sizeForRatio } from "../../lib/sizes";
 import { useAppState, useDispatch } from "../../lib/state/store";
 
 export const FALLBACK_SHAPES: Record<Shape, [number, number]> = DEFAULT_SHAPE_SIZES;
@@ -22,18 +23,46 @@ export function DialRow({ label, children, htmlFor }: { label: ReactNode; childr
   );
 }
 
-export function ShapeChips({ value, onChange, shapes }: { value: Shape; onChange: (s: Shape) => void; shapes: Record<string, [number, number]> }) {
+/** "Same as reference": shown while Create has a reference picture; `size` is what it makes. */
+export interface ReferenceShape {
+  size: [number, number];
+  active: boolean;
+  onPick: () => void;
+}
+
+export function ShapeChips({
+  value,
+  onChange,
+  shapes,
+  reference,
+}: {
+  value: Shape;
+  onChange: (s: Shape) => void;
+  shapes: Record<string, [number, number]>;
+  reference?: ReferenceShape | null;
+}) {
   return (
     <div role="radiogroup" aria-label="Shape" className="grid grid-cols-4 gap-1.5">
       {SHAPES.map((s) => {
         const [w, h] = shapes[s] ?? FALLBACK_SHAPES[s];
-        return <ShapeChip key={s} active={s === value} w={w} h={h} title={`${w}×${h}`} label={SHAPE_LABEL[s]} onClick={() => onChange(s)} />;
+        return <ShapeChip key={s} active={!reference?.active && s === value} w={w} h={h} title={`${w}×${h}`} label={SHAPE_LABEL[s]} onClick={() => onChange(s)} />;
       })}
+      {reference && (
+        <ShapeChip
+          active={reference.active}
+          w={reference.size[0]}
+          h={reference.size[1]}
+          title={`Same shape as the reference picture, ${reference.size[0]}×${reference.size[1]}`}
+          label="Same as reference"
+          onClick={reference.onPick}
+          wide
+        />
+      )}
     </div>
   );
 }
 
-/** One shape chip (a radio): an outline of `w`×`h` above the label. `inset` draws a smaller box inside it. */
+/** One shape chip (a radio): an outline of `w`×`h` above the label. `inset` draws a smaller box inside it; `wide` is a full-row chip with the outline beside the label. */
 export function ShapeChip({
   active,
   w,
@@ -43,6 +72,7 @@ export function ShapeChip({
   onClick,
   disabled,
   inset,
+  wide,
 }: {
   active: boolean;
   w: number;
@@ -52,6 +82,7 @@ export function ShapeChip({
   onClick: () => void;
   disabled?: boolean;
   inset?: boolean;
+  wide?: boolean;
 }) {
   const max = 18;
   const iw = w >= h ? max : Math.round((max * w) / h);
@@ -65,7 +96,8 @@ export function ShapeChip({
       disabled={disabled}
       onClick={onClick}
       className={cx(
-        "flex h-14 min-w-0 flex-col items-center justify-center gap-1 rounded-lg border text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        "flex min-w-0 items-center justify-center rounded-lg border text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        wide ? "col-span-full h-9 gap-2" : "h-14 flex-col gap-1",
         focusRing,
         active
           ? "border-amber-500 bg-amber-50 font-medium text-amber-950 dark:border-amber-500/70 dark:bg-amber-500/10 dark:text-amber-100"
@@ -91,6 +123,8 @@ export function ShapeChip({
 
 export function Dials({ ui }: { ui: FamilyUi | null }) {
   const c = useAppState((s) => s.create);
+  const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
+  const refSize = ref && ref.width > 0 && ref.height > 0 ? sizeForRatio(ref.width / ref.height, ui) : null;
   const selected = useAppState((s) => s.results.find((r) => r.id === s.selectedResultId) ?? null);
   const dispatch = useDispatch();
   const shapes = ui?.shapes ?? FALLBACK_SHAPES;
@@ -103,7 +137,20 @@ export function Dials({ ui }: { ui: FamilyUi | null }) {
   return (
     <div className="space-y-3.5">
       <DialRow label="Shape">
-        <ShapeChips value={c.shape} shapes={shapes} onChange={(v) => dispatch({ type: "setDial", dial: "shape", value: v })} />
+        <ShapeChips
+          value={c.shape}
+          shapes={shapes}
+          onChange={(v) => dispatch({ type: "setDial", dial: "shape", value: v })}
+          reference={
+            refSize
+              ? {
+                  size: refSize,
+                  active: c.refShape,
+                  onPick: () => dispatch({ type: "createRefShape" }),
+                }
+              : null
+          }
+        />
       </DialRow>
       <DialRow label="Quality">
         <Segmented

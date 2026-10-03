@@ -37,6 +37,7 @@ const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
 const { ReferenceSlot } = await import("./ReferenceSlot");
+const { Dials } = await import("./Dials");
 const { makeActions } = await import("../../lib/state/actions");
 type Store = ReturnType<typeof createStore>;
 
@@ -371,6 +372,23 @@ describe("reference picture", () => {
     expect(store.getState().create.modelId).toBe("k");
     fireEvent.click(screen.getByRole("button", { name: "Remove the reference picture" }));
     expect(store.getState().create.refImageId).toBeNull();
+  });
+
+  it("offers Same as reference in the Shape dial and picks it when the picture is added", () => {
+    const store = storeWithResults(result("w", 1600, 900));
+    withApp(store, <Dials ui={null} />);
+    expect(screen.queryByRole("radio", { name: "Same as reference" })).toBeNull();
+
+    act(() => store.dispatch({ type: "createSetRef", ref: store.getState().images.w }));
+    const chip = screen.getByRole("radio", { name: "Same as reference" });
+    expect(chip.getAttribute("aria-checked")).toBe("true");
+    expect(chip.getAttribute("title")).toContain("1344×768");
+    expect(screen.getByRole("radio", { name: "Square" }).getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Square" }));
+    expect(store.getState().create.refShape).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "Same as reference" }));
+    expect(store.getState().create.refShape).toBe(true);
   });
 
   it("Side by side shows the reference picture next to a result made with it", () => {
