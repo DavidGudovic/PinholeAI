@@ -106,8 +106,12 @@ export function EditTab() {
   // "Also apply to…": Describe a change and Restyle only (no brush: each picture is different).
   const alsoMode = mode === "instruction" || mode === "restyle";
   const also = useMemo(
-    () => (alsoMode ? e.alsoIds.map((id) => images[id]).filter((r): r is ImgRef => !!r) : []),
-    [alsoMode, e.alsoIds, images],
+    () => {
+      // Not the picture shown now (the history may have moved to one of them).
+      const shown = e.chain[e.index]?.imageId;
+      return alsoMode ? e.alsoIds.map((id) => images[id]).filter((r): r is ImgRef => !!r && r.id !== shown) : [];
+    },
+    [alsoMode, e.alsoIds, e.chain, e.index, images],
   );
   const batching = also.length > 0;
   const edits = useMemo(

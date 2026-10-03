@@ -452,7 +452,7 @@ pub fn export_png(core: &AppCore, ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
 pub const SHEET_MAX: usize = 8;
 
 /// "Save as one sheet": the pictures in a grid ([`img::sheet`]), each one watermarked like its
-/// own export first. The sheet is watermarked again when Pinhole made any of them, and carries
+/// own export first. The sheet is watermarked again when it carries a marker, and carries
 /// the XMP marker: their shared source type, or "composite" when they differ. No settings chunk
 /// (each picture has its own settings).
 fn sheet_bytes(ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
@@ -461,17 +461,6 @@ fn sheet_bytes(ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
             "A sheet takes up to {SHEET_MAX} pictures."
         )));
     }
-    let tiles = ims
-        .iter()
-        .map(marked_pixels)
-        .collect::<CoreResult<Vec<_>>>()?;
-    let (mut rgba, w, h) = img::sheet(&tiles);
-    if ims.iter().any(|im| im.meta.is_some()) {
-        pinhole_engine::watermark::embed(&mut rgba, w, h);
-    }
-    let png = img::encode_png_rgba(&rgba, w, h).map_err(|e| {
-        CoreError::internal("Couldn't prepare the sheet.").with_details(e.to_string())
-    })?;
     let types: Vec<Option<&str>> = ims.iter().map(source_type).collect();
     let source = if types.iter().all(|t| *t == types[0]) {
         types[0]
@@ -481,6 +470,19 @@ fn sheet_bytes(ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
             .any(Option::is_some)
             .then_some(SOURCE_COMPOSITE)
     };
+    let tiles = ims
+        .iter()
+        .map(marked_pixels)
+        .collect::<CoreResult<Vec<_>>>()?;
+    let (mut rgba, w, h) = img::sheet(&tiles);
+    // Resizing can wash out a picture's own watermark (a saved one opened again carries one
+    // in its pixels only), so any sheet with a marker gets one of its own.
+    if source.is_some() {
+        pinhole_engine::watermark::embed(&mut rgba, w, h);
+    }
+    let png = img::encode_png_rgba(&rgba, w, h).map_err(|e| {
+        CoreError::internal("Couldn't prepare the sheet.").with_details(e.to_string())
+    })?;
     match source {
         Some(source) => {
             pinhole_engine::png::add_itxt_chunk(&png, "XML:com.adobe.xmp", &ai_marker_xmp(source))

@@ -8,7 +8,7 @@ import type { CoreError } from "../../lib/types";
 import type { EditMode } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 
-const EDIT_JOBS = ["edit", "editUpscale"] as const;
+const EDIT_JOBS = ["edit", "editUpscale", "editMore"] as const;
 
 export function ApplyBar({
   mode,

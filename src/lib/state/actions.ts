@@ -99,14 +99,17 @@ export function makeActions(store: Store) {
 
   /** Cancel (or Reset) was pressed during the current job, maybe before the engine had it. */
   let cancelRequested = false;
+  /** The "Also apply to…" run the current job belongs to: Cancel stops the whole run. */
+  let runningGroup: string | null = null;
 
   /**
    * Mark a job as running for the whole of `work` (only one at a time). Must be called before
    * the caller's first await, so the queue hands over to the next job without a gap.
    */
-  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[]): Promise<T> {
+  async function withJob<T>(kind: JobKind, work: () => Promise<T>, count?: number, imageIds?: string[], group?: string): Promise<T> {
     if (get().job) throw busyError();
     cancelRequested = false;
+    runningGroup = group ?? null;
     dispatch({ type: "jobStart", kind, at: Date.now(), count, imageIds });
     let ok = false;
     try {
@@ -140,8 +143,10 @@ export function makeActions(store: Store) {
     const id = uid("q");
     return new Promise<void>((resolve, reject) => {
       waiting.set(id, { run, resolve, reject });
+      // One "Added to the queue" per "Also apply to…" run, not one per picture.
+      const quiet = !!entry.group && get().queue.some((q) => q.group === entry.group);
       dispatch({ type: "queueAdd", job: { ...entry, id } });
-      toast(get().queue.length === 1 ? "Added to the queue. It starts when the current one finishes." : "Added to the queue.", { ms: 2500 });
+      if (!quiet) toast(get().queue.length === 1 ? "Added to the queue. It starts when the current one finishes." : "Added to the queue.", { ms: 2500 });
     });
   }
 
@@ -296,6 +301,8 @@ export function makeActions(store: Store) {
     // upscale still work.
     const batchId = get().resultBatch[resultId];
     const batch = batchId ? get().batches[batchId] : undefined;
+    // An "Also apply to…" result's upscale joins its run too (for Save as one sheet).
+    const group = get().resultGroup[resultId];
     const imageIds = [resultId, ...(batch?.request.refImageIds ?? [])];
     try {
       await enqueue(upscaleEntry("upscale", resultId, factor, imageIds), () =>
@@ -309,7 +316,7 @@ export function makeActions(store: Store) {
             throw cancelledError();
           }
           const refs = await jobRefs([im], nonce);
-          dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs });
+          dispatch({ type: "addResults", batch: batch ?? null, images: [im], refs, ...(group ? { group } : {}) });
         }, 1, imageIds),
       );
     } catch (e) {
@@ -320,6 +327,8 @@ export function makeActions(store: Store) {
 
   async function cancel() {
     if (get().job) cancelRequested = true;
+    // The rest of an "Also apply to…" run doesn't start either.
+    if (get().job && runningGroup) for (const q of get().queue) if (q.group === runningGroup) removeQueued(q.id);
     await api.cancelGeneration().catch(() => undefined);
   }
 
@@ -681,7 +690,7 @@ export function makeActions(store: Store) {
       });
     let maskId: string | null = null;
     try {
-      const shownDone = enqueue(queueEntry("edit", text, opts.model, 1, [source.id, ...second]), () =>
+      const shownDone = enqueue({ ...queueEntry("edit", text, opts.model, 1, [source.id, ...second]), ...(group ? { group } : {}) }, () =>
         // The job (and with it the history lock) starts before the first await.
         withJob(
           "edit",
@@ -727,6 +736,7 @@ export function makeActions(store: Store) {
           },
           1,
           [source.id, ...second],
+          group,
         ).then(() => undefined),
       );
       // Queued behind the shown picture's edit, in the order they were picked. The queue
@@ -761,9 +771,9 @@ export function makeActions(store: Store) {
     text: string,
   ) {
     try {
-      await enqueue(queueEntry("edit", text, model, 1, [source.id, ...second]), () =>
+      await enqueue({ ...queueEntry("edit", text, model, 1, [source.id, ...second]), kind: "editMore", group }, () =>
         withJob(
-          "edit",
+          "editMore",
           async () => {
             const nonce = get().sessionNonce;
             const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
@@ -783,6 +793,7 @@ export function makeActions(store: Store) {
           },
           1,
           [source.id, ...second],
+          group,
         ).then(() => undefined),
       );
     } catch (e) {

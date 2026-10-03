@@ -130,11 +130,16 @@ export interface DescribeParams {
   text: string;
 }
 
-/** "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results). */
-export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "describe";
+/**
+ * "editUpscale" = Upscale from the Edit tab (its result joins the edit history, not Create's results).
+ * "editMore" = one "Also apply to…" picture (its result goes to Create's results; the history is left alone).
+ */
+export type JobKind = "create" | "edit" | "upscale" | "editUpscale" | "editMore" | "describe";
 
 /** A job that belongs to the Edit tab (it locks the edit history while it runs). */
-export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
+export const isEditJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale" || kind === "editMore";
+/** A job whose result joins the edit history (it locks the history while it runs or waits). */
+const historyJob = (kind: JobKind | null | undefined) => kind === "edit" || kind === "editUpscale";
 
 export interface Job {
   kind: JobKind;
@@ -159,6 +164,8 @@ export interface QueuedJob {
   detail: string;
   /** Session images it reads (kept until it has run). */
   imageIds: string[];
+  /** The "Also apply to…" run it belongs to. */
+  group?: string;
 }
 
 export interface Toast {
@@ -512,7 +519,7 @@ export function compactFineTune(ft: FineTune): FineTune {
 }
 
 /** An edit is running or waiting: the edit history stays put until they are done. */
-export const editBusy = (s: Pick<AppState, "job" | "queue">) => isEditJob(s.job?.kind) || s.queue.some((q) => isEditJob(q.kind));
+export const editBusy = (s: Pick<AppState, "job" | "queue">) => historyJob(s.job?.kind) || s.queue.some((q) => historyJob(q.kind));
 
 /** A new Generate/Edit/Upscale press waits in the queue. */
 export const willQueue = (s: Pick<AppState, "job" | "queue">) => !!s.job || s.queue.length > 0;

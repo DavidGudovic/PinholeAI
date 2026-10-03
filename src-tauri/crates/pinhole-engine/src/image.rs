@@ -393,8 +393,8 @@ mod tests {
 
     #[test]
     fn sheet_puts_pictures_in_a_grid_with_gaps() {
-        let red = (vec![200u8, 0, 0, 255].repeat(100 * 60), 100, 60);
-        let tiles = vec![red.clone(), red.clone(), red.clone(), red];
+        let red = ([200u8, 0, 0, 255].repeat(100 * 60), 100, 60);
+        let tiles = [red.clone(), red.clone(), red.clone(), red];
         let (px, w, h) = sheet(&tiles);
         // 2×2 cells of 100×60 with 8 px gaps.
         assert_eq!((w, h), (2 * 100 + 3 * 8, 2 * 60 + 3 * 8));
@@ -413,8 +413,8 @@ mod tests {
 
     #[test]
     fn sheet_fits_other_shapes_and_stays_under_the_limit() {
-        let wide = (vec![0u8, 0, 200, 255].repeat(200 * 100), 200, 100);
-        let tall = (vec![0u8, 200, 0, 255].repeat(100 * 200), 100, 200);
+        let wide = ([0u8, 0, 200, 255].repeat(200 * 100), 200, 100);
+        let tall = ([0u8, 200, 0, 255].repeat(100 * 200), 100, 200);
         let (_, w, h) = sheet(&[wide.clone(), tall]);
         // Cells take the largest width and height.
         assert_eq!((w, h), (2 * 200 + 3 * 8, 200 + 2 * 8));
