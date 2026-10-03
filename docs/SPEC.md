@@ -204,7 +204,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
    only the known fields, range-checked; the picture is not kept) and fills model (by id, else by name),
    seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler and size through the same mapping
    as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
-   the chunk gets a short note saying how to have pictures carry it; other programs' metadata is never read.
+   the chunk opens the same chooser as a pasted picture (§5); other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
     file or log (`scripts/privacy-lint.mjs`).
 11. **The one exception is Styles** (§7): text the user explicitly saves as a named Style is
@@ -227,6 +227,13 @@ choice for the current tab is first. The picture is then imported exactly like a
 file, and that tab opens. Text pasted into a text field stays a text paste. On Linux the WebView's
 paste event carries no data, so the picture is read from the system clipboard through Rust
 (`clipboard_image`, PNG); in a text field only when the clipboard holds no text.
+
+A picture dropped on the window opens the same chooser, wherever no drop area takes it (the Edit and
+Describe tabs and the reference slot take it directly; a picture without saved settings dropped on
+Create's results area goes to the chooser). A picture dragged out of a web browser works when the browser
+hands over the file (Windows); when only its web address comes through (usually Linux), a short note says
+to save it first. A file that isn't a picture gets a short note too. Nothing is downloaded from a dropped
+link.
 
 ### 5.1 Create (txt2img)
 
@@ -612,8 +619,8 @@ List with friendly name, family, size, last used, **Delete** (removes orphaned c
 after confirmation), an **Open folder** button (the Models folder), a **Helpers** list (the
 Describe model and the upscaler, with size and Delete), and **Add a file I already have** (pick a .safetensors/.gguf in the file
 chooser → detected, and looked up on CivitAI by its SHA-256 as in §6), and **Use models from another app** (§3). A model or add-on
-that can't make intimate pictures (RELEASE-SPEC §3.2 rule 3) has a **Safe images only** badge. Dropping files onto the window is not supported: the native drop handler
-is disabled so HTML5 image drag-and-drop works in Edit/Describe on Windows.
+that can't make intimate pictures (RELEASE-SPEC §3.2 rule 3) has a **Safe images only** badge. Dropping model files onto the window is not supported: the native drop handler
+is disabled so HTML5 image drag-and-drop works on Windows (§5).
 
 ---
 

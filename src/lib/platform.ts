@@ -36,11 +36,24 @@ export function markPlatform(doc: Document = document, userAgent: string = navig
   doc.head.appendChild(style);
 }
 
+/** Takes a drop that no drop area took (see `blockStrayDrops`). */
+export type StrayDropHandler = (dt: DataTransfer) => void;
+let strayDrop: StrayDropHandler | null = null;
+
+/** Hands drops that no drop area took to `h` (the paste chooser) instead of refusing them. */
+export function onStrayDrop(h: StrayDropHandler): () => void {
+  strayDrop = h;
+  return () => {
+    if (strayDrop === h) strayDrop = null;
+  };
+}
+
 /**
  * A link or file dropped where nothing takes it would make the WebView open it: the app would
  * be replaced (unsaved pictures lost) and the page loaded outside the Rust network client.
  * Window listeners run after the drop targets (React listens at its root), so a DropTarget
- * that takes the drop has already called preventDefault; any other drop is refused here.
+ * that takes the drop has already called preventDefault; any other drop is kept from the
+ * WebView here and given to the `onStrayDrop` handler, which treats a picture like a paste.
  * Text dragged into a text field still drops as usual.
  */
 export function blockStrayDrops(win: Window = window): () => void {
@@ -48,9 +61,11 @@ export function blockStrayDrops(win: Window = window): () => void {
   const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
   const guard = (e: DragEvent) => {
     if (e.defaultPrevented) return;
-    if (editable(e.target) && !hasFiles(e)) return;
+    const files = hasFiles(e);
+    if (editable(e.target) && !files) return;
     e.preventDefault();
-    if (e.type === "dragover" && e.dataTransfer) e.dataTransfer.dropEffect = "none";
+    if (e.type === "dragover" && e.dataTransfer) e.dataTransfer.dropEffect = files && strayDrop ? "copy" : "none";
+    if (e.type === "drop" && e.dataTransfer && strayDrop) strayDrop(e.dataTransfer);
   };
   win.addEventListener("dragover", guard);
   win.addEventListener("drop", guard);

@@ -19,7 +19,7 @@ import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import { AddonChips } from "./AddonChips";
 import { Dials } from "./Dials";
 import { FineTuneDrawer } from "./FineTune";
-import { DropTarget } from "../../components/ImageDrop";
+import { DropTarget, offerDroppedPicture } from "../../components/ImageDrop";
 import { PasteDialog, PasteSummary } from "./PasteDialog";
 import { ReuseNotice } from "./ReuseNotice";
 import { reuseSettingsFrom, type ReuseOutcome } from "./reuseSettings";
@@ -118,15 +118,18 @@ function CreateWorkspace() {
     setError(null);
   };
 
-  // A picture Pinhole saved, dropped on the results area: reuse how it was made.
+  // A picture Pinhole saved, dropped on the results area: reuse how it was made. Any other
+  // picture is handled like a pasted one.
   const reuseFrom = async (file: File) => {
     try {
       const o = await reuseSettingsFrom(file, store, actions);
-      setReuse(o);
-      if (o.found) {
-        setOutcome(null);
-        setPresetNotice(null);
+      if (!o.found) {
+        offerDroppedPicture(file);
+        return;
       }
+      setReuse(o);
+      setOutcome(null);
+      setPresetNotice(null);
       setError(null);
     } catch (e) {
       setError(api.asCoreError(e));
@@ -190,7 +193,7 @@ function CreateWorkspace() {
       </aside>
 
       <div className="min-h-0 min-w-0 bg-neutral-100 dark:bg-neutral-950">
-        <DropTarget onFile={(f) => void reuseFrom(f)} className="h-full" label="Drop a picture made with Pinhole to reuse its settings">
+        <DropTarget onFile={(f) => void reuseFrom(f)} className="h-full" label="Drop the picture here. One made with Pinhole reuses its settings.">
           <div className="flex h-full min-h-0 flex-col">
             <Results />
           </div>

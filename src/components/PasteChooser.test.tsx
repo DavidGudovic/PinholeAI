@@ -10,6 +10,7 @@ vi.mock("../lib/api", async (orig) => {
     ...real,
     importImage: vi.fn(async () => ({ id: `pasted-${++n}`, width: 64, height: 48 })),
     getImage: vi.fn(async () => new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer),
+    readPictureSettings: vi.fn(async () => null),
   };
 });
 
@@ -18,6 +19,10 @@ const { installMocks } = await import("../lib/mock");
 const { AppProvider } = await import("../lib/state/AppProvider");
 const { createStore } = await import("../lib/state/store");
 const { PasteChooser, defaultPasteTarget, pasteTargets } = await import("./PasteChooser");
+const { DropTarget } = await import("./ImageDrop");
+const { Toasts } = await import("./Toasts");
+const { CreateTab } = await import("../tabs/create/CreateTab");
+const { blockStrayDrops } = await import("../lib/platform");
 
 beforeAll(async () => {
   await installMocks();
@@ -43,6 +48,19 @@ function paste() {
   });
 }
 const flush = () => act(() => new Promise((r) => setTimeout(r, 0)));
+
+/** jsdom has no DragEvent/DataTransfer: a plain cancelable event carrying a fake transfer. */
+function drop(target: Element, data: { types: string[]; files?: File[]; uri?: string }) {
+  const e = new Event("drop", { bubbles: true, cancelable: true });
+  Object.defineProperty(e, "dataTransfer", {
+    value: { types: data.types, files: data.files ?? [], items: [], dropEffect: "copy", getData: (t: string) => (t === "text/uri-list" ? (data.uri ?? "") : "") },
+  });
+  act(() => {
+    target.dispatchEvent(e);
+  });
+  return e;
+}
+const picture = () => new File([new Uint8Array(4)], "photo.jpg", { type: "image/jpeg" });
 
 function setup(createModes: string[]) {
   const store = createStore();
@@ -116,5 +134,71 @@ describe("pasted picture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(api.importImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("dropped picture", () => {
+  let stop: () => void;
+  beforeEach(() => {
+    stop = blockStrayDrops();
+  });
+  afterEach(() => stop());
+
+  it("dropped where no drop area takes it, asks what it's for like a pasted one", async () => {
+    const store = setup(["txt2img"]);
+    const e = drop(document.body, { types: ["Files"], files: [picture()] });
+    expect(e.defaultPrevented).toBe(true);
+    expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
+    expect(api.importImage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    await flush();
+    expect(store.getState().tab).toBe("edit");
+    expect(api.importImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a drop area that takes the picture keeps it", () => {
+    setup(["txt2img"]);
+    const onFile = vi.fn();
+    render(
+      <DropTarget onFile={onFile}>
+        <span>Reference slot</span>
+      </DropTarget>,
+    );
+    const f = picture();
+    drop(screen.getByText("Reference slot"), { types: ["Files"], files: [f] });
+    expect(onFile).toHaveBeenCalledWith(f);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says what to do with a file that isn't a picture or a link from a web browser", () => {
+    const store = createStore();
+    render(
+      <AppProvider store={store}>
+        <PasteChooser />
+        <Toasts />
+      </AppProvider>,
+    );
+    drop(document.body, { types: ["Files"], files: [new File(["x"], "notes.txt", { type: "text/plain" })] });
+    expect(screen.getByText(/isn’t a picture Pinhole can open/)).toBeTruthy();
+    const e = drop(document.body, { types: ["text/uri-list"], uri: "https://example.com/cat.png" });
+    expect(e.defaultPrevented).toBe(true);
+    expect(screen.getByText(/Save the picture first, then drop the file/)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("dropped on Create's results without saved settings, asks what it's for", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setModels", models: [model("m", ["txt2img"])] });
+    store.dispatch({ type: "selectModel", modelId: "m" });
+    render(
+      <AppProvider store={store}>
+        <CreateTab />
+        <PasteChooser />
+      </AppProvider>,
+    );
+    drop(screen.getByText("Your images appear here"), { types: ["Files"], files: [picture()] });
+    await flush();
+    expect(api.readPictureSettings).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
   });
 });
