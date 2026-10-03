@@ -37,6 +37,7 @@ import {
   tagsWithSafeMode,
   toBrowseQuery,
   toggleTag,
+  visibleTags,
   type BrowseFilters,
   type BrowseTotals,
 } from "./lib/query";
@@ -379,20 +380,11 @@ export function BrowseView({ settings, onShowInstalled }: { settings: Settings |
         </ScrollRow>
 
         <ScrollRow label="Tags" className="gap-1.5">
-          {options.tags.map((t) => {
-            const locked = t.needsSafeModeOff && !isSafeModeOff(filters.content);
-            return (
-              <Chip
-                key={t.key}
-                active={!locked && filters.tags.includes(t.key)}
-                disabled={locked}
-                title={locked ? "Turn Safe mode off to use this tag" : undefined}
-                onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}
-              >
-                {t.label}
-              </Chip>
-            );
-          })}
+          {visibleTags(options.tags, filters.content).map((t) => (
+            <Chip key={t.key} active={filters.tags.includes(t.key)} onClick={() => update({ tags: toggleTag(filters.tags, t.key) })}>
+              {t.label}
+            </Chip>
+          ))}
         </ScrollRow>
 
         {/* One line: scrolls sideways in a narrow window instead of folding. */}

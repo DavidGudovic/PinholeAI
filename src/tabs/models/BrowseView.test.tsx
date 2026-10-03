@@ -91,3 +91,17 @@ describe("BrowseView reference picture filter", () => {
     expect(within(klein.closest("article")!).getByText("Reference picture")).toBeTruthy();
   }, 15_000);
 });
+
+describe("BrowseView tags with Safe mode on", () => {
+  it("doesn't show tags that need Safe mode off", async () => {
+    render(
+      <StoreContext.Provider value={createStore()}>
+        <BrowseView settings={null} onShowInstalled={() => undefined} />
+      </StoreContext.Provider>,
+    );
+    await screen.findByRole("button", { name: "Portraits" }, { timeout: 5000 });
+    const offOnly = (await api.catalogFilters()).tags.filter((t) => t.needsSafeModeOff);
+    expect(offOnly.length).toBeGreaterThan(0);
+    for (const t of offOnly) expect(screen.queryByRole("button", { name: t.label })).toBeNull();
+  }, 10_000);
+});

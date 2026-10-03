@@ -527,7 +527,7 @@ Two sub-views: **Browse** and **Installed**.
 | Kind | Models · Style add-ons | `types=Checkpoint` · `types=LORA` |
 | For (style add-ons only) | Any model · For <installed model> (defaults to the model picked in Create) | `baseModels=` the CivitAI base models of every registry family with the same architecture as that model (`families::lora_base_models`: an SDXL model also gets Pony and Illustrious LoRAs); each card shows the newest version made for them; a tag that narrows `baseModels` (Edit) with nothing in common answers "none" without asking CivitAI. Not a filter "Clear filters" resets |
 | Look | Realistic · Anime · Illustration · 3D · Painting · Pixel art · Line art · Cinematic · Vintage · Brand & product | tag sets from `config/catalog-filters.yaml`. Look, Tags and the switches row each stay on one line and scroll sideways when the window is too narrow |
-| Tags | multi-select: Edit model · Reference picture · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). Reference picture = models whose family has both `txt2img` and `edit` in `models.yaml` `modes` (they can follow Create's reference picture); the base models come from `models.yaml` and are also sent as `baseModels`; those cards and installed models show a "Reference picture" badge. NSFW = exactly the models Safe mode hides; greyed out while Safe mode is on. No one-click preset for it |
+| Tags | multi-select: Edit model · Reference picture · Portraits · Characters · Landscapes · Architecture · Animals · Fantasy · Sci-fi · Vehicles · Robots · Food · Fashion · Objects · Backgrounds · Textures · Horror · NSFW | client-side, `catalog-filters.yaml → tags`; a model must match every picked tag (its tags, whole words in its name, or its base model). Reference picture = models whose family has both `txt2img` and `edit` in `models.yaml` `modes` (they can follow Create's reference picture); the base models come from `models.yaml` and are also sent as `baseModels`; those cards and installed models show a "Reference picture" badge. NSFW = exactly the models Safe mode hides; not shown while Safe mode is on. No one-click preset for it |
 | Safe mode | On (default) · Off | always `nsfw=true` (the only way to get every sample image with its rating); On keeps models that pass `safe_filter` (see below) · Off keeps everything |
 | Price | Free (default) · Include early access (paid) · Early access only | free = drop models whose latest version is in early access; paid items are **hidden by default** |
 | Sort | Most liked · Most downloaded (default) · Newest | `sort=Most Liked / Most Downloaded / Newest` |
@@ -602,6 +602,8 @@ grid where it was):
   badge, LoRA trigger words) and the same Install button.
 - **Example images**: the version's preview images from CivitAI, fetched through the Rust client
   like every preview. With Safe mode on, images made for adults are left out (with a count); videos are skipped.
+  Opened from Installed, Safe mode counts as on unless it is off in Settings (confirmed this session)
+  and in Browse.
   Images come from `GET /api/v1/model-versions/{id}`, the only endpoint that still returns each
   image's generation data (`/models` and `/images` send `meta: null`, checked 2026-09-28).
 - Clicking an image shows it larger with its prompt and main settings, plus two buttons:
