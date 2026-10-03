@@ -415,8 +415,8 @@ pub fn installable_files<'a>(
 /// only the diffusion model, not its VAE and text encoders, so it can't stand in
 /// for the full checkpoint.
 ///
-/// Files that would get the same row (see [`choice_group`]), such as an fp16 and
-/// a bf16 copy, or an FP8 and an INT8 copy, are listed once: the one
+/// Files that would get the same row at about the same size (see [`choice_group`]),
+/// such as an fp16 and a bf16 copy, or an FP8 and an INT8 copy, are listed once: the one
 /// [`select_file`] ranks best, in the place of the group's first file.
 pub fn size_choices<'a>(
     files: &'a [ModelFile],
@@ -432,7 +432,10 @@ pub fn size_choices<'a>(
         .filter(|f| any_format || diffusion_only.is_none_or(|d| is_diffusion_only(f) == d))
     {
         let key = choice_group(f);
-        match groups.iter_mut().find(|(k, _)| *k == key) {
+        match groups
+            .iter_mut()
+            .find(|(k, g)| *k == key && same_size(g[0], f))
+        {
             Some((_, g)) => g.push(f),
             None => groups.push((key, vec![f])),
         }
@@ -443,7 +446,14 @@ pub fn size_choices<'a>(
         .collect()
 }
 
-/// Which size row a file belongs to: its format, whether it holds only the
+/// Sizes within 5% of each other: a full (EMA) and a pruned copy, or an fp32
+/// and an fp16 copy, stay separate rows.
+fn same_size(a: &ModelFile, b: &ModelFile) -> bool {
+    let (a, b) = (a.size_bytes() as f64, b.size_bytes() as f64);
+    (a - b).abs() <= 0.05 * a.max(b)
+}
+
+/// Which size row a file belongs to (with [`same_size`]): its format, whether it holds only the
 /// diffusion model, and its [`precision_label`], with INT8 counted as FP8 (same
 /// size and graphics memory).
 /// Files whose label names no precision ("Standard", "Compact (GGUF)") each get
@@ -1029,6 +1039,29 @@ mod tests {
         // A pick of a hidden copy falls back to the usual file.
         let (f, _) = select_file_for_machine(&files, &allowed(), false, Some(2), |_| None).unwrap();
         assert_eq!(f.name, "m_fp16.safetensors");
+        // A full copy and a much smaller pruned copy stay separate rows.
+        let mut sd = vec![
+            file(
+                "s_full.safetensors",
+                Some("SafeTensor"),
+                Some("fp16"),
+                Some("full"),
+                true,
+                7e6,
+            ),
+            file(
+                "s_pruned.safetensors",
+                Some("SafeTensor"),
+                Some("fp16"),
+                Some("pruned"),
+                false,
+                2e6,
+            ),
+        ];
+        for (i, f) in sd.iter_mut().enumerate() {
+            f.hashes.insert("SHA256".into(), format!("{i}").repeat(64));
+        }
+        assert_eq!(names(&sd, false).len(), 2);
         // INT8 alone still shows.
         files.remove(3);
         assert_eq!(
