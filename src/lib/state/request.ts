@@ -114,6 +114,45 @@ export function variationRequest(req: GenerateRequest): GenerateRequest {
   return { ...req, fineTune };
 }
 
+/** How much "Close to this one" redraws the picture: the layout holds, the details change (at 0.35
+ * SD 1.5 pictures barely changed; at 0.55 the layout held and details visibly changed). */
+export const CLOSE_STRENGTH = 0.55;
+
+/**
+ * "Close to this one": new pictures that start from `source` with its batch's prompt, model,
+ * shape and settings, and redraw only the details, each with a new random start.
+ */
+export function closeRequest(req: GenerateRequest, source: Pick<ResultImage, "id" | "width" | "height" | "kind">): GenerateRequest {
+  const fineTune = { ...req.fineTune };
+  delete fineTune.seed;
+  // The source's own size (Best may have made it larger than the dial's size); an upscaled
+  // source is drawn at the dial's size instead.
+  if (source.kind !== "upscaled") {
+    fineTune.width = source.width;
+    fineTune.height = source.height;
+  }
+  return {
+    ...req,
+    mode: "img2img",
+    fineTune,
+    initImageId: source.id,
+    strength: CLOSE_STRENGTH,
+    refImageIds: [],
+    maskImageId: null,
+  };
+}
+
+/**
+ * "Finish at Best quality": the same picture again at Best (same seed, prompt, model and
+ * shape), one image. `null` when there is nothing to finish (already Best).
+ */
+export function finishRequest(req: GenerateRequest, seed: number): GenerateRequest | null {
+  if (req.dials.quality === "best") return null;
+  // Best's own step count, not a Fine-tune one.
+  const { steps: _steps, ...fineTune } = req.fineTune;
+  return { ...req, dials: { ...req.dials, quality: "best", count: 1 }, fineTune: { ...fineTune, seed } };
+}
+
 /** A random seed in the range the engine picks from when none is set. */
 export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
 
@@ -134,6 +173,8 @@ export function otherModelRequest(
   if (w && h) [fineTune.width, fineTune.height] = sizeForRatio(w / h, opts.ui);
   return {
     ...req,
+    // A Close to this one picture: the prompt alone on the other model.
+    ...(req.mode === "img2img" ? { mode: "txt2img" as const, initImageId: null, strength: null } : {}),
     modelId: opts.model.id,
     dials: { ...req.dials, stick: defaultStickPosition(opts.ui), count: 1 },
     fineTune,

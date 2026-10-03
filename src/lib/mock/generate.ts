@@ -241,7 +241,8 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
     const stickVal = ui.stickRange[0] + Math.min(1, Math.max(0, req.dials.stick)) * (ui.stickRange[1] - ui.stickRange[0]);
     const cfg = Math.max(1, req.fineTune.cfg ?? (ui.stickMapsTo === "cfg" && ui.showStick ? stickVal : ui.defaultCfg));
     const guidance = req.fineTune.guidance ?? (ui.stickMapsTo === "guidance" ? stickVal : ui.defaultGuidance);
-    const count = req.mode === "txt2img" ? req.dials.count : 1;
+    // Like Rust: Edit, Fix details and Extend make one picture; Create and plain img2img make How many.
+    const count = req.mode === "txt2img" || (req.mode === "img2img" && !req.fixDetails && !req.extend) ? req.dials.count : 1;
     const baseSeed = req.fineTune.seed ?? Math.floor(Math.random() * 2 ** 31);
 
     const src = req.mode === "edit" ? session.get(req.refImageIds?.[0] ?? "") : req.mode === "img2img" ? session.get(req.initImageId ?? "") : undefined;

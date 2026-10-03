@@ -46,6 +46,7 @@ vi.mock("./platform", async (orig) => {
 const apiMod = await import("../api");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
+const { CLOSE_STRENGTH } = await import("./request");
 const { ALSO_MAX, editBusy, sheetIds } = await import("./model");
 
 const model: InstalledModel = {
@@ -856,6 +857,75 @@ describe("done alert", () => {
   });
 });
 
+describe("Close to this one and Finish at Best quality", () => {
+  it("Close to this one restyles the picture with the batch's settings, How many times, and keeps its source", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "fast", fineTune: { seed: 9 } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), width: 96, height: 64 }] } as GenerateResult);
+    await first;
+    store.dispatch({ type: "patchCreate", patch: { count: 2 } });
+    const close = actions.closeTo("a");
+    await tick();
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ mode: "img2img", prompt: "a lighthouse", modelId: "m", initImageId: "a", strength: CLOSE_STRENGTH, refImageIds: [] });
+    expect(req.dials).toMatchObject({ quality: "fast", count: 2 });
+    expect(req.fineTune.seed).toBeUndefined();
+    expect([req.fineTune.width, req.fineTune.height]).toEqual([96, 64]);
+    expect(store.getState().queue).toEqual([]);
+    pending!({ images: [img("c1"), img("c2")] } as GenerateResult);
+    await close;
+    // The new batch holds its source, so Variations of it still work after it is removed.
+    actions.removeResult("a");
+    expect(store.getState().images.a).toBeDefined();
+    const again = actions.variations("c1");
+    await tick();
+    expect(vi.mocked(apiMod.generate).mock.calls[2][0]).toMatchObject({ mode: "img2img", initImageId: "a" });
+    pending!({ images: [img("c3")] } as GenerateResult);
+    await again;
+    // A queued upscale of a Close picture holds the source too.
+    const job = actions.variations("c1");
+    await tick();
+    const up = actions.upscale("c1", 2);
+    expect(store.getState().queue[0].imageIds).toEqual(["c1", "a"]);
+    pending!({ images: [img("c4")] } as GenerateResult);
+    await job;
+    await tick();
+    pendingUpscale!(img("u"));
+    await up;
+  });
+
+  it("Finish at Best quality re-makes one picture at Best with its own seed", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "balanced", count: 2, fineTune: { steps: 8 } } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [{ ...img("a"), seed: 40 }, { ...img("b"), seed: 41 }] } as GenerateResult);
+    await first;
+    const finish = actions.finishAtBest("b");
+    await tick();
+    const req = vi.mocked(apiMod.generate).mock.calls[1][0];
+    expect(req).toMatchObject({ mode: "txt2img", prompt: "a lighthouse", modelId: "m" });
+    expect(req.dials).toMatchObject({ quality: "best", count: 1 });
+    expect(req.fineTune.seed).toBe(41);
+    expect(req.fineTune.steps).toBeUndefined();
+    pending!({ images: [img("f")] } as GenerateResult);
+    await finish;
+  });
+
+  it("Finish at Best quality does nothing for a picture already made at Best", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "patchCreate", patch: { quality: "best" } });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    await actions.finishAtBest("a");
+    expect(vi.mocked(apiMod.generate)).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("choices in braces", () => {
   const calls = () => vi.mocked(apiMod.generate).mock.calls.map((c) => c[0]);
 
@@ -929,6 +999,27 @@ describe("choices in braces", () => {
 
 describe("on another model", () => {
   const other: InstalledModel = { ...model, id: "o", friendlyName: "Other" };
+
+  it("runs a Close to this one picture's prompt on its own there", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "setModels", models: [model, other] });
+    const first = actions.generateCreate();
+    await tick();
+    pending!({ images: [img("a")] } as GenerateResult);
+    await first;
+    const close = actions.closeTo("a");
+    await tick();
+    pending!({ images: [{ ...img("c"), seed: 5 }] } as GenerateResult);
+    await close;
+    store.dispatch({ type: "setModels", models: [model, other] });
+    const run = actions.onOtherModel("c", "o");
+    await tick();
+    pending!({ images: [img("d")] } as GenerateResult);
+    await run;
+    const req = vi.mocked(apiMod.generate).mock.calls[2][0];
+    expect(req).toMatchObject({ modelId: "o", mode: "txt2img", initImageId: null, strength: null });
+    expect(req.fineTune.seed).toBe(5);
+  });
 
   it("runs the same prompt, seed and shape on the other model, without the first model's own settings", async () => {
     const { store, actions } = setup();

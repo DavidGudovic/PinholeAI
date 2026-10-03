@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Copy,
   ImageUp,
+  Images,
   Layers,
   ChevronDown,
   Grid2x2,
@@ -137,6 +138,11 @@ function Preview({
   const actions = useActions();
   const busy = useAppState((s) => !!s.job);
   const hasBatch = useAppState((s) => !!s.resultBatch[result.id]);
+  // "Finish at Best quality": for pictures made below Best (not upscales).
+  const canFinish = useAppState(
+    (s) => result.kind !== "upscaled" && (s.batches[s.resultBatch[result.id]]?.request.dials?.quality ?? "best") !== "best",
+  );
+  const waits = busy ? " (waits for the current job)" : "";
   // The reference picture this result was made with, while it is still in memory.
   const reference = useAppState((s) => {
     const id = s.batches[s.resultBatch[result.id]]?.request.refImageIds?.[0];
@@ -238,15 +244,20 @@ function Preview({
             ) : (
               <FocusFirst>
                 <MenuItem
+                  icon={<Images className="h-4 w-4" />}
+                  disabled={!hasBatch}
+                  hint={hasBatch ? `Same layout, new details${waits}` : "Only for images made in this session"}
+                  onClick={() => {
+                    close();
+                    void run(() => actions.closeTo(result.id));
+                  }}
+                >
+                  Close to this one
+                </MenuItem>
+                <MenuItem
                   icon={<Shuffle className="h-4 w-4" />}
                   disabled={!hasBatch}
-                  hint={
-                    hasBatch
-                      ? busy
-                        ? "Same prompt, new seeds (waits for the current job)"
-                        : "Same prompt, new seeds"
-                      : "Only for images made in this session"
-                  }
+                  hint={hasBatch ? `Same prompt, new layouts${waits}` : "Only for images made in this session"}
                   onClick={() => {
                     close();
                     void run(() => actions.variations(result.id));
@@ -280,6 +291,7 @@ function Preview({
           width={result.width}
           height={result.height}
           onPick={(f) => void run(() => actions.upscale(result.id, f))}
+          onFinish={canFinish ? () => void run(() => actions.finishAtBest(result.id)) : undefined}
         />
         <Button
           title="Write a prompt from this picture"

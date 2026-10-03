@@ -266,7 +266,7 @@ active model family):
 | Quality | 3-stop slider: Fast · Balanced · Best | `steps` (and hires fix at Best if the family allows it) |
 | Stick to prompt | slider: Loose ↔ Strict | `cfg` within `cfg_range`; hidden when the family is fixed-CFG (e.g. `cfg: 1`) |
 | How many | 1 · 2 · 4 | `batch_count` |
-| Keep this look | toggle | locks the seed of the selected result |
+| Keep this look | toggle ("Keeps this picture’s layout") | locks the seed of the selected result |
 
 **Fine-tune** drawer (collapsed by default): negative prompt (only for families that use it),
 sampler, scheduler, steps, CFG, seed, flow shift, clip skip, hires fix, LoRAs with weights,
@@ -388,8 +388,13 @@ when the instruction already says what to keep, and the details line when it rem
 edit model reads natural language); the Safe mode rule, add-on trigger words and word check apply
 as in Create.
 
-Result card actions: **Save** · **Edit this** · **Describe** · **Variations** (same prompt,
-new seeds) · **Same character** · **On another model…** · **Upscale 2×/4×** · **Copy to clipboard**. **Save all (n)** appears next to Save when
+Result card actions: **Save** · **Edit this** · **Describe** · **More like this ▾**
+(**Close to this one**: How many new pictures restyled from this one at strength 0.55 with the
+same prompt, model, size and settings and new seeds, so the layout holds and the details change;
+**Variations**: same prompt, new seeds; **Same character**; **On another model…**) ·
+**Upscale ▾** (**Finish at Best quality** on top for pictures made at Fast or Balanced: the same
+request at Best with the picture's own seed and Best's steps, one image; then **Upscale 2×/4×**)
+· **Copy to clipboard**. **Save all (n)** appears next to Save when
 more than one picture is unsaved. **Save as one sheet (n)** (in Save's menu, desktop app) saves
 the pictures that came in the same run as the shown one (its batch, one Generate with choices in
 braces, or one "Also apply to…" edit;
@@ -440,8 +445,8 @@ what was applied and what was skipped. The pasted text is never stored or logged
 Live preview: if a TAESD file is registered for the family, show a low-res preview while
 generating. Progress bar + **Cancel** (`POST /sdcpp/v1/jobs/{id}/cancel`).
 
-**Queue:** pressing Generate (or Apply edit / Restyle in Edit, Variations, or Upscale in Create or
-Edit) while a job runs adds it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
+**Queue:** pressing Generate (or Apply edit / Restyle in Edit, Close to this one, Variations, Finish at Best quality, or
+Upscale in Create or Edit) while a job runs adds it to a queue instead; the button reads "Add to queue". Each queued job keeps the settings from the
 moment it was pressed and runs, in order, when the one before it ends (switching models in between
 as needed). A small button next to Generate shows how many are waiting and opens the list, where
 each can be removed. Cancel stops only the running job; Reset empties the queue. Queued jobs live in
