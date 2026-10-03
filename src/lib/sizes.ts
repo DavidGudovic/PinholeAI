@@ -61,6 +61,18 @@ export function referenceSize(
   return sizeForRatio(ref.width / ref.height, ui);
 }
 
+/**
+ * Width and height for "Same as reference": the reference size, or, when one side was typed in
+ * Fine-tune, the other side worked out from the reference's shape (rounded to 64).
+ */
+export function fillReferenceSize(width: number | null | undefined, height: number | null | undefined, ref: [number, number]): [number, number] {
+  const round64 = (n: number) => Math.max(64, Math.round(n / 64) * 64);
+  if (width != null && height != null) return [width, height];
+  if (width != null) return [width, round64((width * ref[1]) / ref[0])];
+  if (height != null) return [round64((height * ref[0]) / ref[1]), height];
+  return ref;
+}
+
 /** The monitor's size in real pixels, or null when the WebView doesn't say. */
 export function screenPixels(): { width: number; height: number } | null {
   try {

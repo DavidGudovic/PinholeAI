@@ -94,7 +94,7 @@ export function ChoicesNote() {
   if (!choices || choices.count >= choices.total) return null;
   return (
     <p className="text-center text-xs text-neutral-500">
-      Makes the first {choices.count} of {choices.total} combinations. {MAX_CHOICE_PICTURES} is the most for one Generate.
+      Makes the first {choices.count} of {choices.total > 1000 ? "more than 1,000" : choices.total} combinations. {MAX_CHOICE_PICTURES} is the most for one Generate.
     </p>
   );
 }

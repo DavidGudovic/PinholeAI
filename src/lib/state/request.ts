@@ -1,7 +1,7 @@
 // Pure builders: app state → GenerateRequest, presets ↔ Create params.
 // PRIVACY: requests contain prompt text — memory only. Presets never do.
 
-import { referenceSize, sizeForRatio } from "../sizes";
+import { fillReferenceSize, referenceSize, sizeForRatio } from "../sizes";
 import { DEFAULT_SHAPE_SIZES, defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
 import type {
   Dials,
@@ -90,10 +90,7 @@ export function buildCreateRequest(
 ): GenerateRequest {
   const fineTune = effectiveFineTune(c.fineTune, opts.ui);
   const refSize = referenceSize(c, opts.ref, opts.ui);
-  if (refSize) {
-    fineTune.width ??= refSize[0];
-    fineTune.height ??= refSize[1];
-  }
+  if (refSize) [fineTune.width, fineTune.height] = fillReferenceSize(fineTune.width, fineTune.height, refSize);
   return {
     modelId: opts.model.id,
     mode: "txt2img",

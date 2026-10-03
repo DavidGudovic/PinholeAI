@@ -779,7 +779,7 @@ export function makeActions(store: Store) {
     // queued edit with the same settings; every result of the run goes to Create's results together.
     const also =
       opts.from == null && opts.alsoSize && (opts.mode === "instruction" || opts.mode === "restyle")
-        ? edit.alsoIds.map((id) => s.images[id]).filter((r): r is ImgRef => !!r && r.id !== source.id)
+        ? edit.alsoIds.map((id) => s.images[id]).filter((r): r is ImgRef => !!r && r.id !== source.id && !second.includes(r.id))
         : [];
     const group = also.length ? uid("g") : undefined;
     let others: Promise<void>[] = [];
