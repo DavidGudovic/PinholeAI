@@ -6,7 +6,7 @@ import { useActions } from "../lib/state/AppProvider";
 import { willQueue, type TabId } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { canSaveAs } from "../lib/state/platform";
-import { Button, MenuItem, Popover, cx, focusRing } from "./ui";
+import { Button, MenuItem, MenuSeparator, Popover, cx, focusRing } from "./ui";
 
 /** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
 export const UPSCALE_MAX_SIDE = 8192;
@@ -111,12 +111,15 @@ export function UpscaleMenu({
   disabled,
   size = "md",
   onPick,
+  onFinish,
 }: {
   width: number;
   height: number;
   disabled?: boolean;
   size?: "sm" | "md";
   onPick: (factor: 2 | 4) => void;
+  /** "Finish at Best quality" on top (Create pictures made below Best). */
+  onFinish?: () => void;
 }) {
   const queues = useAppState(willQueue);
   // The upscaler always runs at 4× first (2× is 4× halved), up to 8192 px per side.
@@ -124,7 +127,7 @@ export function UpscaleMenu({
   const icon = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
   return (
     <Popover
-      width={200}
+      width={onFinish ? 250 : 200}
       trigger={(p) => (
         <Button {...p} size={size} disabled={disabled}>
           <ImageUp className={icon} /> Upscale{" "}
@@ -134,6 +137,20 @@ export function UpscaleMenu({
     >
       {(close) => (
         <>
+          {onFinish && (
+            <>
+              <MenuItem
+                hint={`Same picture, more detail${queues ? " (waits for the current job)" : ""}`}
+                onClick={() => {
+                  close();
+                  onFinish();
+                }}
+              >
+                Finish at Best quality
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          )}
           {([2, 4] as const).map((f) => (
             <MenuItem
               key={f}

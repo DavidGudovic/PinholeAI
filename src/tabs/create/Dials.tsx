@@ -152,10 +152,10 @@ export function Dials({ ui }: { ui: FamilyUi | null }) {
               <span className="inline-flex items-center gap-1 text-xs text-neutral-500">
                 {seedLocked ? (
                   <>
-                    <Lock className="h-3 w-3 text-amber-600" /> Seed {c.fineTune.seed}
+                    <Lock className="h-3 w-3 text-amber-600" /> Keeps this picture’s layout
                   </>
                 ) : canLock ? (
-                  "Reuse the selected image’s seed"
+                  "Keeps this picture’s layout"
                 ) : (
                   "Select an image first"
                 )}

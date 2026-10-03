@@ -105,6 +105,42 @@ export function variationRequest(req: GenerateRequest): GenerateRequest {
   return { ...req, fineTune };
 }
 
+/** How much "Close to this one" redraws the picture: the layout holds, the details change. */
+export const CLOSE_STRENGTH = 0.45;
+
+/**
+ * "Close to this one": new pictures that start from `source` with its batch's prompt, model,
+ * shape and settings, and redraw only the details, each with a new random start.
+ */
+export function closeRequest(req: GenerateRequest, source: Pick<ResultImage, "id" | "width" | "height" | "kind">): GenerateRequest {
+  const fineTune = { ...req.fineTune };
+  delete fineTune.seed;
+  // The source's own size (Best may have made it larger than the dial's size); an upscaled
+  // source is drawn at the dial's size instead.
+  if (source.kind !== "upscaled") {
+    fineTune.width = source.width;
+    fineTune.height = source.height;
+  }
+  return {
+    ...req,
+    mode: "img2img",
+    fineTune,
+    initImageId: source.id,
+    strength: CLOSE_STRENGTH,
+    refImageIds: [],
+    maskImageId: null,
+  };
+}
+
+/**
+ * "Finish at Best quality": the same picture again at Best (same seed, prompt, model and
+ * shape), one image. `null` when there is nothing to finish (already Best).
+ */
+export function finishRequest(req: GenerateRequest, seed: number): GenerateRequest | null {
+  if (req.dials.quality === "best") return null;
+  return { ...req, dials: { ...req.dials, quality: "best", count: 1 }, fineTune: { ...req.fineTune, seed } };
+}
+
 /** Output size for an edit: keep the aspect ratio, ≤ ~maxPixels, multiples of `multiple` (16, or 64 for SD families). */
 export function fitEditSize(w: number, h: number, maxPixels = 1024 * 1024, multiple = 16): [number, number] {
   if (!(w > 0 && h > 0)) return [1024, 1024];
