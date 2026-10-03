@@ -318,6 +318,7 @@ async function generate(req: GenerateRequest): Promise<{ images: ResultImage[] }
         scheduler: req.fineTune.scheduler ?? ui.defaultScheduler,
         parentId: src ? (req.refImageIds?.[0] ?? req.initImageId ?? null) : null,
         origin,
+        ...(ui.seamless && req.mode === "txt2img" && req.fineTune.seamless ? { seamless: true } : {}),
       };
       session.set(id, { bytes: await toPng(c), width: w, height: h, seed, meta });
       images.push(meta);

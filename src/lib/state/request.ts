@@ -33,6 +33,7 @@ export const PRESET_FINE_TUNE_KEYS = [
   "height",
   "hires",
   "vaeTiling",
+  "seamless",
   "autoPromptPrefix",
 ] as const satisfies readonly (keyof PresetFineTune)[];
 
@@ -65,6 +66,7 @@ export function effectiveFineTune(ft: FineTune, ui: FamilyUi | null): FineTune {
   if (ui && !ui.usesNegativePrompt) delete out.negativePrompt;
   if (out.negativePrompt != null && !out.negativePrompt.trim()) delete out.negativePrompt;
   if (ui && !ui.autoPromptPrefix) delete out.autoPromptPrefix;
+  if (ui && !ui.seamless) delete out.seamless;
   // Only when Hires fix is off: on Auto it can still run (Best), with these values.
   if (out.hires === false) {
     delete out.hiresScale;
@@ -413,6 +415,7 @@ export function settingsSummary(r: ResultImage): string {
   if (r.cfg > 0 && (r.guidance == null || r.cfg !== 1)) parts.push(`CFG ${fmt(r.cfg)}`);
   const s = [r.sampler, r.scheduler].filter(Boolean).join(" ");
   if (s) parts.push(s);
+  if (r.seamless) parts.push("repeats without seams");
   parts.push(`seed ${r.seed}`);
   return parts.join(" · ");
 }

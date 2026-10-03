@@ -659,6 +659,7 @@ mod tests {
             parent_id: Some("p".into()),
             origin: Origin::Generated,
             upscaler: None,
+            seamless: false,
             base_size: None,
         }
     }

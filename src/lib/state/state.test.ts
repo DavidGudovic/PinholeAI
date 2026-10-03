@@ -254,6 +254,15 @@ describe("requests", () => {
     expect(req({ ...create.fineTune, hires: false })).toEqual({ hires: false });
   });
 
+  it("sends Repeats without seams only for families that offer it", () => {
+    const create = { ...withModels().create, prompt: "p", fineTune: { seamless: true } as FineTune };
+    const ft = (familyId: keyof typeof FAMILY_UI) =>
+      buildCreateRequest(create, { ui: FAMILY_UI[familyId], loras: [], model: model("m1", familyId), settings: null }).fineTune;
+    expect(ft("sdxl")).toEqual({ seamless: true });
+    expect(ft("sd15")).toEqual({ seamless: true });
+    expect(ft("flux1_dev")).toEqual({});
+  });
+
   it("filters LoRAs that don't match the model's architecture", () => {
     let s = run(withModels(), { type: "selectModel", modelId: "m1" });
     s = run(s, { type: "patchCreate", patch: { loras: [{ loraId: "p", weight: 0.8 }, { loraId: "x", weight: 1 }, { loraId: "gone", weight: 1 }] } });
@@ -588,6 +597,12 @@ describe("settingsSummary", () => {
     expect(settingsSummary(result("a", 42))).toBe("Model One · 1024×1024 · 30 steps · CFG 6 · dpm++2m karras · seed 42");
     expect(settingsSummary(result("a", 1, { guidance: 3.5, cfg: 1, sampler: "euler", scheduler: null }))).toBe(
       "Model One · 1024×1024 · 30 steps · guidance 3.5 · euler · seed 1",
+    );
+  });
+
+  it("says when a picture repeats without seams", () => {
+    expect(settingsSummary(result("a", 42, { seamless: true }))).toBe(
+      "Model One · 1024×1024 · 30 steps · CFG 6 · dpm++2m karras · repeats without seams · seed 42",
     );
   });
 

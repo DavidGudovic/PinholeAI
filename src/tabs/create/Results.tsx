@@ -6,6 +6,7 @@ import {
   ImageUp,
   Layers,
   ChevronDown,
+  Grid2x2,
   Maximize2,
   PanelsLeftRight,
   ScanText,
@@ -139,6 +140,10 @@ function Preview({
     return id ? s.images[id] : undefined;
   });
   const [sideBySide, setSideBySide] = useState(false);
+  // "Show tiled": a picture made with "Repeats without seams", four times, edges touching.
+  const [tiledFor, setTiledFor] = useState<string | null>(null);
+  const tiled = !!result.seamless && tiledFor === result.id;
+  const tiledUrl = useTiledUrl(img.url, result.width, result.height, tiled);
   const unsavedCount = useAppState((s) => unsavedIds(s).length);
   const [error, setError] = useState<CoreError | null>(null);
 
@@ -167,8 +172,8 @@ function Preview({
           />
         ) : (
           <img
-            src={img.url}
-            alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}`}
+            src={tiledUrl ?? img.url}
+            alt={`Generated image, ${result.width}×${result.height}, seed ${result.seed}${tiledUrl ? ", shown tiled 2×2" : ""}`}
             className="max-h-full max-w-full rounded-lg object-contain shadow-lg ring-1 ring-black/5 dark:ring-white/10"
             draggable={false}
             onDoubleClick={onExpand}
@@ -249,6 +254,17 @@ function Preview({
             onClick={() => setSideBySide((v) => !v)}
           >
             <PanelsLeftRight className="h-4 w-4" />
+          </IconButton>
+        )}
+        {result.seamless && (
+          <IconButton
+            label="Show tiled"
+            variant="secondary"
+            className={tiled ? "ring-2 ring-amber-500" : undefined}
+            aria-pressed={tiled}
+            onClick={() => setTiledFor(tiled ? null : result.id)}
+          >
+            <Grid2x2 className="h-4 w-4" />
           </IconButton>
         )}
         <IconButton
@@ -375,3 +391,34 @@ const Strip = memo(function Strip({
     </div>
   );
 });
+
+/** The picture at `url` drawn 2×2 into one image (object URL), while `on`. */
+function useTiledUrl(url: string, width: number, height: number, on: boolean): string | null {
+  const [tiledUrl, setTiledUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    let made: string | null = null;
+    let live = true;
+    const pic = new Image();
+    pic.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = width * 2;
+      canvas.height = height * 2;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      for (const [x, y] of [[0, 0], [width, 0], [0, height], [width, height]]) ctx.drawImage(pic, x, y, width, height);
+      canvas.toBlob((blob) => {
+        if (!blob || !live) return;
+        made = URL.createObjectURL(blob);
+        setTiledUrl(made);
+      });
+    };
+    pic.src = url;
+    return () => {
+      live = false;
+      if (made) URL.revokeObjectURL(made);
+      setTiledUrl(null);
+    };
+  }, [url, width, height, on]);
+  return on ? tiledUrl : null;
+}

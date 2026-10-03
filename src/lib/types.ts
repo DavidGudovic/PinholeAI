@@ -341,6 +341,8 @@ export interface FamilyUi {
   stayCloseShown: boolean;
   /** Default "Stay close to original" dial position (0…1) for edits. */
   stayCloseDefault: number;
+  /** Offer "Repeats without seams" in Fine-tune (Create). */
+  seamless?: boolean;
 }
 
 export interface Dials {
@@ -367,6 +369,8 @@ export interface FineTune {
   hiresScale?: number | null;
   hiresDenoise?: number | null;
   vaeTiling?: boolean | null;
+  /** "Repeats without seams" (Create, families with `FamilyUi.seamless`). */
+  seamless?: boolean | null;
   negativePrompt?: string | null;
   autoPromptPrefix?: boolean | null;
 }
@@ -436,6 +440,8 @@ export interface ResultImage {
   origin?: ImageOrigin;
   /** Upscaled pictures: which upscaler made it. */
   upscaler?: "photo" | "photo_texture" | "drawing";
+  /** Made with "Repeats without seams": its edges join up when repeated. */
+  seamless?: boolean;
 }
 
 export type ImageOrigin = "generated" | "imported";

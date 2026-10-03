@@ -318,6 +318,16 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
             <Segmented size="sm" ariaLabel="VAE tiling" value={tri(ft.vaeTiling)} onChange={(t) => set({ vaeTiling: fromTri(t) })} options={[{ value: "auto" as Tri, label: "Auto" }, { value: "on" as Tri, label: "On" }, { value: "off" as Tri, label: "Off" }]} />
           </Row>
 
+          {ui?.seamless && (
+            <Row full label="Repeats without seams" def="off" changed={ft.seamless != null} onReset={() => set({ seamless: null })}>
+              <Toggle
+                checked={ft.seamless ?? false}
+                onChange={(v) => set({ seamless: v || null })}
+                label={<span className="text-sm">Edges join up when the picture is repeated, for patterns and textures. Switching it reloads the model.</span>}
+              />
+            </Row>
+          )}
+
           <UpscalerRow />
 
           {ui?.autoPromptPrefix && (
