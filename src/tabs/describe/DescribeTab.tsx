@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, Download, ImagePlus, ScanText, Sparkles, Tags, TextQuote } from "lucide-react";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { DropTarget, DropZone, useFilePicker } from "../../components/ImageDrop";
+import { PictureButton, SessionChoices, useSessionPictures } from "../../components/SessionPictures";
 import { AutoTextarea, Button, Kbd, Segmented, Spinner } from "../../components/ui";
 import { HelperPicker } from "../../components/HelperPicker";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
@@ -76,6 +77,7 @@ export function DescribeTab() {
     }
   };
   const picker = useFilePicker((f) => void load(f));
+  const sessionPics = useSessionPictures([d.imageId]);
 
   const describe = async () => {
     const s = store.getState().describe;
@@ -142,9 +144,9 @@ export function DescribeTab() {
               <img src={img.url} alt="Image to describe" className="max-h-full max-w-full rounded-lg object-contain shadow-lg ring-1 ring-black/5 dark:ring-white/10" draggable={false} />
             </div>
             <div className="flex shrink-0 items-center justify-center gap-2 pb-4">
-              <Button size="sm" variant="ghost" onClick={picker.open}>
+              <PictureButton onFile={picker.open} onPick={(p) => actions.sendToDescribe(p.id)} pictures={sessionPics} pickTitle="Describe this picture">
                 <ImagePlus className="h-3.5 w-3.5" /> Another image
-              </Button>
+              </PictureButton>
               <span className="text-xs text-neutral-500 tabular-nums">
                 {img.width}×{img.height}
               </span>
@@ -154,6 +156,7 @@ export function DescribeTab() {
           <div className="flex min-h-0 flex-1 p-6">
             <DropZone onFile={(f) => void load(f)} title="Add an image to describe" busy={importing}>
               {importing && <Spinner className="mt-3 h-4 w-4" />}
+              <SessionChoices pictures={sessionPics} title="Describe this picture" disabled={importing} onPick={(p) => actions.sendToDescribe(p.id)} />
             </DropZone>
           </div>
         )}

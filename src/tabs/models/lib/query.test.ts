@@ -10,6 +10,7 @@ import {
   isSafeModeOff,
   isVideoFile,
   mergePage,
+  moreFiltersCount,
   NO_TOTALS,
   normalizeSearch,
   resultsSummary,
@@ -18,6 +19,9 @@ import {
   tagsWithSafeMode,
   toBrowseQuery,
   toggleTag,
+  confirmedContent,
+  examplesContent,
+  visibleTags,
 } from "./query";
 
 const card = (versionId: number, extra: Partial<CatalogCard> = {}): CatalogCard => ({
@@ -209,5 +213,35 @@ describe("isVideoFile", () => {
     expect(isVideoFile("https://image.civitai.com/x/v.mp4")).toBe(true);
     expect(isVideoFile("https://image.civitai.com/x/v.WEBM?x=1")).toBe(true);
     expect(isVideoFile(null)).toBe(false);
+  });
+});
+
+describe("Safe mode outside Browse", () => {
+  it("keeps Safe mode on until turning it off was confirmed", () => {
+    expect(confirmedContent("all", false)).toBe("safe");
+    expect(confirmedContent("all", true)).toBe("all");
+    expect(confirmedContent("safe", true)).toBe("safe");
+  });
+  it("example pictures follow Settings and Browse: Safe mode on in either keeps them hidden", () => {
+    expect(examplesContent("all", false, null)).toBe("safe");
+    expect(examplesContent("all", true, null)).toBe("all");
+    expect(examplesContent("safe", true, null)).toBe("safe");
+    expect(examplesContent(null, true, null)).toBe("safe");
+    expect(examplesContent("all", true, { content: "safe" })).toBe("safe");
+    expect(examplesContent("all", true, { content: "all" })).toBe("all");
+    expect(examplesContent("safe", true, { content: "all" })).toBe("safe");
+  });
+  it("leaves out tags that need Safe mode off while it is on", () => {
+    expect(visibleTags(FALLBACK_OPTIONS.tags, "safe").some((t) => t.needsSafeModeOff)).toBe(false);
+    expect(visibleTags(FALLBACK_OPTIONS.tags, "all")).toEqual(FALLBACK_OPTIONS.tags);
+  });
+});
+
+describe("moreFiltersCount", () => {
+  it("counts the folded filters that are set, not Reference picture", () => {
+    const d = defaultFilters(null, null, false);
+    expect(moreFiltersCount(d, d)).toBe(0);
+    expect(moreFiltersCount({ ...d, tags: ["reference"] }, d)).toBe(0);
+    expect(moreFiltersCount({ ...d, tags: ["reference", "portraits", "food"], commercialOnly: true, hideAnime: true, price: d.price === "free" ? "include" : "free" }, d)).toBe(5);
   });
 });

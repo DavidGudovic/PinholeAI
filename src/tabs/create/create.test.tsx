@@ -30,13 +30,14 @@ const api = await import("../../lib/api");
 const { installMocks } = await import("../../lib/mock");
 const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
-const { PresetNoticeCard } = await import("./CreateTab");
+const { ChoicesNote, GenerateLabel, PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
 const { FinalPromptPreview, FineTuneDrawer } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
 const { ReferenceSlot } = await import("./ReferenceSlot");
+const { Dials } = await import("./Dials");
 const { makeActions } = await import("../../lib/state/actions");
 type Store = ReturnType<typeof createStore>;
 
@@ -406,6 +407,23 @@ describe("reference picture", () => {
     expect(store.getState().create.refImageId).toBeNull();
   });
 
+  it("offers Same as reference in the Shape dial and picks it when the picture is added", () => {
+    const store = storeWithResults(result("w", 1600, 900));
+    withApp(store, <Dials ui={null} />);
+    expect(screen.queryByRole("radio", { name: "Same as reference" })).toBeNull();
+
+    act(() => store.dispatch({ type: "createSetRef", ref: store.getState().images.w }));
+    const chip = screen.getByRole("radio", { name: "Same as reference" });
+    expect(chip.getAttribute("aria-checked")).toBe("true");
+    expect(chip.getAttribute("title")).toContain("1344×768");
+    expect(screen.getByRole("radio", { name: "Square" }).getAttribute("aria-checked")).toBe("false");
+
+    fireEvent.click(screen.getByRole("radio", { name: "Square" }));
+    expect(store.getState().create.refShape).toBe(false);
+    fireEvent.click(screen.getByRole("radio", { name: "Same as reference" }));
+    expect(store.getState().create.refShape).toBe(true);
+  });
+
   it("shows the one-time note about photos of people for a picture from the computer only", async () => {
     const store = storeWithResults({ ...result("a", 64, 64), origin: "generated" });
     store.dispatch({ type: "setModels", models: [sdxl, klein] });
@@ -444,13 +462,13 @@ describe("reference picture", () => {
     expect(screen.queryByTestId("side-by-side")).toBeNull();
   });
 
-  it("More like this holds Close to this one, Variations and Same character; Describe stays a button", () => {
+  it("More like this holds Close to this one, Variations, Same character and On another model; Describe stays a button", () => {
     const store = storeWithResults(result("a", 64, 64));
     withApp(store, <Results />);
     expect(screen.queryByRole("button", { name: /Same character/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
     const items = screen.getAllByRole("menuitem");
-    expect(items.map((i) => i.textContent?.match(/^(Close to this one|Variations|Same character)/)?.[0])).toEqual(["Close to this one", "Variations", "Same character"]);
+    expect(items.map((i) => i.textContent?.match(/^(Close to this one|Variations|Same character|On another model…)/)?.[0])).toEqual(["Close to this one", "Variations", "Same character", "On another model…"]);
     // No batch for this result, so no Close to this one or Variations.
     expect((screen.getByRole("menuitem", { name: /Close to this one/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("menuitem", { name: /Variations/ }) as HTMLButtonElement).disabled).toBe(true);
@@ -549,5 +567,76 @@ describe("Tip line", () => {
     store.dispatch({ type: "setSettings", settings: { ...(await api.getSettings()), showTips: false } });
     withApp(store, <TipLine hasBatch />);
     expect(screen.queryByRole("note")).toBeNull();
+  });
+});
+
+describe("On another model", () => {
+  const other = (id: string, extra: Partial<InstalledModel> = {}) => ({ ...model, id, friendlyName: `Model ${id}`, ...extra }) as InstalledModel;
+  const request = (refImageIds?: string[]) =>
+    ({ modelId: "m", mode: "txt2img", prompt: "p", styleId: null, dials: { shape: "square", quality: "balanced", stick: 0.5, count: 1 }, fineTune: {}, loras: [], addTriggerWords: true, ...(refImageIds ? { refImageIds } : {}) }) as GenerateRequest;
+  const withBatch = (req: GenerateRequest, ...images: ResultImage[]) => {
+    const store = createStore();
+    store.dispatch({ type: "addResults", batch: { id: "b1", request: req }, images, refs: images.map((r) => ({ id: r.id, url: `blob:${r.id}`, width: r.width, height: r.height })) });
+    return store;
+  };
+
+  it("lists the other installed models that fit and are set up", () => {
+    const store = withBatch(request(), result("a", 64, 64));
+    store.dispatch({
+      type: "setModels",
+      models: [model, other("fits", { fit: "fits" }), other("tight", { fit: "tight" }), other("big", { fit: "tooBig" }), other("part", { missingComponents: ["VAE"] })],
+    });
+    withApp(store, <Results />);
+    fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /On another model/ }));
+    const names = screen.getAllByRole("menuitem").map((i) => i.textContent ?? "");
+    expect(names.some((n) => n.includes("Model fits"))).toBe(true);
+    expect(names.some((n) => n.includes("Model tight"))).toBe(true);
+    expect(names.some((n) => n.includes("Model big") || n.includes("Model part") || n.includes("Test model"))).toBe(false);
+  });
+
+  it("lists only models that take a reference picture when the picture used one", () => {
+    const store = withBatch(request(["r"]), result("a", 64, 64));
+    store.dispatch({ type: "setModels", models: [model, other("plain"), other("klein", { modes: ["txt2img", "edit"] })] });
+    withApp(store, <Results />);
+    fireEvent.click(screen.getByRole("button", { name: /More like this/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /On another model/ }));
+    const names = screen.getAllByRole("menuitem").map((i) => i.textContent ?? "");
+    expect(names.some((n) => n.includes("Model klein"))).toBe(true);
+    expect(names.some((n) => n.includes("Model plain"))).toBe(false);
+  });
+
+  it("opens the new picture side by side with the first, labelled by model", () => {
+    const store = withBatch(request(), result("a", 64, 64));
+    const made = { ...result("c", 64, 64), modelId: "o", modelLabel: "Other model" };
+    store.dispatch({ type: "addResults", batch: { id: "b2", request: { ...request(), modelId: "o" }, compareWith: "a" }, images: [made], refs: [{ id: "c", url: "blob:c", width: 64, height: 64 }] });
+    withApp(store, <Results />);
+    expect(screen.getByTestId("side-by-side")).toBeTruthy();
+    const toggle = screen.getByRole("button", { name: "Side by side with the picture from m" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("side-by-side")).toBeNull();
+  });
+});
+
+describe("choices in braces on the Generate button", () => {
+  it("shows the count, and says when the cap trims it", () => {
+    const store = createStore();
+    store.dispatch({ type: "patchCreate", patch: { prompt: "a {red|blue|green} car" } });
+    const ui = (queues: boolean) => (
+      <AppProvider store={store}>
+        <GenerateLabel queues={queues} />
+        <ChoicesNote />
+      </AppProvider>
+    );
+    const { container, rerender } = render(ui(false));
+    expect(container.textContent).toBe("Generate 3");
+    rerender(ui(true));
+    expect(container.textContent).toBe("Add 3 to queue");
+    act(() => store.dispatch({ type: "patchCreate", patch: { prompt: "{a|b|c|d|e} {1|2|3|4|5|6}" } }));
+    expect(container.textContent).toContain("Add 16 to queue");
+    expect(container.textContent).toContain("Makes the first 16 of 30 combinations.");
+    act(() => store.dispatch({ type: "patchCreate", patch: { prompt: "a {cozy} cabin" } }));
+    expect(container.textContent).toBe("Add to queue");
   });
 });

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ChevronDown, Dices, Plus, RotateCcw, SlidersHorizontal, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, IconButton, MenuItem, MenuLabel, Popover, Segmented, Select, Toggle, cx, focusRing, inputClass } from "../../components/ui";
-import { namedSizes, screenPixels, sizeForRatio } from "../../lib/sizes";
+import { namedSizes, referenceSize, screenPixels, sizeForRatio } from "../../lib/sizes";
 import { SD_SAMPLERS, SD_SCHEDULERS, defaultStickPosition, samplerLabel, schedulerLabel, stickValue } from "../../lib/paste/map";
 import { asCoreError, previewFinalPrompt } from "../../lib/api";
 import type { FamilyUi, FineTune, GenerateRequest, InstalledModel } from "../../lib/types";
@@ -11,7 +11,8 @@ import { useActions } from "../../lib/state/AppProvider";
 import { useDebounced } from "../../lib/state/hooks";
 import { DEFAULT_LORA_WEIGHT, loraCompatible } from "../../lib/state/model";
 import { requestAddonBrowse } from "../models/lib/session";
-import { buildCreateRequest } from "../../lib/state/request";
+import { expandChoices } from "../../lib/state/choices";
+import { buildCreateRequest, randomSeed } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
 import { UpscalerSelect, useUpscaler } from "../../components/UpscalerChoice";
@@ -165,6 +166,7 @@ function UpscalerRow() {
 export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
   const [open, setOpen] = useState(false);
   const c = useAppState((s) => s.create);
+  const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
   const styles = useAppState((s) => s.styles);
   const dispatch = useDispatch();
   const ft = c.fineTune;
@@ -175,7 +177,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
 
   const stickPos = c.stick ?? defaultStickPosition(ui);
   const steps = ui ? ui.qualitySteps[qualityIndex(c.quality)] : null;
-  const [sw, sh] = ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape];
+  const [sw, sh] = referenceSize(c, ref, ui) ?? ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape];
   const cfgDefault = ui ? (ui.stickMapsTo === "cfg" && ui.showStick ? stickValue(ui, stickPos) : ui.defaultCfg) : null;
   const guidanceDefault = ui ? (ui.stickMapsTo === "guidance" ? stickValue(ui, stickPos) : ui.defaultGuidance) : null;
   const showGuidance = !ui || ui.stickMapsTo === "guidance" || ui.defaultGuidance != null;
@@ -271,7 +273,7 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
           <Row label="Seed" htmlFor="ft-seed" def="random" changed={ft.seed != null} onReset={() => set({ seed: null })}>
             <div className="flex gap-1.5">
               <NumberInput id="ft-seed" integer min={0} value={ft.seed} placeholder="Random" onChange={(v) => set({ seed: v })} />
-              <IconButton label="Pick a random seed" variant="secondary" onClick={() => set({ seed: Math.floor(Math.random() * 2 ** 31) })}>
+              <IconButton label="Pick a random seed" variant="secondary" onClick={() => set({ seed: randomSeed() })}>
                 <Dices className="h-4 w-4" />
               </IconButton>
             </div>
@@ -459,8 +461,19 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
   const c = useAppState((s) => s.create);
   const loras = useAppState((s) => s.loras);
   const settings = useAppState((s) => s.settings);
-  const req = useMemo(() => (model ? buildCreateRequest(c, { ui, loras, model, settings }) : null), [c, ui, loras, model, settings]);
-  return <PromptPreview req={c.prompt.trim() ? req : null} empty="Type a prompt to see exactly what is sent." />;
+  const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
+  // With {a|b} choices: the first prompt they make.
+  const choices = useMemo(() => expandChoices(c.prompt).prompts, [c.prompt]);
+  const req = useMemo(
+    () => (model && choices.length ? buildCreateRequest({ ...c, prompt: choices[0] }, { ui, loras, model, settings, ref }) : null),
+    [c, choices, ui, loras, model, settings, ref],
+  );
+  return (
+    <>
+      <PromptPreview req={c.prompt.trim() ? req : null} empty="Type a prompt to see exactly what is sent." />
+      {choices.length > 1 && <p className="mt-1 text-[11px] text-neutral-500">The first of the {choices.length} prompts your choices in braces make.</p>}
+    </>
+  );
 }
 
 /**

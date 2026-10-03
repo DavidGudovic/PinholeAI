@@ -13,6 +13,7 @@ import * as api from "../../lib/api";
 import type { CoreError, GroupStatus } from "../../lib/types";
 import { useActions, usePrimaryAction } from "../../lib/state/AppProvider";
 import { useFamilyUi, useModel } from "../../lib/state/hooks";
+import { choiceCount, MAX_CHOICE_PICTURES } from "../../lib/state/choices";
 import { createModels, isActiveDownload, willQueue } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
@@ -73,6 +74,28 @@ function NoModels() {
 }
 
 const CREATE_JOBS = ["create", "upscale"] as const;
+
+/** Pictures the prompt's `{a|b}` choices make. Only these subscribe to the prompt, not the whole sidebar. */
+function useChoices() {
+  const prompt = useAppState((s) => s.create.prompt);
+  return useMemo(() => choiceCount(prompt), [prompt]);
+}
+
+export function GenerateLabel({ queues }: { queues: boolean }) {
+  const choices = useChoices();
+  const n = choices ? ` ${choices.count}` : "";
+  return <>{queues ? `Add${n} to queue` : `Generate${n}`}</>;
+}
+
+export function ChoicesNote() {
+  const choices = useChoices();
+  if (!choices || choices.count >= choices.total) return null;
+  return (
+    <p className="text-center text-xs text-neutral-500">
+      Makes the first {choices.count} of {choices.total} combinations. {MAX_CHOICE_PICTURES} is the most for one Generate.
+    </p>
+  );
+}
 
 function CreateWorkspace() {
   const models = useAppState((s) => s.models);
@@ -180,7 +203,7 @@ function CreateWorkspace() {
           <div className="flex gap-2">
             <Button variant="primary" size="lg" className="min-w-0 flex-1" disabled={!model} onClick={() => void generate()}>
               {queues ? <ListPlus className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-              {queues ? "Add to queue" : "Generate"}
+              <GenerateLabel queues={queues} />
               <span className="ml-1 inline-flex gap-0.5 opacity-70">
                 <Kbd>{modKey}</Kbd>
                 <Kbd>Enter</Kbd>
@@ -188,6 +211,7 @@ function CreateWorkspace() {
             </Button>
             <QueueButton />
           </div>
+          <ChoicesNote />
           {jobKind === "edit" && <p className="text-center text-xs text-neutral-500">Busy with an edit. Generate waits for it to finish.</p>}
           {error && <ErrorWithFix error={error} onDismiss={() => setError(null)} onRetry={() => void generate()} />}
         </div>
