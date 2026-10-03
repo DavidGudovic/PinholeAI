@@ -70,6 +70,8 @@ pub fn set_settings(core: &Arc<AppCore>, settings: Settings) -> CoreResult<Setti
     let mut current = core.settings.write();
     // The Models folder only changes by moving the models (models_folder.rs).
     settings.models_folder = current.models_folder.clone();
+    // The Saved pictures folder only changes through `set_save_folder`.
+    settings.save_folder = current.save_folder.clone();
     // Accepted licences only change through `accept_license` (licence.rs).
     settings.accepted_licenses = current.accepted_licenses.clone();
     pinhole_store::settings::save(&core.data, &settings).map_err(crate::library::store_err)?;
@@ -250,9 +252,102 @@ pub fn data_folder(core: &AppCore) -> CoreResult<PathBuf> {
     ensure_dir(core.data.root.clone())
 }
 
-/// `Data/outputs/` (created if missing so the file manager can open it).
+/// Settings → Saved pictures. Mirrors `SaveFolderInfo` in `src/lib/types.ts`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveFolderInfo {
+    /// Where Save puts pictures.
+    pub path: String,
+    /// The user picked it (Change…); false = the default.
+    pub custom: bool,
+    /// The default folder ("Use default" puts Save back there).
+    pub default_path: String,
+    /// `Data/outputs/` when it holds pictures saved before and Save now goes elsewhere.
+    pub earlier_path: Option<String>,
+}
+
+const SAVE_FOLDER_MISSING: &str = "Your Saved pictures folder isn't available. Connect the drive it's on, or pick another folder in Settings → Saved pictures.";
+
+/// The folder Save writes to: the one picked in Settings, else `Pictures/Pinhole`
+/// (`Data/outputs/` for a portable copy).
+pub fn save_folder(core: &AppCore) -> (PathBuf, bool) {
+    match core.settings.read().save_folder.as_deref() {
+        Some(p) => (PathBuf::from(p), true),
+        None => (core.data.default_saves(), false),
+    }
+}
+
+pub fn save_folder_info(core: &AppCore) -> SaveFolderInfo {
+    let (path, custom) = save_folder(core);
+    let old = core.data.outputs();
+    let has_pictures = std::fs::read_dir(&old)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    SaveFolderInfo {
+        earlier_path: (has_pictures && !same_folder(&old, &path))
+            .then(|| old.display().to_string()),
+        path: path.display().to_string(),
+        custom,
+        default_path: core.data.default_saves().display().to_string(),
+    }
+}
+
+/// The Save folder, ready to write to. The default one is created on first use; a
+/// picked one must still exist (a drive that isn't connected is never filled in on
+/// the system disk).
+pub fn save_folder_for_write(core: &AppCore) -> CoreResult<PathBuf> {
+    let (dir, custom) = save_folder(core);
+    if custom && !dir.is_dir() {
+        return Err(CoreError::new("io", SAVE_FOLDER_MISSING));
+    }
+    ensure_dir(dir)
+}
+
+/// Settings → Saved pictures → Change… (`Some`) or Use default (`None`). Pictures
+/// already saved stay where they are.
+pub fn set_save_folder(core: &AppCore, folder: Option<String>) -> CoreResult<SaveFolderInfo> {
+    let folder = match folder
+        .map(|f| f.trim().to_string())
+        .filter(|f| !f.is_empty())
+    {
+        None => None,
+        Some(f) => {
+            let path = PathBuf::from(&f);
+            if !path.is_absolute() || !path.is_dir() {
+                return Err(CoreError::invalid(
+                    "Pick an existing folder for saved pictures.",
+                ));
+            }
+            if !pinhole_store::datadir::is_writable_dir(&path) {
+                return Err(CoreError::invalid(
+                    "Pinhole can't save into that folder. Pick one you can write to.",
+                ));
+            }
+            // Picking the default folder again is the same as Use default.
+            (!same_folder(&path, &core.data.default_saves())).then_some(f)
+        }
+    };
+    let mut current = core.settings.write();
+    let mut next = current.clone();
+    next.save_folder = folder;
+    pinhole_store::settings::save(&core.data, &next).map_err(crate::library::store_err)?;
+    *current = next.normalized();
+    drop(current);
+    Ok(save_folder_info(core))
+}
+
+/// Paths name the same folder (letter case doesn't count on Windows).
+fn same_folder(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// The Save folder, for "Open folder" (created if missing so the file manager can open it).
 pub fn outputs_folder(core: &AppCore) -> CoreResult<PathBuf> {
-    ensure_dir(core.data.outputs())
+    save_folder_for_write(core)
 }
 
 fn ensure_dir(dir: PathBuf) -> CoreResult<PathBuf> {
@@ -343,6 +438,91 @@ pub(crate) mod tests {
         assert_eq!(info.os, std::env::consts::OS);
         assert!(outputs_folder(&core).unwrap().is_dir());
         assert_eq!(data_folder(&core).unwrap(), core.data.root);
+    }
+
+    #[test]
+    fn save_folder_default_change_and_back() {
+        let (t, core) = test_core(Arc::new(Recorder::default()));
+        // Tests (like portable copies) default to Data/outputs.
+        let info = save_folder_info(&core);
+        assert!(!info.custom);
+        assert_eq!(info.path, core.data.outputs().display().to_string());
+        assert_eq!(info.default_path, info.path);
+
+        let picked = t.path().join("My pictures");
+        // Must exist, be a full path, and be writable.
+        assert_eq!(
+            set_save_folder(&core, Some(picked.display().to_string()))
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        assert!(set_save_folder(&core, Some("relative/dir".into())).is_err());
+        std::fs::create_dir_all(&picked).unwrap();
+        let info = set_save_folder(&core, Some(picked.display().to_string())).unwrap();
+        assert!(info.custom);
+        assert_eq!(info.path, picked.display().to_string());
+        assert_eq!(save_folder_for_write(&core).unwrap(), picked);
+        // Stored with the other settings and kept across a restart.
+        let stored = pinhole_store::settings::load(&core.data).unwrap();
+        assert_eq!(stored.save_folder, Some(picked.display().to_string()));
+
+        // A plain settings save (e.g. from an older settings object) doesn't reset it.
+        let mut s = get_settings(&core);
+        s.save_folder = None;
+        s.theme = "dark".into();
+        let saved = set_settings(&core, s).unwrap();
+        assert_eq!(saved.save_folder, Some(picked.display().to_string()));
+
+        // The folder went away (drive unplugged): Save says so and never recreates it.
+        std::fs::remove_dir(&picked).unwrap();
+        let err = save_folder_for_write(&core).unwrap_err();
+        assert!(
+            err.message.contains("Settings → Saved pictures"),
+            "{}",
+            err.message
+        );
+        assert!(!picked.exists());
+
+        // Use default.
+        let info = set_save_folder(&core, None).unwrap();
+        assert!(!info.custom);
+        assert_eq!(save_folder_for_write(&core).unwrap(), core.data.outputs());
+        // Picking the default folder itself is the same as Use default.
+        let info = set_save_folder(&core, Some(core.data.outputs().display().to_string())).unwrap();
+        assert!(!info.custom);
+        assert_eq!(
+            pinhole_store::settings::load(&core.data)
+                .unwrap()
+                .save_folder,
+            None
+        );
+    }
+
+    #[test]
+    fn installed_copy_saves_into_pictures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shipped = ShippedPaths {
+            config_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../config"),
+        };
+        let pictures = tmp.path().join("Pictures").join("Pinhole");
+        let data =
+            DataDir::at(tmp.path().join("Data"), false).with_pictures_home(Some(pictures.clone()));
+        let core = AppCore::new(shipped, data, Arc::new(Recorder::default()))
+            .unwrap_or_else(|e| panic!("AppCore::new failed: {}", e.message));
+        // Not created until something is saved.
+        assert!(!pictures.exists());
+        assert_eq!(save_folder_info(&core).path, pictures.display().to_string());
+        assert_eq!(save_folder_for_write(&core).unwrap(), pictures);
+        assert!(pictures.is_dir());
+
+        // Pictures saved by an older version stay in Data/outputs, and Settings says so.
+        assert_eq!(save_folder_info(&core).earlier_path, None);
+        std::fs::write(core.data.outputs().join("pinhole_old.png"), b"x").unwrap();
+        assert_eq!(
+            save_folder_info(&core).earlier_path,
+            Some(core.data.outputs().display().to_string())
+        );
     }
 
     fn gpu(index: usize, vendor: Vendor, vram_gb: f32) -> GpuInfo {

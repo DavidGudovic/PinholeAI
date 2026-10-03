@@ -22,6 +22,10 @@ pub struct DataDir {
     /// another Pinhole install pointed at it sees the same models.
     #[serde(default)]
     pub models_home: Option<PathBuf>,
+    /// Where Save puts pictures by default: `Pinhole` inside the user's Pictures folder.
+    /// Only set for an installed copy; portable copies (and tests) keep `Data/outputs/`.
+    #[serde(default)]
+    pub pictures_home: Option<PathBuf>,
 }
 
 /// Index file inside a user-picked Models folder (the default folder keeps
@@ -120,7 +124,12 @@ impl DataDir {
         }
         let installed =
             installed_root().or_else(|| dirs::home_dir().map(|h| h.join(".pinhole").join("Data")));
-        resolve_with(env, &portable, installed)
+        resolve_with(
+            env,
+            &portable,
+            installed,
+            pictures_home(dirs::picture_dir(), dirs::home_dir()),
+        )
     }
 
     /// Use an explicit root (tests).
@@ -129,7 +138,14 @@ impl DataDir {
             root,
             portable,
             models_home: None,
+            pictures_home: None,
         }
+    }
+
+    /// Use `folder` (absolute) as the default Save folder; `None` = `Data/outputs/`.
+    pub fn with_pictures_home(mut self, folder: Option<PathBuf>) -> Self {
+        self.pictures_home = folder.filter(|p| p.is_absolute());
+        self
     }
 
     /// Use `folder` (absolute) as the Models folder; `None` = `Data/models/`.
@@ -212,6 +228,10 @@ impl DataDir {
     }
     pub fn outputs(&self) -> PathBuf {
         self.root.join("outputs")
+    }
+    /// Default Save folder: `Pictures/Pinhole` for an installed copy, else `Data/outputs/`.
+    pub fn default_saves(&self) -> PathBuf {
+        self.pictures_home.clone().unwrap_or_else(|| self.outputs())
     }
     pub fn presets(&self) -> PathBuf {
         self.root.join("presets")
@@ -332,10 +352,26 @@ fn installed_root() -> Option<PathBuf> {
     dirs::data_dir().map(|d| d.join("pinhole").join("Data"))
 }
 
+/// `Pinhole` inside the Pictures folder (`dirs::picture_dir`: the XDG pictures folder on
+/// Linux, the Pictures known folder on Windows), else inside `~/Pictures` when that exists.
+fn pictures_home(pictures: Option<PathBuf>, home: Option<PathBuf>) -> Option<PathBuf> {
+    pictures
+        // XDG settings point Pictures at the home folder to turn it off.
+        .filter(|p| p.is_absolute() && Some(p) != home.as_ref())
+        .or_else(|| {
+            home.map(|h| h.join("Pictures"))
+                .filter(|p| p.is_absolute() && p.is_dir())
+        })
+        .map(|p| p.join("Pinhole"))
+}
+
+/// `pictures` is only used for an installed copy: the CI / test override and portable
+/// copies keep saving into `Data/outputs/`.
 fn resolve_with(
     env: Option<PathBuf>,
     portable: &[PathBuf],
     installed: Option<PathBuf>,
+    pictures: Option<PathBuf>,
 ) -> Result<DataDir, StoreError> {
     if let Some(root) = env {
         let root = if root.is_absolute() {
@@ -343,20 +379,12 @@ fn resolve_with(
         } else {
             std::env::current_dir()?.join(root)
         };
-        return Ok(DataDir {
-            root,
-            portable: false,
-            models_home: None,
-        });
+        return Ok(DataDir::at(root, false));
     }
     if let Some(root) = portable.iter().find(|p| p.is_dir() && is_writable_dir(p)) {
-        return Ok(DataDir {
-            root: root.clone(),
-            portable: true,
-            models_home: None,
-        });
+        return Ok(DataDir::at(root.clone(), true));
     }
-    installed.map(|root| DataDir { root, portable: false, models_home: None }).ok_or_else(|| {
+    installed.map(|root| DataDir::at(root, false).with_pictures_home(pictures)).ok_or_else(|| {
         StoreError::Invalid(
             "Pinhole couldn't find a folder for its data. Create an empty folder named \"Data\" next to \
              the Pinhole program to use portable mode."
@@ -393,6 +421,20 @@ pub fn is_writable_dir(dir: &Path) -> bool {
 mod tests {
     use super::*;
 
+    /// A Pictures folder that is absolute on every platform.
+    fn pics() -> PathBuf {
+        std::env::temp_dir().join("Pictures")
+    }
+
+    /// `resolve_with` with a Pictures folder known.
+    fn resolve3(
+        env: Option<PathBuf>,
+        portable: &[PathBuf],
+        installed: Option<PathBuf>,
+    ) -> Result<DataDir, StoreError> {
+        resolve_with(env, portable, installed, Some(pics()))
+    }
+
     #[test]
     fn normalize_rel_matches_resolve_rel() {
         for (raw, want) in [
@@ -416,7 +458,7 @@ mod tests {
         let portable = tmp.path().join("exe").join("Data");
         fs::create_dir_all(&portable).unwrap();
         let env = tmp.path().join("ci-data");
-        let d = resolve_with(
+        let d = resolve3(
             Some(env.clone()),
             &[portable],
             Some(tmp.path().join("installed")),
@@ -424,11 +466,14 @@ mod tests {
         .unwrap();
         assert_eq!(d.root, env);
         assert!(!d.portable);
+        // CI / tests never save into the real Pictures folder.
+        assert!(d.pictures_home.is_none());
+        assert_eq!(d.default_saves(), env.join("outputs"));
     }
 
     #[test]
     fn relative_env_override_is_made_absolute() {
-        let d = resolve_with(Some(PathBuf::from("rel-data")), &[], None).unwrap();
+        let d = resolve3(Some(PathBuf::from("rel-data")), &[], None).unwrap();
         assert!(d.root.is_absolute());
         assert!(d.root.ends_with("rel-data"));
     }
@@ -438,7 +483,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let portable = tmp.path().join("Data");
         fs::create_dir_all(&portable).unwrap();
-        let d = resolve_with(
+        let d = resolve3(
             None,
             std::slice::from_ref(&portable),
             Some(tmp.path().join("installed")),
@@ -446,6 +491,8 @@ mod tests {
         .unwrap();
         assert_eq!(d.root, portable);
         assert!(d.portable);
+        // A portable copy keeps its pictures next to it.
+        assert_eq!(d.default_saves(), portable.join("outputs"));
         // The probe file is cleaned up.
         assert_eq!(fs::read_dir(&portable).unwrap().count(), 0);
     }
@@ -455,7 +502,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let second = tmp.path().join("appimage-dir").join("Data");
         fs::create_dir_all(&second).unwrap();
-        let d = resolve_with(
+        let d = resolve3(
             None,
             &[tmp.path().join("nope").join("Data"), second.clone()],
             None,
@@ -469,9 +516,65 @@ mod tests {
     fn installed_when_no_portable_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let installed = tmp.path().join("installed").join("Data");
-        let d = resolve_with(None, &[tmp.path().join("Data")], Some(installed.clone())).unwrap();
+        let d = resolve3(None, &[tmp.path().join("Data")], Some(installed.clone())).unwrap();
         assert_eq!(d.root, installed);
         assert!(!d.portable);
+        assert_eq!(d.default_saves(), pics());
+    }
+
+    #[test]
+    fn installed_without_pictures_folder_saves_into_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let installed = tmp.path().join("installed").join("Data");
+        let d = resolve_with(None, &[], Some(installed.clone()), None).unwrap();
+        assert_eq!(d.default_saves(), installed.join("outputs"));
+    }
+
+    #[test]
+    fn pictures_home_is_pinhole_inside_pictures() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pictures = tmp.path().join("Bilder");
+        assert_eq!(
+            pictures_home(Some(pictures.clone()), None),
+            Some(pictures.join("Pinhole"))
+        );
+        // No known Pictures folder: ~/Pictures when it exists, else nothing.
+        let home = tmp.path().join("home");
+        assert_eq!(pictures_home(None, Some(home.clone())), None);
+        fs::create_dir_all(home.join("Pictures")).unwrap();
+        assert_eq!(
+            pictures_home(None, Some(home.clone())),
+            Some(home.join("Pictures").join("Pinhole"))
+        );
+        // Pictures turned off in the XDG settings (set to the home folder): ~/Pictures or nothing.
+        assert_eq!(
+            pictures_home(Some(home.clone()), Some(home.clone())),
+            Some(home.join("Pictures").join("Pinhole"))
+        );
+        // A relative answer is never used.
+        assert_eq!(pictures_home(Some(PathBuf::from("Pictures")), None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pictures_home_windows_paths() {
+        let known = PathBuf::from(r"C:\Users\Maya\OneDrive\Pictures");
+        assert_eq!(
+            pictures_home(Some(known), None),
+            Some(PathBuf::from(r"C:\Users\Maya\OneDrive\Pictures\Pinhole"))
+        );
+        let d = DataDir::at(
+            PathBuf::from(r"C:\Users\Maya\AppData\Local\Pinhole\Data"),
+            false,
+        )
+        .with_pictures_home(Some(PathBuf::from(r"D:\Pics\Pinhole")));
+        assert_eq!(d.default_saves(), PathBuf::from(r"D:\Pics\Pinhole"));
+        // Drive-relative paths are not absolute on Windows.
+        let d = d.with_pictures_home(Some(PathBuf::from(r"D:Pics")));
+        assert_eq!(
+            d.default_saves(),
+            PathBuf::from(r"C:\Users\Maya\AppData\Local\Pinhole\Data\outputs")
+        );
     }
 
     #[test]
@@ -480,7 +583,7 @@ mod tests {
         let not_dir = tmp.path().join("Data");
         fs::write(&not_dir, "x").unwrap();
         let installed = tmp.path().join("inst");
-        let d = resolve_with(None, &[not_dir], Some(installed.clone())).unwrap();
+        let d = resolve3(None, &[not_dir], Some(installed.clone())).unwrap();
         assert_eq!(d.root, installed);
     }
 
@@ -495,7 +598,7 @@ mod tests {
         // Root can write anywhere; only assert when the permission actually bites.
         let writable = is_writable_dir(&portable);
         let installed = tmp.path().join("inst");
-        let d = resolve_with(
+        let d = resolve3(
             None,
             std::slice::from_ref(&portable),
             Some(installed.clone()),
@@ -511,7 +614,7 @@ mod tests {
 
     #[test]
     fn no_location_is_a_plain_error() {
-        let e = resolve_with(None, &[], None).unwrap_err();
+        let e = resolve3(None, &[], None).unwrap_err();
         assert!(matches!(e, StoreError::Invalid(_)));
     }
 

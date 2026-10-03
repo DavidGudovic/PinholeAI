@@ -11,7 +11,7 @@ import { Button, MenuItem, MenuSeparator, Popover, cx, focusRing } from "./ui";
 /** Largest side the upscaler can output (it works at 4× first). Mirrors upscale_image in generate.rs. */
 export const UPSCALE_MAX_SIDE = 8192;
 
-/** Save, plus "Save as…" (and, with `onSaveAll`, "Save all unsaved") in the desktop app. Errors go to `run`. */
+/** Save, plus "Save as…" (and, with `onSaveAll`, "Save all unsaved"; with `onSaveSheet`, "Save as one sheet") in the desktop app. Errors go to `run`. */
 export function SaveButton({
   id,
   seed,
@@ -20,6 +20,8 @@ export function SaveButton({
   tab,
   unsavedCount = 0,
   onSaveAll,
+  sheetCount = 0,
+  onSaveSheet,
 }: {
   id: string;
   seed: number | null;
@@ -30,6 +32,9 @@ export function SaveButton({
   /** Unsaved pictures in the session; "Save all unsaved" shows when there are 2 or more. */
   unsavedCount?: number;
   onSaveAll?: () => void;
+  /** Pictures that came with this one; "Save as one sheet" shows when there are 2 or more. */
+  sheetCount?: number;
+  onSaveSheet?: () => void;
 }) {
   const actions = useActions();
   const [saving, setSaving] = useState(false);
@@ -94,6 +99,17 @@ export function SaveButton({
                   }}
                 >
                   Save all unsaved ({unsavedCount})
+                </MenuItem>
+              )}
+              {onSaveSheet && sheetCount > 1 && (
+                <MenuItem
+                  hint="The pictures made with this one, side by side in one picture"
+                  onClick={() => {
+                    close();
+                    onSaveSheet();
+                  }}
+                >
+                  Save as one sheet ({sheetCount})
                 </MenuItem>
               )}
             </>

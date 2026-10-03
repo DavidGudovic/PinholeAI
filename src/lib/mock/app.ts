@@ -13,7 +13,7 @@
 //   ?lowdisk        only 9 GB free on the Data drive (see catalog.ts)
 import type { MockTable } from "./index";
 import { mockEmit } from "./index";
-import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, SafetyCheckStatus, Settings } from "../types";
+import type { AppInfo, CoreError, EngineStatus, GpuInfo, HardwareView, ModelsFolderInfo, ModelsFolderPreview, SafetyCheckStatus, SaveFolderInfo, Settings } from "../types";
 import { startMockDownload } from "./models";
 import { isKnownLicence } from "./licences";
 import { NOTICE_VERSION } from "../../firstrun/UseNotice";
@@ -63,6 +63,7 @@ export function mockSettings(): Settings {
       engineBackend: "auto",
       textEncoderOnCpu: "auto",
       modelsFolder: null,
+      saveFolder: null,
       describeModel: "auto",
       improveModel: "auto",
       upscaler: "auto",
@@ -102,6 +103,14 @@ const DEFAULT_MODELS = "C:\\Users\\Alex\\AppData\\Local\\Pinhole\\Data\\models";
 function modelsFolderInfo(): ModelsFolderInfo {
   const custom = mockSettings().modelsFolder;
   return { path: custom ?? DEFAULT_MODELS, custom: custom != null, problem: null };
+}
+
+// ---------------------------------------------------------------- saved pictures
+const DEFAULT_SAVES = "C:\\Users\\Alex\\Pictures\\Pinhole";
+
+export function saveFolderInfo(): SaveFolderInfo {
+  const custom = mockSettings().saveFolder ?? null;
+  return { path: custom ?? DEFAULT_SAVES, custom: custom != null, defaultPath: DEFAULT_SAVES, earlierPath: null };
 }
 
 // ---------------------------------------------------------------- hardware
@@ -209,7 +218,10 @@ function backends(): Set<string> {
 
 function engineState(): EngineStatus {
   const backend = backendFor(selectedGpu());
-  return { ...engineFlags, installed: backends().has(backend), version: ENGINE_VERSION, backend };
+  const installed = backends().has(backend);
+  // Engine archive sizes like config/engine.yaml (CUDA build + its runtime, Vulkan, CPU).
+  const downloadBytes = installed ? 0 : backend === "cuda" ? 901_297_000 : backend === "vulkan" ? 30_029_173 : 17_448_207;
+  return { ...engineFlags, installed, version: ENGINE_VERSION, backend, downloadBytes };
 }
 
 function setEngine(flags: Partial<typeof engineFlags>) {
@@ -338,8 +350,9 @@ const table: MockTable = {
   get_settings: async () => ({ ...mockSettings() }),
   set_settings: async (a) => {
     await sleep(60);
-    // Like Rust: the Models folder only changes by moving the models; licences only by accept_license.
-    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings), modelsFolder: mockSettings().modelsFolder, acceptedLicenses: mockSettings().acceptedLicenses });
+    // Like Rust: the Models folder only changes by moving the models, the Save folder only by
+    // set_save_folder, licences only by accept_license.
+    const next = normalizeSettings({ ...mockSettings(), ...(a.settings as Settings), modelsFolder: mockSettings().modelsFolder, saveFolder: mockSettings().saveFolder ?? null, acceptedLicenses: mockSettings().acceptedLicenses });
     settings = next;
     return { ...next };
   },
@@ -373,6 +386,13 @@ const table: MockTable = {
     settings = { ...mockSettings(), modelsFolder: (a.folder as string | null) ?? null };
   },
   open_outputs_folder: async () => undefined,
+  save_folder_info: async () => saveFolderInfo(),
+  set_save_folder: async (a) => {
+    await sleep(60);
+    const folder = (a.folder as string | null) ?? null;
+    settings = { ...mockSettings(), saveFolder: folder === DEFAULT_SAVES ? null : folder };
+    return saveFolderInfo();
+  },
   engine_status: async () => ({ ...engineState() }),
   engine_output: async () =>
     [
@@ -394,6 +414,8 @@ const table: MockTable = {
     const opts = a.options as { filters?: { extensions: string[] }[]; directory?: boolean; title?: string } | undefined;
     // Models → "Use models from another app" gets a fake ComfyUI folder.
     if (opts?.directory && opts.title?.includes("ComfyUI")) return "C:\\AI\\ComfyUI";
+    // Settings → Saved pictures → "Change…" gets a fake wallpapers folder.
+    if (opts?.directory && opts.title?.includes("saved pictures")) return "C:\\Users\\Alex\\Pictures\\Wallpapers";
     // Settings → Models folder → "Change…" gets a fake shared-drive folder.
     if (opts?.directory) return "D:\\Shared\\Pinhole Models";
     const filters = (opts?.filters ?? []).flatMap((f) => f.extensions);

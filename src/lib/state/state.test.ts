@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FineTune, InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, sessionPictures, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, sessionPictures, sheetIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -689,5 +689,42 @@ describe("queue state", () => {
       ["c", "Edit 2"],
     ]);
     expect(s.edit.index).toBe(2);
+  });
+});
+
+describe("Also apply to… and sheets", () => {
+  const r = (id: string): ImgRef => ({ id, url: `blob:${id}`, width: 8, height: 8 });
+  const res = (id: string, kind?: "upscaled") => ({ id, width: 8, height: 8, seed: 1, ...(kind ? { kind } : {}) }) as ResultImage;
+  const run = (s: AppState, ...actions: Action[]) => actions.reduce(reducer, s);
+
+  it("keeps the picked pictures while listed, never the one being edited, and at most 16", () => {
+    let s = run(initialState(), { type: "editLoad", ref: r("a") });
+    s = run(s, { type: "editSetAlso", refs: [r("a"), r("b"), r("b"), ...Array.from({ length: 20 }, (_, i) => r(`x${i}`))] });
+    expect(s.edit.alsoIds[0]).toBe("b");
+    expect(s.edit.alsoIds).toHaveLength(16);
+    expect(referencedImageIds(s).has("b")).toBe(true);
+    // Editing one of them instead takes it off the list.
+    s = run(s, { type: "editLoad", ref: r("b") });
+    expect(s.edit.alsoIds).not.toContain("b");
+    s = run(s, { type: "editSetAlso", refs: [] });
+    expect(s.images.x0).toBeUndefined();
+  });
+
+  it("a sheet is the run the picture came in, oldest first, upscales apart, up to 8", () => {
+    const batch = (id: string) => ({ id, request: {} as never });
+    let s = run(initialState(), { type: "addResults", batch: batch("b1"), images: [res("p1"), res("p2"), res("p3")], refs: ["p1", "p2", "p3"].map(r) });
+    s = run(s, { type: "addResults", batch: batch("b1"), images: [res("u1", "upscaled")], refs: [r("u1")] });
+    s = run(s, { type: "addResults", batch: null, images: [res("solo")], refs: [r("solo")] });
+    expect(sheetIds(s, "p2")).toEqual(["p1", "p2", "p3"]);
+    expect(sheetIds(s, "u1")).toEqual([]);
+    expect(sheetIds(s, "solo")).toEqual([]);
+    // Choices in braces: one batch per choice, one run.
+    s = run(s, { type: "addResults", batch: batch("k1"), images: [res("red")], refs: [r("red")], group: "k" });
+    s = run(s, { type: "addResults", batch: batch("k2"), images: [res("blue")], refs: [r("blue")], group: "k" });
+    expect(sheetIds(s, "blue")).toEqual(["red", "blue"]);
+    const ids = Array.from({ length: 10 }, (_, i) => `g${i}`);
+    for (const id of ids) s = run(s, { type: "addResults", batch: null, images: [res(id)], refs: [r(id)], group: "g" });
+    expect(sheetIds(s, "g5")).toEqual(ids.slice(2));
+    expect(sheetIds(s, "g0")).toEqual([...ids.slice(3), "g0"].sort((a, b) => ids.indexOf(a) - ids.indexOf(b)));
   });
 });

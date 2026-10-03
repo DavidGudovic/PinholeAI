@@ -12,7 +12,6 @@ import {
   onHardwareReady,
   openDataFolder,
   openExternalLink,
-  openOutputsFolder,
   setSettings as saveSettings,
 } from "../lib/api";
 import type { AppInfo, ContentMode, CoreError, HardwareView, Settings } from "../lib/types";
@@ -31,6 +30,7 @@ import { WhatGoesOnlineLink } from "../components/WhatGoesOnline";
 import { emitSettingsChanged } from "./events";
 import { EngineOutput } from "./EngineOutput";
 import { ModelsFolderSection } from "./ModelsFolderSection";
+import { SaveFolderSection } from "./SaveFolderSection";
 import { UpdateSection } from "./UpdateSection";
 
 /** Where "Report a problem" goes (SAFETY.md → Reporting a problem). Opened in the browser. */
@@ -455,6 +455,7 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
       </Section>
 
       <Section title="Saved pictures">
+        <SaveFolderSection />
         <Labeled
           label="Information inside saved pictures"
           hint={
@@ -474,9 +475,6 @@ function SettingsBody({ onSaveState }: { onSaveState: (s: "idle" | "saving" | "s
             onChange={(savedMetadata) => update({ savedMetadata })}
           />
         </Labeled>
-        <Button size="sm" variant="ghost" onClick={() => void openOutputsFolder().catch((e) => setError(asCoreError(e)))}>
-          <FolderOpen className="h-4 w-4" /> Open saved pictures folder
-        </Button>
       </Section>
 
       <Section title="CivitAI API key">
