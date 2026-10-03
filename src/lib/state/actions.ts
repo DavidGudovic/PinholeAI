@@ -439,9 +439,12 @@ export function makeActions(store: Store) {
     return saved;
   }
 
+  /** The Saved pictures folder, where Save as and Save all start. */
+  const saveFolderPath = () => api.saveFolderInfo().then((i) => i.path, () => undefined);
+
   async function saveAs(id: string, seed: number | null) {
     if (!canSaveAs()) return save(id);
-    const path = await chooseSavePath(`pinhole_${seed ?? "image"}.png`);
+    const path = await chooseSavePath(`pinhole_${seed ?? "image"}.png`, await saveFolderPath());
     if (!path) return null;
     const saved = await api.saveImageAs(id, path);
     dispatch({ type: "markSaved", entries: [{ id, path: saved.path }] });
@@ -452,7 +455,7 @@ export function makeActions(store: Store) {
   /** "Save as one sheet": the pictures as one grid picture, through the save dialog. Null when cancelled. */
   async function saveSheet(ids: string[]) {
     if (ids.length < 2 || !canSaveAs()) return null;
-    const path = await chooseSavePath(`pinhole_sheet_${ids.length}.png`);
+    const path = await chooseSavePath(`pinhole_sheet_${ids.length}.png`, await saveFolderPath());
     if (!path) return null;
     const saved = await api.saveSheetAs(ids, path);
     toast(`Saved the sheet to ${saved.path}`, { ms: 8000 });
@@ -463,9 +466,7 @@ export function makeActions(store: Store) {
   async function saveAll(only?: string[]): Promise<boolean> {
     const ids = only ?? unsavedIds(get());
     if (!ids.length) return true;
-    // Starts in the Saved pictures folder.
-    const start = await api.saveFolderInfo().catch(() => null);
-    const dir = await chooseFolder("Save all pictures to…", start?.path);
+    const dir = await chooseFolder("Save all pictures to…", await saveFolderPath());
     if (!dir) return false;
     const batch = await api.saveImagesTo(ids, dir);
     dispatch({ type: "markSaved", entries: batch.saved });
