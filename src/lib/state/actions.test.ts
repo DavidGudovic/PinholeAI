@@ -139,6 +139,15 @@ describe("same character", () => {
     expect(s.create.prompt).toBe("a lighthouse");
   });
 
+  it("keeps the picked model even when it is Too big or still needs a part", () => {
+    for (const picked of [{ ...klein, fit: "tooBig" as const }, { ...klein, missingComponents: ["Vision encoder"] }]) {
+      const { store, actions } = withResult([model, picked]);
+      store.dispatch({ type: "patchCreate", patch: { modelId: "k" } });
+      actions.sameCharacter("a");
+      expect(store.getState()).toMatchObject({ tab: "create", create: { modelId: "k", refImageId: "a" } });
+    }
+  });
+
   it("switches to an installed model that takes a reference picture", () => {
     const { store, actions } = withResult([model, klein]);
     actions.sameCharacter("a");
