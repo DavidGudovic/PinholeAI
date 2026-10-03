@@ -315,8 +315,9 @@ of quietly dropping it.
 button and no new mode or setting. It uses the first of: the Create model, if it takes a reference
 picture; another installed one that does and can run now (ready, not "Too big"; switched to); else
 Edit → **Describe a change** with the image loaded (any image 2 cleared), which offers the one-click
-edit model when none is installed. An Imported result (made from a picture the user added) always
-goes to Edit, so the Edit notice about photos of people shows. A short note says to describe the
+edit model when none is installed. The same applies to an Imported result (made from a picture the
+user added); the notice about photos of people (RELEASE-SPEC §7) shows in Create's reference slot as
+in Edit. A short note says to describe the
 new scene ("the same character on a beach"). The image keeps its id, so its origin
 (Generated/Imported, RELEASE-SPEC §3.1) and the image checks carry through unchanged.
 

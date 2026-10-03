@@ -435,7 +435,8 @@ prints them for a folder of test pictures.
   while typing (prompt preview, Browse search) show the message in place instead.
 - **Edit notice** (built 2026-09-30, `editNoticeSeen`), the first time an Imported image is opened in Edit: "Only edit photos of
   people who have agreed to it. Making sexual or humiliating images of real people without consent
-  is a crime in many countries."
+  is a crime in many countries." The same one-time notice, starting "Only use photos", shows when an
+  Imported image is Create's reference picture (`src/components/PhotoNotice.tsx`).
 - These notices support the safeguards; they don't replace them (§11).
 - The Pinhole Licence (MIT text plus the Safeguards condition) and its disclaimer stay.
 
