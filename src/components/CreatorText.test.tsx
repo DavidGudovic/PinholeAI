@@ -20,7 +20,15 @@ describe("CreatorText", () => {
     expect(container.querySelectorAll("a")).toHaveLength(1);
     fireEvent.click(screen.getByText("good"));
     expect(onLink).toHaveBeenCalledWith("https://example.com/x");
+    fireEvent.keyDown(screen.getByText("good"), { key: "Enter" });
+    expect(onLink).toHaveBeenCalledTimes(2);
     expect(screen.getByText(/bad/)).toBeTruthy();
+  });
+
+  it("renders links without an href so the WebView never resolves their hosts", () => {
+    const { container } = render(<CreatorText html={'<p><a href="https://example.com/x">site</a></p>'} onLink={() => {}} />);
+    expect(container.querySelector("[href]")).toBeNull();
+    expect(screen.getByRole("link", { name: "site" }).getAttribute("title")).toBe("https://example.com/x");
   });
 
   it("collapses long text behind Show more", () => {

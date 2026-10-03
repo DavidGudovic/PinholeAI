@@ -3,7 +3,9 @@
 // rebuilt as React elements from a short allow-list: text formatting, lists and
 // https links. Images, video, iframes, styles and everything else are dropped, so
 // the page never contacts another server (and Safe mode applies to embedded
-// pictures too). Links open in the system browser through Rust.
+// pictures too). Links open in the system browser through Rust. They carry no
+// href, so the WebView never looks up or connects to the link's host itself
+// (Chromium-based WebViews resolve link hosts ahead of a click on http pages).
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Button } from "./ui";
 
@@ -38,15 +40,14 @@ function build(node: Node, onLink: (url: string) => void, key: string, depth: nu
     return (
       <a
         key={key}
-        href={href}
+        role="link"
+        tabIndex={0}
         title={href}
-        rel="noreferrer noopener"
-        className="text-amber-700 underline hover:text-amber-600 dark:text-amber-400"
-        onClick={(e) => {
-          e.preventDefault();
-          onLink(href);
+        className="cursor-pointer text-amber-700 underline hover:text-amber-600 dark:text-amber-400"
+        onClick={() => onLink(href)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onLink(href);
         }}
-        onAuxClick={(e) => e.preventDefault()}
       >
         {kids}
       </a>
