@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use pinhole_core::app::{self, AppInfo, HardwareView};
+use pinhole_core::app::{self, AppInfo, HardwareView, SaveFolderInfo};
 use pinhole_core::update::{self, Prepared, UpdateCheck};
 use pinhole_core::{AppCore, CoreError};
 use pinhole_store::Settings;
@@ -58,6 +58,20 @@ pub async fn open_outputs_folder(
 ) -> Result<(), CoreError> {
     let dir = app::outputs_folder(&core)?;
     open_folder(&handle, &dir)
+}
+
+#[tauri::command]
+pub async fn save_folder_info(core: State<'_, Arc<AppCore>>) -> Result<SaveFolderInfo, CoreError> {
+    Ok(app::save_folder_info(&core))
+}
+
+/// Settings → Saved pictures: `Some(folder)` from Change…, `None` = Use default.
+#[tauri::command]
+pub async fn set_save_folder(
+    core: State<'_, Arc<AppCore>>,
+    folder: Option<String>,
+) -> Result<SaveFolderInfo, CoreError> {
+    app::set_save_folder(&core, folder)
 }
 
 /// Open a folder in the system file manager (no network, no WebView navigation).
@@ -156,6 +170,8 @@ super::area_commands![
     get_hardware,
     open_data_folder,
     open_outputs_folder,
+    save_folder_info,
+    set_save_folder,
     check_for_updates,
     install_update,
     open_release_page,

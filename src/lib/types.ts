@@ -58,6 +58,8 @@ export interface Settings {
   /** Models folder the user picked (absolute), null = Data/models. Read-only here:
    *  it only changes through changeModelsFolder, which moves the models. */
   modelsFolder: string | null;
+  /** Folder Save writes to (Settings → Saved pictures); null = Pictures/Pinhole (Data/outputs for a portable copy). Changed only with setSaveFolder. */
+  saveFolder: string | null;
   /** Helper model for Describe: "auto" or a HelperModel id. */
   describeModel: string;
   /** Helper model for "Improve my prompt": "auto" or a HelperModel id. */
@@ -129,6 +131,8 @@ export interface EngineStatus {
   /** Plain-language note about the running engine (e.g. prompt read on the processor
    *  after running out of graphics memory; other programs using a lot of it). */
   note?: string | null;
+  /** Size of the engine download for this computer while it isn't installed (0 once it is). */
+  downloadBytes?: number;
 }
 
 // ---------------------------------------------------------------- downloads
@@ -243,6 +247,15 @@ export interface ModelsFolderInfo {
   custom: boolean;
   /** missing = drive not connected / mounted; readOnly = can't write (e.g. NTFS mounted read-only). */
   problem: "missing" | "readOnly" | null;
+}
+
+export interface SaveFolderInfo {
+  /** Where Save puts pictures. */
+  path: string;
+  /** A folder the user picked (Change…). */
+  custom: boolean;
+  /** Where Use default puts them. */
+  defaultPath: string;
 }
 
 export interface ModelsFolderPreview {

@@ -478,10 +478,13 @@ fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     }
 }
 
-/// Save into `Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.<ext>` (unique suffix
-/// `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
+/// Save into the Save folder (`Pictures/Pinhole` by default, `Data/outputs/` for a
+/// portable copy, or the one picked in Settings) as `pinhole_YYYYMMDD_HHMMSS_<seed>.<ext>`
+/// (unique suffix `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
 pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
-    save_into(core, id, &core.data.outputs())
+    // Missing picture first: no folder is created for nothing.
+    core.session.get(id).ok_or_else(missing)?;
+    save_into(core, id, &crate::app::save_folder_for_write(core)?)
 }
 
 /// "Save all": every listed image into a folder the user picked, named like
