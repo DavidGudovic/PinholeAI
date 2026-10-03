@@ -302,9 +302,14 @@ per app session; × closes it, **Don't show tips** (or Settings → Show tips) t
 or "the same character somewhere else". Shown only for models whose architecture takes reference
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
 file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
-(Ctrl/Cmd+V, see §5) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
-`ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
-result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
+(Ctrl/Cmd+V, see §5) or picked from this session's pictures, Create and Edit results still in memory (small thumbnails next to the button). The picture goes to `sd-server` as
+`ref_images[0]` of a txt2img request, and the result has no "parent" (it isn't an edit). While a
+picture is set, the Shape dial has a full-width **Same as reference** chip under the four shapes: the
+reference picture's shape at the model's Square area (the same rule as Named sizes), so the memory
+need is unchanged; Width and Height typed in Fine-tune still win. Adding a picture picks it when the
+shape is still Square and no size was typed, and the slot says "Shape: same as this picture."; picking
+another shape (or a preset or pasted settings with a shape) takes over, and removing the picture goes
+back to the Shape dial. It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
 it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
 picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most
@@ -412,6 +417,14 @@ earlier image is added at the end of the history.
 Entry points: **Edit this** on any result, drag-and-drop, paste from clipboard, file picker.
 The image comes in as an in-memory buffer (never copied into `Data/`).
 
+**From this session:** wherever a picture is asked for (the empty Edit and Describe tabs, **Another
+image** in Edit and Describe, **Add another image**, the reference picture), the pictures made this
+session that are still in memory (Create results and Edit results, newest first) are offered next to
+choosing a file: thumbnails under an empty drop area, or a small menu (**Choose a file…** plus the
+thumbnails) on the button. Without any, the button opens the file chooser as before. The picture
+shown, or image 1 for image 2, is left out. A picked picture is used as it is in the session, like
+**Edit this**; nothing is read from or written to disk.
+
 Four modes; Describe a change or Restyle is picked automatically:
 
 1. **Instruction edit** (default when an edit model is installed): the user types what to change:
@@ -475,6 +488,10 @@ text-to-image run (size, seed, sampler), not an edit of your own picture.
 If no edit model is installed, the Edit tab shows one card: "Get the best edit model for your
 GPU" — one-click download of the top edit model that fits (§6.1), showing its download size
 and VRAM need.
+When Edit opens in Restyle only because no edit model is installed, one slim line at the top
+offers it: "To change one thing and keep the rest, get the edit model (size)" with a Get button.
+Restyle stays usable; the line goes once an edit model is installed and can be closed for the
+session. Picking Restyle yourself doesn't show it.
 
 **Edit chain**: each edit result can be edited again. Keep an in-memory undo stack
 (original → edit 1 → edit 2…) with a before/after comparison slider. Click any step in the
@@ -537,6 +554,11 @@ Two sub-views: **Browse** and **Installed**.
 | Size | Runs on my card (default off; models only) | client-side: hides cards whose best file is **Too big** (§6.2); the line above the grid says how many it hid |
 | Style | Hide anime (switch, default off, remembered in Settings; models and add-ons) | client-side (CivitAI can only include one tag, never exclude; Browse keeps fetching until the page is full): hides models tagged or named anime / manga / cartoon / chibi / waifu, and whose newest version is on an anime-native base (Illustrious, NoobAI). Pony is not hidden by base, only by tags. Rules in `catalog-filters.yaml → hide_anime` |
 | Search | free text | `query` |
+
+Always shown: search, Kind, Sort, Time, Look, Safe mode, Works with Pinhole, Runs on my card and
+Reference picture (a switch for that tag). Tags, Price, Commercial use and Hide anime sit under
+**More filters**, which starts open whenever one of them is set and shows how many are set while
+closed.
 
 - Paging with `cursor` (page×limit > 1000 returns 429). Each request asks for `limit=50` models
   (`api_limit`); array filters are repeated keys (`baseModels=A&baseModels=B`); a text search is paged by `page=N` (CivitAI sends no cursor for it), other browsing by `cursor`.
