@@ -1,7 +1,7 @@
 // Pure builders: app state → GenerateRequest, presets ↔ Create params.
 // PRIVACY: requests contain prompt text — memory only. Presets never do.
 
-import { referenceSize } from "../sizes";
+import { referenceSize, sizeForRatio } from "../sizes";
 import { DEFAULT_SHAPE_SIZES, defaultStayClosePosition, defaultStickPosition, shapeFor } from "../paste/map";
 import type {
   Dials,
@@ -110,6 +110,36 @@ export function variationRequest(req: GenerateRequest): GenerateRequest {
   const fineTune = { ...req.fineTune };
   delete fineTune.seed;
   return { ...req, fineTune };
+}
+
+/** A random seed in the range the engine picks from when none is set. */
+export const randomSeed = () => Math.floor(Math.random() * 2 ** 31);
+
+/**
+ * "On another model": the same prompt, style, shape, quality, reference picture and seed on
+ * `model` (and Hires fix on or off as it was). Settings that belong to one model family
+ * (sampler, steps, Stick to prompt position, prompt prefix) go back to `model`'s defaults, a set
+ * size keeps its shape at `model`'s usual size, and add-ons that don't work with it are left out.
+ */
+export function otherModelRequest(
+  req: GenerateRequest,
+  seed: number,
+  opts: { model: InstalledModel; ui: FamilyUi | null; loras: InstalledLora[] },
+): GenerateRequest {
+  const { negativePrompt, vaeTiling, hires, width: w, height: h } = req.fineTune;
+  const fineTune = effectiveFineTune({ negativePrompt, vaeTiling, hires, seed }, opts.ui);
+  // A set size (a named size, Same as reference): the same shape at the new model's own size.
+  if (w && h) [fineTune.width, fineTune.height] = sizeForRatio(w / h, opts.ui);
+  return {
+    ...req,
+    modelId: opts.model.id,
+    dials: { ...req.dials, stick: defaultStickPosition(opts.ui), count: 1 },
+    fineTune,
+    loras: req.loras.filter((u) => {
+      const l = opts.loras.find((x) => x.id === u.loraId);
+      return !!l && loraCompatible(l, opts.model.familyId);
+    }),
+  };
 }
 
 /** Output size for an edit: keep the aspect ratio, ≤ ~maxPixels, multiples of `multiple` (16, or 64 for SD families). */
