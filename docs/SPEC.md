@@ -307,7 +307,7 @@ per app session; × closes it, **Don't show tips** (or Settings → Show tips) t
 or "the same character somewhere else". Shown only for models whose architecture takes reference
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
 file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
-(Ctrl/Cmd+V, see §5) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
+(Ctrl/Cmd+V, see §5) or picked from this session's pictures, Create and Edit results still in memory (small thumbnails next to the button). The picture goes to `sd-server` as
 `ref_images[0]` of a txt2img request, and the result has no "parent" (it isn't an edit). While a
 picture is set, the Shape dial has a full-width **Same as reference** chip under the four shapes: the
 reference picture's shape at the model's Square area (the same rule as Named sizes), so the memory
@@ -431,6 +431,14 @@ earlier image is added at the end of the history.
 
 Entry points: **Edit this** on any result, drag-and-drop, paste from clipboard, file picker.
 The image comes in as an in-memory buffer (never copied into `Data/`).
+
+**From this session:** wherever a picture is asked for (the empty Edit and Describe tabs, **Another
+image** in Edit and Describe, **Add another image**, the reference picture), the pictures made this
+session that are still in memory (Create results and Edit results, newest first) are offered next to
+choosing a file: thumbnails under an empty drop area, or a small menu (**Choose a file…** plus the
+thumbnails) on the button. Without any, the button opens the file chooser as before. The picture
+shown, or image 1 for image 2, is left out. A picked picture is used as it is in the session, like
+**Edit this**; nothing is read from or written to disk.
 
 Four modes; Describe a change or Restyle is picked automatically:
 
