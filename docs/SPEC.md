@@ -298,8 +298,13 @@ or "the same character somewhere else". Shown only for models whose architecture
 images (`modes: [..., edit]` in `models.yaml`: FLUX.2 klein and dev, Qwen-Image 2.1 with its vision
 file); **Add a reference picture** opens a file, and a picture can also be dropped, pasted
 (Ctrl/Cmd+V, see §5) or picked from this session's results (small thumbnails next to the button). The picture goes to `sd-server` as
-`ref_images[0]` of a txt2img request; the output size still comes from the Shape dial, and the
-result has no "parent" (it isn't an edit). It lives in session memory like every image, is kept by
+`ref_images[0]` of a txt2img request, and the result has no "parent" (it isn't an edit). While a
+picture is set, the Shape dial has a full-width **Same as reference** chip under the four shapes: the
+reference picture's shape at the model's Square area (the same rule as Named sizes), so the memory
+need is unchanged; Width and Height typed in Fine-tune still win. Adding a picture picks it when the
+shape is still Square and no size was typed, and the slot says "Shape: same as this picture."; picking
+another shape (or a preset or pasted settings with a shape) takes over, and removing the picture goes
+back to the Shape dial. It lives in session memory like every image, is kept by
 queued jobs and by Variations of a batch made with it, is never saved in a preset, and Reset clears
 it. Switching to a model that can't use it keeps the picture with "<model> can't use a reference
 picture" and a **Switch to <model>** button for an installed one that can (ready, fits, most

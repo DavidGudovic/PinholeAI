@@ -19,6 +19,7 @@ const RECENT = 6;
 
 export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
   const refId = useAppState((s) => s.create.refImageId);
+  const refShape = useAppState((s) => s.create.refShape);
   const ref = useAppState((s) => (refId ? s.images[refId] : undefined));
   const models = useAppState((s) => s.models);
   const results = useAppState((s) => s.results);
@@ -53,7 +54,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
             <img src={ref.url} alt="Reference picture" className="h-12 w-12 shrink-0 rounded-md object-cover" draggable={false} />
             <p className="min-w-0 flex-1 text-xs text-neutral-500">
               <span className="font-medium text-neutral-700 dark:text-neutral-300">Reference picture.</span> Say how to use it, like “in the style of the picture” or “the
-              same dog on a beach”.
+              same dog on a beach”.{refShape && " Shape: same as this picture."}
             </p>
             <IconButton label="Remove the reference picture" size="sm" onClick={() => dispatch({ type: "createSetRef", ref: null })}>
               <Trash className="h-3.5 w-3.5" />

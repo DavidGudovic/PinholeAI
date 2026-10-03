@@ -230,7 +230,8 @@ export function makeActions(store: Store) {
       async () => {
         dispatch({ type: "pushPrompt", prompt: create.prompt });
         const ui = model.familyId ? await ensureFamilyUi(model.familyId).catch(() => null) : null;
-        return buildCreateRequest(create, { ui, loras, model, settings });
+        const ref = create.refImageId ? s.images[create.refImageId] : null;
+        return buildCreateRequest(create, { ui, loras, model, settings, ref });
       },
     );
   }
