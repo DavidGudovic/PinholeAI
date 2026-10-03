@@ -494,6 +494,8 @@ export function FinalPromptPreview({ ui, model }: { ui: FamilyUi | null; model: 
 export function PromptPreview({ req, empty }: { req: GenerateRequest | null; empty: string }) {
   // Rust resolves the style's words from its id, so an edit to the selected style must refresh too.
   const style = useAppState((s) => (req?.styleId ? s.styles.find((x) => x.id === req.styleId) : undefined));
+  // Safe mode changes the negative prompt Rust adds.
+  const contentMode = useAppState((s) => s.settings?.contentMode ?? null);
   // Only the parts that change the text matter; debounce typing. (In memory only.)
   const key = req
     ? JSON.stringify([
@@ -507,6 +509,7 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
         req.fineTune.autoPromptPrefix ?? null,
         req.loras,
         req.addTriggerWords,
+        contentMode,
       ])
     : "";
   const debouncedKey = useDebounced(key, 350);

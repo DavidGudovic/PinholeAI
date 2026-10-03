@@ -1192,3 +1192,67 @@ async fn repeats_without_seams_launches_with_circular_for_create_only() {
     assert!(!res.images[0].seamless);
     assert!(!circular(core.gen.external_launches.lock().last().unwrap()));
 }
+
+#[tokio::test]
+async fn safe_mode_off_adds_its_words_to_the_negative_prompt() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let sdxl = register_fake_model(&core, "sdxl");
+    let flux = register_fake_model(&core, "z_image_turbo");
+    let words = generate::SAFE_OFF_NEGATIVE;
+    let negative_of = |model: &str, user: Option<&str>| {
+        let mut req = GenerateRequest::txt2img(model.to_string(), "a lighthouse at dusk");
+        req.fine_tune.negative_prompt = user.map(str::to_string);
+        req
+    };
+
+    // Safe mode On: the negative prompt is the user's own.
+    core.settings.write().content_mode = "safe".into();
+    let p = generate::preview_final_prompt(&core, &negative_of(&sdxl, Some("blurry")))
+        .await
+        .unwrap();
+    assert_eq!(p.negative.as_deref(), Some("blurry"));
+
+    // Safe mode Off: the words follow the user's negative prompt, in the preview and the request.
+    core.settings.write().content_mode = "all".into();
+    let req = negative_of(&sdxl, Some("blurry, "));
+    let p = generate::preview_final_prompt(&core, &req).await.unwrap();
+    assert_eq!(p.negative, Some(format!("blurry, {words}")));
+    generate::generate(&core, req).await.unwrap();
+    assert_eq!(
+        mock.requests().pop().unwrap()["negative_prompt"],
+        format!("blurry, {words}")
+    );
+
+    // An emptied negative prompt gets them too, and words already there aren't repeated.
+    let p = generate::preview_final_prompt(&core, &negative_of(&sdxl, Some("")))
+        .await
+        .unwrap();
+    assert_eq!(p.negative.as_deref(), Some(words));
+    let p = generate::preview_final_prompt(&core, &negative_of(&sdxl, Some("Child, blurry")))
+        .await
+        .unwrap();
+    let n = p.negative.unwrap();
+    assert!(n.starts_with("Child, blurry, teen,"), "{n}");
+    assert_eq!(n.to_lowercase().matches("child,").count(), 1, "{n}");
+
+    // Edits get them as well.
+    let src = pinhole_engine::testutil::solid_png(64, 64, [10, 20, 30, 255]);
+    let imported = session::import_image(&core, src).unwrap();
+    let mut req = negative_of(&sdxl, None);
+    req.mode = GenMode::Img2img;
+    req.init_image_id = Some(imported.id);
+    generate::generate(&core, req).await.unwrap();
+    let neg = mock.requests().pop().unwrap()["negative_prompt"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(neg.ends_with(words), "{neg}");
+
+    // Families without a negative prompt get none.
+    let p = generate::preview_final_prompt(&core, &negative_of(&flux, None))
+        .await
+        .unwrap();
+    assert_eq!(p.negative, None);
+}
