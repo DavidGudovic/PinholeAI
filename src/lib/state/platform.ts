@@ -40,9 +40,9 @@ export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(
 export const modKey = isMac ? "⌘" : "Ctrl";
 
 /** Native folder picker (Tauri only). Returns null when cancelled or unavailable. */
-export async function chooseFolder(title: string): Promise<string | null> {
+export async function chooseFolder(title: string, defaultPath?: string): Promise<string | null> {
   if (!isTauri()) return null;
-  const dir = await open({ directory: true, multiple: false, title });
+  const dir = await open({ directory: true, multiple: false, title, defaultPath });
   return typeof dir === "string" ? dir : null;
 }
 

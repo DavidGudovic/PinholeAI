@@ -92,6 +92,11 @@ All app files live in one folder called `Data/`:
   (Windows zip release).
 - **Installed mode**: `%LOCALAPPDATA%\Pinhole\Data` (Windows), `~/.local/share/pinhole/Data` (Linux).
 - Settings has an **"Open Data folder"** button.
+- **Saved pictures** (what Save writes) go to `Pinhole` inside the user's Pictures folder
+  (the XDG pictures folder on Linux, the Pictures known folder on Windows), created on the first
+  Save. A portable copy, or a computer with no Pictures folder, uses `Data/outputs/`.
+  Settings → Saved pictures can point Save at another folder; that path is stored in
+  `settings.yaml` with the other settings. Changing it moves nothing that was already saved.
 
 ```
 Data/
@@ -103,7 +108,7 @@ Data/
     loras/
     upscalers/
     captioners/
-  outputs/            only written when the user clicks Save
+  outputs/            Save folder of a portable copy; only written when the user clicks Save
   presets/            *.yaml, one per preset
   styles/             *.yaml, one per user-saved style
   config/
@@ -839,7 +844,8 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
   such as `--clip-on-cpu` still apply)
 - Safe mode default (On / Off)
 - Show paid (early access) models (off by default)
-- Saved-image metadata (None / Settings without prompt)
+- Saved pictures: the folder Save writes to (default `Pictures/Pinhole`, §3) with **Change…** /
+  **Use default** / **Open folder**, and saved-image metadata (None / Settings without prompt)
 - Show tips (on by default)
 - Helper models: Describe model and Improve model (Automatic by default; §5.2 "Helper models")
 - Safety: **Usage guidelines** and **Licence** (both shown in the app), and **Report a problem**:

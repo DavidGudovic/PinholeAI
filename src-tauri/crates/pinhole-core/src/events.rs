@@ -59,6 +59,9 @@ pub struct EngineStatus {
     /// graphics memory. Never prompt text.
     #[serde(default)]
     pub note: Option<String>,
+    /// Size of the engine download for this computer while it isn't installed (0 once it is).
+    #[serde(default)]
+    pub download_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

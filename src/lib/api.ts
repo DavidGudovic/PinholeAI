@@ -51,6 +51,9 @@ async function withLicence<R>(run: () => Promise<R>): Promise<R> {
 export const getHardware = () => invoke<T.HardwareView>("get_hardware");
 export const openDataFolder = () => invoke<void>("open_data_folder");
 export const openOutputsFolder = () => invoke<void>("open_outputs_folder");
+export const saveFolderInfo = () => invoke<T.SaveFolderInfo>("save_folder_info");
+/** Settings → Saved pictures: a folder from Change…, or null for the default. */
+export const setSaveFolder = (folder: string | null) => invoke<T.SaveFolderInfo>("set_save_folder", { folder });
 /** One request to GitHub's releases API. Only ever called from the "Check for updates" button. */
 export const checkForUpdates = () => invoke<T.UpdateCheck>("check_for_updates");
 /** Downloads + verifies the update (progress via onDownload, kind "appUpdate"), then Pinhole restarts. Resolves only on failure paths that return. */
@@ -148,7 +151,7 @@ export const importImage = (bytes: Uint8Array) => invoke<T.ImportedImage>("impor
 export const readPictureSettings = (bytes: Uint8Array) => invoke<T.PictureSettings | null>("read_picture_settings", bytes);
 /** Bytes of a session image: PNG for generated/upscaled images; imported images keep their format (PNG/JPEG/WebP). */
 export const getImage = (id: string) => invoke<ArrayBuffer>("get_image", { id });
-/** Writes Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.png. */
+/** Writes pinhole_YYYYMMDD_HHMMSS_<seed>.png into the Save folder (saveFolderInfo). */
 export const saveImage = (id: string) => invoke<T.SavedImage>("save_image", { id });
 /** Save to a user-chosen path (from the dialog plugin). */
 export const saveImageAs = (id: string, path: string) => invoke<T.SavedImage>("save_image_as", { id, path });

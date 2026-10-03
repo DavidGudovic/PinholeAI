@@ -441,7 +441,9 @@ export function makeActions(store: Store) {
   async function saveAll(only?: string[]): Promise<boolean> {
     const ids = only ?? unsavedIds(get());
     if (!ids.length) return true;
-    const dir = await chooseFolder("Save all pictures to…");
+    // Starts in the Saved pictures folder.
+    const start = await api.saveFolderInfo().catch(() => null);
+    const dir = await chooseFolder("Save all pictures to…", start?.path);
     if (!dir) return false;
     const batch = await api.saveImagesTo(ids, dir);
     dispatch({ type: "markSaved", entries: batch.saved });

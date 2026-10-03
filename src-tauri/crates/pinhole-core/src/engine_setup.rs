@@ -208,6 +208,7 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
         error_code: flags.error.as_ref().map(|e| e.code.clone()),
         error_details: flags.error.as_ref().and_then(|e| e.details.clone()),
         note: crate::memory::engine_note(core, &flags),
+        download_bytes: 0,
     };
     match selected_build(core, EngineKind::Sd) {
         Ok((cfg, sel)) => {
@@ -228,6 +229,9 @@ pub fn engine_status(core: &AppCore) -> EngineStatus {
                         st.installed = true;
                         st.backend = Some(any.backend);
                     }
+                }
+                if !st.installed {
+                    st.download_bytes = sel.build.archives().iter().filter_map(|a| a.bytes()).sum();
                 }
             }
         }
