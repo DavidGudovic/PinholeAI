@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { FineTune, InstalledLora, InstalledModel, Preset, ResultImage, Settings } from "../types";
 import { FAMILY_UI } from "./familyFixtures";
-import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
+import { createModels, editModels, initialState, reducer, referenceModel, referencedImageIds, sessionPictures, sheetIds, takesReference, unsavedIds, type Action, type AppState, type ImgRef } from "./model";
 import { applyPreset, clearPreset, buildCreateRequest, buildEditRequest, editOutputSize, extendCanvas, fitEditSize, presetFromCreate, settingsSummary, variationRequest } from "./request";
 
 const SENTINEL = "PINHOLE_SENTINEL_7f3a";
@@ -200,6 +200,15 @@ describe("unsaved pictures and prompt history", () => {
     expect(unsavedIds(s).sort()).toEqual(["b", "e"]);
     s = run(s, { type: "removeResult", id: "b" });
     expect(unsavedIds(s)).toEqual(["e"]);
+  });
+
+  it("this session's pictures: Create and Edit results, newest first, without imported originals", () => {
+    let s = made(withModels());
+    s = run(s, { type: "addResults", batch: null, images: [result("c", 4)], refs: [ref("c")] });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "a", "b"]);
+    expect(sessionPictures(s, ["e", null]).map((p) => p.id)).toEqual(["c", "a", "b"]);
+    s = run(s, { type: "removeResult", id: "a" });
+    expect(sessionPictures(s).map((p) => p.id)).toEqual(["c", "e", "b"]);
   });
 
   it("Reset forgets what was saved and the prompt history", () => {
@@ -423,6 +432,50 @@ describe("requests", () => {
     s = run(s, { type: "createSetRef", ref: ref("r2") }, { type: "clearSession" });
     expect(s.create.refImageId).toBeNull();
     expect(buildCreateRequest(s.create, { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null }).refImageIds).toBeUndefined();
+  });
+
+  it("makes Create's picture the reference picture's shape with Same as reference", () => {
+    const k = model("k", "flux2_klein_4b", { modes: ["txt2img", "img2img", "edit"], fit: "fits" });
+    const tall: ImgRef = { id: "t", url: "blob:t", width: 900, height: 1600 };
+    const opts = { ui: FAMILY_UI.sdxl, loras: [], model: k, settings: null, ref: tall };
+
+    // Added with the default shape: switches to Same as reference, at the model's Square area.
+    let s = run(withModels(), { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // Width and Height typed in Fine-tune still win.
+    s = run(s, { type: "setFineTune", patch: { width: 1024 } });
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 1024, height: 1344 });
+
+    // Picking a shape takes over; choosing Same as reference again clears the typed size.
+    s = run(s, { type: "setDial", dial: "shape", value: "landscape" });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, opts).fineTune.width).toBeUndefined();
+    s = run(s, { type: "setFineTune", patch: { width: 640 } }, { type: "createRefShape" });
+    expect(s.create.refShape).toBe(true);
+    expect(buildCreateRequest(s.create, opts).fineTune).toMatchObject({ width: 768, height: 1344 });
+
+    // A preset's shape takes over too, and None brings Same as reference back.
+    const preset = { ...presetFromCreate("p", { ...s.create, shape: "wide" }, { model: k, loras: [] }), id: "p" };
+    const lists = { models: [k], loras: [], styleIds: [] };
+    s = run(s, { type: "patchCreate", patch: applyPreset(preset, s.create, lists).patch });
+    expect(s.create).toMatchObject({ shape: "wide", refShape: false });
+    s = run(s, { type: "patchCreate", patch: clearPreset(s.create, lists) });
+    expect(s.create.refShape).toBe(true);
+    s = run(s, { type: "patchCreate", patch: { shape: "wide" } });
+    expect(s.create.refShape).toBe(false);
+
+    // A shape picked before the picture is added stays.
+    s = run(withModels(), { type: "setDial", dial: "shape", value: "portrait" }, { type: "createSetRef", ref: tall });
+    expect(s.create.refShape).toBe(false);
+
+    // Removing the picture or Reset goes back to the Shape dial.
+    s = run(withModels(), { type: "createSetRef", ref: tall }, { type: "createSetRef", ref: null });
+    expect(s.create.refShape).toBe(false);
+    expect(buildCreateRequest(s.create, { ...opts, ref: null }).fineTune.width).toBeUndefined();
+    s = run(s, { type: "createSetRef", ref: tall }, { type: "clearSession" });
+    expect(s.create.refShape).toBe(false);
   });
 
   it("sends the Edit tab's add-ons that fit the edit's model, with their trigger words", () => {
@@ -651,5 +704,42 @@ describe("queue state", () => {
       ["c", "Edit 2"],
     ]);
     expect(s.edit.index).toBe(2);
+  });
+});
+
+describe("Also apply to… and sheets", () => {
+  const r = (id: string): ImgRef => ({ id, url: `blob:${id}`, width: 8, height: 8 });
+  const res = (id: string, kind?: "upscaled") => ({ id, width: 8, height: 8, seed: 1, ...(kind ? { kind } : {}) }) as ResultImage;
+  const run = (s: AppState, ...actions: Action[]) => actions.reduce(reducer, s);
+
+  it("keeps the picked pictures while listed, never the one being edited, and at most 16", () => {
+    let s = run(initialState(), { type: "editLoad", ref: r("a") });
+    s = run(s, { type: "editSetAlso", refs: [r("a"), r("b"), r("b"), ...Array.from({ length: 20 }, (_, i) => r(`x${i}`))] });
+    expect(s.edit.alsoIds[0]).toBe("b");
+    expect(s.edit.alsoIds).toHaveLength(16);
+    expect(referencedImageIds(s).has("b")).toBe(true);
+    // Editing one of them instead takes it off the list.
+    s = run(s, { type: "editLoad", ref: r("b") });
+    expect(s.edit.alsoIds).not.toContain("b");
+    s = run(s, { type: "editSetAlso", refs: [] });
+    expect(s.images.x0).toBeUndefined();
+  });
+
+  it("a sheet is the run the picture came in, oldest first, upscales apart, up to 8", () => {
+    const batch = (id: string) => ({ id, request: {} as never });
+    let s = run(initialState(), { type: "addResults", batch: batch("b1"), images: [res("p1"), res("p2"), res("p3")], refs: ["p1", "p2", "p3"].map(r) });
+    s = run(s, { type: "addResults", batch: batch("b1"), images: [res("u1", "upscaled")], refs: [r("u1")] });
+    s = run(s, { type: "addResults", batch: null, images: [res("solo")], refs: [r("solo")] });
+    expect(sheetIds(s, "p2")).toEqual(["p1", "p2", "p3"]);
+    expect(sheetIds(s, "u1")).toEqual([]);
+    expect(sheetIds(s, "solo")).toEqual([]);
+    // Choices in braces: one batch per choice, one run.
+    s = run(s, { type: "addResults", batch: batch("k1"), images: [res("red")], refs: [r("red")], group: "k" });
+    s = run(s, { type: "addResults", batch: batch("k2"), images: [res("blue")], refs: [r("blue")], group: "k" });
+    expect(sheetIds(s, "blue")).toEqual(["red", "blue"]);
+    const ids = Array.from({ length: 10 }, (_, i) => `g${i}`);
+    for (const id of ids) s = run(s, { type: "addResults", batch: null, images: [res(id)], refs: [r(id)], group: "g" });
+    expect(sheetIds(s, "g5")).toEqual(ids.slice(2));
+    expect(sheetIds(s, "g0")).toEqual([...ids.slice(3), "g0"].sort((a, b) => ids.indexOf(a) - ids.indexOf(b)));
   });
 });

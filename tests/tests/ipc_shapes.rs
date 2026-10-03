@@ -540,6 +540,7 @@ async fn rust_json_matches_types_ts() {
         &models::preview_delete(&core, &model_id).unwrap(),
     );
     c.check("ModelsFolderInfo", &models_folder::info(&core));
+    c.check("SaveFolderInfo", &app::save_folder_info(&core));
     let other = tempfile::tempdir().unwrap();
     c.check(
         "ModelsFolderPreview",

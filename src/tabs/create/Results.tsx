@@ -1,7 +1,9 @@
 // Results: big preview of the selected image, its actions and settings summary,
 // and a strip of every image made this session (in memory until Save).
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  ArrowLeftRight,
+  ChevronLeft,
   Copy,
   ImageUp,
   Layers,
@@ -18,15 +20,16 @@ import {
 import { CheckReadings } from "../../components/CheckReadings";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { SaveButton, UpscaleMenu } from "../../components/ImageActions";
+import { StyleBadge } from "../../components/ModelPicker";
 import { ImageViewer } from "../../components/ImageViewer";
 import { Logo } from "../../components/Logo";
 import { SideBySide } from "../../components/SideBySide";
-import { Button, IconButton, Kbd, MenuItem, Popover, cx, focusRing } from "../../components/ui";
+import { Button, IconButton, Kbd, MenuItem, MenuSeparator, Popover, VramBadge, cx, focusRing } from "../../components/ui";
 import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
-import { unsavedIds, type ImgRef } from "../../lib/state/model";
+import { createModels, sheetIds, takesReference, unsavedIds, type ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
 import { TipLine } from "./TipLine";
@@ -139,12 +142,21 @@ function Preview({
     const id = s.batches[s.resultBatch[result.id]]?.request.refImageIds?.[0];
     return id ? s.images[id] : undefined;
   });
-  const [sideBySide, setSideBySide] = useState(false);
+  // "On another model": the result this one was made to compare with, while it is in memory.
+  const compare = useAppState((s) => {
+    const id = s.batches[s.resultBatch[result.id]]?.compareWith;
+    return id && s.images[id] ? s.results.find((r) => r.id === id) : undefined;
+  });
+  const compareImg = useAppState((s) => (compare ? s.images[compare.id] : undefined));
+  const [sideBySide, setSideBySide] = useState(!!compare);
+  const [pickModel, setPickModel] = useState(false);
   // "Show tiled": a picture made with "Repeats without seams", four times, edges touching.
   const [tiledFor, setTiledFor] = useState<string | null>(null);
   const tiled = !!result.seamless && tiledFor === result.id;
   const tiledUrl = useTiledUrl(img.url, result.width, result.height, tiled);
   const unsavedCount = useAppState((s) => unsavedIds(s).length);
+  // Joined to a string so the selector returns a stable value.
+  const sheet = useAppState((s) => sheetIds(s, result.id).join(" "));
   const [error, setError] = useState<CoreError | null>(null);
 
   const run = async (f: () => Promise<unknown>) => {
@@ -165,7 +177,12 @@ function Preview({
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 px-6 pt-5 pb-3">
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
-        {sideBySide && reference ? (
+        {sideBySide && compare && compareImg ? (
+          <SideBySide
+            first={{ url: compareImg.url, width: compare.width, height: compare.height, label: compare.modelLabel === result.modelLabel ? "Before" : compare.modelLabel }}
+            second={{ url: img.url, width: result.width, height: result.height, label: compare.modelLabel === result.modelLabel ? "This one" : result.modelLabel }}
+          />
+        ) : sideBySide && reference ? (
           <SideBySide
             first={{ ...reference, label: "Reference" }}
             second={{ url: img.url, width: result.width, height: result.height, label: "Result" }}
@@ -189,12 +206,17 @@ function Preview({
           tab="create"
           unsavedCount={unsavedCount}
           onSaveAll={() => void run(() => actions.saveAll())}
+          sheetCount={sheet ? sheet.split(" ").length : 0}
+          onSaveSheet={() => void run(() => actions.saveSheet(sheet.split(" ")))}
         />
         <Button onClick={() => actions.sendToEdit(result.id)}>
           <WandSparkles className="h-4 w-4" /> Edit this
         </Button>
         <Popover
-          width={250}
+          width={pickModel ? 300 : 250}
+          onOpenChange={(open) => {
+            if (!open) setPickModel(false);
+          }}
           trigger={(p) => (
             <Button {...p}>
               <Shuffle className="h-4 w-4" /> More like this{" "}
@@ -202,37 +224,57 @@ function Preview({
             </Button>
           )}
         >
-          {(close) => (
-            <>
-              <MenuItem
-                icon={<Shuffle className="h-4 w-4" />}
-                disabled={!hasBatch}
-                hint={
-                  hasBatch
-                    ? busy
-                      ? "Same prompt, new seeds (waits for the current job)"
-                      : "Same prompt, new seeds"
-                    : "Only for images made in this session"
-                }
-                onClick={() => {
+          {(close) =>
+            pickModel ? (
+              <OtherModelList
+                resultId={result.id}
+                onBack={() => setPickModel(false)}
+                onClose={close}
+                onPick={(modelId) => {
                   close();
-                  void run(() => actions.variations(result.id));
+                  void run(() => actions.onOtherModel(result.id, modelId));
                 }}
-              >
-                Variations
-              </MenuItem>
-              <MenuItem
-                icon={<UserRound className="h-4 w-4" />}
-                hint="This character or subject in a different scene"
-                onClick={() => {
-                  close();
-                  actions.sameCharacter(result.id);
-                }}
-              >
-                Same character
-              </MenuItem>
-            </>
-          )}
+              />
+            ) : (
+              <FocusFirst>
+                <MenuItem
+                  icon={<Shuffle className="h-4 w-4" />}
+                  disabled={!hasBatch}
+                  hint={
+                    hasBatch
+                      ? busy
+                        ? "Same prompt, new seeds (waits for the current job)"
+                        : "Same prompt, new seeds"
+                      : "Only for images made in this session"
+                  }
+                  onClick={() => {
+                    close();
+                    void run(() => actions.variations(result.id));
+                  }}
+                >
+                  Variations
+                </MenuItem>
+                <MenuItem
+                  icon={<UserRound className="h-4 w-4" />}
+                  hint="This character or subject in a different scene"
+                  onClick={() => {
+                    close();
+                    actions.sameCharacter(result.id);
+                  }}
+                >
+                  Same character
+                </MenuItem>
+                <MenuItem
+                  icon={<ArrowLeftRight className="h-4 w-4" />}
+                  disabled={!hasBatch}
+                  hint={hasBatch ? "Same prompt and seed, shown side by side" : "Only for images made in this session"}
+                  onClick={() => setPickModel(true)}
+                >
+                  On another model…
+                </MenuItem>
+              </FocusFirst>
+            )
+          }
         </Popover>
         <UpscaleMenu
           width={result.width}
@@ -245,9 +287,9 @@ function Preview({
         >
           <ScanText className="h-4 w-4" /> Describe
         </Button>
-        {reference && (
+        {(compare || reference) && (
           <IconButton
-            label="Side by side with the reference picture"
+            label={compare ? `Side by side with the picture from ${compare.modelLabel}` : "Side by side with the reference picture"}
             variant="secondary"
             className={sideBySide ? "ring-2 ring-amber-500" : undefined}
             aria-pressed={sideBySide}
@@ -300,6 +342,82 @@ function Preview({
           <ErrorWithFix error={error} onDismiss={() => setError(null)} />
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * "On another model…": installed models that can make the same picture (they fit this
+ * computer, are set up, and take the reference picture when it used one).
+ */
+function OtherModelList({
+  resultId,
+  onBack,
+  onClose,
+  onPick,
+}: {
+  resultId: string;
+  onBack: () => void;
+  onClose: () => void;
+  onPick: (modelId: string) => void;
+}) {
+  const actions = useActions();
+  const models = useAppState((s) => s.models);
+  const req = useAppState((s) => s.batches[s.resultBatch[resultId]]?.request);
+  const usedReference = !!req?.refImageIds?.length;
+  const list = createModels(models).filter(
+    (m) => m.id !== req?.modelId && m.fit !== "tooBig" && !m.missingComponents.length && (!usedReference || takesReference(m)),
+  );
+  return (
+    <FocusFirst role="menu" label="On another model">
+      <MenuItem icon={<ChevronLeft className="h-4 w-4" />} onClick={onBack}>
+        On another model
+      </MenuItem>
+      <MenuSeparator />
+      {list.length ? (
+        list.map((m) => (
+          <MenuItem
+            key={m.id}
+            onClick={() => onPick(m.id)}
+            hint={
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>{m.familyLabel ?? "Unknown family"}</span>
+                <VramBadge vram={m.vram} fit={m.fit} />
+              </span>
+            }
+          >
+            <span className="flex items-center gap-2">
+              <span className="truncate font-medium">{m.friendlyName}</span>
+              <StyleBadge badge={m.styleBadge} />
+            </span>
+          </MenuItem>
+        ))
+      ) : (
+        <p className="px-2.5 py-2 text-xs text-neutral-500">
+          {usedReference ? "No other installed model can use the reference picture." : "No other installed model fits this computer."}
+        </p>
+      )}
+      <MenuSeparator />
+      <MenuItem icon={<Layers className="h-4 w-4" />} onClick={() => {
+          onClose();
+          actions.setTab("models");
+        }}
+      >
+        Get more models…
+      </MenuItem>
+    </FocusFirst>
+  );
+}
+
+/** Moves focus into a menu whose items just replaced the ones that had it. */
+function FocusFirst({ children, role, label }: { children: ReactNode; role?: string; label?: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.querySelector<HTMLElement>("[role=menuitem]:not(:disabled)")?.focus();
+  }, []);
+  return (
+    <div ref={box} role={role} aria-label={label}>
+      {children}
     </div>
   );
 }

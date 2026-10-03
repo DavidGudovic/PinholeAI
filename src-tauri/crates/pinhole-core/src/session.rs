@@ -430,16 +430,105 @@ fn marked_pixels(im: &SessionImage) -> CoreResult<(Vec<u8>, u32, u32)> {
     Ok((rgba, w, h))
 }
 
-/// Export (RELEASE-SPEC §1 item 4): the one function behind Save, Save as and
-/// Copy. Images made by Pinhole (generated, edited, upscaled) always get the
+/// Export (RELEASE-SPEC §1 item 4): the one function behind Save, Save as, Save as one sheet
+/// and Copy. Images made by Pinhole (generated, edited, upscaled) always get the
 /// AI-generated marker (invisible watermark + XMP) (there is no setting for it) plus the optional
 /// "settings (no prompt)" chunk. A picture the user added and didn't change
-/// leaves as it came in (already scrubbed at import).
-pub fn export_png(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
-    let bytes = export_bytes(core, im)?;
-    core.check
-        .note_export(&bytes, im.sources(), im.safe_images_only);
+/// leaves as it came in (already scrubbed at import). Several pictures make one sheet (see
+/// [`sheet_bytes`]).
+pub fn export_png(core: &AppCore, ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
+    let bytes = match ims {
+        [] => return Err(missing()),
+        [im] => export_bytes(core, im)?,
+        _ => sheet_bytes(ims)?,
+    };
+    let sources = ims.iter().flat_map(|im| im.sources()).collect();
+    let safe_images_only = ims.iter().any(|im| im.safe_images_only);
+    core.check.note_export(&bytes, sources, safe_images_only);
     Ok(bytes)
+}
+
+/// Most pictures on one sheet.
+pub const SHEET_MAX: usize = 8;
+
+/// "Save as one sheet": the pictures in a grid ([`img::sheet`]), each one watermarked like its
+/// own export first. The sheet is watermarked again when it carries a marker, and carries
+/// the XMP marker: their shared source type, or "composite" when they differ. No settings chunk
+/// (each picture has its own settings).
+fn sheet_bytes(ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
+    if ims.len() > SHEET_MAX {
+        return Err(CoreError::invalid(format!(
+            "A sheet takes up to {SHEET_MAX} pictures."
+        )));
+    }
+    let types: Vec<Option<&str>> = ims.iter().map(source_type).collect();
+    let source = if types.iter().all(|t| *t == types[0]) {
+        types[0]
+    } else {
+        types
+            .iter()
+            .any(Option::is_some)
+            .then_some(SOURCE_COMPOSITE)
+    };
+    let tiles = ims
+        .iter()
+        .map(marked_pixels)
+        .collect::<CoreResult<Vec<_>>>()?;
+    let (mut rgba, w, h) = img::sheet(&tiles);
+    // Resizing can wash out a picture's own watermark (a saved one opened again carries one
+    // in its pixels only), so any sheet with a marker gets one of its own.
+    if source.is_some() {
+        pinhole_engine::watermark::embed(&mut rgba, w, h);
+    }
+    let png = img::encode_png_rgba(&rgba, w, h).map_err(|e| {
+        CoreError::internal("Couldn't prepare the sheet.").with_details(e.to_string())
+    })?;
+    match source {
+        Some(source) => {
+            pinhole_engine::png::add_itxt_chunk(&png, "XML:com.adobe.xmp", &ai_marker_xmp(source))
+                .map_err(|_| CoreError::internal("Couldn't prepare the sheet."))
+        }
+        None => Ok(png),
+    }
+}
+
+/// "Save as one sheet" to a user-chosen path (from the save dialog): 2 to [`SHEET_MAX`] session
+/// pictures, in order, as one PNG.
+pub fn save_sheet_as(core: &AppCore, ids: &[String], path: &str) -> CoreResult<SavedImage> {
+    if ids.len() < 2 {
+        return Err(CoreError::invalid(
+            "Pick at least two pictures for a sheet.",
+        ));
+    }
+    let ims = ids
+        .iter()
+        .map(|id| core.session.get(id).ok_or_else(missing))
+        .collect::<CoreResult<Vec<_>>>()?;
+    let mut path = PathBuf::from(path);
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err(CoreError::invalid(
+            "Pick a folder and file name to save to.",
+        ));
+    }
+    let png = path
+        .extension()
+        .is_some_and(|e| e.to_string_lossy().eq_ignore_ascii_case("png"));
+    if !png {
+        let mut name = path.file_name().unwrap_or_default().to_os_string();
+        name.push(".png");
+        path.set_file_name(name);
+        if path.exists() {
+            return Err(CoreError::invalid(format!(
+                "A file named “{}” is already there. Pick another name.",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )));
+        }
+    }
+    let bytes = export_png(core, &ims)?;
+    write_file(&path, &bytes)?;
+    Ok(SavedImage {
+        path: path.to_string_lossy().into_owned(),
+    })
 }
 
 fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
@@ -478,10 +567,13 @@ fn export_bytes(core: &AppCore, im: &SessionImage) -> CoreResult<Vec<u8>> {
     }
 }
 
-/// Save into `Data/outputs/pinhole_YYYYMMDD_HHMMSS_<seed>.<ext>` (unique suffix
-/// `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
+/// Save into the Save folder (`Pictures/Pinhole` by default, `Data/outputs/` for a
+/// portable copy, or the one picked in Settings) as `pinhole_YYYYMMDD_HHMMSS_<seed>.<ext>`
+/// (unique suffix `_2`, `_3`… on collision). Imported images use `import` instead of a seed.
 pub fn save_image(core: &AppCore, id: &str) -> CoreResult<SavedImage> {
-    save_into(core, id, &core.data.outputs())
+    // Missing picture first: no folder is created for nothing.
+    core.session.get(id).ok_or_else(missing)?;
+    save_into(core, id, &crate::app::save_folder_for_write(core)?)
 }
 
 /// "Save all": every listed image into a folder the user picked, named like
@@ -516,7 +608,7 @@ pub fn save_images_to(core: &AppCore, ids: &[String], dir: &str) -> CoreResult<S
 
 fn save_into(core: &AppCore, id: &str, dir: &Path) -> CoreResult<SavedImage> {
     let im = core.session.get(id).ok_or_else(missing)?;
-    let bytes = export_png(core, &im)?;
+    let bytes = export_png(core, std::slice::from_ref(&im))?;
     fs::create_dir_all(dir).map_err(|e| io_err(dir, e))?;
     let stamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
     let tag = im
@@ -588,7 +680,7 @@ pub fn save_image_as(core: &AppCore, id: &str, path: &str) -> CoreResult<SavedIm
             )));
         }
     }
-    let bytes = export_png(core, &im)?;
+    let bytes = export_png(core, std::slice::from_ref(&im))?;
     write_file(&path, &bytes)?;
     Ok(SavedImage {
         path: path.to_string_lossy().into_owned(),
@@ -978,12 +1070,12 @@ mod tests {
         // it stays a brought-in picture, checked as one.
         assert_eq!(im.origin, Origin::Imported);
         assert_eq!(im.sources().len(), 1);
-        let chunks = exported_xmp(&export_png(&core, &im).unwrap());
+        let chunks = exported_xmp(&export_png(&core, std::slice::from_ref(&im)).unwrap());
         assert_eq!(chunks.len(), 1, "{chunks:?}");
         assert!(chunks[0].contains("digitalsourcetype/trainedAlgorithmicMedia\""));
         assert!(!chunks[0].contains("GPS") && !chunks[0].contains("SENTINEL"));
         // The label is the same one Pinhole writes, so it survives being opened again.
-        let again = export_png(&core, &im).unwrap();
+        let again = export_png(&core, std::slice::from_ref(&im)).unwrap();
         let id2 = import_image(&core, again).unwrap().id;
         assert_eq!(
             core.session.get(&id2).unwrap().ai_label,
@@ -999,7 +1091,9 @@ mod tests {
             let id = import_image(&core, labelled_png(code)).unwrap().id;
             let im = core.session.get(&id).unwrap();
             assert_eq!(im.ai_label, None, "{code}");
-            assert!(exported_xmp(&export_png(&core, &im).unwrap()).is_empty());
+            assert!(
+                exported_xmp(&export_png(&core, std::slice::from_ref(&im)).unwrap()).is_empty()
+            );
         }
     }
 
@@ -1017,9 +1111,102 @@ mod tests {
         let id = import_image(&core, jpeg).unwrap().id;
         let im = core.session.get(&id).unwrap();
         assert_eq!(im.ai_label, Some(AiLabel::Composite));
-        let chunks = exported_xmp(&export_png(&core, &im).unwrap());
+        let chunks = exported_xmp(&export_png(&core, std::slice::from_ref(&im)).unwrap());
         assert_eq!(chunks.len(), 1, "{chunks:?}");
         assert!(chunks[0].contains("compositeWithTrainedAlgorithmicMedia"));
         assert!(!chunks[0].contains("SENTINEL"));
+    }
+
+    /// A made picture of `w`×`h` with some texture (the watermark needs detail to sit in).
+    fn made(id: &str, w: u32, h: u32) -> SessionImage {
+        let rgba: Vec<u8> = (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                let v = (96 + (x * 7 + y * 13) % 64) as u8;
+                [v, v / 2 + 40, 255 - v, 255]
+            })
+            .collect();
+        let mut im = image(Some(meta(id)), Origin::Generated, vec![]);
+        im.id = id.into();
+        im.bytes = Arc::new(img::encode_png_rgba(&rgba, w, h).unwrap());
+        (im.width, im.height) = (w, h);
+        im
+    }
+
+    #[test]
+    fn a_sheet_is_one_marked_picture_without_settings() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        core.settings.write().saved_metadata = "settings".into();
+        let ims: Vec<_> = (0..4).map(|i| made(&format!("s{i}"), 320, 256)).collect();
+        let bytes = export_png(&core, &ims).unwrap();
+        let chunks = exported_xmp(&bytes);
+        assert_eq!(chunks.len(), 1, "only the marker: {chunks:?}");
+        assert!(chunks[0].contains("digitalsourcetype/trainedAlgorithmicMedia\""));
+        let (rgba, w, h) = img::decode_rgba(&bytes).unwrap();
+        assert_eq!((w, h), (2 * 320 + 3 * 8, 2 * 256 + 3 * 8));
+        assert!(pinhole_engine::watermark::is_marked(&rgba, w, h));
+        // One picture cut out of the sheet still carries its own mark.
+        let tile: Vec<u8> = (8..8 + 256)
+            .flat_map(|y| {
+                let start = ((y * w + 8) * 4) as usize;
+                rgba[start..start + 320 * 4].to_vec()
+            })
+            .collect();
+        assert!(pinhole_engine::watermark::is_marked(&tile, 320, 256));
+    }
+
+    #[test]
+    fn a_sheet_of_a_photo_and_a_made_picture_is_a_composite() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let photo_png = made("p", 200, 200).bytes.as_ref().clone();
+        let photo = core
+            .session
+            .get(&import_image(&core, photo_png).unwrap().id)
+            .unwrap();
+        let bytes = export_png(&core, &[photo.clone(), made("m", 200, 200)]).unwrap();
+        let chunks = exported_xmp(&bytes);
+        assert!(
+            chunks[0].contains("compositeWithTrainedAlgorithmicMedia"),
+            "{chunks:?}"
+        );
+        // Photos only: no marker, like the photos themselves.
+        let bytes = export_png(&core, &[photo.clone(), photo]).unwrap();
+        assert!(exported_xmp(&bytes).is_empty());
+    }
+
+    #[test]
+    fn save_sheet_as_writes_a_png_and_checks_its_input() {
+        let (tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let path = tmp.path().join("sheet");
+        let one = vec!["missing".to_string()];
+        assert_eq!(
+            save_sheet_as(&core, &one, path.to_str().unwrap())
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        let two = vec!["missing".to_string(), "gone".to_string()];
+        assert_eq!(
+            save_sheet_as(&core, &two, path.to_str().unwrap())
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+        let ids: Vec<String> = (0..2)
+            .map(|_| {
+                import_image(&core, made("p", 120, 90).bytes.as_ref().clone())
+                    .unwrap()
+                    .id
+            })
+            .collect();
+        let saved = save_sheet_as(&core, &ids, path.to_str().unwrap()).unwrap();
+        assert!(saved.path.ends_with("sheet.png"));
+        let (_, w, h) = img::decode_rgba(&std::fs::read(&saved.path).unwrap()).unwrap();
+        assert_eq!((w, h), (2 * 120 + 3 * 8, 90 + 2 * 8));
+        let nine: Vec<String> = std::iter::repeat_n(ids[0].clone(), 9).collect();
+        assert!(save_sheet_as(&core, &nine, tmp.path().join("x.png").to_str().unwrap()).is_err());
     }
 }
