@@ -58,6 +58,8 @@ describe("picture in a data: address", () => {
     expect(f?.type).toBe("image/png");
     expect(Array.from(new Uint8Array(await f!.arrayBuffer())).slice(0, 4)).toEqual([0x89, 0x50, 0x4e, 0x47]);
     expect(pictureFromDataUrl("data:image/jpeg;base64,/9j/")?.name).toBe("dropped.jpg");
+    expect(pictureFromDataUrl("data:image/jpg;base64,/9j/")?.type).toBe("image/jpeg");
+    expect(pictureFromDataUrl("data:image/png;charset=utf-8;base64,iVBORw0KGgo=")?.type).toBe("image/png");
     expect(pictureFromDataUrl("data:image/svg+xml;base64,PHN2Zz4=")).toBeNull();
     expect(pictureFromDataUrl("data:text/html;base64,PGI+")).toBeNull();
     expect(pictureFromDataUrl("https://example.com/a.png")).toBeNull();

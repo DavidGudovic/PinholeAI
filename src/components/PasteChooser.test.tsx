@@ -217,7 +217,10 @@ describe("dropped picture", () => {
   it("a browser drag holding the picture in a data: address opens the chooser, with nothing downloaded", () => {
     setup(["txt2img"]);
     const png = "data:image/png;base64,iVBORw0KGgo=";
-    drop(document.body, { types: ["text/uri-list", "text/html"], uri: "https://example.com/page", html: `<meta charset="utf-8"><img alt="" src="${png}">` });
+    // With a web address, the markup's src may be a placeholder: not used.
+    drop(document.body, { types: ["text/uri-list", "text/html"], uri: "https://cdn.example.com/real.jpg", html: `<img src="${png}" srcset="https://cdn.example.com/real.jpg">` });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    drop(document.body, { types: ["text/uri-list", "text/html"], uri: "", html: `<meta charset="utf-8"><img alt="" data-src="data:image/png;base64,AAAA" src="${png}">` });
     expect(screen.getByRole("dialog", { name: /Use the dropped picture for/ })).toBeTruthy();
   });
 });
