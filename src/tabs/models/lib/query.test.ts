@@ -248,7 +248,7 @@ describe("moreFiltersCount", () => {
 });
 
 describe("withSettingsSafeMode", () => {
-  const opts = { tags: [{ key: "nsfw", label: "NSFW", needsSafeModeOff: true }, { key: "portraits", label: "Portraits" }] };
+  const opts = { tags: [{ key: "nsfw", label: "NSFW", needsSafeModeOff: true }, { key: "portraits", label: "Portraits", needsSafeModeOff: false }] };
   const off = { ...defaultFilters(null, null, false), content: "all" as const, tags: ["nsfw", "portraits"] };
   it("turns Browse's Safe mode on when Settings has it on, keeping other tags", () => {
     expect(withSettingsSafeMode(off, "safe", opts)).toMatchObject({ content: "safe", tags: ["portraits"] });
