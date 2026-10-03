@@ -39,6 +39,7 @@ export const FALLBACK_OPTIONS: CatalogFilterOptions = {
   ],
   tags: [
     { key: "edit", label: "Edit model", needsSafeModeOff: false },
+    { key: "reference", label: "Reference picture", needsSafeModeOff: false },
     { key: "portraits", label: "Portraits", needsSafeModeOff: false },
     { key: "characters", label: "Characters", needsSafeModeOff: false },
     { key: "landscapes", label: "Landscapes", needsSafeModeOff: false },

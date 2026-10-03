@@ -177,6 +177,11 @@ export const CatalogCardView = memo(function CatalogCardView({
 
         <div className="flex flex-wrap items-center gap-1">
           {card.commercialOk ? <Badge tone="green">OK for client work</Badge> : <Badge>Not for client work</Badge>}
+          {card.takesReference && (
+            <Badge tone="blue" title="In Create, this model can follow a picture you add under the prompt">
+              Reference picture
+            </Badge>
+          )}
         </div>
         {card.licenseNote && (
           <p className="truncate text-[11px] text-neutral-500" title={card.licenseNote}>

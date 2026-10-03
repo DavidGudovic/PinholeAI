@@ -51,6 +51,7 @@ impl CatalogEnv for AnyEnv {
             label: "SDXL".into(),
             license_note: None,
             diffusion_only: false,
+            takes_reference: false,
         })
     }
     fn vram_for(&self, _: &str, _: u64) -> Option<(VramNeed, Fit)> {

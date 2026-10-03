@@ -493,6 +493,7 @@ mod tests {
                 label: base.into(),
                 license_note: None,
                 diffusion_only: false,
+                takes_reference: false,
             })
         }
         fn vram_for(
