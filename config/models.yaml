@@ -1337,7 +1337,10 @@ captioner:
     # Words a reworded idea has to keep when the idea has them (they are in common_words).
     exact_words: [more, less, her, his, him, she, their, them, they, from, into, this, that, these, those]
     # A reworded idea that adds one of these while the idea names no person is not used.
-    people: [1boy, 1girl, 2boys, 2girls, multiple boys, multiple girls, solo, man, men, woman, women, boy, boys, girl, girls, person, people, child, children, kid, kids, couple, princess, prince, knight, lady]
+    people: [1boy, 1girl, 2boys, 2girls, multiple boys, multiple girls, solo, man, men, woman, women, boy, boys, girl, girls, person, people, child, children, kid, kids, couple, princess, prince, knight, lady, king, queen, wizard, witch, elf, warrior, soldier, bride, character]
+    # Added phrases (and a reworded idea) with one of these are left out while the idea names no
+    # person and doesn't have the word itself.
+    person_details: [hair, hairstyle, ponytail, braid, braids, bangs, beard, makeup, lipstick, freckles, earrings, outfit, outfits, clothes, clothing, suit, suits, dress, dresses, skirt, shirt, jacket, uniform]
     # Added phrases containing one of these are left out (moods and quality words).
     drop: [atmosphere, ambiance, ambience, mood, moody, feeling, vibe, vibes, serene, tranquil, peaceful, inviting, evoking, sense of, emotional, whimsical, charming, masterpiece, best quality, high quality, high resolution, 4k, 8k, comfortable, beautiful, stunning]
     # Improve in Edit → Describe a change. Edit instructions are changes, not scenes: the helper

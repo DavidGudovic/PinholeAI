@@ -353,10 +353,11 @@ used only when it keeps the idea's intent: its numbers and negations (and no new
 word it negates), the words in `improve.exact_words` ("more", "her", "this"…), every view, medium,
 light or "same"/"keep" phrase the idea names (`improve.given`), at least four in five of its other
 words (`improve.common_words` aside; singular and plural count as one), at most 40 words, and no
-added person (`improve.people`), mood or quality word or add-on trigger word. Otherwise the user's
+added person (`improve.people`) or, while the idea names none, hair or clothes it doesn't have
+(`improve.person_details`), mood or quality word or add-on trigger word. Otherwise the user's
 words are used as typed. The other lines are added after it: a line the idea already covers is
 left out, and so are mood and quality words (`improve.drop`, quality words come from the family's
-`auto_prompt_prefix`), "no …" phrases, phrases naming a person when the idea names none, lines with two or more phrases
+`auto_prompt_prefix`), "no …" phrases, phrases naming a person, or hair or clothes the idea doesn't have (`improve.person_details`), when the idea names none, lines with two or more phrases
 of the form's example, long sentences,
 the idea's own words and repeats. Sentences for natural-language families, tags (at most 12 added)
 for families whose `style_template` is `tags` (SD 1.5, SDXL), Danbooru tags for families with
