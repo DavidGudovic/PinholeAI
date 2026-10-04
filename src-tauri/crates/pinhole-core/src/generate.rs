@@ -451,7 +451,7 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
     };
     let apply_prefix =
         req.fine_tune.auto_prompt_prefix.unwrap_or(true) && req.mode != GenMode::Edit;
-    let mut final_prompt = pinhole_registry::style::combine(
+    let final_prompt = pinhole_registry::style::combine(
         &reg,
         &family,
         &prompt,
@@ -460,11 +460,6 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
         req.fine_tune.negative_prompt.as_deref(),
         apply_prefix,
     );
-    if core.settings.read().content_mode == "all" {
-        if let Some(n) = final_prompt.negative.as_mut() {
-            *n = with_safe_off_negative(n);
-        }
-    }
 
     // Word-checked: the whole positive prompt (idea + style + trigger words) and the add-ons.
     let prompt = crate::text_check::checked_with(final_prompt.prompt.clone(), &addon_words)?;
@@ -488,29 +483,6 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
         loras,
         addon_ids,
     })
-}
-
-/// Added to the end of the negative prompt while Safe mode is Off, for families that use a
-/// negative prompt. Combined with the rest in memory only, like every negative prompt.
-pub(crate) const SAFE_OFF_NEGATIVE: &str = "child, teen, teenager, young, childlike, loli";
-
-/// `negative` with [`SAFE_OFF_NEGATIVE`] after it (its words that `negative` already has are
-/// not repeated).
-fn with_safe_off_negative(negative: &str) -> String {
-    let mut out = negative
-        .trim()
-        .trim_end_matches(|c: char| c == ',' || c.is_whitespace())
-        .to_string();
-    for w in SAFE_OFF_NEGATIVE.split(", ") {
-        if contains_phrase(&out, w) {
-            continue;
-        }
-        if !out.is_empty() {
-            out.push_str(", ");
-        }
-        out.push_str(w);
-    }
-    out
 }
 
 /// The installed model + its family. Edit mode uses the best installed edit model
