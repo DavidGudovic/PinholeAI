@@ -561,6 +561,25 @@ describe("Edit tab", () => {
     expect(store.getState().edit.index).toBe(0);
   });
 
+  it("draws the toolbar's undo, redo and delete buttons at the bar's small size, and the full-screen button over the picture", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle" } });
+    });
+    for (const name of ["Undo", "Redo", "Delete this edit"]) {
+      expect((await screen.findByRole("button", { name })).className.split(" ")).toContain("h-7");
+    }
+    const full = await screen.findByRole("button", { name: "View full screen" });
+    expect(full.className.split(" ")).toEqual(expect.arrayContaining(["bg-black/40!", "text-white!", "hover:bg-black/60!"]));
+  });
+
   it("offers Upscale and shows the final prompt in Fine-tune", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });

@@ -93,6 +93,22 @@ describe("image paste", () => {
   });
 });
 
+describe("MenuItem", () => {
+  it("highlights on hover only while enabled", () => {
+    render(
+      <>
+        <MenuItem disabled>Off</MenuItem>
+        <MenuItem>On</MenuItem>
+      </>,
+    );
+    for (const name of ["Off", "On"]) {
+      const cls = screen.getByRole("menuitem", { name }).className.split(" ");
+      expect(cls).toContain("enabled:hover:bg-neutral-100");
+      expect(cls).not.toContain("hover:bg-neutral-100");
+    }
+  });
+});
+
 describe("keyboard focus", () => {
   const tick = () => act(() => new Promise((r) => setTimeout(r, 0)));
 
@@ -289,6 +305,20 @@ describe("ImageViewer", () => {
     expect(onIndex).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+  it("uses the dark styles for its buttons in either theme, with the shared focus ring on the arrows", () => {
+    render(
+      <ImageViewer
+        images={[...imgs, { url: "blob:c", width: 100, height: 100, alt: "C" }]}
+        index={1}
+        onIndex={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
+    expect(screen.getByRole("dialog", { name: "Image viewer" }).classList.contains("dark")).toBe(true);
+    for (const name of ["Previous image", "Next image"]) {
+      expect(screen.getByRole("button", { name }).className).toContain("focus-visible:");
+    }
   });
   it("zoom keeps the point under the cursor fixed and pans stay in bounds", () => {
     const v = zoomAt({ scale: 1, x: 0, y: 0 }, 2, 50, 20);
