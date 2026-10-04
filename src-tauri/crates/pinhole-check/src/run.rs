@@ -222,11 +222,15 @@ impl Checker {
         outputs: &[&str],
     ) -> Result<Model, CheckError> {
         init_threads();
-        let bytes = files::read_verified(&self.dir, f)?;
-        let model = tract_onnx::onnx()
-            .with_ignore_output_shapes(true)
-            .with_ignore_value_info(true)
-            .model_for_read(&mut bytes.as_slice())?
+        // The file's bytes go before the graph is optimised (the graph has its own copy).
+        let model = {
+            let bytes = files::read_verified(&self.dir, f)?;
+            tract_onnx::onnx()
+                .with_ignore_output_shapes(true)
+                .with_ignore_value_info(true)
+                .model_for_read(&mut bytes.as_slice())?
+        };
+        let model = model
             .with_input_fact(0, f32::fact(shape).into())?
             .into_optimized()?;
         if !outputs.is_empty() {
@@ -452,17 +456,21 @@ impl Checker {
         use tract_onnx::prelude::Framework;
         init_threads();
         let f = &files::AGE_YEARS;
-        let bytes = files::read_verified(&self.dir, f)?;
-        let onnx = tract_onnx::onnx()
-            .with_ignore_output_shapes(true)
-            .with_ignore_value_info(true);
-        let mut proto = onnx.proto_model_for_read(&mut bytes.as_slice())?;
-        let graph = proto.graph.as_mut().ok_or(CheckError::Damaged(f.label))?;
-        if rewrite_col2im(graph).is_none() {
-            return Err(CheckError::Damaged(f.label));
-        }
-        let model = onnx
-            .model_for_proto_model(&proto)?
+        // The file's bytes and the parsed file go before the graph is optimised.
+        let model = {
+            let bytes = files::read_verified(&self.dir, f)?;
+            let onnx = tract_onnx::onnx()
+                .with_ignore_output_shapes(true)
+                .with_ignore_value_info(true);
+            let mut proto = onnx.proto_model_for_read(&mut bytes.as_slice())?;
+            drop(bytes);
+            let graph = proto.graph.as_mut().ok_or(CheckError::Damaged(f.label))?;
+            if rewrite_col2im(graph).is_none() {
+                return Err(CheckError::Damaged(f.label));
+            }
+            onnx.model_for_proto_model(&proto)?
+        };
+        let model = model
             .with_input_fact(0, f32::fact([1, 6, MIVOLO_SIDE, MIVOLO_SIDE]).into())?
             .into_optimized()?;
         Ok(model.into_runnable()?)
@@ -485,7 +493,7 @@ fn init_threads() {
 
 pub fn decode(png: &[u8]) -> Result<RgbImage, CheckError> {
     image::load_from_memory_with_format(png, image::ImageFormat::Png)
-        .map(|i| i.to_rgb8())
+        .map(|i| i.into_rgb8())
         .map_err(|_| CheckError::Image)
 }
 
@@ -1011,6 +1019,24 @@ fn overlap(a: &[f32; 4], b: &[f32; 4]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_gives_the_same_pixels_for_rgb_and_rgba_pngs() {
+        let rgb =
+            image::RgbImage::from_fn(7, 5, |x, y| image::Rgb([x as u8 * 30, y as u8 * 40, 9]));
+        let rgba = image::RgbaImage::from_fn(7, 5, |x, y| {
+            image::Rgba([x as u8 * 30, y as u8 * 40, 9, 128 + x as u8])
+        });
+        for img in [
+            image::DynamicImage::ImageRgb8(rgb),
+            image::DynamicImage::ImageRgba8(rgba),
+        ] {
+            let mut png = Vec::new();
+            img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+                .unwrap();
+            assert_eq!(decode(&png).unwrap(), img.to_rgb8());
+        }
+    }
 
     #[test]
     fn overlap_is_a_share_of_the_smaller_box() {
