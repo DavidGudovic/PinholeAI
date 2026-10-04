@@ -199,7 +199,7 @@ pub fn memory_plan(lines: &[String]) -> Vec<String> {
 pub enum MissedGpu {
     /// The card was found but had no free memory: auto-fit put everything on the processor.
     NoFreeMemory,
-    /// The card wasn't found (e.g. Linux without NVIDIA's Vulkan driver): integrated
+    /// The card wasn't found (e.g. no working NVIDIA driver): integrated
     /// graphics or the processor does the work.
     NotFound,
 }
