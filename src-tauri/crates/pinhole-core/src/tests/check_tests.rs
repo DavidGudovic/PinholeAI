@@ -70,10 +70,10 @@ async fn a_blocked_result_drops_the_whole_batch() {
     req.dials.count = 2;
     let e = generate::generate(&core, req).await.unwrap_err();
     assert_eq!(e.code, "blocked");
-    assert_eq!(e.message, crate::text_check::BLOCKED_MESSAGE);
+    assert_eq!(e.message, crate::imagecheck::LOOKS_UNDERAGE_MESSAGE);
     assert_eq!(core.session.len(), 0, "no picture of the batch is kept");
     assert!(counts.lock().0 >= 1);
-    // Dev builds name the rule for tuning; the message never changes.
+    // Dev builds add the rule for tuning; the message names only the rule.
     if cfg!(debug_assertions) {
         assert!(e.details.unwrap().starts_with("looks_underage"));
     }
@@ -171,6 +171,7 @@ async fn adult_results_pass_unless_made_from_a_brought_in_photo_of_someone() {
         .await
         .unwrap_err();
     assert_eq!(e.code, "blocked");
+    assert_eq!(e.message, crate::imagecheck::PHOTO_MADE_INTIMATE_MESSAGE);
     assert_eq!(counts.lock().1, 1);
 
     // A chain with an ordinary step first, the original discarded, then intimate.
@@ -531,6 +532,21 @@ async fn safe_images_only_models_cant_make_intimate_pictures() {
         .await
         .unwrap_err();
     assert_eq!(e.code, "blocked");
+    assert_eq!(e.message, crate::imagecheck::SAFE_ONLY_MARKED_MESSAGE);
+    // When the age rule also applies, its message is the one shown.
+    let mut minor = intimate_adult();
+    minor.tags.as_mut().unwrap().minor = 0.9;
+    use_check(
+        &core,
+        FakeCheck {
+            readings: minor,
+            ..Default::default()
+        },
+    );
+    let e = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
+        .await
+        .unwrap_err();
+    assert_eq!(e.message, crate::imagecheck::LOOKS_UNDERAGE_MESSAGE);
     // Ordinary pictures from it are fine.
     use_check(&core, FakeCheck::default());
     let ordinary = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "x"))
@@ -563,6 +579,7 @@ async fn safe_images_only_models_cant_make_intimate_pictures() {
     restyle.init_image_id = Some(ordinary.clone());
     let e = generate::generate(&core, restyle).await.unwrap_err();
     assert_eq!(e.code, "blocked");
+    assert_eq!(e.message, crate::imagecheck::SAFE_ONLY_EARLIER_MESSAGE);
     // Nor does saving it and opening the file again.
     let saved = session::export_png(&core, &[core.session.get(&ordinary).unwrap()]).unwrap();
     let reopened = session::import_image(&core, saved).unwrap().id;
@@ -613,6 +630,7 @@ async fn unchecked_hand_added_files_are_safe_images_only() {
         set(&lora, Some(state));
         let e = generate::generate(&core, with_lora()).await.unwrap_err();
         assert_eq!(e.code, "blocked", "add-on {state:?}");
+        assert_eq!(e.message, crate::imagecheck::SAFE_ONLY_UNCONFIRMED_MESSAGE);
         set(&lora, None);
         set(&model, Some(state));
         let e = generate::generate(&core, with_lora()).await.unwrap_err();

@@ -16,9 +16,12 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-/// Message shown when the word check or the image check blocks a request. It includes no
-/// details about the text. The UI shows the usage guidelines with it.
-pub const BLOCKED_MESSAGE: &str = "Pinhole can't help with this. See the usage guidelines.";
+/// Shown when the word check blocks text that pairs an under-18 term with a sexual term. The
+/// UI shows it with the usage guidelines.
+pub const BLOCKED_MESSAGE: &str = "This asks for something the usage guidelines don't allow.";
+
+/// Shown when the word check blocks a request for a copy of a document or money.
+pub const DOCUMENT_MESSAGE: &str = "Pinhole doesn't make copies of IDs, documents or money.";
 
 /// Terms that point at someone under 18. The last word of each also matches with a trailing
 /// `s`/`es` ("little girls").
@@ -276,15 +279,33 @@ const NUMBER_WORDS: &[&str] = &[
     "seventeen",
 ];
 
-/// The word check said no. Carries nothing about the text (PRIVACY).
+/// The word check said no, and which of its two lists matched. Carries nothing about the text
+/// (PRIVACY).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Blocked;
+pub enum Blocked {
+    /// An under-18 term together with a sexual term.
+    MinorWithSexual,
+    /// A document or banknote together with a word asking for a usable copy.
+    DocumentCopy,
+}
+
+impl Blocked {
+    /// The sentence shown to the user.
+    pub fn message(self) -> &'static str {
+        match self {
+            Blocked::MinorWithSexual => BLOCKED_MESSAGE,
+            Blocked::DocumentCopy => DOCUMENT_MESSAGE,
+        }
+    }
+}
 
 /// Blocks text that pairs an under-18 term with a sexual term, or that asks for a usable copy
 /// of an identity document or banknote.
 pub fn check(text: &str) -> Result<(), Blocked> {
-    if pairs_minor_with_sexual(text) || asks_for_document_copy(text) {
-        Err(Blocked)
+    if pairs_minor_with_sexual(text) {
+        Err(Blocked::MinorWithSexual)
+    } else if asks_for_document_copy(text) {
+        Err(Blocked::DocumentCopy)
     } else {
         Ok(())
     }
@@ -1165,7 +1186,7 @@ mod tests {
             "bank statement, account number",
         ] {
             assert!(asks_for_document_copy(t), "{t}");
-            assert_eq!(check(t), Err(Blocked), "{t}");
+            assert_eq!(check(t), Err(Blocked::DocumentCopy), "{t}");
         }
     }
 
@@ -1469,7 +1490,7 @@ mod tests {
     fn checked_prompts_only_come_from_the_check() {
         assert_eq!(
             CheckedPrompt::check("loli, nude, PINHOLE_SENTINEL_7f3a"),
-            Err(Blocked)
+            Err(Blocked::MinorWithSexual)
         );
         let ok = CheckedPrompt::check("a nude woman, oil painting").unwrap();
         assert_eq!(ok.as_str(), "a nude woman, oil painting");
