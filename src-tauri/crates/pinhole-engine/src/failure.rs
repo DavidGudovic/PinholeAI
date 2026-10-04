@@ -232,15 +232,15 @@ pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
     {
         return Some(MissedGpu::NoFreeMemory);
     }
-    // The chosen backends: `auto-fit: --backend "diffusion=CUDA0,te=cpu,..."`.
-    let diffusion_on_cpu = fit
-        .iter()
-        .filter(|l| l.contains("auto-fit: --backend"))
-        .any(|l| {
-            l.to_ascii_lowercase()
-                .split(['"', ','])
-                .any(|part| part.trim() == "diffusion=cpu")
-        });
+    // The chosen backends: `auto-fit: --backend "diffusion=CUDA0,te=cpu,..."`, sometimes
+    // followed by `--params-backend "diffusion=CPU"`. That second list only says where the
+    // weights wait between uses (the model runs on the card in parts), so only the first counts.
+    let diffusion_on_cpu = fit.iter().any(|l| {
+        backend_spec(l).is_some_and(|spec| {
+            spec.split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("diffusion=cpu"))
+        })
+    });
     if !expect_nvidia {
         return None;
     }
@@ -257,6 +257,12 @@ pub fn missed_gpu(lines: &[String], expect_nvidia: bool) -> Option<MissedGpu> {
         .any(|k| l.contains(k))
     };
     (!devices.is_empty() && !devices.iter().any(|l| is_nvidia(l))).then_some(MissedGpu::NotFound)
+}
+
+/// The quoted list after `auto-fit: --backend` in an auto-fit line.
+fn backend_spec(line: &str) -> Option<&str> {
+    let rest = line.split_once("auto-fit: --backend \"")?.1;
+    Some(rest.split_once('"').map_or(rest, |(spec, _)| spec))
 }
 
 #[cfg(test)]
@@ -427,5 +433,17 @@ ggml_cuda_init: found 1 CUDA devices (Total VRAM: 16275 MiB): Device 0: NVIDIA G
         assert_eq!(missed_gpu(&full, true), Some(MissedGpu::NoFreeMemory));
         assert_eq!(missed_gpu(&full, false), Some(MissedGpu::NoFreeMemory));
         assert_eq!(missed_gpu(&[], true), None);
+        // The model runs on the card in parts with its weights in system memory: on the card.
+        let in_parts = log(&[
+            "[INFO ] backend_fit.cpp:326  -     CUDA0        NVIDIA GeForce RTX 5070 Ti       free  15010 MiB, budget  10914 MiB",
+            "[INFO ] backend_fit.cpp:333  -     RAM          free  24000 MiB, params budget  21600 MiB",
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"diffusion=CUDA0,te=CUDA0,vae=CUDA0\" --params-backend \"diffusion=CPU\"",
+        ]);
+        assert_eq!(missed_gpu(&in_parts, true), None);
+        let vulkan_in_parts = log(&[
+            "[INFO ] backend_fit.cpp:326  -     Vulkan0      NVIDIA GeForce RTX 5070 Ti       free  15010 MiB, budget  10914 MiB",
+            "[INFO ] backend_fit.cpp:474  - auto-fit: --backend \"te=cpu,diffusion=Vulkan0,vae=Vulkan0\" --params-backend \"diffusion=CPU,te=CPU\"",
+        ]);
+        assert_eq!(missed_gpu(&vulkan_in_parts, true), None);
     }
 }
