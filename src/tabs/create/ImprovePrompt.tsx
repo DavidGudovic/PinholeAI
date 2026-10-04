@@ -18,7 +18,7 @@ import type { CoreError, ImproveTarget } from "../../lib/types";
 import { GroupProgress } from "../models/controls";
 
 const toolbarButton = cx(
-  "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 disabled:pointer-events-none disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white",
+  "inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-neutral-600 enabled:hover:bg-neutral-100 enabled:hover:text-neutral-900 disabled:cursor-not-allowed disabled:opacity-50 dark:text-neutral-400 dark:enabled:hover:bg-neutral-800 dark:enabled:hover:text-white",
   focusRing,
 );
 
