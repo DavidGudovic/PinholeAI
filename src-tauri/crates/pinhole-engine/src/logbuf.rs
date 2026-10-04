@@ -83,6 +83,22 @@ impl std::fmt::Debug for LogBuffer {
     }
 }
 
+/// Length of `bytes` without an unfinished UTF-8 character at the end (only
+/// the last 3 bytes are looked at, so an invalid byte earlier doesn't matter).
+fn complete_utf8_len(bytes: &[u8]) -> usize {
+    let n = bytes.len();
+    let Some(start) = (n.saturating_sub(3)..n)
+        .rev()
+        .find(|&i| bytes[i] & 0xC0 != 0x80)
+    else {
+        return n;
+    };
+    match std::str::from_utf8(&bytes[start..]) {
+        Err(e) if e.valid_up_to() == 0 && e.error_len().is_none() => start,
+        _ => n,
+    }
+}
+
 impl LogBuffer {
     pub fn new(cap: usize) -> Self {
         Self {
@@ -121,10 +137,7 @@ impl LogBuffer {
         // the next read instead of decoding each half on its own.
         let mut bytes = std::mem::take(&mut g.pending[stream as usize]);
         bytes.extend_from_slice(input);
-        let complete = match std::str::from_utf8(&bytes) {
-            Err(e) if e.error_len().is_none() => e.valid_up_to(),
-            _ => bytes.len(),
-        };
+        let complete = complete_utf8_len(&bytes);
         g.pending[stream as usize] = bytes.split_off(complete);
         let text = String::from_utf8_lossy(&bytes);
         let mut buf = std::mem::take(&mut g.partial[stream as usize]);
@@ -459,6 +472,14 @@ mod tests {
         b.push_bytes(&"end é".as_bytes()[..5]);
         b.flush();
         assert_eq!(b.tail(1), vec!["end \u{FFFD}"]);
+
+        // An invalid byte earlier in the same read doesn't stop the cut-off
+        // character at the end from being kept.
+        let mut first = b"bad \xFF then ".to_vec();
+        first.extend_from_slice(&"é\n".as_bytes()[..1]);
+        b.push_bytes(&first);
+        b.push_bytes(&"é\n".as_bytes()[1..]);
+        assert_eq!(b.tail(1), vec!["bad \u{FFFD} then é"]);
     }
 
     #[test]
