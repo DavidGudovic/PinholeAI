@@ -17,6 +17,8 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    // One jsdom per worker; each test file still gets its own VM context.
+    pool: "vmThreads",
     include: ["src/**/*.test.{ts,tsx}"],
   },
 });
