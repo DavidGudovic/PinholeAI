@@ -1078,9 +1078,9 @@ fn added_phrases<'a>(
     given: &std::collections::BTreeMap<String, Vec<String>>,
     skipped: &[String],
     example: &str,
-    people: &[String],
-    person_details: &[String],
+    spec: &ImproveSpec,
 ) -> Vec<(&'a str, Vec<String>)> {
+    let (people, person_details) = (&spec.people, &spec.person_details);
     let copied = example_phrases(example);
     // People the idea doesn't have would change the picture, and so would their hair or clothes.
     let has_person = names_person(idea, people);
@@ -1182,8 +1182,7 @@ fn assemble_improved(
         &spec.given,
         &[spec.drop.as_slice(), avoid].concat(),
         spec.styles.get(style).map_or("", |st| st.example.as_str()),
-        &spec.people,
-        &spec.person_details,
+        spec,
     );
     if groups.is_empty() {
         return (!same_words(&base, idea)).then_some(base);
@@ -1268,8 +1267,7 @@ fn assemble_edit(
         &spec.edit.given,
         &[spec.drop.as_slice(), avoid].concat(),
         &spec.edit.form,
-        &spec.people,
-        &spec.person_details,
+        spec,
     );
     let common = &spec.common_words;
     let mentioned: std::collections::HashSet<String> = content_words(&both)
