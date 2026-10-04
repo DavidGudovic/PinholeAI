@@ -153,6 +153,10 @@ impl Session {
         self.images.read().get(id).cloned()
     }
 
+    pub fn contains(&self, id: &str) -> bool {
+        self.images.read().contains_key(id)
+    }
+
     pub fn remove(&self, id: &str) -> bool {
         self.images.write().remove(id).is_some()
     }

@@ -145,7 +145,7 @@ pub struct CheckState {
     /// Brought-in pictures that passed the check before Describe, by session image id.
     describable: Mutex<std::collections::HashSet<String>>,
     /// Whether a session image is photo-style ([`is_photo_style`]), by session image id.
-    /// Session images never change, so each is measured once.
+    /// Session images never change, so each is normally measured once.
     photo_style: Mutex<HashMap<String, bool>>,
 }
 
@@ -179,9 +179,19 @@ impl CheckState {
         self.photo_style.lock().remove(id);
     }
 
-    /// A result just added to the session: its photo-style flag from the check's readings.
-    pub(crate) fn note_photo_style(&self, id: &str, photo: bool) {
-        self.photo_style.lock().insert(id.to_string(), photo);
+    /// Keep a session image's photo-style flag, if the image is still in `session`.
+    pub(crate) fn note_photo_style(
+        &self,
+        session: &crate::session::Session,
+        id: &str,
+        photo: bool,
+    ) {
+        let mut kept = self.photo_style.lock();
+        // Looked up under the lock: discard and Reset take the image out of the session
+        // before they drop its flag, so no flag outlives its image.
+        if session.contains(id) {
+            kept.insert(id.to_string(), photo);
+        }
     }
 
     /// Save/Copy: remember what an exported picture was made from.
@@ -480,9 +490,7 @@ pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResu
     let r = res.map_err(|e| check_error(core, e))?;
     let photo = photo_style(&r);
     // Not kept for a picture discarded while it was measured.
-    if core.session.get(&img.id).is_some() {
-        core.check.note_photo_style(&img.id, photo);
-    }
+    core.check.note_photo_style(&core.session, &img.id, photo);
     Ok(photo)
 }
 
@@ -853,7 +861,7 @@ mod tests {
         let counts = fake.counts.clone();
         use_fake(&core, fake);
         let png = pinhole_engine::image::encode_png_rgba(&[9u8; 8 * 8 * 4], 8, 8).unwrap();
-        let id = crate::session::import_image(&core, png).unwrap().id;
+        let id = crate::session::import_image(&core, png.clone()).unwrap().id;
         let img = core.session.get(&id).unwrap();
         assert!(is_photo_style(&core, &img).await.unwrap());
         assert!(is_photo_style(&core, &img).await.unwrap());
@@ -866,7 +874,12 @@ mod tests {
         assert!(is_photo_style(&core, &img).await.unwrap());
         assert!(core.check.photo_style.lock().is_empty());
 
-        core.check.note_photo_style("other", false);
+        // Only kept for a picture in the session.
+        core.check.note_photo_style(&core.session, &id, false);
+        assert!(core.check.photo_style.lock().is_empty());
+        let other = crate::session::import_image(&core, png).unwrap().id;
+        core.check.note_photo_style(&core.session, &other, false);
+        assert_eq!(core.check.photo_style.lock().get(&other), Some(&false));
         core.check.forget();
         assert!(core.check.photo_style.lock().is_empty());
     }

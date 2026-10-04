@@ -1306,7 +1306,7 @@ async fn generate_inner(
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
         }
-        core.check.note_photo_style(&meta.id, photo);
+        core.check.note_photo_style(&core.session, &meta.id, photo);
         out.push(meta);
     }
     touch_last_used(core, &prep.model.id);
@@ -1828,7 +1828,7 @@ async fn upscale_inner(
     {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
-    core.check.note_photo_style(&meta.id, photo);
+    core.check.note_photo_style(&core.session, &meta.id, photo);
     Ok(meta)
 }
 

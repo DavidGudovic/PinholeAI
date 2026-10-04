@@ -222,6 +222,44 @@ async fn auto_upscale_of_a_made_picture_reuses_its_style_reading() {
     assert_eq!(counts.lock().0, 3, "the two results, not the source again");
 }
 
+/// A made picture's kept style is the one its own check read: a drawing stays a drawing
+/// without being measured again.
+#[tokio::test]
+async fn auto_upscale_of_a_made_drawing_uses_the_drawing_upscaler() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    install_fake_upscaler(&core);
+    install_component(
+        &core,
+        ModelKind::Upscaler,
+        "RealESRGAN_x4plus_anime_6B.pth",
+        generate::UPSCALER_DRAWING_COMPONENT,
+    );
+    let fake = FakeCheck {
+        readings: pinhole_check::Readings {
+            tags: Some(pinhole_check::Tags {
+                general: 0.9,
+                realistic: 0.0,
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let counts = fake.counts.clone();
+    use_check(&core, fake);
+    let mut req = GenerateRequest::txt2img(model, "a cat");
+    req.fine_tune.width = Some(64);
+    req.fine_tune.height = Some(48);
+    let src = generate::generate(&core, req).await.unwrap().images[0].clone();
+    assert_eq!(counts.lock().0, 1);
+    let up = generate::upscale_image(&core, &src.id, 4).await.unwrap();
+    assert_eq!(up.upscaler.as_deref(), Some("drawing"));
+    assert_eq!(counts.lock().0, 2, "only the result, not the source again");
+}
+
 /// Cancel works while Upscale reads the picture style for the Auto pick: nothing is
 /// downloaded or upscaled after it.
 #[tokio::test]
