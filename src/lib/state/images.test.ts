@@ -3,7 +3,7 @@ import type { ResultImage } from "../types";
 
 vi.mock("../api", async (orig) => ({ ...(await orig<typeof import("../api")>()), discardImage: vi.fn(async () => undefined) }));
 
-const { imageMime, makeThumbUrl, releaseRefs, watchThumbs } = await import("./images");
+const { THUMBS_AT_ONCE, imageMime, makeThumbUrl, releaseRefs, watchThumbs } = await import("./images");
 const { createStore } = await import("./store");
 
 const buf = (...bytes: number[]) => new Uint8Array([...bytes, ...new Array(16).fill(0)]).buffer;
@@ -29,9 +29,12 @@ describe("thumbnails", () => {
   beforeEach(() => {
     revoked = [];
     vi.useFakeTimers();
-    globalThis.URL.revokeObjectURL = vi.fn((u: string) => void revoked.push(u));
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation((u: string) => void revoked.push(u));
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   const setup = () => {
     const store = createStore((refs, a) => releaseRefs(refs, a.type !== "clearSession"));
@@ -45,7 +48,7 @@ describe("thumbnails", () => {
     return { store, make, pending };
   };
 
-  it("adds a small copy to a ref after it is shown, once, and revokes it with the picture", async () => {
+  it("adds a small copy to a ref once it is added, and revokes it with the picture", async () => {
     const { store, make, pending } = setup();
     store.dispatch({ type: "addResults", batch: null, images: [made("a")], refs: [ref("a")] });
     // The ref is in the store before its thumbnail exists.
@@ -74,6 +77,23 @@ describe("thumbnails", () => {
     pending.get("a")!.resolve("blob:a-thumb");
     await vi.waitFor(() => expect(revoked).toEqual(["blob:a", "blob:a-thumb"]));
     expect(store.getState().images.a).toBeUndefined();
+  });
+
+  it("makes thumbnails one at a time and skips a picture removed while it waits", async () => {
+    const { store, make, pending } = setup();
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    store.dispatch({ type: "addResults", batch: null, images: ids.map(made), refs: ids.map(ref) });
+    expect(make).toHaveBeenCalledTimes(THUMBS_AT_ONCE);
+    const waiting = ids.find((id) => !pending.has(id))!;
+    store.dispatch({ type: "removeResult", id: waiting });
+    for (let k = 1; k <= 5; k++) {
+      await vi.waitFor(() => expect(make).toHaveBeenCalledTimes(k));
+      const id = make.mock.calls[k - 1][0].id;
+      pending.get(id)!.resolve(`blob:${id}-thumb`);
+      await vi.waitFor(() => expect(store.getState().images[id].thumbUrl).toBe(`blob:${id}-thumb`));
+    }
+    expect(make).toHaveBeenCalledTimes(5);
+    expect(make.mock.calls.map(([r]) => r.id)).not.toContain(waiting);
   });
 
   it("makes no copy of a picture that is already small", async () => {

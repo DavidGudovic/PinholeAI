@@ -66,14 +66,37 @@ export async function makeThumbUrl(r: ImgRef): Promise<string | null> {
   }
 }
 
+/** Thumbnails made at the same time: each one decodes the full picture on the main thread. */
+export const THUMBS_AT_ONCE = 1;
+
 /**
  * Make a thumbnail for each ref once it is in the store, so a picture never waits for its
- * thumbnail. A thumbnail whose ref is gone by the time it is ready is revoked straight away;
- * otherwise releaseRefs revokes it together with the ref's url.
+ * thumbnail. Refs are queued and made THUMBS_AT_ONCE at a time; a ref that left the store while
+ * queued is skipped. A thumbnail whose ref is gone by the time it is ready is revoked straight
+ * away; otherwise releaseRefs revokes it together with the ref's url.
  */
 export function watchThumbs(store: Store, make: (r: ImgRef) => Promise<string | null> = makeThumbUrl): () => void {
   const tried = new WeakSet<ImgRef>();
+  const queue: ImgRef[] = [];
+  let running = 0;
   let seen: AppState["images"] | null = null;
+  const pump = () => {
+    while (running < THUMBS_AT_ONCE && queue.length) {
+      const r = queue.shift()!;
+      if (store.getState().images[r.id]?.url !== r.url) continue;
+      running++;
+      void make(r)
+        .catch(() => null)
+        .then((thumbUrl) => {
+          if (thumbUrl) {
+            store.dispatch({ type: "setThumb", id: r.id, url: r.url, thumbUrl });
+            if (store.getState().images[r.id]?.thumbUrl !== thumbUrl) URL.revokeObjectURL(thumbUrl);
+          }
+          running--;
+          pump();
+        });
+    }
+  };
   const scan = () => {
     const images = store.getState().images;
     if (images === seen) return;
@@ -81,14 +104,9 @@ export function watchThumbs(store: Store, make: (r: ImgRef) => Promise<string | 
     for (const r of Object.values(images)) {
       if (r.thumbUrl || tried.has(r)) continue;
       tried.add(r);
-      void make(r)
-        .catch(() => null)
-        .then((thumbUrl) => {
-          if (!thumbUrl) return;
-          store.dispatch({ type: "setThumb", id: r.id, url: r.url, thumbUrl });
-          if (store.getState().images[r.id]?.thumbUrl !== thumbUrl) URL.revokeObjectURL(thumbUrl);
-        });
+      queue.push(r);
     }
+    pump();
   };
   scan();
   return store.subscribe(scan);
