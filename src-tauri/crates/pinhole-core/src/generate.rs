@@ -849,14 +849,7 @@ pub async fn generate(core: &Arc<AppCore>, req: GenerateRequest) -> CoreResult<G
         Err(e) if e.code == "cancelled" => {
             emit_progress(core, GenPhase::Cancelled, &label, None, None, t0)
         }
-        Err(e) => {
-            if e.code == "blocked" || e.code.starts_with("check_") {
-                // The engine keeps finished jobs readable on its port: a picture the check
-                // dropped must go with it.
-                core.gen.clear_pending.store(true, Ordering::SeqCst);
-            }
-            emit_progress(core, GenPhase::Failed, &label, None, None, t0)
-        }
+        Err(_) => emit_progress(core, GenPhase::Failed, &label, None, None, t0),
     }
     after_job(core, epoch).await;
     result
@@ -1270,7 +1263,10 @@ async fn generate_inner(
             inputs: inputs.pictures(),
         },
     )
-    .await?;
+    .await
+    // The engine keeps finished jobs readable on its port: a picture the check dropped
+    // must go with it (the engine is stopped after this job).
+    .inspect_err(|_| core.gen.clear_pending.store(true, Ordering::SeqCst))?;
     // Cancel pressed during the check: nothing is kept (as for an upscale).
     if cancel.is_cancelled() {
         return Err(CoreError::new("cancelled", "Cancelled."));
