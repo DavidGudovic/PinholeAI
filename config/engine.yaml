@@ -41,7 +41,13 @@ stable_diffusion_cpp:
   # --mmap: weights auto-fit parks in system memory are mapped from the model file
   # (model_manager.cpp can_mmap_storage) instead of copied into pinned host buffers
   # (model_manager.cpp params_buffer_type_for), so the OS can page them out.
-  launch_defaults: ["--listen-ip", "127.0.0.1", "--log-level", "info", "--disable-image-metadata", "--mmap"]
+  # --lora-apply-mode at_runtime: add-ons are added during each step instead of merged into
+  # the weights. The engine's default for unquantized files (auto = immediately) writes into
+  # the mapped weights, so every weight held in system memory becomes a private copy, and a
+  # different add-on or weight on the next picture maps and merges all of them again
+  # (measured on the CPU build with SD 1.5 and one add-on: 1.74 GB of private memory vs
+  # 0.2 GB at_runtime, flat per picture either way). GGUF models already use at_runtime.
+  launch_defaults: ["--listen-ip", "127.0.0.1", "--log-level", "info", "--disable-image-metadata", "--mmap", "--lora-apply-mode", "at_runtime"]
   builds:
     windows_cuda:
       # CUDA 12.8.1, CMAKE_CUDA_ARCHITECTURES 61;70;75;80;86;89;90;100;120 → includes RTX 50xx

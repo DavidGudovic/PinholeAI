@@ -1020,7 +1020,10 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   memory plan (sd.cpp auto-fit: free memory and where each part's weights went) from the model's
   last launch. `sd-server` runs at `--log-level info` for that plan, never verbose / debug (they
   print the request). Weights auto-fit keeps in system memory are memory-mapped from the model
-  file (`--mmap`) rather than copied into pinned memory, so the OS can page them out; because a
+  file (`--mmap`) rather than copied into pinned memory, so the OS can page them out. Add-ons are
+  applied during each step (`--lora-apply-mode at_runtime`), not merged into the weights, so those
+  mapped weights are not turned into private copies and a different add-on on the next picture
+  doesn't merge them all again; because a
   mapped file can't be deleted on Windows, deleting a model first stops the engine when it runs
   that model or has one of its files open. sd-server's per-tensor "unknown tensor" lines are not
   kept in the output buffer (they can run to hundreds and push out the useful lines).
