@@ -17,6 +17,7 @@ import {
   unsavedEditIds,
   unsavedIds,
   willQueue,
+  type AppState,
   type EditMode,
   type EditParams,
   type ImgRef,
@@ -476,12 +477,17 @@ export function makeActions(store: Store) {
     return saved;
   }
 
-  /** "Save all": asks for a folder, then saves every unsaved picture (or just `only`) there. False when cancelled; throws if some couldn't be saved. */
-  async function saveAll(only?: string[]): Promise<boolean> {
-    const ids = only ?? unsavedIds(get());
-    if (!ids.length) return true;
+  /**
+   * "Save all": asks for a folder, then saves every unsaved picture (or the ones `pick` returns)
+   * there. The list is read again once the folder is chosen, so pictures that finished while the
+   * folder picker was open are saved too. False when cancelled; throws if some couldn't be saved.
+   */
+  async function saveAll(pick: (s: AppState) => string[] = unsavedIds): Promise<boolean> {
+    if (!pick(get()).length) return true;
     const dir = await chooseFolder("Save all pictures to…", await saveFolderPath());
     if (!dir) return false;
+    const ids = pick(get());
+    if (!ids.length) return true;
     const batch = await api.saveImagesTo(ids, dir);
     dispatch({ type: "markSaved", entries: batch.saved });
     const n = batch.saved.length;
