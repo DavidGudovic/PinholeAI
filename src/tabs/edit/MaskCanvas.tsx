@@ -10,6 +10,17 @@ export interface MaskHandle {
 
 const PAINT = "rgba(245, 158, 11, 1)"; // amber-500, shown at reduced opacity
 
+/** Whether any pixel is painted. Anti-aliased eraser edges can leave a few nearly transparent pixels. */
+function hasPaint(c: HTMLCanvasElement): boolean {
+  const ctx = c.getContext("2d");
+  if (!ctx || !c.width || !c.height) return false;
+  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  for (let i = 3; i < px.length; i += 4) {
+    if (px[i] > 16) return true;
+  }
+  return false;
+}
+
 export function MaskCanvas({
   ref,
   width,
@@ -55,23 +66,13 @@ export function MaskCanvas({
     },
     async exportPng() {
       const c = canvas.current;
-      if (!c || !painted.current) return null;
+      // Everything erased again: nothing painted (an all-black mask would change nothing).
+      if (!c || !painted.current || !hasPaint(c)) return null;
       const tmp = document.createElement("canvas");
       tmp.width = c.width;
       tmp.height = c.height;
       const t = tmp.getContext("2d")!;
       t.drawImage(c, 0, 0);
-      // Everything erased again: nothing painted (an all-black mask would change nothing).
-      // Anti-aliased eraser edges can leave a few nearly transparent pixels.
-      const px = t.getImageData(0, 0, tmp.width, tmp.height).data;
-      let any = false;
-      for (let i = 3; i < px.length; i += 4) {
-        if (px[i] > 16) {
-          any = true;
-          break;
-        }
-      }
-      if (!any) return null;
       t.globalCompositeOperation = "source-in";
       t.fillStyle = "#fff";
       t.fillRect(0, 0, tmp.width, tmp.height);
@@ -111,12 +112,22 @@ export function MaskCanvas({
     }
   };
 
+  // After an eraser stroke that removed all the paint, the mask counts as empty again.
+  const endStroke = () => {
+    const wasStroke = !!last.current;
+    last.current = null;
+    if (wasStroke && erase && painted.current && canvas.current && !hasPaint(canvas.current)) {
+      painted.current = false;
+      onPaintedChange(false);
+    }
+  };
+
   return (
     <>
       <canvas
         ref={canvas}
         aria-label="Paint where the image may change"
-        className={`absolute inset-0 h-full w-full touch-none opacity-55 ${active ? "cursor-none" : "pointer-events-none"}`}
+        className={`absolute inset-0 h-full w-full touch-none opacity-55 ${active ? "cursor-none" : "pointer-events-none invisible"}`}
         onPointerDown={(e) => {
           if (!active || e.button !== 0) return;
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -133,15 +144,11 @@ export function MaskCanvas({
           stroke(last.current, p);
           last.current = p;
         }}
-        onPointerUp={() => {
-          last.current = null;
-        }}
-        onPointerCancel={() => {
-          last.current = null;
-        }}
+        onPointerUp={endStroke}
+        onPointerCancel={endStroke}
         onPointerLeave={() => {
           setCursor(null);
-          last.current = null;
+          endStroke();
         }}
       />
       {active && cursor && (

@@ -12,6 +12,8 @@ const hold = <T,>() => {
 let maskExport = hold<Blob | null>();
 // Whether the mask counts as painted as soon as it is switched on.
 let paintOnShow = true;
+// Whether the brush is on (the mask's `active`), as last rendered.
+let maskActive = false;
 let captioner: CaptionerStatus = { available: false } as CaptionerStatus;
 
 const model = {
@@ -50,6 +52,7 @@ vi.mock("../../lib/api", async (orig) => {
 vi.mock("./MaskCanvas", () => ({
   MaskCanvas: ({ ref, active, onPaintedChange }: { ref?: Ref<unknown>; active: boolean; onPaintedChange: (b: boolean) => void }) => {
     useImperativeHandle(ref, () => ({ clear: () => undefined, exportPng: () => maskExport.promise }));
+    maskActive = active;
     useEffect(() => {
       if (active && paintOnShow) onPaintedChange(true);
     }, [active, onPaintedChange]);
@@ -72,6 +75,7 @@ beforeAll(async () => {
 beforeEach(() => {
   maskExport = hold();
   paintOnShow = true;
+  maskActive = false;
   captioner = { available: false } as CaptionerStatus;
   globalThis.URL.createObjectURL = vi.fn(() => "blob:x") as typeof URL.createObjectURL;
   globalThis.URL.revokeObjectURL = vi.fn();
@@ -498,6 +502,36 @@ describe("Edit tab", () => {
     expect(req.fineTune.seed).toBeUndefined();
   });
 
+  it("Try again stays available after a second Add detail in a row", async () => {
+    paintOnShow = false;
+    const results: ((r: unknown) => void)[] = [];
+    vi.mocked(api.generate).mockImplementation(() => new Promise((res) => results.push(res as (r: unknown) => void)) as never);
+    const getImage = vi.spyOn(api, "getImage").mockResolvedValue(new ArrayBuffer(8));
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => store.dispatch({ type: "editLoad", ref: ref("a") }));
+    fireEvent.click(await screen.findByRole("radio", { name: "Fix details" }));
+    await flush();
+    const meta = (id: string, parentId: string) => ({ id, width: 64, height: 64, seed: 1, modelId: "m", modelLabel: "Test model", familyId: "", steps: 1, cfg: 1, guidance: null, sampler: null, scheduler: null, parentId });
+    for (const [n, [id, parent]] of [["r1", "a"], ["r2", "r1"]].entries()) {
+      fireEvent.click(screen.getByRole("button", { name: /^Add detail/ }));
+      await waitFor(() => expect(results).toHaveLength(n + 1));
+      await act(async () => results[n]({ images: [meta(id, parent)] }));
+      await waitFor(() => expect(store.getState().job).toBeNull());
+      await flush();
+      expect(store.getState().edit.chain.at(-1)?.imageId).toBe(id);
+      expect(screen.getByRole("button", { name: "Try again" })).toHaveProperty("disabled", false);
+    }
+    getImage.mockRestore();
+    vi.mocked(api.generate).mockImplementation(() => new Promise(() => undefined));
+  });
+
   it("adds an edit queued behind another after its result instead of replacing it", async () => {
     const results: ((r: unknown) => void)[] = [];
     vi.mocked(api.generate).mockImplementation(() => new Promise((res) => results.push(res as (r: unknown) => void)) as never);
@@ -756,12 +790,17 @@ describe("Also apply to…", () => {
     );
     await flush();
     expect(screen.getByText("Only change here")).toBeTruthy();
+    fireEvent.click(screen.getByRole("switch", { name: /Only change here/ }));
+    await flush();
+    expect(maskActive).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Also apply to/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Also apply to this picture" }));
     await flush();
     expect(store.getState().edit.alsoIds).toEqual(["c1"]);
     expect(screen.getByRole("button", { name: /Restyle 2 pictures/ })).toBeTruthy();
     expect(screen.queryByText("Only change here")).toBeNull();
+    // The brush is off too: the edit changes each whole picture.
+    expect(maskActive).toBe(false);
     expect(screen.getByText(/Also on 1 more picture/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Don't apply to other pictures" }));
     expect(store.getState().edit.alsoIds).toEqual([]);

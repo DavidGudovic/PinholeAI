@@ -292,3 +292,47 @@ async fn cancelled_upscale_stops_the_engine() {
     );
     assert_eq!(core.session.len(), 1, "only the source image");
 }
+
+/// With no engine running, Upscale starts the engine with the picture's model only
+/// when its file is there; otherwise it uses another installed model.
+#[tokio::test]
+async fn upscale_model_pick_skips_a_model_whose_file_is_gone() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let first = register_fake_model(&core, "sdxl");
+    let mut req = GenerateRequest::txt2img(first.clone(), "a cat");
+    req.fine_tune.width = Some(64);
+    req.fine_tune.height = Some(48);
+    let src_id = generate::generate(&core, req).await.unwrap().images[0]
+        .id
+        .clone();
+    let src = core.session.get(&src_id).unwrap();
+    let second = register_fake_model(&core, "sdxl");
+    assert_eq!(
+        generate::pick_model_for_upscale(&core, &src).as_deref(),
+        Some(first.as_str()),
+        "the picture's own model while its file is there"
+    );
+
+    let path = {
+        let idx = core.installed.lock();
+        idx.abs_path(&core.data, idx.get(&first).unwrap())
+    };
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        generate::pick_model_for_upscale(&core, &src).as_deref(),
+        Some(second.as_str())
+    );
+
+    // No file left: still the picture's model, so starting it names the missing file.
+    let path = {
+        let idx = core.installed.lock();
+        idx.abs_path(&core.data, idx.get(&second).unwrap())
+    };
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        generate::pick_model_for_upscale(&core, &src).as_deref(),
+        Some(first.as_str())
+    );
+}

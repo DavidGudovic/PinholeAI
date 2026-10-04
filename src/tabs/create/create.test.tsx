@@ -32,7 +32,7 @@ const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
 const { ChoicesNote, GenerateLabel, PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
-const { FinalPromptPreview, FineTuneDrawer } = await import("./FineTune");
+const { FinalPromptPreview, FineTuneDrawer, LoraSection } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
@@ -535,6 +535,29 @@ describe("Named sizes", () => {
     expect(store.getState().create.fineTune).toMatchObject({ width: 768, height: 1344 });
     expect(screen.getByRole("button", { name: "Phone" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Instagram" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("Typing in the prompt", () => {
+  it("does not re-render the dials, the Fine-tune drawer or the add-on list", async () => {
+    const store = createStore();
+    const renders = vi.fn();
+    // The drawer stays closed: open, it shows the final prompt preview, which follows the prompt.
+    withApp(
+      store,
+      <Profiler id="sidebar" onRender={renders}>
+        <Dials ui={null} />
+        <FineTuneDrawer ui={null} model={null} />
+        <LoraSection model={null} />
+      </Profiler>,
+    );
+    await flush();
+    const before = renders.mock.calls.length;
+    for (const prompt of ["a", "a f", "a fox"]) act(() => store.dispatch({ type: "patchCreate", patch: { prompt } }));
+    expect(renders.mock.calls.length).toBe(before);
+    // A dial change still shows up.
+    act(() => store.dispatch({ type: "setDial", dial: "quality", value: "best" }));
+    expect(renders.mock.calls.length).toBeGreaterThan(before);
   });
 });
 

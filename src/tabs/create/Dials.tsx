@@ -144,30 +144,36 @@ function useFitText(label: ReactNode, active: boolean) {
 }
 
 export function Dials({ ui }: { ui: FamilyUi | null }) {
-  const c = useAppState((s) => s.create);
+  // One selector per field: typing in the prompt replaces s.create, and these don't change.
+  const shape = useAppState((s) => s.create.shape);
+  const refShape = useAppState((s) => s.create.refShape);
+  const quality = useAppState((s) => s.create.quality);
+  const stick = useAppState((s) => s.create.stick);
+  const count = useAppState((s) => s.create.count);
+  const seed = useAppState((s) => s.create.fineTune.seed);
   const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
   const refSize = ref && ref.width > 0 && ref.height > 0 ? sizeForRatio(ref.width / ref.height, ui) : null;
   const selected = useAppState((s) => s.results.find((r) => r.id === s.selectedResultId) ?? null);
   const dispatch = useDispatch();
   const shapes = ui?.shapes ?? FALLBACK_SHAPES;
   const steps = ui?.qualitySteps;
-  const stickPos = c.stick ?? defaultStickPosition(ui);
+  const stickPos = stick ?? defaultStickPosition(ui);
   const stickVal = ui ? stickValue(ui, stickPos) : null;
-  const seedLocked = c.fineTune.seed != null;
+  const seedLocked = seed != null;
   const canLock = seedLocked || !!selected;
 
   return (
     <div className="space-y-3.5">
       <DialRow label="Shape">
         <ShapeChips
-          value={c.shape}
+          value={shape}
           shapes={shapes}
           onChange={(v) => dispatch({ type: "setDial", dial: "shape", value: v })}
           reference={
             refSize
               ? {
                   size: refSize,
-                  active: c.refShape,
+                  active: refShape,
                   onPick: () => dispatch({ type: "createRefShape" }),
                 }
               : null
@@ -178,7 +184,7 @@ export function Dials({ ui }: { ui: FamilyUi | null }) {
         <Segmented
           ariaLabel="Quality"
           stretch
-          value={c.quality}
+          value={quality}
           onChange={(v) => dispatch({ type: "setDial", dial: "quality", value: v })}
           options={QUALITIES.map((q, i) => ({
             value: q,
@@ -202,7 +208,7 @@ export function Dials({ ui }: { ui: FamilyUi | null }) {
       <DialRow label="How many">
         <Segmented
           ariaLabel="How many"
-          value={c.count}
+          value={count}
           onChange={(v) => dispatch({ type: "setDial", dial: "count", value: v })}
           options={[
             { value: 1 as const, label: "1" },

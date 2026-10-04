@@ -165,27 +165,34 @@ function UpscalerRow() {
 
 export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: InstalledModel | null }) {
   const [open, setOpen] = useState(false);
-  const c = useAppState((s) => s.create);
+  // One selector per field, so typing in the prompt doesn't re-render the drawer.
+  const ft = useAppState((s) => s.create.fineTune);
+  const loras = useAppState((s) => s.create.loras);
+  const quality = useAppState((s) => s.create.quality);
+  const shape = useAppState((s) => s.create.shape);
+  const stick = useAppState((s) => s.create.stick);
+  const styleId = useAppState((s) => s.create.styleId);
+  const refShape = useAppState((s) => s.create.refShape);
+  const refImageId = useAppState((s) => s.create.refImageId);
   const ref = useAppState((s) => (s.create.refImageId ? s.images[s.create.refImageId] : null));
   const styles = useAppState((s) => s.styles);
   const dispatch = useDispatch();
-  const ft = c.fineTune;
   const set = (patch: Partial<FineTune>) => dispatch({ type: "setFineTune", patch });
 
   const changedKeys = Object.keys(ft).filter((k) => k !== "negativePrompt" || !!ft.negativePrompt?.trim());
-  const changedCount = changedKeys.length + (c.loras.length ? 1 : 0);
+  const changedCount = changedKeys.length + (loras.length ? 1 : 0);
 
-  const stickPos = c.stick ?? defaultStickPosition(ui);
-  const steps = ui ? ui.qualitySteps[qualityIndex(c.quality)] : null;
-  const refSize = referenceSize(c, ref, ui);
-  const [sw, sh] = refSize ? fillReferenceSize(ft.width, ft.height, refSize) : (ui?.shapes[c.shape] ?? FALLBACK_SHAPES[c.shape]);
+  const stickPos = stick ?? defaultStickPosition(ui);
+  const steps = ui ? ui.qualitySteps[qualityIndex(quality)] : null;
+  const refSize = referenceSize({ refShape, refImageId }, ref, ui);
+  const [sw, sh] = refSize ? fillReferenceSize(ft.width, ft.height, refSize) : (ui?.shapes[shape] ?? FALLBACK_SHAPES[shape]);
   const cfgDefault = ui ? (ui.stickMapsTo === "cfg" && ui.showStick ? stickValue(ui, stickPos) : ui.defaultCfg) : null;
   const guidanceDefault = ui ? (ui.stickMapsTo === "guidance" ? stickValue(ui, stickPos) : ui.defaultGuidance) : null;
   const showGuidance = !ui || ui.stickMapsTo === "guidance" || ui.defaultGuidance != null;
   const showNegative = !ui || ui.usesNegativePrompt;
-  const hiresDefaultOn = !!ui?.hiresAtBest && c.quality === "best";
+  const hiresDefaultOn = !!ui?.hiresAtBest && quality === "best";
   const hiresOn = ft.hires ?? hiresDefaultOn;
-  const style = styles.find((s) => s.id === c.styleId) ?? null;
+  const style = styles.find((s) => s.id === styleId) ?? null;
 
   return (
     <section className="rounded-xl border border-neutral-200 dark:border-neutral-800">
@@ -356,19 +363,19 @@ export function FineTuneDrawer({ ui, model }: { ui: FamilyUi | null; model: Inst
 
 /** Add-on list with Add; `target`: the Create or the Edit tab's add-ons. */
 export function LoraSection({ model, target = "create" }: { model: InstalledModel | null; target?: "create" | "edit" }) {
-  const c = useAppState((s) => s[target]);
+  const used = useAppState((s) => s[target].loras);
   const loras = useAppState((s) => s.loras);
   const dispatch = useDispatch();
   const actions = useActions();
-  const setLoras = (list: typeof c.loras) => dispatch(target === "edit" ? { type: "patchEdit", patch: { loras: list } } : { type: "patchCreate", patch: { loras: list } });
-  const available = loras.filter((l) => !c.loras.some((u) => u.loraId === l.id));
+  const setLoras = (list: typeof used) => dispatch(target === "edit" ? { type: "patchEdit", patch: { loras: list } } : { type: "patchCreate", patch: { loras: list } });
+  const available = loras.filter((l) => !used.some((u) => u.loraId === l.id));
   const compatible = available.filter((l) => loraCompatible(l, model?.familyId));
   const incompatible = available.filter((l) => !loraCompatible(l, model?.familyId));
 
   return (
     <div className="col-span-2">
       <div className="mb-1.5 flex h-5 items-center justify-between">
-        <span className={cx("text-xs font-medium", c.loras.length ? "text-amber-800 dark:text-amber-300" : "text-neutral-600 dark:text-neutral-400")}>LoRAs (style add-ons)</span>
+        <span className={cx("text-xs font-medium", used.length ? "text-amber-800 dark:text-amber-300" : "text-neutral-600 dark:text-neutral-400")}>LoRAs (style add-ons)</span>
         <Popover
           align="end"
           width={320}
@@ -384,7 +391,7 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
                 <MenuItem
                   key={l.id}
                   onClick={() => {
-                    setLoras([...c.loras, { loraId: l.id, weight: DEFAULT_LORA_WEIGHT }]);
+                    setLoras([...used, { loraId: l.id, weight: DEFAULT_LORA_WEIGHT }]);
                     close();
                   }}
                   hint={l.trainedWords.length ? `Trigger: ${l.trainedWords.join(", ")}` : l.baseModel ?? undefined}
@@ -414,11 +421,11 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
           )}
         </Popover>
       </div>
-      {c.loras.length === 0 ? (
+      {used.length === 0 ? (
         <p className="text-xs text-neutral-400">None</p>
       ) : (
         <ul className="space-y-2">
-          {c.loras.map((u, i) => {
+          {used.map((u, i) => {
             const l = loras.find((x) => x.id === u.loraId);
             const ok = !!l && loraCompatible(l, model?.familyId);
             return (
@@ -435,10 +442,10 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
                     value={u.weight}
                     onChange={(e) => {
                       const w = Number.parseFloat(e.target.value);
-                      if (Number.isFinite(w)) setLoras(c.loras.map((x, j) => (j === i ? { ...x, weight: w } : x)));
+                      if (Number.isFinite(w)) setLoras(used.map((x, j) => (j === i ? { ...x, weight: w } : x)));
                     }}
                   />
-                  <IconButton label={`Remove ${l?.friendlyName ?? "add-on"}`} size="sm" onClick={() => setLoras(c.loras.filter((_, j) => j !== i))}>
+                  <IconButton label={`Remove ${l?.friendlyName ?? "add-on"}`} size="sm" onClick={() => setLoras(used.filter((_, j) => j !== i))}>
                     <X className="h-3.5 w-3.5" />
                   </IconButton>
                 </div>
@@ -450,7 +457,7 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
                   max={1.5}
                   step={0.05}
                   value={Math.min(1.5, Math.max(0, u.weight))}
-                  onChange={(e) => setLoras(c.loras.map((x, j) => (j === i ? { ...x, weight: Number(e.target.value) } : x)))}
+                  onChange={(e) => setLoras(used.map((x, j) => (j === i ? { ...x, weight: Number(e.target.value) } : x)))}
                 />
                 {!ok && (
                   <p className="mt-1 flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400">
