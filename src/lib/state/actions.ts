@@ -4,7 +4,7 @@
 // PRIVACY: prompt text passes through here into IPC only. Never log it.
 
 import * as api from "../api";
-import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledModel, LoraUse, ResultImage } from "../types";
+import type { CoreError, EngineStatus, FamilyUi, GenerateRequest, InstalledLora, InstalledModel, LoraUse, ResultImage } from "../types";
 import {
   ALSO_MAX,
   DEFAULT_LORA_WEIGHT,
@@ -55,8 +55,19 @@ export function makeActions(store: Store) {
   async function refreshSettings() {
     dispatch({ type: "setSettings", settings: await api.getSettings() });
   }
+  // Replies can come back out of order: only the newest refresh applies its result (or its error).
+  let modelsSeq = 0;
   async function refreshModels() {
-    const [models, loras] = await Promise.all([api.listModels(), api.listLoras().catch(() => [])]);
+    const mine = ++modelsSeq;
+    let models: InstalledModel[];
+    let loras: InstalledLora[];
+    try {
+      [models, loras] = await Promise.all([api.listModels(), api.listLoras().catch(() => [])]);
+    } catch (e) {
+      if (mine !== modelsSeq) return;
+      throw e;
+    }
+    if (mine !== modelsSeq) return;
     dispatch({ type: "setModels", models });
     dispatch({ type: "setLoras", loras });
   }
