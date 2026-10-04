@@ -363,16 +363,15 @@ enum SafeOnly {
     Earlier,
 }
 
-pub const LOOKS_UNDERAGE_MESSAGE: &str =
-    "Someone may look under 18. The age check can be wrong about young-looking adults.";
+pub const LOOKS_UNDERAGE_MESSAGE: &str = "Someone in this picture may look under 18.";
 pub const PHOTO_MADE_INTIMATE_MESSAGE: &str =
-    "This started from a picture you brought in that shows a face. Pinhole doesn't make intimate pictures from those.";
+    "This started from a picture you brought in that shows a face. Those can't be made intimate.";
 pub const SAFE_ONLY_MARKED_MESSAGE: &str =
-    "A model or add-on in use is marked safe images only on CivitAI, so it can't make intimate pictures.";
+    "A model or add-on in use is marked safe images only on CivitAI.";
 pub const SAFE_ONLY_UNCONFIRMED_MESSAGE: &str =
-    "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate pictures.";
+    "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only.";
 pub const SAFE_ONLY_EARLIER_MESSAGE: &str =
-    "This comes from a picture made with a safe-images-only model, so it can't be intimate.";
+    "This comes from a picture made with a safe-images-only model or add-on.";
 
 /// The sentence shown when the image check blocks a picture.
 fn block_message(rule: Rule, safe: Option<SafeOnly>) -> &'static str {
@@ -772,5 +771,34 @@ mod tests {
             block_message(Rule::SafeImagesOnlyModel, None),
             SAFE_ONLY_UNCONFIRMED_MESSAGE
         );
+    }
+
+    #[test]
+    fn each_rule_shows_its_block_message() {
+        let cases = [
+            (
+                block_message(Rule::LooksUnderage, None),
+                "Someone in this picture may look under 18.",
+            ),
+            (
+                block_message(Rule::PhotoMadeIntimate, None),
+                "This started from a picture you brought in that shows a face. Those can't be made intimate.",
+            ),
+            (
+                block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Marked)),
+                "A model or add-on in use is marked safe images only on CivitAI.",
+            ),
+            (
+                block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Unconfirmed)),
+                "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only.",
+            ),
+            (
+                block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Earlier)),
+                "This comes from a picture made with a safe-images-only model or add-on.",
+            ),
+        ];
+        for (shown, expected) in cases {
+            assert_eq!(shown, expected);
+        }
     }
 }

@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-const BLOCKED = { code: "blocked", message: "Someone may look under 18. The age check can be wrong about young-looking adults.", details: null };
+const BLOCKED = { code: "blocked", message: "Someone in this picture may look under 18.", details: null };
 const core = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => core);
 
