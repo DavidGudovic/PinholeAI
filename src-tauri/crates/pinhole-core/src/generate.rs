@@ -1838,10 +1838,14 @@ fn model_and_family(core: &AppCore, model_id: &str) -> CoreResult<(InstalledFile
     Ok((m, fam))
 }
 
-fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> {
+pub(crate) fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> {
     let idx = core.installed.lock();
     let reg = core.registry();
-    let usable = |f: &&InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).is_some();
+    // A known family and its file present (a linked drive may be disconnected).
+    let usable = |f: &&InstalledFile| {
+        f.family.as_deref().and_then(|id| reg.family(id)).is_some()
+            && idx.abs_path(&core.data, f).is_file()
+    };
     if let Some(m) = src
         .meta
         .as_ref()
