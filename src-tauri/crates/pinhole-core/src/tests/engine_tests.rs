@@ -35,6 +35,33 @@ async fn sd_args_keep_only_tuning_launch_defaults() {
         .any(|w| w[0] == "--model" && w[1] == "/m.safetensors"));
 }
 
+/// Add-ons are applied during each step (engine.yaml), so weights held in system memory
+/// stay mapped from the model file; a model's own `--lora-apply-mode` still wins.
+#[tokio::test]
+async fn sd_args_apply_add_ons_at_runtime() {
+    let (_tmp, core, _) = new_core();
+    let cfg = crate::engine_setup::engine_config(&core).unwrap();
+    let wiring = vec!["--model".to_string(), "/m.safetensors".to_string()];
+    let args = crate::engine::full_sd_args(&core, &wiring, &cfg);
+    let modes: Vec<&[String]> = args
+        .windows(2)
+        .filter(|w| w[0] == "--lora-apply-mode")
+        .collect();
+    assert_eq!(modes.len(), 1, "{args:?}");
+    assert_eq!(modes[0][1], "at_runtime", "{args:?}");
+
+    let own: Vec<String> = ["--model", "/m.safetensors", "--lora-apply-mode", "immediately"]
+        .map(String::from)
+        .to_vec();
+    let args = crate::engine::full_sd_args(&core, &own, &cfg);
+    let modes: Vec<&String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--lora-apply-mode")
+        .map(|w| &w[1])
+        .collect();
+    assert_eq!(modes, vec!["immediately"], "{args:?}");
+}
+
 #[tokio::test]
 async fn sd_args_force_loopback_and_privacy_flags() {
     let (_tmp, core, _) = new_core();
