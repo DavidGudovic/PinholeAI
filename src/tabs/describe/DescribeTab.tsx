@@ -133,6 +133,7 @@ export function DescribeTab() {
 
   const unavailable = status && !status.available;
   const installingNow = !!dl && isActiveDownload(dl);
+  const failedNow = dl?.state === "failed";
 
   return (
     <div className="grid h-full grid-cols-[minmax(0,1fr)_minmax(360px,440px)]">
@@ -197,10 +198,18 @@ export function DescribeTab() {
               {installingNow && dl ? (
                 <GroupProgress group={dl} compact onCancel={() => void cancelInstall(dl.groupId)} />
               ) : (
-                <Button variant="primary" onClick={() => void install()} disabled={installing}>
-                  {installing ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-4 w-4" />}
-                  Get the describer{status.downloadBytes ? ` (${formatBytes(status.downloadBytes)})` : ""}
-                </Button>
+                <>
+                  {failedNow && (
+                    <p className="text-xs text-red-600 dark:text-red-400" role="alert">
+                      {dl.error ?? "The download failed. Try again."}
+                    </p>
+                  )}
+                  <Button variant="primary" onClick={() => void install()} disabled={installing}>
+                    {installing ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-4 w-4" />}
+                    {failedNow ? "Try again" : "Get the describer"}
+                    {status.downloadBytes ? ` (${formatBytes(status.downloadBytes)})` : ""}
+                  </Button>
+                </>
               )}
               <details className="text-xs text-neutral-500">
                 <summary className="cursor-pointer select-none">Other options</summary>

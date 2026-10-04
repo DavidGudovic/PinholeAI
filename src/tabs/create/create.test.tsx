@@ -208,6 +208,19 @@ describe("Paste as text", () => {
   });
 });
 
+describe("model still needs parts", () => {
+  it("Get missing parts opens Models on the Installed view", async () => {
+    const { MissingPartsNote } = await import("./CreateTab");
+    const { getLastView } = await import("../models/lib/session");
+    const store = createStore();
+    withApp(store, <MissingPartsNote missing={["VAE"]} />);
+    expect(screen.getByText(/This model still needs VAE\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Get missing parts" }));
+    expect(store.getState().tab).toBe("models");
+    expect(getLastView()).toBe("installed");
+  });
+});
+
 describe("Improve my prompt", () => {
   const box = (prompt: string) => {
     const store = createStore();
@@ -261,6 +274,31 @@ describe("Improve my prompt", () => {
     await screen.findByRole("button", { name: /Get the helper/ });
     expect(api.improvePrompt).not.toHaveBeenCalled();
     expect(store.getState().create.prompt).toBe("a fox");
+  });
+
+  it("says why when the helper download failed and offers Try again", async () => {
+    vi.mocked(api.captionerStatus).mockResolvedValueOnce({ available: false, source: null, downloadBytes: 0, running: false });
+    const spy = vi.spyOn(api, "installCaptioner").mockResolvedValueOnce({ groupId: "helper-1" } as Awaited<ReturnType<typeof api.installCaptioner>>);
+    const store = box("a fox");
+    fireEvent.click(screen.getByRole("button", { name: /Improve/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Get the helper/ }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    const failed: GroupStatus = {
+      groupId: "helper-1",
+      label: "Helper",
+      kind: "captioner",
+      state: "failed",
+      currentFile: null,
+      fileIndex: 0,
+      fileCount: 1,
+      downloadedBytes: 0,
+      totalBytes: 1,
+      error: "The download timed out — check your internet connection and try again.",
+    };
+    act(() => store.dispatch({ type: "download", status: failed }));
+    expect((await screen.findByRole("alert")).textContent).toBe("The download timed out — check your internet connection and try again.");
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();
+    spy.mockRestore();
   });
 });
 

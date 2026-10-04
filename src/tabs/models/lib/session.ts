@@ -49,6 +49,17 @@ export const onHelpersRequest = (cb: () => void) => {
   return () => void helperListeners.delete(cb);
 };
 
+/** "Get missing parts" in Create: the Models tab opens its Installed view. */
+const installedListeners = new Set<() => void>();
+export const requestInstalledView = () => {
+  lastView = "installed";
+  for (const l of installedListeners) l();
+};
+export const onInstalledRequest = (cb: () => void) => {
+  installedListeners.add(cb);
+  return () => void installedListeners.delete(cb);
+};
+
 export const rememberView = (v: "browse" | "helpers" | "installed") => {
   lastView = v;
 };

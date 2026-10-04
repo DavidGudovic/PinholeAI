@@ -80,3 +80,15 @@ describe("InstallDialog size choice", () => {
     expect(await screen.findByText(/Checking the files on CivitAI/)).toBeTruthy();
   });
 });
+
+describe("InstallDialog plan error", () => {
+  it("offers Try again when the plan fails to load, and loads it again", async () => {
+    api.planCivitaiInstall.mockRejectedValueOnce({ code: "offline", message: "CivitAI didn't answer." });
+    render(<InstallDialog versionId={7} onClose={() => undefined} />);
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    api.planCivitaiInstall.mockResolvedValueOnce(plan(1));
+    fireEvent.click(retry);
+    expect(await screen.findByRole("radio", { name: /Compact \(FP8\)/ })).toBeTruthy();
+    expect(api.planCivitaiInstall).toHaveBeenCalledTimes(2);
+  });
+});

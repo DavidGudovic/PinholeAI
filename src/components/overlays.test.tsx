@@ -341,3 +341,45 @@ describe("ImageViewer", () => {
     ).toEqual({ scale: 1, x: 0, y: 0 });
   });
 });
+
+describe("modal focus stays inside", () => {
+  const tick = () => act(() => new Promise((r) => setTimeout(r, 0)));
+
+  it("Tab and Shift+Tab wrap around inside a dialog", async () => {
+    render(
+      <>
+        <button>Behind</button>
+        <Dialog open onClose={() => undefined} title="Key" footer={<button>Save</button>}>
+          <input aria-label="Name" />
+        </Dialog>
+      </>,
+    );
+    await tick();
+    const dialog = screen.getByRole("dialog");
+    const close = screen.getByRole("button", { name: "Close" });
+    const save = screen.getByRole("button", { name: "Save" });
+    save.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(save);
+  });
+
+  it("the image viewer takes focus and gives it back on close", async () => {
+    const view = (open: boolean) => (
+      <>
+        <button>Generate</button>
+        {open && <ImageViewer images={[{ url: "blob:a", width: 10, height: 10, alt: "A" }]} index={0} onIndex={() => undefined} onClose={() => undefined} />}
+      </>
+    );
+    const { rerender } = render(view(false));
+    const generate = screen.getByRole("button", { name: "Generate" });
+    generate.focus();
+    rerender(view(true));
+    await tick();
+    expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Image viewer" }));
+    rerender(view(false));
+    await tick();
+    expect(document.activeElement).toBe(generate);
+  });
+});

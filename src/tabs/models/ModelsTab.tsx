@@ -10,7 +10,7 @@ import { BrowseView } from "./BrowseView";
 import { DownloadsPanel } from "./DownloadsPanel";
 import { InstalledView } from "./InstalledView";
 import { ScrollRootContext, useIsVisible } from "./lib/preview";
-import { getLastView, hasAddonRequest, onAddonRequest, onHelpersRequest, rememberView } from "./lib/session";
+import { getLastView, hasAddonRequest, onAddonRequest, onHelpersRequest, onInstalledRequest, rememberView } from "./lib/session";
 import { HelpersView } from "./HelpersView";
 
 type View = "browse" | "helpers" | "installed";
@@ -54,6 +54,16 @@ export function ModelsTab() {
       onHelpersRequest(() => {
         rememberView("helpers");
         setViewState("helpers");
+      }),
+    [],
+  );
+
+  // "Get missing parts" in Create opens Installed.
+  useEffect(
+    () =>
+      onInstalledRequest(() => {
+        rememberView("installed");
+        setViewState("installed");
       }),
     [],
   );

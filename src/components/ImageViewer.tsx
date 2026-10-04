@@ -17,7 +17,7 @@ import {
   ScanSearch,
   X,
 } from "lucide-react";
-import { IconButton, cx, focusRing, useEscape } from "./ui";
+import { IconButton, cx, focusRing, useEscape, useModalFocus } from "./ui";
 
 export interface ViewerImage {
   url: string;
@@ -70,6 +70,9 @@ export function ImageViewer({
   onClose: () => void;
 }) {
   useEscape(true, onClose);
+  // Focus moves into the viewer while it is open and back to where it was on close.
+  const root = useRef<HTMLDivElement>(null);
+  useModalFocus(true, root);
   const img = images[index];
   const stage = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -214,10 +217,12 @@ export function ImageViewer({
   const percent = Math.round(view.scale * 100);
   return createPortal(
     <div
+      ref={root}
       role="dialog"
       aria-modal="true"
       aria-label="Image viewer"
-      className="dark fixed inset-0 z-[60] flex flex-col bg-neutral-950 text-white"
+      tabIndex={-1}
+      className="dark fixed inset-0 z-[60] flex flex-col bg-neutral-950 text-white outline-none"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-neutral-400 tabular-nums">

@@ -313,8 +313,9 @@ export function useEscape(open: boolean, onClose: () => void) {
 /**
  * Modal focus: on open, remember the focused element and move focus into the
  * panel (the first match of `first`, else the panel itself); on close, put it back.
+ * Tab and Shift+Tab wrap around inside the panel, so focus stays in it while it is open.
  */
-function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, first?: string) {
+export function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, first?: string) {
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
@@ -322,12 +323,43 @@ function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, firs
       const el = first ? panel.current?.querySelector<HTMLElement>(first) : null;
       (el ?? panel.current)?.focus();
     }, 0);
+    const root = panel.current;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !root) return;
+      const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => !el.closest("[hidden], [inert]"));
+      if (!items.length) {
+        e.preventDefault();
+        root.focus();
+        return;
+      }
+      const active = document.activeElement;
+      const firstEl = items[0];
+      const lastEl = items[items.length - 1];
+      if (e.shiftKey && (active === firstEl || active === root)) {
+        e.preventDefault();
+        lastEl.focus();
+      } else if (!e.shiftKey && active === lastEl) {
+        e.preventDefault();
+        firstEl.focus();
+      }
+    };
+    root?.addEventListener("keydown", onKey);
     return () => {
       clearTimeout(t);
+      root?.removeEventListener("keydown", onKey);
       prev?.focus?.();
     };
   }, [open, panel, first]);
 }
+
+const FOCUSABLE = [
+  "a[href]",
+  "button:not(:disabled)",
+  "input:not(:disabled):not([type=hidden])",
+  "select:not(:disabled)",
+  "textarea:not(:disabled)",
+  "[tabindex]:not([tabindex='-1'])",
+].join(", ");
 
 /** Centered modal. */
 export function Dialog({

@@ -99,6 +99,32 @@ function NumberInput({
   );
 }
 
+/** Add-on weight field. Keeps its own text so it can be cleared or start with "-";
+ *  only finite numbers are passed on, and leaving the field shows the stored weight. */
+export function LoraWeightInput({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => {
+    setText((t) => (t.trim() !== "" && Number(t) === value ? t : String(value)));
+  }, [value]);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      className={cx(inputClass, "h-7 w-18 px-2 py-0 text-xs tabular-nums")}
+      step={0.05}
+      min={-2}
+      max={3}
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const w = Number.parseFloat(e.target.value);
+        if (Number.isFinite(w)) onChange(w);
+      }}
+      onBlur={() => setText(String(value))}
+    />
+  );
+}
+
 type Tri = "auto" | "on" | "off";
 const tri = (v: boolean | null | undefined): Tri => (v == null ? "auto" : v ? "on" : "off");
 const fromTri = (t: Tri): boolean | null => (t === "auto" ? null : t === "on");
@@ -432,18 +458,10 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
               <li key={u.loraId} className="rounded-lg border border-neutral-200 px-2.5 py-2 dark:border-neutral-800">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate text-sm">{l?.friendlyName ?? "Missing add-on"}</span>
-                  <input
-                    type="number"
-                    aria-label={`Weight for ${l?.friendlyName ?? "add-on"}`}
-                    className={cx(inputClass, "h-7 w-18 px-2 py-0 text-xs tabular-nums")}
-                    step={0.05}
-                    min={-2}
-                    max={3}
+                  <LoraWeightInput
+                    label={`Weight for ${l?.friendlyName ?? "add-on"}`}
                     value={u.weight}
-                    onChange={(e) => {
-                      const w = Number.parseFloat(e.target.value);
-                      if (Number.isFinite(w)) setLoras(used.map((x, j) => (j === i ? { ...x, weight: w } : x)));
-                    }}
+                    onChange={(w) => setLoras(used.map((x, j) => (j === i ? { ...x, weight: w } : x)))}
                   />
                   <IconButton label={`Remove ${l?.friendlyName ?? "add-on"}`} size="sm" onClick={() => setLoras(used.filter((_, j) => j !== i))}>
                     <X className="h-3.5 w-3.5" />

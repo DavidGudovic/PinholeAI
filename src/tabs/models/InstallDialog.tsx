@@ -147,7 +147,16 @@ export function InstallDialog({ versionId, title, onClose }: { versionId: number
         footer={footer}
       >
         {!plan && !error && <PlanSkeleton />}
-        {!plan && error && <ErrorNotice error={error} />}
+        {!plan && error && (
+          <ErrorNotice
+            error={error}
+            action={
+              <Button size="sm" onClick={() => setAttempt((a) => a + 1)}>
+                Try again
+              </Button>
+            }
+          />
+        )}
         {plan && (
           <div className="space-y-5 text-sm">
             {plan.blockedReason && (
