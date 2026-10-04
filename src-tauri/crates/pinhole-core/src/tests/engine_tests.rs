@@ -50,9 +50,14 @@ async fn sd_args_apply_add_ons_at_runtime() {
     assert_eq!(modes.len(), 1, "{args:?}");
     assert_eq!(modes[0][1], "at_runtime", "{args:?}");
 
-    let own: Vec<String> = ["--model", "/m.safetensors", "--lora-apply-mode", "immediately"]
-        .map(String::from)
-        .to_vec();
+    let own: Vec<String> = [
+        "--model",
+        "/m.safetensors",
+        "--lora-apply-mode",
+        "immediately",
+    ]
+    .map(String::from)
+    .to_vec();
     let args = crate::engine::full_sd_args(&core, &own, &cfg);
     let modes: Vec<&String> = args
         .windows(2)
