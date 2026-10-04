@@ -53,8 +53,8 @@ pub(crate) struct EngineSlot {
     pub proc: Option<EngineProcess>,
     pub args: Vec<String>,
     pub model_id: Option<String>,
-    /// An img_gen job was submitted to this process, so it may hold finished
-    /// results (see [`IDLE_STOP_AFTER`]).
+    /// An img_gen job or an upscale was sent to this process, so it may hold
+    /// finished results (see [`IDLE_STOP_AFTER`]).
     pub results_cached: bool,
     /// This process's per-launch API key ([`sdapi::API_KEY_ENV`]).
     pub api_key: Option<String>,
@@ -611,6 +611,10 @@ pub(crate) async fn ensure_engine(
     cancel: &CancellationToken,
     t0: Instant,
 ) -> CoreResult<SdClient> {
+    // Cancelled before this point: keep the loaded engine as it is.
+    if cancel.is_cancelled() {
+        return Err(CoreError::new("cancelled", "Cancelled."));
+    }
     let external = core.gen.external.lock().clone();
     if let Some(url) = external {
         core.gen.external_launches.lock().push(wiring_args.to_vec());

@@ -336,3 +336,46 @@ async fn upscale_model_pick_skips_a_model_whose_file_is_gone() {
         Some(first.as_str())
     );
 }
+
+/// An engine that only ran an upscale is stopped by the idle timer too.
+#[cfg(unix)]
+#[tokio::test]
+async fn idle_stop_covers_an_engine_that_only_upscaled() {
+    let (tmp, core, _rec) = new_core();
+    install_fake_upscaler(&core);
+    *core.gen.idle_stop_after.lock() = Duration::from_millis(50);
+    // Nothing answers on the engine's port: the upscale request fails.
+    let port = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        l.local_addr().unwrap().port()
+    };
+    let script = tmp.path().join("fake-sd.sh");
+    std::fs::write(&script, "#!/bin/sh\nexec sleep 30\n").unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let proc = pinhole_engine::EngineProcess::spawn(
+        &script,
+        &[],
+        port,
+        Arc::new(pinhole_engine::LogBuffer::default()),
+    )
+    .unwrap();
+    put_engine(&core, proc, false).await;
+    let img = session::import_image(
+        &core,
+        pinhole_engine::testutil::solid_png(8, 8, [1, 2, 3, 255]),
+    )
+    .unwrap();
+    generate::upscale_image(&core, &img.id, 4)
+        .await
+        .unwrap_err();
+    for _ in 0..100 {
+        if !engine_running(&core).await {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(!engine_running(&core).await, "idle engine stopped");
+}

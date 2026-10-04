@@ -66,18 +66,19 @@ pub(crate) const MORE_ROOM_RESERVE_GIB: u8 = 4;
 /// (reserve at launch, reserve for the "more room" retry) in GiB for a card
 /// with `vram_gb` (0 = unknown). Smaller cards keep less free: the reserve
 /// comes out of what auto-fit may keep on the card (free − reserve instead of
-/// free − 0.5 GiB). The retry stays at a quarter of the card at most, because
-/// sd.cpp treats a reserve at or above the free memory as no limit at all
-/// (ggml_graph_cut.cpp `resolve_auto_max_vram_bytes`). Below 8 GB the launch
-/// keeps the engine's own default.
+/// free − 0.5 GiB). The retry stays at a quarter of the card's nominal size at
+/// most, because sd.cpp treats a reserve at or above the free memory as no
+/// limit at all (ggml_graph_cut.cpp `resolve_auto_max_vram_bytes`). Below 8 GB the launch
+/// keeps the engine's own default. The buckets start half a GB below the
+/// nominal size, because cards report a little less (16303 MiB → 15.9 GB).
 pub(crate) fn vram_reserves(vram_gb: f32) -> (u8, u8) {
     if !(vram_gb.is_finite() && vram_gb > 0.0) {
         (1, 2)
-    } else if vram_gb >= 16.0 {
+    } else if vram_gb >= 15.5 {
         (VRAM_RESERVE_GIB, MORE_ROOM_RESERVE_GIB)
-    } else if vram_gb >= 12.0 {
+    } else if vram_gb >= 11.5 {
         (VRAM_RESERVE_GIB, 3)
-    } else if vram_gb >= 8.0 {
+    } else if vram_gb >= 7.5 {
         (1, 2)
     } else if vram_gb >= 4.0 {
         (0, 1)
@@ -248,6 +249,23 @@ pub(crate) fn memory_choices(
     };
     fb.more_room_gib = more_room;
     fb
+}
+
+/// Remember the automatic choices `learned` by a retry that then succeeded
+/// for `model_id` (RAM only, app session), and send the engine status again
+/// so its note shows them.
+pub(crate) fn remember_memory_choices(core: &AppCore, model_id: &str, learned: MemFallback) {
+    if learned == MemFallback::default() {
+        return;
+    }
+    {
+        let mut remembered = core.gen.mem_fallback.lock();
+        let entry = remembered.entry(model_id.to_string()).or_default();
+        entry.te_on_cpu |= learned.te_on_cpu;
+        entry.vae_tiling |= learned.vae_tiling;
+        entry.vram_reserve_gib = entry.vram_reserve_gib.max(learned.vram_reserve_gib);
+    }
+    crate::engine_setup::emit_status(core);
 }
 
 /// Weights in system memory stick while this model runs with the same
@@ -829,8 +847,12 @@ mod tests {
     #[test]
     fn vram_reserve_scales_with_the_card() {
         assert_eq!(vram_reserves(16.0), (2, 4));
+        assert_eq!(vram_reserves(15.9), (2, 4), "16 GB card as reported");
+        assert_eq!(vram_reserves(15.6), (2, 4));
         assert_eq!(vram_reserves(12.0), (2, 3));
+        assert_eq!(vram_reserves(11.9), (2, 3));
         assert_eq!(vram_reserves(8.0), (1, 2));
+        assert_eq!(vram_reserves(7.9), (1, 2));
         assert_eq!(vram_reserves(6.0), (0, 1));
         assert_eq!(vram_reserves(4.0), (0, 1));
         assert_eq!(vram_reserves(2.0), (0, 0));

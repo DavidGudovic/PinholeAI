@@ -992,16 +992,17 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   portable mode its profile folder lives in `Data/webview`.
 - **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
 - **Running out of graphics memory**: before `sd-server` starts, leftover Pinhole engines (processes
-  under `Data/engine/` that this app isn't running) are killed, an idle Describe engine is stopped,
-  and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
-  loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
+  under `Data/engine/` that this app isn't running) are killed and on NVIDIA `nvidia-smi` tells
+  how much graphics memory other programs use (a note while loading when it's more than a quarter
+  of the card and more than 1 GB). With a GPU engine build an idle Describe engine is stopped
+  before each job and upscale, also when the loaded image engine is reused. A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
   processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
   note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising
   runs out, more of the card is kept free (`--max-vram -4` instead of `-2` on a 16 GB card, less on
-  smaller cards, at most a quarter of the card; remembered per model for the app session, shown in
-  the engine note); then the
+  smaller cards, at most a quarter of the card's nominal size; remembered per model for the app
+  session once the retried job succeeds, shown in the engine note); then the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
   every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
   model runs with the same settings, also after the idle stop — another model, other settings or
