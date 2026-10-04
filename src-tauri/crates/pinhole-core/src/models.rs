@@ -776,10 +776,11 @@ pub(crate) async fn start_install(
         if items.is_empty() {
             return Err(CoreError::invalid("This is already downloading."));
         }
-        let total: u64 = items.iter().map(|(f, _)| f.size_bytes).sum();
         let models_root =
             models_dir_for_write(core, ModelKind::Checkpoint).map(|_| core.data.models_root())?;
-        check_free_space(&models_root, total).map_err(|e| disk_space_error(e, &items[0].0.url))?;
+        let first_url = items[0].0.url.clone();
+        // Bytes still to download: a cancelled download resumes from its `.part`.
+        let mut need = 0u64;
 
         let mut specs = Vec::new();
         let mut planned: Vec<(PathBuf, String, Registration)> = Vec::new();
@@ -812,6 +813,7 @@ pub(crate) async fn start_install(
                             .relative(p)
                             .is_some_and(|rel| index.has_rel_path(&rel)))
             });
+            need = need.saturating_add(local::still_to_download(&dest, f.size_bytes));
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url)
                     .into_iter()
@@ -839,6 +841,7 @@ pub(crate) async fn start_install(
             };
             planned.push((dest, inflight_key(&f), reg));
         }
+        check_free_space(&models_root, need).map_err(|e| disk_space_error(e, &first_url))?;
         let group_id =
             core.downloads
                 .enqueue_kind(label, pinhole_net::download::DownloadKind::Model, specs);
