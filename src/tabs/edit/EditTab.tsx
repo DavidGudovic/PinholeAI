@@ -168,7 +168,10 @@ export function EditTab() {
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
-    if (editBusy(store.getState())) return;
+    if (editBusy(store.getState())) {
+      actions.toast("Wait for the edits in progress to finish first.");
+      return;
+    }
     setError(null);
     setImporting(true);
     try {
@@ -184,7 +187,10 @@ export function EditTab() {
   const picker = useFilePicker((f) => void load(f));
 
   const loadSecond = async (f: File) => {
-    if (editBusy(store.getState())) return;
+    if (editBusy(store.getState())) {
+      actions.toast("Wait for the edits in progress to finish first.");
+      return;
+    }
     setError(null);
     setImporting(true); // Apply waits for image 2
     try {
@@ -302,7 +308,10 @@ export function EditTab() {
       running.current = false;
     }
   };
-  usePrimaryAction("edit", () => void run());
+  // Ctrl/Cmd+Enter does nothing while the Apply button is disabled.
+  usePrimaryAction("edit", () => {
+    if (canRun) void run();
+  });
 
   const upscale = async (factor: 2 | 4) => {
     if (importing || !current) return;

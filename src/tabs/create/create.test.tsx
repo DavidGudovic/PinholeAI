@@ -32,7 +32,7 @@ const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
 const { ChoicesNote, GenerateLabel, PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
-const { FinalPromptPreview, FineTuneDrawer, LoraSection } = await import("./FineTune");
+const { FinalPromptPreview, FineTuneDrawer, LoraSection, PromptPreview } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
@@ -187,6 +187,22 @@ describe("Final prompt preview", () => {
     await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(1));
     act(() => store.dispatch({ type: "setStyles", styles: [{ ...style, positive: "oil painting" }] }));
     await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(2), { timeout: 2000 });
+  });
+
+  it("refreshes when only the source picture or the edit mode changes", async () => {
+    const base = { modelId: "m", mode: "img2img", prompt: "", styleId: null, fineTune: {}, loras: [], addTriggerWords: true, initImageId: "a", fixDetails: true } as unknown as GenerateRequest;
+    const store = createStore();
+    const view = (req: GenerateRequest) => (
+      <StoreContext.Provider value={store}>
+        <PromptPreview req={req} empty="" />
+      </StoreContext.Provider>
+    );
+    const { rerender } = render(view(base));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(1));
+    rerender(view({ ...base, initImageId: "b" }));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    rerender(view({ ...base, initImageId: "b", fixDetails: false, extend: { width: 96, height: 64, left: 16, top: 0 } }));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(3), { timeout: 2000 });
   });
 });
 

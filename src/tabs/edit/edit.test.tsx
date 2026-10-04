@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { Profiler, useEffect, useImperativeHandle, type Ref } from "react";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { CaptionerStatus, InstalledModel } from "../../lib/types";
 
 const hold = <T,>() => {
@@ -42,6 +42,7 @@ vi.mock("../../lib/api", async (orig) => {
     listModels: vi.fn(async () => [model]),
     importImage: vi.fn(async () => ({ id: "mask", width: 8, height: 8 })),
     generate: vi.fn(() => new Promise(() => undefined)),
+    installSafetyCheck: vi.fn(real.installSafetyCheck),
     captionerStatus: vi.fn(async () => captioner),
     describeImage: vi.fn(async () => "a lighthouse"),
     improvePrompt: vi.fn(async (p: string) => ({ text: `${p}. Warm street lights. Keep the composition unchanged.`, note: null })),
@@ -260,6 +261,55 @@ describe("Edit tab", () => {
     await waitFor(() => expect(api.generate).toHaveBeenCalledTimes(1));
     const req = vi.mocked(api.generate).mock.calls[0][0];
     expect(req).toMatchObject({ initImageId: "a", extend: { height: 64 } });
+  });
+
+  it("Ctrl+Enter does nothing while the Extend button is disabled", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "extend", extendTo: "square" } });
+    });
+    await flush();
+    expect((screen.getByRole("button", { name: /^Extend/ }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => void runPrimaryAction("edit"));
+    await flush();
+    expect(api.generate).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Pick another shape to extend it/)).toBeNull();
+  });
+
+  it("Try again after setting up the safety check runs the edit even when the prompt was cleared", async () => {
+    vi.mocked(api.generate).mockRejectedValueOnce({ code: "check_missing", message: "The safety check isn't set up.", details: null });
+    vi.mocked(api.installSafetyCheck).mockResolvedValueOnce({} as Awaited<ReturnType<typeof api.installSafetyCheck>>);
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "restyle", restylePrompt: "watercolor" } });
+    });
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Restyle/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Set up safety check/ }));
+    const panel = screen.getByText(/The safety check isn't set up/).closest("div.space-y-2") as HTMLElement;
+    const retry = await within(panel).findByRole("button", { name: "Try again" });
+    act(() => store.dispatch({ type: "patchEdit", patch: { restylePrompt: "" } }));
+    await flush();
+    fireEvent.click(retry);
+    // The edit runs again and says what it needs, in place of the old error.
+    expect(await screen.findByText(/Describe how it should look \(or pick a style\) first/)).toBeTruthy();
+    expect(screen.queryByText(/The safety check isn't set up/)).toBeNull();
   });
 
   it("runs one edit when Restyle is pressed twice while the mask is exported", async () => {
@@ -563,6 +613,48 @@ describe("Edit tab", () => {
     expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a", "r1", "r2"]);
     getImage.mockRestore();
     vi.mocked(api.generate).mockImplementation(() => new Promise(() => undefined));
+  });
+
+  it("says to wait when a picture is dropped on the stage while an edit runs", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    act(() => store.dispatch({ type: "jobStart", kind: "edit", at: 0, count: 1 }));
+    const stage = screen.getByRole("complementary", { name: "Edit settings" }).nextElementSibling!;
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    const png = new File(["x"], "b.png", { type: "image/png" });
+    Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"], files: [png], items: [], dropEffect: "copy" } });
+    act(() => void stage.dispatchEvent(drop));
+    expect(store.getState().toasts.map((t) => t.text)).toContain("Wait for the edits in progress to finish first.");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+  });
+
+  it("says to wait when image 2 is chosen while an edit runs", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "patchEdit", patch: { mode: "instruction" } });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    // The file dialog for image 2 was opened before the edit started.
+    const input = screen.getByRole("button", { name: /Add another image/ }).closest("div")!.parentElement!.querySelector("input[type=file]") as HTMLInputElement;
+    act(() => store.dispatch({ type: "jobStart", kind: "edit", at: 0, count: 1 }));
+    const png = new File(["x"], "b.png", { type: "image/png" });
+    act(() => void fireEvent.change(input, { target: { files: [png] } }));
+    await flush();
+    expect(store.getState().toasts.map((t) => t.text)).toContain("Wait for the edits in progress to finish first.");
+    expect(api.importImage).not.toHaveBeenCalled();
+    expect(store.getState().edit.secondImageId).toBeNull();
   });
 
   it("Ctrl+Z doesn't move the history behind an open dialog", async () => {

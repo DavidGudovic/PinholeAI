@@ -44,6 +44,7 @@ vi.mock("./platform", async (orig) => {
 });
 
 const apiMod = await import("../api");
+const platformMod = await import("./platform");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
 const { CLOSE_STRENGTH } = await import("./request");
@@ -796,8 +797,24 @@ describe("unsaved pictures", () => {
     const { store, actions } = setup();
     store.dispatch({ type: "addResults", batch: null, images: [img("a"), img("b")], refs: [ref("a"), ref("b")] });
     vi.mocked(apiMod.saveImagesTo).mockResolvedValueOnce({ saved: [{ id: "b", path: "/x/b.png" }], failed: 0 } as never);
-    expect(await actions.saveAll(["b"])).toBe(true);
+    expect(await actions.saveAll(() => ["b"])).toBe(true);
     expect(apiMod.saveImagesTo).toHaveBeenCalledWith(["b"], "/x");
+  });
+
+  it("Save all also saves pictures that finished while the folder picker was open", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] });
+    let pick: (dir: string) => void = () => undefined;
+    vi.mocked(platformMod.chooseFolder).mockImplementationOnce(() => new Promise((res) => (pick = res)));
+    vi.mocked(apiMod.saveImagesTo).mockClear();
+    const saving = actions.saveAll();
+    await tick();
+    store.dispatch({ type: "addResults", batch: null, images: [img("b")], refs: [ref("b")] });
+    pick("/x");
+    expect(await saving).toBe(true);
+    const [ids, dir] = vi.mocked(apiMod.saveImagesTo).mock.calls[0];
+    expect([...ids].sort()).toEqual(["a", "b"]);
+    expect(dir).toBe("/x");
   });
 
   it("remembers the prompt of each Generate for Up/Down recall", async () => {
