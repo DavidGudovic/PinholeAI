@@ -301,7 +301,7 @@ pub enum Blocked {
 }
 
 impl Blocked {
-    /// The sentence shown to the user.
+    /// The message shown to the user.
     pub fn message(self) -> &'static str {
         match self {
             Blocked::MinorWithSexual | Blocked::DocumentCopy => BLOCKED_MESSAGE,

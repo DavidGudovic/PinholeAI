@@ -1,7 +1,7 @@
 //! The local image check at result intake (RELEASE-SPEC §4). Every generated picture
 //! is measured by `pinhole_check` before it enters the session; if one picture of a
-//! batch is blocked, the whole batch is dropped with a one-sentence message for the rule
-//! ([`block_message`]).
+//! batch is blocked, the whole batch is dropped with a message naming the rule
+//! ([`block_message()`]).
 //!
 //! Fail closed: without all check files (or with a damaged one) Create and Edit stop
 //! with `check_missing`, which the UI answers with "Set up safety check". The check is
