@@ -153,6 +153,34 @@ fn startup_error_text(error: &str, data_root: Option<&std::path::Path>) -> Strin
     text
 }
 
+/// What the shell does once `setup` has run.
+#[derive(Debug, PartialEq)]
+enum AfterSetup {
+    Run,
+    /// Show this in a message box; closing it exits with code 1.
+    ShowError(String),
+    /// Exit with code 1 now: under WebDriver no one is there to close a message box.
+    Exit,
+}
+
+/// A setup error is also written to stderr, in case the message box can't be shown.
+fn after_setup(
+    result: Result<(), String>,
+    data_root: Option<&std::path::Path>,
+    webdriver: bool,
+) -> AfterSetup {
+    let Err(e) = result else {
+        return AfterSetup::Run;
+    };
+    let text = startup_error_text(&e, data_root);
+    eprintln!("{text}");
+    if webdriver {
+        AfterSetup::Exit
+    } else {
+        AfterSetup::ShowError(text)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     apply_webkit_env_fixes();
@@ -162,12 +190,16 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let mut data_root = None;
-            if let Err(e) = setup(app, &mut data_root) {
-                app.dialog()
-                    .message(startup_error_text(&e, data_root.as_deref()))
+            let result = setup(app, &mut data_root);
+            match after_setup(result, data_root.as_deref(), under_webdriver()) {
+                AfterSetup::Run => {}
+                AfterSetup::ShowError(text) => app
+                    .dialog()
+                    .message(text)
                     .title("Pinhole")
                     .kind(MessageDialogKind::Error)
-                    .show(|_| std::process::exit(1));
+                    .show(|_| std::process::exit(1)),
+                AfterSetup::Exit => std::process::exit(1),
             }
             Ok(())
         })
@@ -186,7 +218,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{app_url_allowed, startup_error_text, webkit_env_fixes};
+    use super::{after_setup, app_url_allowed, startup_error_text, webkit_env_fixes, AfterSetup};
+
+    #[test]
+    fn a_setup_error_is_shown_instead_of_ending_the_build() {
+        assert_eq!(after_setup(Ok(()), None, false), AfterSetup::Run);
+        let root = std::path::Path::new("/d/Data");
+        let err = || Err("Permission denied".to_string());
+        assert_eq!(
+            after_setup(err(), Some(root), false),
+            AfterSetup::ShowError(startup_error_text("Permission denied", Some(root)))
+        );
+        assert_eq!(after_setup(err(), Some(root), true), AfterSetup::Exit);
+    }
 
     #[test]
     fn startup_error_names_the_data_folder() {
