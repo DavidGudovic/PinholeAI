@@ -535,10 +535,16 @@ pub async fn install_update(
         return Err(CoreError::invalid("An update is already under way."));
     }
     let result = install_inner(core, &current, version).await;
-    if result.is_err() {
+    if result.as_ref().is_err_and(|e| !installed_anyway(e)) {
         UPDATING.store(false, Ordering::SeqCst);
     }
     result
+}
+
+/// An `update_restart` error comes after the new version was put in place, so no second
+/// update starts in this run.
+fn installed_anyway(e: &CoreError) -> bool {
+    e.code == "update_restart"
 }
 
 async fn install_inner(
@@ -871,6 +877,13 @@ pub fn cleanup_after_update(exe_dir: &Path, data_dir: &Path) {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn restart_error_keeps_the_update_marked_as_done() {
+        assert!(installed_anyway(&CoreError::new("update_restart", "x")));
+        assert!(!installed_anyway(&CoreError::invalid("x")));
+        assert!(!installed_anyway(&CoreError::new("io", "x")));
+    }
 
     fn rel(tag: &str, draft: bool, assets: &[(&str, u64)]) -> GhRelease {
         GhRelease {
