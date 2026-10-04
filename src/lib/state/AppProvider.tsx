@@ -1,6 +1,7 @@
 // Wires the store to the backend: initial loads, events, image cleanup.
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import * as api from "../api";
+import { hardwareKey } from "../hardware";
 import { makeActions, type Actions } from "./actions";
 import { releaseRefs } from "./images";
 import type { TabId } from "./model";
@@ -34,6 +35,21 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
     );
     keep(api.onEngine((e) => store.dispatch({ type: "setEngine", engine: e })));
     keep(api.onModelsChanged(() => void actions.refreshModels().catch(() => undefined)));
+
+    // Fit badges are worked out against the hardware at list time: fetch the list again when
+    // detection finishes or a GPU / VRAM / backend setting changes.
+    const refitModels = () => void actions.refreshModels().catch(() => undefined);
+    keep(api.onHardwareReady(refitModels));
+    let seen = store.getState().settings;
+    let hwKey: string | null = seen ? hardwareKey(seen) : null;
+    const offSettings = store.subscribe(() => {
+      const s = store.getState().settings;
+      if (!s || s === seen) return;
+      seen = s;
+      const k = hardwareKey(s);
+      if (hwKey !== null && k !== hwKey) refitModels();
+      hwKey = k;
+    });
 
     void actions.refreshSettings().catch(() =>
       // No settings → don't trap the user in a broken first run.
@@ -69,6 +85,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
 
     return () => {
       alive = false;
+      offSettings();
       for (const u of unlisten) u();
     };
   }, [store, actions]);

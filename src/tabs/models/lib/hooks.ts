@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { asCoreError, engineStatus, getHardware, getSettings, installEngine, onEngine, onHardwareReady } from "../../../lib/api";
-import type { CoreError, EngineStatus, GroupStatus, HardwareView, Settings } from "../../../lib/types";
+import type { CoreError, EngineStatus, GroupStatus, HardwareView } from "../../../lib/types";
+import { hardwareKey } from "../../../lib/hardware";
 import { onSettingsChanged } from "../../../settings/events";
 import { getTagged, knownGroupIds, newestActiveOfKind, newestGroupSince, tagGroup, useDownloadsVersion } from "./downloads";
 
@@ -45,8 +46,7 @@ export function useHardware(): HardwareView | null {
   return hw;
 }
 
-/** The Settings fields that change the effective hardware (and so every fit badge). */
-export const hardwareKey = (s: Settings) => JSON.stringify([s.gpu, s.vramOverrideGb, s.engineBackend]);
+export { hardwareKey };
 
 /**
  * Calls `cb` when the effective hardware may have changed: detection finished, or a
