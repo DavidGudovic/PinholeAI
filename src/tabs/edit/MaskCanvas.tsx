@@ -10,11 +10,27 @@ export interface MaskHandle {
 
 const PAINT = "rgba(245, 158, 11, 1)"; // amber-500, shown at reduced opacity
 
-/** Whether any pixel is painted. Anti-aliased eraser edges can leave a few nearly transparent pixels. */
-function hasPaint(c: HTMLCanvasElement): boolean {
+/** Canvas area (image pixels) that holds every paint stroke so far. */
+interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+/**
+ * Whether any pixel inside `box` is painted (nothing is painted outside it), reading only that
+ * area. Anti-aliased eraser edges can leave a few nearly transparent pixels.
+ */
+function hasPaint(c: HTMLCanvasElement, box: Box | null): boolean {
   const ctx = c.getContext("2d");
-  if (!ctx || !c.width || !c.height) return false;
-  const px = ctx.getImageData(0, 0, c.width, c.height).data;
+  if (!ctx || !c.width || !c.height || !box) return false;
+  const x0 = Math.max(0, Math.floor(box.x0));
+  const y0 = Math.max(0, Math.floor(box.y0));
+  const x1 = Math.min(c.width, Math.ceil(box.x1));
+  const y1 = Math.min(c.height, Math.ceil(box.y1));
+  if (!(x1 > x0 && y1 > y0)) return false;
+  const px = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
   for (let i = 3; i < px.length; i += 4) {
     if (px[i] > 16) return true;
   }
@@ -45,6 +61,7 @@ export function MaskCanvas({
   const canvas = useRef<HTMLCanvasElement>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
   const painted = useRef(false);
+  const paintBox = useRef<Box | null>(null);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
 
   // New image size → start over.
@@ -54,6 +71,7 @@ export function MaskCanvas({
     c.width = width;
     c.height = height;
     painted.current = false;
+    paintBox.current = null;
     onPaintedChange(false);
   }, [width, height]);
 
@@ -62,12 +80,13 @@ export function MaskCanvas({
       const c = canvas.current;
       c?.getContext("2d")?.clearRect(0, 0, c.width, c.height);
       painted.current = false;
+      paintBox.current = null;
       onPaintedChange(false);
     },
     async exportPng() {
       const c = canvas.current;
       // Everything erased again: nothing painted (an all-black mask would change nothing).
-      if (!c || !painted.current || !hasPaint(c)) return null;
+      if (!c || !painted.current || !hasPaint(c, paintBox.current)) return null;
       const tmp = document.createElement("canvas");
       tmp.width = c.width;
       tmp.height = c.height;
@@ -106,6 +125,17 @@ export function MaskCanvas({
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
     ctx.stroke();
+    if (!erase) {
+      // Half the line width plus a pixel for anti-aliased edges.
+      const r = (brush * scale) / 2 + 1;
+      const b = paintBox.current;
+      paintBox.current = {
+        x0: Math.min(b?.x0 ?? Infinity, from.x - r, to.x - r),
+        y0: Math.min(b?.y0 ?? Infinity, from.y - r, to.y - r),
+        x1: Math.max(b?.x1 ?? -Infinity, from.x + r, to.x + r),
+        y1: Math.max(b?.y1 ?? -Infinity, from.y + r, to.y + r),
+      };
+    }
     if (!erase && !painted.current) {
       painted.current = true;
       onPaintedChange(true);
@@ -116,7 +146,7 @@ export function MaskCanvas({
   const endStroke = () => {
     const wasStroke = !!last.current;
     last.current = null;
-    if (wasStroke && erase && painted.current && canvas.current && !hasPaint(canvas.current)) {
+    if (wasStroke && erase && painted.current && canvas.current && !hasPaint(canvas.current, paintBox.current)) {
       painted.current = false;
       onPaintedChange(false);
     }

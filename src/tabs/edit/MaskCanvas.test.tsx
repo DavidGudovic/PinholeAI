@@ -6,8 +6,14 @@ import { MaskCanvas } from "./MaskCanvas";
 // jsdom has no 2D canvas: a stand-in where a paint stroke fills every pixel and an
 // eraser stroke clears them all.
 let alpha = 0;
+// The canvas's size on screen (CSS px), for turning pointer positions into image pixels.
+let shown = 8;
 beforeEach(() => {
   alpha = 0;
+  shown = 8;
+  vi.spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect").mockImplementation(
+    () => ({ left: 0, top: 0, width: shown, height: shown, right: shown, bottom: shown, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect,
+  );
   const ctx = {
     globalCompositeOperation: "source-over",
     beginPath() {},
@@ -68,5 +74,29 @@ describe("MaskCanvas", () => {
     fireEvent.pointerDown(canvas, { button: 0 });
     fireEvent.pointerUp(canvas);
     expect(onPainted).toHaveBeenLastCalledWith(true);
+  });
+
+  it("after an eraser stroke reads back only the area that was painted, not the whole mask", () => {
+    shown = 400;
+    const big = { width: 4096, height: 4096, displayWidth: 400, brush: 4 };
+    const read = vi.spyOn(HTMLCanvasElement.prototype.getContext("2d") as unknown as { getImageData: () => unknown }, "getImageData");
+    const onPainted = vi.fn();
+    const { rerender } = render(<MaskCanvas {...big} erase={false} active onPaintedChange={onPainted} />);
+    const canvas = screen.getByLabelText("Paint where the image may change");
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas);
+    expect(onPainted).toHaveBeenLastCalledWith(true);
+    rerender(<MaskCanvas {...big} erase active onPaintedChange={onPainted} />);
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.pointerUp(canvas);
+    expect(onPainted).toHaveBeenLastCalledWith(false);
+    expect(read).toHaveBeenCalled();
+    for (const [x, y, w, h] of read.mock.calls as unknown as number[][]) {
+      // The dab: 4 CSS px at 4096/400 image px each, around (102, 102).
+      expect(x).toBeGreaterThan(50);
+      expect(y).toBeGreaterThan(50);
+      expect(w).toBeLessThan(64);
+      expect(h).toBeLessThan(64);
+    }
   });
 });
