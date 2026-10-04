@@ -163,7 +163,13 @@ pub async fn unload_model(core: &AppCore, model_id: &str, files: &[PathBuf]) {
         }
     }
     cancel_load_of(core, model_id, files);
-    let mut slot = core.gen.slot.lock().await;
+    let mut slot = match core.gen.slot.try_lock() {
+        Ok(s) => s,
+        // A new engine is loading: the old one is already stopped and the new one
+        // doesn't use these files.
+        Err(_) if new_engine_loading(core) && !loading_one_of(core, model_id, files) => return,
+        Err(_) => core.gen.slot.lock().await,
+    };
     if unload_stops(core, &slot, model_id, files) {
         if let Some(p) = slot.proc.take() {
             p.stop().await;
@@ -192,6 +198,12 @@ fn unload_stops(core: &AppCore, slot: &EngineSlot, model_id: &str, files: &[Path
     slot.model_id.as_deref() == Some(model_id) || uses_file
 }
 
+/// Whether [`ensure_engine`] holds the engine slot while a new engine loads: the old
+/// engine is stopped and the slot stays taken until the load ends (up to [`LOAD_TIMEOUT`]).
+fn new_engine_loading(core: &AppCore) -> bool {
+    core.gen.loading.lock().is_some() && core.gen.flags.lock().loading
+}
+
 /// Whether a job is loading `model_id` (or an engine that opens one of `files`).
 fn loading_one_of(core: &AppCore, model_id: &str, files: &[PathBuf]) -> bool {
     core.gen.loading.lock().as_ref().is_some_and(|(id, args)| {
@@ -213,7 +225,21 @@ pub(crate) async fn unload_interrupts_job(
     if core.gen.active.lock().is_none() || loading_one_of(core, model_id, files) {
         return false;
     }
-    let slot = core.gen.slot.lock().await;
+    let slot = match core.gen.slot.try_lock() {
+        Ok(s) => s,
+        Err(_) if new_engine_loading(core) => {
+            // The engine being loaded doesn't open these files (checked above), but its
+            // job reads LoRAs and upscalers from their folders.
+            let per_job_dirs = [
+                core.data.models(ModelKind::Lora),
+                core.data.models(ModelKind::Upscaler),
+            ];
+            return files
+                .iter()
+                .any(|f| per_job_dirs.iter().any(|d| f.starts_with(d)));
+        }
+        Err(_) => core.gen.slot.lock().await,
+    };
     core.gen.active.lock().is_some() && unload_stops(core, &slot, model_id, files)
 }
 
