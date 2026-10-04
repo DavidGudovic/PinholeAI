@@ -1665,10 +1665,7 @@ async fn ensure_llama(core: &Arc<AppCore>, helper: Option<&str>) -> CoreResult<L
         port,
         core.describe.logs.clone(),
     )
-    .map_err(|e| {
-        CoreError::new("engine_failed", "The describe engine couldn't be started.")
-            .with_details(e.to_string())
-    })?;
+    .map_err(|e| spawn_failed(e.to_string()))?;
     let client =
         LlamaClient::new(core.local.clone(), proc.base_url()).with_api_key(api_key.clone());
     match proc
@@ -1763,9 +1760,26 @@ pub async fn shutdown(core: &AppCore) {
     *core.describe.stopping.lock() = tokio_util::sync::CancellationToken::new();
 }
 
+/// The error shown when the llama-server process can't be started.
+fn spawn_failed(details: String) -> CoreError {
+    CoreError::new(
+        "engine_failed",
+        "The describe engine couldn't be started. Your antivirus may have blocked it — allow Pinhole in your antivirus, then try again.",
+    )
+    .with_details(details)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spawn_failure_says_what_to_do_next() {
+        let e = spawn_failed("os error 5".into());
+        assert_eq!(e.code, "engine_failed");
+        assert!(e.message.contains("then try again"), "{}", e.message);
+        assert!(e.message.contains("antivirus"), "{}", e.message);
+    }
 
     #[test]
     fn overlapping_describes_keep_the_engine_busy() {
