@@ -260,8 +260,6 @@ export function EditTab() {
   // `again`: redo the shown edit from the step before it, with a new seed ("Try again").
   const run = async (again = false) => {
     if (running.current || importing || !current || !model) return;
-    // Ctrl/Cmd+Enter does nothing while the Apply button is disabled.
-    if (!again && !canRun) return;
     const from = again ? e.index - 1 : e.index;
     const source = e.chain[from] ? images[e.chain[from].imageId] : undefined;
     if (!source || (again && !canTryAgain)) return;
@@ -310,7 +308,10 @@ export function EditTab() {
       running.current = false;
     }
   };
-  usePrimaryAction("edit", () => void run());
+  // Ctrl/Cmd+Enter does nothing while the Apply button is disabled.
+  usePrimaryAction("edit", () => {
+    if (canRun) void run();
+  });
 
   const upscale = async (factor: 2 | 4) => {
     if (importing || !current) return;
