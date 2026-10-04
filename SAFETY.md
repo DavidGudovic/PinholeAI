@@ -59,8 +59,8 @@ can miss some harmful ones. We keep improving them.
   and keeps the prompt helper's ideas safe for work. It doesn't check what a model makes, so it
   isn't a promise that every picture is safe for work.
 - **Judging age is hard.** Age checks work from how someone looks in a picture, so they can be
-  wrong either way. The age check is less accurate on some model families, and pictures from
-  Pony-based models are blocked by mistake more often.
+  wrong either way. The age check is less accurate on some model families. It often reads faces
+  from Pony-based models as younger than intended, so more of their pictures are blocked.
 - **Pinhole doesn't identify people.** It treats a brought-in picture with a face as a real
   person, and it never recognises who someone is.
 - **Consent can't be seen in a picture.** That is why intimate edits of brought-in pictures of
