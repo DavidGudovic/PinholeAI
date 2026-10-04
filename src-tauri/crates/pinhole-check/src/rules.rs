@@ -48,11 +48,12 @@ pub const CHILD_FACE: f32 = 0.6;
 /// young-looking adults: on FairFace portraits 42 % of faces labelled 10–19 and 2.9 % labelled
 /// 20–29 reach it with the child groups (RELEASE-SPEC §3.2 rule 2).
 pub const UNDER_20_FACE: f32 = 0.8;
-/// Second age estimate (years) below which a face blocks. Set well above 18 on purpose: the
+/// Second age estimate (years) below which a face blocks. Set above 18 on purpose: the
 /// estimate is off by a few years either way, and the margin is what catches 16- and
 /// 17-year-olds. It also blocks some young adults, which only matters on sexual photo-style
-/// results (RELEASE-SPEC §3.2 rule 2 has the numbers per age).
-pub const UNDER_AGE: f32 = 22.0;
+/// results (RELEASE-SPEC §3.2 rule 2 has the numbers per age, on photos and on generated
+/// pictures).
+pub const UNDER_AGE: f32 = 20.0;
 /// From [`UNDER_AGE`] up to this age a face is borderline: the picture is blocked when the
 /// tagger also sees a setting, clothing or object that presents the person as under 18
 /// (`Tags::young_context`). Older faces are never judged by the setting.
@@ -432,6 +433,29 @@ mod tests {
         };
         let r = readings(0.95, sexual_photo(), vec![unsure]);
         assert_eq!(decide(&r, &[], false), None);
+    }
+
+    #[test]
+    fn age_line_is_20_and_borderline_runs_to_26() {
+        assert_eq!(UNDER_AGE, 20.0);
+        assert_eq!(BORDERLINE_AGE, 26.0);
+        let sexual_photo = || Some(photo(tags(0.2, 0.7)));
+        let at = |age: f32| Face {
+            age: Some(age),
+            ..aged(0.0, 0.1)
+        };
+        let r = readings(0.95, sexual_photo(), vec![at(19.9)]);
+        assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage));
+        for age in [20.0, 21.0, 25.9] {
+            assert!(at(age).borderline(), "{age}");
+            let r = readings(0.95, sexual_photo(), vec![at(age)]);
+            assert_eq!(decide(&r, &[], false), None, "{age}");
+            let mut t = photo(tags(0.2, 0.7));
+            t.young_context = YOUNG_CONTEXT_TAG;
+            let r = readings(0.95, Some(t), vec![at(age)]);
+            assert_eq!(decide(&r, &[], false), Some(Rule::LooksUnderage), "{age}");
+        }
+        assert!(!at(26.0).borderline());
     }
 
     #[test]
