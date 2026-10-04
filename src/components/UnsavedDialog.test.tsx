@@ -23,18 +23,18 @@ function open(what: "close" | "clear" | "edit") {
 }
 
 describe("UnsavedDialog", () => {
-  it("warns in red that Reset deletes unsaved images, the prompt and Fine-tune settings", () => {
+  it("warns in red that Reset deletes unsaved images, prompts and Fine-tune changes", () => {
     open("clear");
-    const warning = screen.getByText("Unsaved images, the prompt and Fine-tune settings are permanently deleted.");
+    const warning = screen.getByText("Unsaved images, prompts and Fine-tune changes are permanently deleted.");
     expect(warning.className).toContain("text-red-700");
     expect(warning.className).toContain("dark:text-red-400");
     expect(screen.getByText("Nothing is saved until you press Save.")).toBeTruthy();
     expect(screen.queryByText(/for good/)).toBeNull();
   });
 
-  it("names only images when closing or editing another image", () => {
+  it("says the same when closing, and names only edited images when editing another image", () => {
     open("close");
-    expect(screen.getByText("Unsaved images are permanently deleted.")).toBeTruthy();
+    expect(screen.getByText("Unsaved images, prompts and Fine-tune changes are permanently deleted.")).toBeTruthy();
     cleanup();
     open("edit");
     expect(screen.getByText("Unsaved edited images are permanently deleted.")).toBeTruthy();

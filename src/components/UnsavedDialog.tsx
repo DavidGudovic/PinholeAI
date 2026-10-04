@@ -11,9 +11,9 @@ import { Button, Dialog, ErrorNotice } from "./ui";
 /** What is lost when the user goes ahead without saving. */
 export function leaveWarning(what: LeaveKind | null): string {
   if (what === "edit") return "Unsaved edited images are permanently deleted.";
-  if (what === "close") return "Unsaved images are permanently deleted.";
-  // Reset also clears the prompt fields and Fine-tune changes (model.ts "clearSession").
-  return "Unsaved images, the prompt and Fine-tune settings are permanently deleted.";
+  // Reset clears the prompt fields, preset, reference picture and Fine-tune values (model.ts
+  // "clearSession"); closing loses all of that too, since none of it is kept on disk.
+  return "Unsaved images, prompts and Fine-tune changes are permanently deleted.";
 }
 
 /** Shown before closing the window, Reset, or replacing Edit's history while some pictures were never saved. */
