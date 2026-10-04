@@ -954,17 +954,26 @@ fn keeps_intent(
             .any(|d| in_new(d) && !in_idea(d))
 }
 
-/// Whether every word of `reworded` (three letters or more, `common_words` aside) is one the
-/// instruction `idea` has; singular and plural count as one. An edit instruction reworded as
-/// "add a red umbrella and a hat" asks for more than "add a red umbrella".
-fn adds_no_words(idea: &str, reworded: &str, spec: &ImproveSpec) -> bool {
-    let base = |w: &str| singular(w.trim_start_matches(|c: char| c.is_ascii_digit()));
-    let in_idea: std::collections::HashSet<String> =
-        lower_words(idea).iter().map(|w| base(w)).collect();
+/// Whether every word of `reworded` (three letters or more, `common_words` and the words of the
+/// edit verbs in `actions` aside) is one the instruction `idea` has; singular and plural count as
+/// one, and "1girl" as "girl". An edit instruction reworded as "add a red umbrella and a hat" asks
+/// for more than "add a red umbrella". Which verbs may be used is up to [`keeps_intent`].
+fn adds_no_words(idea: &str, reworded: &str, spec: &ImproveSpec, actions: &[Vec<String>]) -> bool {
+    // "1girl" → "girl"; "5pm" → "pm" and "1990s" → "s" are too short to stand for the word.
+    let base = |w: &str| {
+        Some(singular(w.trim_start_matches(|c: char| c.is_ascii_digit())))
+            .filter(|b| b.chars().count() >= 3)
+    };
+    let known: std::collections::HashSet<String> = lower_words(idea)
+        .iter()
+        .flat_map(|w| [Some(singular(w)), base(w)])
+        .flatten()
+        .chain(actions.iter().flatten().flat_map(|p| lower_words(p)))
+        .collect();
     content_words(reworded)
         .iter()
         .filter(|w| !spec.common_words.contains(*w))
-        .all(|w| in_idea.contains(&base(w)))
+        .all(|w| known.contains(&singular(w)) || base(w).is_some_and(|b| known.contains(&b)))
 }
 
 /// Whether `text` names a person ("man", "1girl", "two women"; `people` is the list of such words).
@@ -996,7 +1005,9 @@ fn base_idea(
     edit: bool,
 ) -> String {
     let r = trimmed(reworded.trim().trim_matches('"'));
-    if keeps_intent(idea, r, spec, avoid, actions) && (!edit || adds_no_words(idea, r, spec)) {
+    if keeps_intent(idea, r, spec, avoid, actions)
+        && (!edit || adds_no_words(idea, r, spec, actions))
+    {
         r.to_string()
     } else {
         trimmed(idea).to_string()
@@ -2177,6 +2188,38 @@ mod tests {
                 "{reworded}"
             );
         }
+        // Another value in place of the instruction's is not the same instruction either.
+        assert!(!adds_no_words(
+            "set the clock to 3pm",
+            "set the clock to 5pm",
+            &m,
+            &[]
+        ));
+        assert!(!adds_no_words(
+            "a car from the 1980s",
+            "a car from the 1990s",
+            &m,
+            &[]
+        ));
+        assert!(adds_no_words(
+            "a girl on a bench",
+            "1girl on a bench",
+            &m,
+            &[]
+        ));
+        // Edit verbs are left to the verb rules: "erase" may become "remove", a verbless
+        // instruction may get one.
+        let actions = vec![
+            vec!["remove".to_string(), "erase".to_string()],
+            vec!["paint".to_string()],
+        ];
+        assert!(adds_no_words(
+            "erase the hat",
+            "remove the hat",
+            &m,
+            &actions
+        ));
+        assert!(adds_no_words("red car", "paint the car red", &m, &actions));
         assert_eq!(
             assemble_edit(
                 "red umbrella",
