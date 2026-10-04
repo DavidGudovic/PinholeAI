@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use pinhole_catalog::local;
 use pinhole_net::download::check_free_space;
-use pinhole_store::datadir::{is_writable_dir, ModelsFolderProblem};
+use pinhole_store::datadir::{is_writable_dir, ModelKind, ModelsFolderProblem};
 use pinhole_store::{DataDir, InstalledFile, InstalledIndex};
 use serde::{Deserialize, Serialize};
 
@@ -222,10 +222,25 @@ pub async fn change(core: &Arc<AppCore>, folder: Option<String>) -> CoreResult<M
     crate::describe::shutdown(core).await;
     crate::models::discard_pending(core);
 
+    // Copies of linked add-ons are made in the current add-on folder; `linked::start` only
+    // empties the one in use, so the old folder's are removed once the move is done.
+    let links = |d: &DataDir| {
+        let p = d
+            .models(ModelKind::Lora)
+            .join(crate::linked::LORA_LINKS_DIR);
+        p.canonicalize().unwrap_or(p)
+    };
+    let (old_links, new_links) = (links(&core.data), links(&to));
     let core2 = core.clone();
-    tokio::task::spawn_blocking(move || move_all(&core2, to))
-        .await
-        .map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))??;
+    tokio::task::spawn_blocking(move || {
+        move_all(&core2, to)?;
+        if old_links != new_links {
+            let _ = std::fs::remove_dir_all(&old_links);
+        }
+        Ok::<(), CoreError>(())
+    })
+    .await
+    .map_err(|_| CoreError::internal("A background task stopped unexpectedly. Try again."))??;
     Ok(info(core))
 }
 
@@ -767,6 +782,23 @@ mod tests {
             pinhole_store::presets::get(&core.shipped.presets(), &core.data, &preset.id).unwrap();
         assert_eq!(p.model_id.as_deref(), Some("a-other"));
         assert_eq!(p.loras[0].lora_id.as_deref(), Some("a-other"));
+    }
+
+    #[tokio::test]
+    async fn the_old_folders_linked_add_on_copies_are_removed() {
+        let (_tmp, core) = test_core();
+        add(&core, "models/checkpoints/a.safetensors", b"aaaa");
+        let loras = core.data.models(ModelKind::Lora);
+        let links = loras.join(crate::linked::LORA_LINKS_DIR);
+        std::fs::create_dir_all(links.join("f1")).unwrap();
+        std::fs::write(links.join("f1").join("w.safetensors"), b"w").unwrap();
+        std::fs::write(loras.join("other.txt"), b"x").unwrap();
+        let shared = tempfile::tempdir().unwrap();
+        change(&core, Some(shared.path().to_string_lossy().into_owned()))
+            .await
+            .unwrap();
+        assert!(!links.exists());
+        assert!(loras.join("other.txt").is_file());
     }
 
     #[tokio::test]

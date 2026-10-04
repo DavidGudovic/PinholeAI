@@ -12,9 +12,10 @@
 //! PRIVACY: `GenerateRequest`, `FinalPromptPreview` and the engine request body
 //! carry prompt text. They are never logged, never written to disk and never
 //! put into a `CoreError`. The only disk write here is `last_used` (a number)
-//! in `installed.json`.
+//! in `installed.json` (or `linked-folders.json` for a linked model).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -327,7 +328,7 @@ pub async fn preview_final_prompt(
     req: &GenerateRequest,
 ) -> CoreResult<FinalPromptPreview> {
     let with_face_prompt = add_detail_prompt(core, req).await?;
-    let p = prepare(core, with_face_prompt.as_ref().unwrap_or(req), false)?;
+    let p = prepare(core, with_face_prompt.as_ref().unwrap_or(req), false).await?;
     Ok(FinalPromptPreview {
         prompt: p.final_prompt.prompt,
         negative: p.final_prompt.negative,
@@ -336,9 +337,26 @@ pub async fn preview_final_prompt(
 
 /// `materialize`: make linked add-ons readable by the engine (a link or copy into Pinhole's
 /// add-on folder). Off for the read-only prompt preview, which writes nothing.
-fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResult<Prepared> {
+async fn prepare(
+    core: &Arc<AppCore>,
+    req: &GenerateRequest,
+    materialize: bool,
+) -> CoreResult<Prepared> {
     let (model, family) = resolve_model(core, req)?;
     let reg = core.registry();
+    // Add-ons were picked for the chosen model; an edit that fell back to
+    // another model (the chosen one can't edit) doesn't get them.
+    let picked = if model.id == req.model_id {
+        &req.loras[..]
+    } else {
+        &[]
+    };
+    crate::lookup::refuse_if_flagged(&model)?;
+    let engine_paths = if materialize {
+        link_add_ons(core, picked).await?
+    } else {
+        HashMap::new()
+    };
 
     // LoRAs → structured list (+ trigger words, in memory).
     let lora_dir = core.data.models(ModelKind::Lora);
@@ -347,17 +365,9 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
     // Every picked add-on's name and trigger words, for the word check below (whether or
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
-    crate::lookup::refuse_if_flagged(&model)?;
     let mut addon_ids = Vec::new();
     {
         let idx = core.installed.lock();
-        // Add-ons were picked for the chosen model; an edit that fell back to
-        // another model (the chosen one can't edit) doesn't get them.
-        let picked = if model.id == req.model_id {
-            &req.loras[..]
-        } else {
-            &[]
-        };
         for l in picked {
             let Some(f) = idx.get(&l.lora_id).filter(|f| f.kind == ModelKind::Lora) else {
                 return Err(CoreError::not_found("A style add-on (LoRA) you picked isn't installed anymore. Remove it in Fine-tune."));
@@ -372,7 +382,13 @@ fn prepare(core: &AppCore, req: &GenerateRequest, materialize: bool) -> CoreResu
                 }
                 // sd-server only loads add-ons from Pinhole's add-on folder.
                 if materialize {
-                    abs = crate::linked::lora_path_for_engine(core, f, &abs)?;
+                    let Some(p) = engine_paths.get(&f.id) else {
+                        return Err(CoreError::not_found(format!(
+                            "The add-on “{}” isn't in the other app's folder any more. Check that its drive is connected, or remove it in Fine-tune.",
+                            f.friendly_name
+                        )));
+                    };
+                    abs = p.clone();
                 } else {
                     abs = lora_dir.join(f.id.as_str());
                 }
@@ -499,6 +515,48 @@ pub(crate) fn contains_phrase(text: &str, phrase: &str) -> bool {
     text.match_indices(&phrase).any(|(i, m)| {
         !word(text[..i].chars().next_back()) && !word(text[i + m.len()..].chars().next())
     })
+}
+
+/// Engine paths (by file id) of the picked add-ons from linked folders: links, or copies,
+/// in Pinhole's add-on folder ([`crate::linked::lora_path_for_engine`]). Made on a blocking
+/// thread without holding the index lock. Add-ons whose file isn't there are left out.
+/// A flagged add-on refuses the request before anything is linked or copied.
+async fn link_add_ons(
+    core: &Arc<AppCore>,
+    picked: &[LoraUse],
+) -> CoreResult<HashMap<String, PathBuf>> {
+    let todo: Vec<(InstalledFile, PathBuf)> = {
+        let idx = core.installed.lock();
+        let addons: Vec<&InstalledFile> = picked
+            .iter()
+            .filter_map(|l| idx.get(&l.lora_id))
+            .filter(|f| f.kind == ModelKind::Lora)
+            .collect();
+        for f in &addons {
+            crate::lookup::refuse_if_flagged(f)?;
+        }
+        addons
+            .into_iter()
+            .filter(|f| f.is_linked())
+            .map(|f| (f.clone(), idx.abs_path(&core.data, f)))
+            .collect()
+    };
+    if todo.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let core = core.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut out = HashMap::new();
+        for (f, abs) in todo {
+            if abs.is_file() {
+                let p = crate::linked::lora_path_for_engine(&core, &f, &abs)?;
+                out.insert(f.id, p);
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|_| CoreError::internal("Getting an add-on ready stopped unexpectedly."))?
 }
 
 fn resolve_model(core: &AppCore, req: &GenerateRequest) -> CoreResult<(InstalledFile, Family)> {
@@ -869,7 +927,7 @@ async fn generate_inner(
     }
     let with_face_prompt = add_detail_prompt(core, req).await?;
     let req = with_face_prompt.as_ref().unwrap_or(req);
-    let prep = prepare(core, req, true)?;
+    let prep = prepare(core, req, true).await?;
     let reg = core.registry();
     let hw = crate::app::hw_context(core);
     let label = prep.model.friendly_name.clone();
@@ -1316,7 +1374,7 @@ async fn generate_inner(
         core.check.note_photo_style(&core.session, &meta.id, photo);
         out.push(meta);
     }
-    touch_last_used(core, &prep.model.id);
+    touch_last_used(core, &prep.model.id).await;
     Ok(GenerateResult { images: out })
 }
 
@@ -1556,13 +1614,25 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// `last_used` in installed.json — a timestamp only.
-fn touch_last_used(core: &AppCore, model_id: &str) {
-    let mut idx = core.installed.lock();
-    if let Some(f) = idx.get_mut(model_id) {
+/// `last_used` of the model — a timestamp only. Saved on a blocking thread, to the file
+/// that holds the entry: linked-folders.json for a linked model, else installed.json.
+async fn touch_last_used(core: &Arc<AppCore>, model_id: &str) {
+    let core = core.clone();
+    let id = model_id.to_string();
+    let _ = tokio::task::spawn_blocking(move || {
+        let mut idx = core.installed.lock();
+        let Some(f) = idx.get_mut(&id) else {
+            return;
+        };
         f.last_used = Some(now_secs());
-        let _ = idx.save(&core.data);
-    }
+        let _ = if f.is_linked() {
+            idx.save_linked(&core.data)
+        } else {
+            idx.save_to(&core.data, &core.data.installed_file())
+                .and_then(|()| idx.save_seals(&core.data))
+        };
+    })
+    .await;
 }
 
 // ================================================================ upscale
@@ -2006,6 +2076,81 @@ async fn ensure_upscaler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A core with a linked folder holding a checkpoint and a style add-on.
+    fn core_with_linked_folder(tmp: &std::path::Path) -> (Arc<AppCore>, String, String) {
+        use crate::linked::{fixtures, tests::new_core, tests::wait_scans};
+        let comfy = tmp.join("Comfy");
+        fixtures::sdxl(&comfy.join("checkpoints/m.safetensors"));
+        fixtures::sdxl_lora(&comfy.join("loras/w.safetensors"));
+        let core = new_core(&tmp.join("Data"));
+        crate::linked::add(&core, &comfy.display().to_string()).unwrap();
+        wait_scans(&core);
+        let model = crate::models::list_models(&core).unwrap()[0].id.clone();
+        let lora = core.installed.lock().loras().next().unwrap().id.clone();
+        (core, model, lora)
+    }
+
+    /// Linked add-ons are made ready for the engine without holding the index lock.
+    #[tokio::test]
+    async fn linked_add_ons_are_made_ready_outside_the_index_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (core, model, lora) = core_with_linked_folder(tmp.path());
+        let mut req = GenerateRequest::txt2img(model, "a red boat");
+        req.loras = vec![LoraUse {
+            lora_id: lora,
+            weight: 1.0,
+            words: None,
+        }];
+        let prep = prepare(&core, &req, true).await.unwrap();
+        assert_eq!(prep.loras.len(), 1);
+        let lora_dir = core.data.models(ModelKind::Lora);
+        assert!(lora_dir.join(&prep.loras[0].path).is_file());
+        assert_eq!(*core.linked.index_locked_while_linking.lock(), vec![false]);
+    }
+
+    /// A flagged model or add-on is refused before any linked add-on is linked or copied.
+    #[tokio::test]
+    async fn a_flagged_request_links_no_add_ons() {
+        use pinhole_store::installed::Lookup;
+        for flag_model in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (core, model, lora) = core_with_linked_folder(tmp.path());
+            let flagged = if flag_model { &model } else { &lora };
+            core.installed.lock().get_mut(flagged).unwrap().lookup = Some(Lookup::Refused);
+            let mut req = GenerateRequest::txt2img(model, "a red boat");
+            req.loras = vec![LoraUse {
+                lora_id: lora,
+                weight: 1.0,
+                words: None,
+            }];
+            assert!(prepare(&core, &req, true).await.is_err());
+            assert!(core.linked.index_locked_while_linking.lock().is_empty());
+            let linked = core.data.models(ModelKind::Lora).join(".pinhole-linked");
+            let n = std::fs::read_dir(&linked).map(|d| d.count()).unwrap_or(0);
+            assert_eq!(n, 0);
+        }
+    }
+
+    /// Using a linked model writes only linked-folders.json.
+    #[tokio::test]
+    async fn last_used_of_a_linked_model_is_saved_with_the_linked_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (core, model, _) = core_with_linked_folder(tmp.path());
+        let installed = core.data.installed_file();
+        assert!(!installed.exists());
+        touch_last_used(&core, &model).await;
+        assert!(core
+            .installed
+            .lock()
+            .get(&model)
+            .unwrap()
+            .last_used
+            .is_some());
+        assert!(!installed.exists());
+        let back = pinhole_store::installed::InstalledIndex::load(&core.data).unwrap();
+        assert!(back.get(&model).unwrap().last_used.is_some());
+    }
 
     /// Only a clear refusal means the engine didn't queue the job.
     #[test]
