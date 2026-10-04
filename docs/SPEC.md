@@ -207,7 +207,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
    generation settings (no prompt)" also writes model name, seed, steps, dials into a PNG text chunk.
    **Reuse settings**: dropping such a picture on Create's results area reads that chunk back (in Rust,
    only the known fields, range-checked; the picture is not kept) and fills model (by id, else by name),
-   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler and size through the same mapping
+   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler, size and "Repeats without seams" through the same mapping
    as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
    the chunk opens the same chooser as a pasted picture (§5); other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
@@ -378,7 +378,9 @@ and two or three parts to keep (the composition, the camera angle, the backgroun
 a person's face and pose), joined as "<change>. <Details>. Keep … unchanged." The rewording
 follows the rules above, and also may not use an edit verb of another kind than the instruction's
 (`improve.edit.actions`: "add a hat" never becomes "replace the background"; an instruction with
-no verb may get one, but not one in `improve.edit.never_added` such as "remove" or "replace"); an instruction that refers to another picture ("from image 2",
+no verb may get one, but not one in `improve.edit.never_added` such as "remove" or "replace") and may not
+name anything the instruction doesn't (every word of three letters or more, `improve.common_words` aside, is
+one the instruction has, edit verbs aside); an instruction that refers to another picture ("from image 2",
 `improve.edit.keep_wording`) keeps its wording. Keep phrases naming something the instruction
 mentions are left out (`improve.common_words` don't count, nor the owner in "the man's face"), at
 most three are kept, details that only say "same …" are left out, and when the instruction keeps

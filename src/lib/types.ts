@@ -504,6 +504,8 @@ export interface PictureSettings {
   scheduler?: string | null;
   width?: number | null;
   height?: number | null;
+  /** Made with "Repeats without seams". Unset for pictures saved before it was recorded. */
+  seamless?: boolean | null;
 }
 
 export interface SavedImage {

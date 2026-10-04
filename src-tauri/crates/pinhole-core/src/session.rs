@@ -269,6 +269,7 @@ fn settings_text(m: &ResultImage) -> String {
         "scheduler": m.scheduler,
         "width": m.base_size.map_or(m.width, |s| s.0),
         "height": m.base_size.map_or(m.height, |s| s.1),
+        "seamless": m.seamless,
     })
     .to_string()
 }
@@ -294,6 +295,8 @@ pub struct PictureSettings {
     pub scheduler: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Made with "Repeats without seams". `None` for pictures saved before it was recorded.
+    pub seamless: Option<bool>,
 }
 
 fn plain_text(v: &serde_json::Value) -> Option<String> {
@@ -347,6 +350,7 @@ pub fn read_picture_settings(bytes: &[u8]) -> Option<PictureSettings> {
         scheduler: plain_text(get("scheduler")),
         width,
         height,
+        seamless: get("seamless").as_bool(),
     };
     (out != PictureSettings::default()).then_some(out)
 }
@@ -872,6 +876,18 @@ mod tests {
         m.base_size = Some((1024, 1024));
         let s = read_picture_settings(&saved_with_settings(&m)).expect("settings");
         assert_eq!((s.width, s.height), (Some(1024), Some(1024)));
+        assert_eq!(s.seamless, Some(false));
+
+        // "Repeats without seams" is recorded, so reusing the settings turns it back on.
+        m.seamless = true;
+        let s = read_picture_settings(&saved_with_settings(&m)).expect("settings");
+        assert_eq!(s.seamless, Some(true));
+        // Pictures saved before it was recorded don't say.
+        let png = img::encode_png_rgba(&[255, 0, 0, 255].repeat(4), 2, 2).unwrap();
+        let older =
+            pinhole_engine::png::add_text_chunk(&png, "pinhole", r#"{"app":"Pinhole","seed":5}"#)
+                .unwrap();
+        assert_eq!(read_picture_settings(&older).unwrap().seamless, None);
     }
 
     #[test]

@@ -957,6 +957,28 @@ fn keeps_intent(
             .any(|d| in_new(d) && !in_idea(d))
 }
 
+/// Whether every word of `reworded` (three letters or more, `common_words` and the words of the
+/// edit verbs in `actions` aside) is one the instruction `idea` has; singular and plural count as
+/// one, and "1girl" as "girl". An edit instruction reworded as "add a red umbrella and a hat" asks
+/// for more than "add a red umbrella". Which verbs may be used is up to [`keeps_intent`].
+fn adds_no_words(idea: &str, reworded: &str, spec: &ImproveSpec, actions: &[Vec<String>]) -> bool {
+    // "1girl" → "girl"; "5pm" → "pm" and "1990s" → "s" are too short to stand for the word.
+    let base = |w: &str| {
+        Some(singular(w.trim_start_matches(|c: char| c.is_ascii_digit())))
+            .filter(|b| b.chars().count() >= 3)
+    };
+    let known: std::collections::HashSet<String> = lower_words(idea)
+        .iter()
+        .flat_map(|w| [Some(singular(w)), base(w)])
+        .flatten()
+        .chain(actions.iter().flatten().flat_map(|p| lower_words(p)))
+        .collect();
+    content_words(reworded)
+        .iter()
+        .filter(|w| !spec.common_words.contains(*w))
+        .all(|w| known.contains(&singular(w)) || base(w).is_some_and(|b| known.contains(&b)))
+}
+
 /// Whether `text` names a person ("man", "1girl", "two women"; `people` is the list of such words).
 fn names_person(text: &str, people: &[String]) -> bool {
     let words = lower_words(text);
@@ -991,16 +1013,20 @@ fn adds_person_detail(text: &str, idea: &str, has_person: bool, person_details: 
 }
 
 /// The idea Improve builds on: the helper's rewording (`reworded`, trailing full stop off) when it
-/// keeps the idea's intent ([`keeps_intent`]), else the idea as typed.
+/// keeps the idea's intent ([`keeps_intent`]) and, in Edit (`edit`), names nothing the
+/// instruction doesn't ([`adds_no_words`]), else the idea as typed.
 fn base_idea(
     idea: &str,
     reworded: &str,
     spec: &ImproveSpec,
     avoid: &[String],
     actions: &[Vec<String>],
+    edit: bool,
 ) -> String {
     let r = trimmed(reworded.trim().trim_matches('"'));
-    if keeps_intent(idea, r, spec, avoid, actions) {
+    if keeps_intent(idea, r, spec, avoid, actions)
+        && (!edit || adds_no_words(idea, r, spec, actions))
+    {
         r.to_string()
     } else {
         trimmed(idea).to_string()
@@ -1146,6 +1172,7 @@ fn assemble_improved(
         spec,
         avoid,
         &[],
+        false,
     );
     let both = format!("{idea}\n{base}");
     let groups = added_phrases(
@@ -1231,6 +1258,7 @@ fn assemble_edit(
         spec,
         avoid,
         &spec.edit.actions,
+        true,
     );
     let both = format!("{instruction}\n{base}");
     let mut groups = added_phrases(
@@ -1781,7 +1809,9 @@ mod tests {
             .map(|(k, v)| (k.to_string(), v))
             .collect(),
             drop: list(&["atmosphere", "best quality"]),
-            common_words: list(&["the", "with", "make", "add", "replace", "give", "her"]),
+            common_words: list(&[
+                "the", "with", "make", "add", "replace", "give", "her", "put",
+            ]),
             people: list(&["1boy", "1girl", "girl", "man"]),
             person_details: list(&["hair", "suit", "dress", "earring"]),
             exact_words: list(&["her", "more", "less"]),
@@ -2160,6 +2190,67 @@ mod tests {
             )
             .unwrap(),
             "put the same bottle on a different table. Dark oak table. Keep the lighting unchanged."
+        );
+        // A rewording that names something the instruction doesn't is not used: the instruction
+        // as typed leads.
+        for reworded in [
+            "add a red umbrella and a hat",
+            "add a red umbrella next to the bench",
+            "add a red umbrella, rainy street",
+        ] {
+            assert_eq!(
+                assemble_edit(
+                    "add a red umbrella",
+                    &[reworded.into(), "open canopy".into(), "-".into()],
+                    &m,
+                    &[]
+                )
+                .unwrap(),
+                "add a red umbrella. Open canopy.",
+                "{reworded}"
+            );
+        }
+        // Another value in place of the instruction's is not the same instruction either.
+        assert!(!adds_no_words(
+            "set the clock to 3pm",
+            "set the clock to 5pm",
+            &m,
+            &[]
+        ));
+        assert!(!adds_no_words(
+            "a car from the 1980s",
+            "a car from the 1990s",
+            &m,
+            &[]
+        ));
+        assert!(adds_no_words(
+            "a girl on a bench",
+            "1girl on a bench",
+            &m,
+            &[]
+        ));
+        // Edit verbs are left to the verb rules: "erase" may become "remove", a verbless
+        // instruction may get one.
+        let actions = vec![
+            vec!["remove".to_string(), "erase".to_string()],
+            vec!["paint".to_string()],
+        ];
+        assert!(adds_no_words(
+            "erase the hat",
+            "remove the hat",
+            &m,
+            &actions
+        ));
+        assert!(adds_no_words("red car", "paint the car red", &m, &actions));
+        assert_eq!(
+            assemble_edit(
+                "red umbrella",
+                &["add red umbrellas".into(), "-".into(), "-".into()],
+                &m,
+                &[]
+            )
+            .unwrap(),
+            "add red umbrellas"
         );
         // Mood words and trigger words go as in Create; nothing left = no change.
         assert!(assemble_edit(
