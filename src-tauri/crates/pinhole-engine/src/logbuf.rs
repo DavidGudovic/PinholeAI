@@ -51,6 +51,8 @@ struct Inner {
     progress: Option<StepProgress>,
     /// Per-stream partial line not yet terminated by `\n` / `\r` (stdout, stderr).
     partial: [String; 2],
+    /// Per-stream bytes of a UTF-8 character cut off at the end of the last read.
+    pending: [Vec<u8>; 2],
     /// Lines stored since the buffer was created (never reset; see [`LogBuffer::mark`]).
     pushed: u64,
 }
@@ -113,9 +115,18 @@ impl LogBuffer {
 
     /// Feed raw bytes from one stream. stdout and stderr keep separate partial
     /// lines so an unterminated progress bar can't swallow an error line.
-    pub fn push_stream(&self, stream: Stream, bytes: &[u8]) {
-        let text = String::from_utf8_lossy(bytes);
+    pub fn push_stream(&self, stream: Stream, input: &[u8]) {
         let mut g = self.inner.lock();
+        // A read can end inside a multi-byte character: keep those bytes for
+        // the next read instead of decoding each half on its own.
+        let mut bytes = std::mem::take(&mut g.pending[stream as usize]);
+        bytes.extend_from_slice(input);
+        let complete = match std::str::from_utf8(&bytes) {
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            _ => bytes.len(),
+        };
+        g.pending[stream as usize] = bytes.split_off(complete);
+        let text = String::from_utf8_lossy(&bytes);
         let mut buf = std::mem::take(&mut g.partial[stream as usize]);
         buf.push_str(&text);
         let mut rest = buf.as_str();
@@ -149,7 +160,9 @@ impl LogBuffer {
     pub fn flush(&self) {
         let mut g = self.inner.lock();
         for i in 0..2 {
-            let partial = std::mem::take(&mut g.partial[i]);
+            let pending = std::mem::take(&mut g.pending[i]);
+            let mut partial = std::mem::take(&mut g.partial[i]);
+            partial.push_str(&String::from_utf8_lossy(&pending));
             if !partial.is_empty() {
                 Self::push_segment(&mut g, &partial);
             }
@@ -236,6 +249,7 @@ impl LogBuffer {
         let mut g = self.inner.lock();
         g.lines.clear();
         g.partial = Default::default();
+        g.pending = Default::default();
         g.progress = None;
     }
 }
@@ -416,6 +430,35 @@ mod tests {
         b.push_line("after restart");
         assert_eq!(b.since_text(m), "after restart");
         assert_eq!(b.since_text(b.mark()), "");
+    }
+
+    #[test]
+    fn characters_split_across_reads_are_kept_whole() {
+        let b = LogBuffer::new(10);
+        let line = "[ERROR] can't open C:\\Users\\José\\model.gguf\n".as_bytes();
+        let cut = line.iter().position(|&c| c == 0xC3).unwrap() + 1;
+        b.push_stream(Stream::Stderr, &line[..cut]);
+        b.push_stream(Stream::Stderr, &line[cut..]);
+        assert_eq!(
+            b.tail(1),
+            vec!["[ERROR] can't open C:\\Users\\José\\model.gguf"]
+        );
+
+        // A secret split mid-character still matches and is redacted.
+        let secret = "ёлка зимой";
+        b.set_secrets([secret]);
+        let line = format!("[DEBUG] text: {secret}\n");
+        let bytes = line.as_bytes();
+        let cut = line.find('л').unwrap() + 1;
+        b.push_bytes(&bytes[..cut]);
+        b.push_bytes(&bytes[cut..]);
+        let all = b.tail_text(10);
+        assert!(!all.contains("зимой") && !all.contains('\u{FFFD}'), "{all}");
+
+        // An unfinished character left at exit is still flushed.
+        b.push_bytes(&"end é".as_bytes()[..5]);
+        b.flush();
+        assert_eq!(b.tail(1), vec!["end \u{FFFD}"]);
     }
 
     #[test]
