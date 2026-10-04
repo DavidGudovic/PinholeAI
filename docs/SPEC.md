@@ -377,7 +377,9 @@ and two or three parts to keep (the composition, the camera angle, the backgroun
 a person's face and pose), joined as "<change>. <Details>. Keep … unchanged." The rewording
 follows the rules above, and also may not use an edit verb of another kind than the instruction's
 (`improve.edit.actions`: "add a hat" never becomes "replace the background"; an instruction with
-no verb may get one, but not one in `improve.edit.never_added` such as "remove" or "replace"); an instruction that refers to another picture ("from image 2",
+no verb may get one, but not one in `improve.edit.never_added` such as "remove" or "replace") and may not
+name anything the instruction doesn't (every word of three letters or more, `improve.common_words` aside, is
+one the instruction has); an instruction that refers to another picture ("from image 2",
 `improve.edit.keep_wording`) keeps its wording. Keep phrases naming something the instruction
 mentions are left out (`improve.common_words` don't count, nor the owner in "the man's face"), at
 most three are kept, details that only say "same …" are left out, and when the instruction keeps
