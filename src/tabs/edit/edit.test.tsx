@@ -565,6 +565,26 @@ describe("Edit tab", () => {
     vi.mocked(api.generate).mockImplementation(() => new Promise(() => undefined));
   });
 
+  it("says to wait when a picture is dropped on the stage while an edit runs", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    act(() => store.dispatch({ type: "jobStart", kind: "edit", at: 0, count: 1 }));
+    const stage = screen.getByRole("complementary", { name: "Edit settings" }).nextElementSibling!;
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    const png = new File(["x"], "b.png", { type: "image/png" });
+    Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"], files: [png], items: [], dropEffect: "copy" } });
+    act(() => void stage.dispatchEvent(drop));
+    expect(store.getState().toasts.map((t) => t.text)).toContain("Wait for the edits in progress to finish first.");
+    expect(store.getState().edit.chain.map((n) => n.imageId)).toEqual(["a"]);
+  });
+
   it("Ctrl+Z doesn't move the history behind an open dialog", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });
