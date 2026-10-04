@@ -24,7 +24,7 @@ use pinhole_catalog::local;
 use pinhole_registry::detect;
 use pinhole_store::datadir::ModelKind;
 use pinhole_store::installed::{
-    linked_folder_id, linked_rel_path, FileStamp, InstalledFile, LinkedFolder, NotUsed,
+    linked_folder_id, linked_rel_path, Duplicate, FileStamp, InstalledFile, LinkedFolder, NotUsed,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,9 @@ pub const LORA_LINKS_DIR: &str = ".pinhole-linked";
 #[derive(Default)]
 pub struct LinkedRuntime {
     pub(crate) scans: Mutex<Scans>,
+    /// Tests: whether the index lock was held each time an add-on was made ready.
+    #[cfg(test)]
+    pub(crate) index_locked_while_linking: Mutex<Vec<bool>>,
 }
 
 #[derive(Default)]
@@ -215,6 +218,10 @@ pub async fn remove(core: &AppCore, id: &str) -> CoreResult<()> {
             .linked
             .not_used
             .retain(|k, _| linked_folder_id(k) != Some(id));
+        index
+            .linked
+            .duplicates
+            .retain(|k, _| linked_folder_id(k) != Some(id));
         if let Err(e) = index.save_linked(&core.data) {
             *index = before;
             return Err(e.into());
@@ -302,7 +309,7 @@ fn scan_folder(core: &AppCore, id: &str) {
     if !root_ok {
         return; // removed, or its drive isn't connected: parked entries stay as they are
     }
-    let (folder, previous, taken_shas, old_skipped) = {
+    let (folder, previous, taken_shas, old_skipped, old_dups) = {
         let mut index = core.installed.lock();
         // Connected again since start: its entries come back with their ids.
         index.unpark(id);
@@ -333,7 +340,14 @@ fn scan_folder(core: &AppCore, id: &str) {
             .filter(|(k, _)| linked_folder_id(k) == Some(id))
             .map(|(k, v)| (k.clone(), *v))
             .collect();
-        (folder, previous, taken, old_skipped)
+        let old_dups: BTreeMap<String, Duplicate> = index
+            .linked
+            .duplicates
+            .iter()
+            .filter(|(k, _)| linked_folder_id(k) == Some(id))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        (folder, previous, taken, old_skipped, old_dups)
     };
     let root = PathBuf::from(&folder.path);
     let registry = core.registry();
@@ -343,6 +357,7 @@ fn scan_folder(core: &AppCore, id: &str) {
     let mut kept: Vec<(InstalledFile, FileStamp)> = Vec::new();
     let mut shas: HashSet<String> = taken_shas;
     let mut skipped: BTreeMap<String, NotUsed> = BTreeMap::new();
+    let mut dups: BTreeMap<String, Duplicate> = BTreeMap::new();
     for f in &found {
         let rel = linked_rel_path(id, &f.parts);
         // A name the index can't store as is (e.g. with `:` on Linux) would
@@ -363,14 +378,22 @@ fn scan_folder(core: &AppCore, id: &str) {
                 } else {
                     Skipped::NotUsable
                 }),
-                _ => recognise(&registry, f, previous.get(&rel).map(|p| &p.0), &rel),
+                _ => match old_dups.get(&rel) {
+                    // The same file as one Pinhole has, unchanged, and that one is still there.
+                    Some(d) if d.stamp == stamp && shas.contains(&d.sha256) => {
+                        dups.insert(rel, d.clone());
+                        continue;
+                    }
+                    _ => recognise(&registry, f, previous.get(&rel).map(|p| &p.0), &rel),
+                },
             },
         };
         match entry {
             Ok(entry) => {
                 let sha = entry.sha256.to_ascii_lowercase();
                 // The same file twice (e.g. a copy Pinhole installed): keep one.
-                if !sha.is_empty() && !shas.insert(sha) {
+                if !sha.is_empty() && !shas.insert(sha.clone()) {
+                    dups.insert(rel, Duplicate { stamp, sha256: sha });
                     continue;
                 }
                 kept.push((entry, stamp));
@@ -417,12 +440,18 @@ fn scan_folder(core: &AppCore, id: &str) {
             && kept.iter().all(|(f, s)| {
                 index.get(&f.id) == Some(f) && index.linked.stamps.get(&f.id) == Some(s)
             })
-            && old_skipped == skipped;
+            && old_skipped == skipped
+            && old_dups == dups;
         index
             .linked
             .not_used
             .retain(|k, _| linked_folder_id(k) != Some(id));
         index.linked.not_used.extend(skipped);
+        index
+            .linked
+            .duplicates
+            .retain(|k, _| linked_folder_id(k) != Some(id));
+        index.linked.duplicates.extend(dups);
         if !unchanged {
             // Keep what changed meanwhile (last used, measured memory, trigger words).
             let live: HashMap<String, InstalledFile> = old
@@ -523,6 +552,11 @@ pub fn lora_path_for_engine(
     file: &InstalledFile,
     abs: &Path,
 ) -> CoreResult<PathBuf> {
+    #[cfg(test)]
+    core.linked
+        .index_locked_while_linking
+        .lock()
+        .push(core.installed.is_locked());
     let id = linked_folder_id(&file.rel_path)
         .ok_or_else(|| CoreError::internal("Not an add-on from another app's folder."))?;
     let norm = pinhole_store::datadir::normalize_rel(&file.rel_path);
@@ -670,7 +704,7 @@ pub(crate) mod fixtures {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::time::{Duration, Instant};
 
     use pinhole_store::DataDir;
@@ -807,6 +841,79 @@ mod tests {
         assert!(comfy
             .join("models/checkpoints/someone.civitai.info")
             .is_file());
+    }
+
+    #[test]
+    fn a_file_pinhole_already_has_is_not_read_again_while_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let comfy = tmp.path().join("Comfy");
+        let path = comfy.join("checkpoints/m.safetensors");
+        fixtures::sdxl(&path);
+        let core = new_core(&tmp.path().join("Data"));
+        let view = add(&core, &comfy.display().to_string()).unwrap();
+        wait_scans(&core);
+        let linked_files = |core: &AppCore| -> Vec<InstalledFile> {
+            core.installed
+                .lock()
+                .files
+                .iter()
+                .filter(|f| f.is_linked())
+                .cloned()
+                .collect()
+        };
+        let found = linked_files(&core);
+        assert_eq!(found.len(), 1);
+        let rel = found[0].rel_path.clone();
+        // Pinhole gets its own copy of the same file.
+        let mut own = found[0].clone();
+        own.id = "own".into();
+        own.rel_path = "models/checkpoints/m.safetensors".into();
+        core.installed.lock().upsert(own);
+        rescan_all(&core, false);
+        wait_scans(&core);
+        assert!(linked_files(&core).is_empty());
+        assert!(core.installed.lock().linked.duplicates.contains_key(&rel));
+        assert_eq!(list(&core)[0].not_used, 0);
+
+        // New bytes with the same size and time: the file isn't read again.
+        let mtime = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        *bytes.last_mut().unwrap() = 1;
+        std::fs::write(&path, &bytes).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        rescan_all(&core, false);
+        wait_scans(&core);
+        assert!(linked_files(&core).is_empty());
+
+        // Once Pinhole's copy is gone, the file is read and used.
+        core.installed.lock().remove("own");
+        rescan_all(&core, false);
+        wait_scans(&core);
+        let back = linked_files(&core);
+        assert_eq!(back.len(), 1);
+        assert_ne!(back[0].sha256, found[0].sha256);
+        assert!(core.installed.lock().linked.duplicates.is_empty());
+
+        // Removing the folder forgets its duplicates too.
+        core.installed.lock().upsert(InstalledFile {
+            id: "own2".into(),
+            rel_path: "models/checkpoints/m2.safetensors".into(),
+            ..back[0].clone()
+        });
+        rescan_all(&core, false);
+        wait_scans(&core);
+        assert!(!core.installed.lock().linked.duplicates.is_empty());
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(remove(&core, &view.id))
+            .unwrap();
+        assert!(core.installed.lock().linked.duplicates.is_empty());
     }
 
     #[test]

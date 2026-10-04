@@ -232,6 +232,18 @@ pub struct LinkedState {
     /// Files found that Pinhole can't use, by `rel_path`: not read (or hashed)
     /// again while unchanged.
     pub not_used: BTreeMap<String, NotUsed>,
+    /// Files found that are the same as one Pinhole already has, by `rel_path`:
+    /// not read (or hashed) again while unchanged and the other copy is there.
+    pub duplicates: BTreeMap<String, Duplicate>,
+}
+
+/// A file in a linked folder with the same bytes as another file Pinhole has.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Duplicate {
+    pub stamp: FileStamp,
+    /// SHA-256 of the file (lowercase hex).
+    pub sha256: String,
 }
 
 /// A file in a linked folder Pinhole doesn't use.
@@ -267,6 +279,8 @@ struct LinkedOnDisk {
     files: Vec<serde_json::Value>,
     #[serde(default)]
     not_used: BTreeMap<String, NotUsed>,
+    #[serde(default)]
+    duplicates: BTreeMap<String, Duplicate>,
 }
 
 /// `rel_path` for `parts` (the path inside the folder) of linked folder `folder_id`.
@@ -412,12 +426,18 @@ impl InstalledIndex {
                 self.linked.parked.push(entry);
             }
         }
+        let known = |rel: &String| {
+            linked_folder_id(rel).is_some_and(|id| folders.iter().any(|f| f.id == id))
+        };
         self.linked.not_used = disk
             .not_used
             .into_iter()
-            .filter(|(rel, _)| {
-                linked_folder_id(rel).is_some_and(|id| folders.iter().any(|f| f.id == id))
-            })
+            .filter(|(rel, _)| known(rel))
+            .collect();
+        self.linked.duplicates = disk
+            .duplicates
+            .into_iter()
+            .filter(|(rel, _)| known(rel))
             .collect();
         self.linked.folders = folders;
     }
@@ -475,6 +495,7 @@ impl InstalledIndex {
             folders: self.linked.folders.clone(),
             files,
             not_used: self.linked.not_used.clone(),
+            duplicates: self.linked.duplicates.clone(),
         };
         let mut json = serde_json::to_vec_pretty(&out).map_err(|e| {
             StoreError::Invalid(format!("could not encode the linked folders: {e}"))
@@ -1012,6 +1033,16 @@ mod tests {
         );
         // An unhashed file never matches an empty hash.
         assert!(idx.find_by_sha("").is_none());
+        let dup = Duplicate {
+            stamp: FileStamp { size: 9, mtime: 3 },
+            sha256: "ab".repeat(32),
+        };
+        idx.linked
+            .duplicates
+            .insert("linked/f1/copy.safetensors".into(), dup.clone());
+        idx.linked
+            .duplicates
+            .insert("linked/gone/copy.safetensors".into(), dup.clone());
         idx.save(&d).unwrap();
 
         let shared = std::fs::read_to_string(d.installed_file()).unwrap();
@@ -1021,6 +1052,11 @@ mod tests {
         assert_eq!(back.get("l"), Some(&l));
         assert_eq!(back.linked.stamps["l"], FileStamp { size: 5, mtime: 7 });
         assert_eq!(back.linked.folders.len(), 1);
+        // Duplicates are kept for the folders that are still in the list.
+        assert_eq!(
+            back.linked.duplicates,
+            BTreeMap::from([("linked/f1/copy.safetensors".to_string(), dup)])
+        );
 
         // A folder that isn't there (drive not connected): its files are parked, kept on save.
         std::fs::remove_dir_all(&other).unwrap();
