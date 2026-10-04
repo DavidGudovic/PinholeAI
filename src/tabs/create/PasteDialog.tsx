@@ -1,6 +1,6 @@
 // "Paste from CivitAI" dialog + the summary of what was applied.
 // PRIVACY: pasted text lives in component state only; never logged or stored.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ClipboardPaste, Download, Info, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { AutoTextarea, Badge, Button, Dialog, ErrorNotice, IconButton, ProgressBar, cx } from "../../components/ui";
 import * as api from "../../lib/api";
@@ -30,6 +30,9 @@ export function PasteDialog({
 
 function PasteDialogInner({ onClose, onApply, initialText }: { onClose: () => void; onApply: (text: string) => Promise<void>; initialText?: string }) {
   const [text, setText] = useState(initialText ?? "");
+  // The text as last rendered, for the clipboard read below.
+  const textRef = useRef(text);
+  textRef.current = text;
   const [fromClipboard, setFromClipboard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<CoreError | null>(null);
@@ -39,8 +42,9 @@ function PasteDialogInner({ onClose, onApply, initialText }: { onClose: () => vo
     if (initialText) return;
     let alive = true;
     void readClipboardText().then((t) => {
-      if (alive && t && looksLikeGenerationData(t)) {
-        setText((cur) => (cur ? cur : t));
+      // Only into an empty box: text typed while the clipboard was read stays.
+      if (alive && t && looksLikeGenerationData(t) && !textRef.current.trim()) {
+        setText(t);
         setFromClipboard(true);
       }
     });
