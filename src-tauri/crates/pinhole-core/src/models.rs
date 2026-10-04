@@ -977,6 +977,8 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     }
     let registry = core.registry();
     purge_expired_pending(core);
+    // Refuse before copying a large file that couldn't be registered afterwards.
+    core.installed.lock().check_savable(&core.data)?;
 
     let header_src = src.clone();
     let reg_for_detect = registry.clone();
@@ -1184,7 +1186,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         }
         // A LoRA of unknown base still works; it just can't be checked for compatibility.
         FamilyResolution::Unsupported(_) if kind == ModelKind::Lora => {
-            register_pending(core, &pending, None)
+            register_pending(core, &pending, None).inspect_err(|_| remove_copy(&pending))
         }
         FamilyResolution::Unsupported(base) => {
             remove_copy(&pending);
@@ -2063,6 +2065,51 @@ mod tests {
         assert!(core.downloads.status().is_empty(), "nothing queued");
         assert!(core.models.inflight_dests.lock().is_empty());
         assert!(core.models.inflight.lock().is_empty());
+    }
+
+    /// "Add a file" is refused before copying when the index couldn't be saved.
+    #[tokio::test]
+    async fn add_a_file_is_refused_before_copying_when_the_index_cant_be_saved() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION + 1;
+        let src = tmp.path().join("Big.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let e = add_local_model(&core, src.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(e.message.contains("newer version"), "{}", e.message);
+        let dir = core.data.models(ModelKind::Checkpoint);
+        assert!(
+            !dir.exists() || std::fs::read_dir(&dir).unwrap().next().is_none(),
+            "nothing copied"
+        );
+    }
+
+    /// A LoRA of unknown base whose registration fails leaves no copy behind.
+    #[tokio::test]
+    async fn failed_lora_registration_removes_the_copy() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        // A directory where the index file goes: saving it fails.
+        std::fs::create_dir_all(core.data.installed_file()).unwrap();
+        let src = tmp.path().join("style.safetensors");
+        safetensors(
+            &src,
+            &[
+                "lora_unet_input_blocks_1_1_proj_in.lora_down.weight",
+                "lora_unet_input_blocks_1_1_proj_in.lora_up.weight",
+            ],
+        );
+        assert!(add_local_model(&core, src.to_str().unwrap()).await.is_err());
+        let dir = core.data.models(ModelKind::Lora);
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        assert!(core.installed.lock().files.is_empty());
+        assert!(src.is_file(), "the user's file is untouched");
     }
 
     /// "Add a file" never picks the name a download is writing to (only its
