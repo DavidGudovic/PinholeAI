@@ -81,14 +81,19 @@ pub async fn sweep_orphans(core: &AppCore) -> Vec<Orphan> {
         .unwrap_or_default()
 }
 
-/// App start: sweep leftovers from an earlier run in the background.
+/// App start: sweep leftovers from an earlier run in the background, then
+/// remove engine files no pinned version uses ([`install::sweep_stale`]).
 pub fn start_orphan_sweep(core: &Arc<AppCore>) {
     let root = engine_root(core);
     if !root.is_dir() {
         return;
     }
+    let cfg = engine_config(core).ok();
     let sweep = move || {
         orphans::kill_orphans(&root, ORPHAN_WAIT);
+        if let Some(cfg) = cfg {
+            install::sweep_stale(&root, &cfg);
+        }
     };
     match tokio::runtime::Handle::try_current() {
         Ok(rt) => drop(rt.spawn_blocking(sweep)),
@@ -345,6 +350,12 @@ pub(crate) async fn unpack_downloaded(
     files: Vec<pinhole_net::download::DownloadedFile>,
 ) -> CoreResult<InstalledEngine> {
     let root = engine_root(core);
+    let paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+    // Installed meanwhile (an earlier download of the same engine): keep that one.
+    if let Some(done) = install::find_installed(&root, kind, &kind.pin(cfg).version, &sel.backend) {
+        install::cleanup_downloads(&paths);
+        return Ok(done);
+    }
     let archives = sel.build.archives();
     if files.len() != archives.len() {
         return Err(CoreError::internal(
@@ -367,7 +378,6 @@ pub(crate) async fn unpack_downloaded(
         .zip(files.iter())
         .map(|(a, f)| (a, f.path.clone(), f.sha256.clone()))
         .collect();
-    let paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
     let pin = kind.pin(cfg).clone();
     let sel2 = sel.clone();
     let root2 = root.clone();

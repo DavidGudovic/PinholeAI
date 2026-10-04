@@ -196,6 +196,18 @@ fn is_gone(status: ProcessStatus) -> bool {
     matches!(status, ProcessStatus::Zombie | ProcessStatus::Dead)
 }
 
+/// A process with this pid is running (any program).
+pub fn pid_running(pid: u32) -> bool {
+    let mut sys = System::new();
+    let pid = Pid::from_u32(pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().without_tasks(),
+    );
+    sys.process(pid).is_some_and(|p| !is_gone(p.status()))
+}
+
 /// Kill every leftover engine under `engine_root` and wait (up to `wait` in
 /// total) until they are gone. Returns what was found.
 pub fn kill_orphans(engine_root: &Path, wait: Duration) -> Vec<Orphan> {

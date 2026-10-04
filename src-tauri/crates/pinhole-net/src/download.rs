@@ -27,6 +27,8 @@ pub const DISK_MARGIN_BYTES: u64 = 256 * 1024 * 1024;
 pub const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 /// Attempts per file for transient network errors (resuming each time).
 const MAX_ATTEMPTS: u32 = 4;
+/// Times a failed attempt that wrote new bytes may restore the retry budget.
+const MAX_PROGRESS_RETRIES: u32 = 50;
 /// Finished groups listed by [`DownloadManager::status`].
 const STATUS_FINISHED: usize = 20;
 /// Finished groups kept for [`DownloadManager::wait`].
@@ -335,9 +337,11 @@ async fn fetch_verified(
         .is_ok_and(|m| m.is_file() && m.len() > 0);
     let mut attempt = 0;
     let mut restarted_after_mismatch = false;
+    let mut progress_retries = 0;
     loop {
         attempt += 1;
         let mut started_over = false;
+        let before = tokio::fs::metadata(&part).await.map_or(0, |m| m.len());
         let r = try_once(
             client,
             spec,
@@ -352,6 +356,16 @@ async fn fetch_verified(
         )
         .await;
         leftover &= !started_over;
+        // An attempt that added bytes to `.part` before it failed starts the
+        // retry count again, up to MAX_PROGRESS_RETRIES times per call.
+        let progressed = carried.as_ref().is_some_and(|c| c.1 > before);
+        if progressed
+            && progress_retries < MAX_PROGRESS_RETRIES
+            && matches!(&r, Err(e) if is_retryable(e))
+        {
+            progress_retries += 1;
+            attempt = 1;
+        }
         match r {
             // The user cancelled while this attempt was failing (e.g. still connecting):
             // report the cancel, not the transport error it raced with.
