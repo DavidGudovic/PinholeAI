@@ -1001,8 +1001,8 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
   note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising
   runs out, more of the card is kept free (`--max-vram -4` instead of `-2` on a 16 GB card, less on
-  smaller cards, at most a quarter of the card; remembered per model for the app session once the
-  retried job succeeds, shown in the engine note); then the
+  smaller cards, at most a quarter of the card's nominal size; remembered per model for the app
+  session once the retried job succeeds, shown in the engine note); then the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
   every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
   model runs with the same settings, also after the idle stop — another model, other settings or

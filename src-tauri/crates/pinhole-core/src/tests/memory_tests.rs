@@ -251,6 +251,10 @@ async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
     .await;
     use_external_engine(&core, &mock.base_url());
     let model = register_fake_model(&core, "z_image_turbo");
+    {
+        let mut f = core.gen.flags.lock();
+        (f.running, f.loaded_model_id) = (true, Some(model.clone()));
+    }
 
     let res = generate::generate(
         &core,
@@ -306,6 +310,21 @@ async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
     assert!(
         remembered.is_some_and(|fb| fb.te_on_cpu && fb.vram_reserve_gib == 4),
         "{remembered:?}"
+    );
+    // The engine status sent after the recovered job has those choices in its note.
+    let last_note = rec
+        .0
+        .lock()
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            CoreEvent::Engine(s) => Some(s.note.clone().unwrap_or_default()),
+            _ => None,
+        })
+        .expect("engine status sent");
+    assert!(
+        last_note.contains("prompt is read on the processor"),
+        "{last_note}"
     );
     // The text encoder choice is kept for the session; system memory only
     // while that engine stays loaded (and the engine status says so).

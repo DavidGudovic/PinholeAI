@@ -1288,3 +1288,77 @@ async fn failed_submit_marks_the_engine_as_holding_results() {
     assert_eq!(err.code, "engine_failed");
     assert!(core.gen.slot.lock().await.results_cached);
 }
+
+/// A Pinhole-started engine that answers the submit with `submit_status`.
+/// The loaded args come from a first load that is cancelled, so the job
+/// reuses the engine instead of launching another one.
+#[cfg(unix)]
+async fn managed_engine_answering(submit_status: u16) -> (tempfile::TempDir, Arc<AppCore>) {
+    let (tmp, core, _rec) = new_core();
+    install_fake_engine(
+        &core,
+        pinhole_engine::install::EngineKind::Sd,
+        "sd-server",
+        "exec sleep 30",
+    );
+    let model = register_fake_model(&core, "sdxl");
+    let c2 = core.clone();
+    let m2 = model.clone();
+    let first = tokio::spawn(async move {
+        generate::generate(&c2, GenerateRequest::txt2img(m2, "a boat")).await
+    });
+    let mut args = None;
+    for _ in 0..500 {
+        args = core.gen.loading.lock().as_ref().map(|(_, a)| a.clone());
+        if args.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let args = args.expect("the engine is loading");
+    generate::cancel(&core);
+    assert_eq!(first.await.unwrap().unwrap_err().code, "cancelled");
+
+    let (base, _) = failing_sd_server(submit_status).await;
+    let port: u16 = base.rsplit(':').next().unwrap().parse().unwrap();
+    let exe = crate::engine_setup::installed_engine(&core, pinhole_engine::install::EngineKind::Sd)
+        .unwrap()
+        .exe;
+    let proc = pinhole_engine::EngineProcess::spawn(
+        &exe,
+        &[],
+        port,
+        Arc::new(pinhole_engine::LogBuffer::default()),
+    )
+    .unwrap();
+    *core.gen.slot.lock().await = crate::engine::EngineSlot {
+        proc: Some(proc),
+        args,
+        model_id: Some(model),
+        results_cached: false,
+        api_key: None,
+    };
+    (tmp, core)
+}
+
+/// A submit that fails with a server error stops a Pinhole-started engine;
+/// a clear refusal keeps it.
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_submit_stops_a_managed_engine_unless_refused() {
+    let (_tmp, core) = managed_engine_answering(503).await;
+    let model = core.gen.slot.lock().await.model_id.clone().unwrap();
+    let err = generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "engine_failed");
+    assert!(!engine_running(&core).await, "engine stopped");
+    assert!(!core.gen.flags.lock().running);
+
+    let (_tmp, core) = managed_engine_answering(400).await;
+    let model = core.gen.slot.lock().await.model_id.clone().unwrap();
+    generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap_err();
+    assert!(engine_running(&core).await, "engine kept");
+}

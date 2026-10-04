@@ -66,9 +66,9 @@ pub(crate) const MORE_ROOM_RESERVE_GIB: u8 = 4;
 /// (reserve at launch, reserve for the "more room" retry) in GiB for a card
 /// with `vram_gb` (0 = unknown). Smaller cards keep less free: the reserve
 /// comes out of what auto-fit may keep on the card (free − reserve instead of
-/// free − 0.5 GiB). The retry stays at a quarter of the card at most, because
-/// sd.cpp treats a reserve at or above the free memory as no limit at all
-/// (ggml_graph_cut.cpp `resolve_auto_max_vram_bytes`). Below 8 GB the launch
+/// free − 0.5 GiB). The retry stays at a quarter of the card's nominal size at
+/// most, because sd.cpp treats a reserve at or above the free memory as no
+/// limit at all (ggml_graph_cut.cpp `resolve_auto_max_vram_bytes`). Below 8 GB the launch
 /// keeps the engine's own default. The buckets start half a GB below the
 /// nominal size, because cards report a little less (16303 MiB → 15.9 GB).
 pub(crate) fn vram_reserves(vram_gb: f32) -> (u8, u8) {
@@ -252,16 +252,20 @@ pub(crate) fn memory_choices(
 }
 
 /// Remember the automatic choices `learned` by a retry that then succeeded
-/// for `model_id` (RAM only, app session).
+/// for `model_id` (RAM only, app session), and send the engine status again
+/// so its note shows them.
 pub(crate) fn remember_memory_choices(core: &AppCore, model_id: &str, learned: MemFallback) {
     if learned == MemFallback::default() {
         return;
     }
-    let mut remembered = core.gen.mem_fallback.lock();
-    let entry = remembered.entry(model_id.to_string()).or_default();
-    entry.te_on_cpu |= learned.te_on_cpu;
-    entry.vae_tiling |= learned.vae_tiling;
-    entry.vram_reserve_gib = entry.vram_reserve_gib.max(learned.vram_reserve_gib);
+    {
+        let mut remembered = core.gen.mem_fallback.lock();
+        let entry = remembered.entry(model_id.to_string()).or_default();
+        entry.te_on_cpu |= learned.te_on_cpu;
+        entry.vae_tiling |= learned.vae_tiling;
+        entry.vram_reserve_gib = entry.vram_reserve_gib.max(learned.vram_reserve_gib);
+    }
+    crate::engine_setup::emit_status(core);
 }
 
 /// Weights in system memory stick while this model runs with the same
