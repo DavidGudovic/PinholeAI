@@ -258,16 +258,15 @@ two short sentences naming the rule, shown with the usage guidelines (§7). It n
 scores, estimated ages, thresholds or which model measured what. If several pictures of a batch
 are blocked, the message of the first rule in this order is shown: rule 2, rule 1, rule 3.
 
-- Rule 2: "Someone may look under 18. The age check can be wrong about young-looking adults."
-- Rule 1: "This started from a picture you brought in that shows a face. Pinhole doesn't make
-  intimate pictures from those."
+- Rule 2: "Someone in this picture may look under 18."
+- Rule 1: "This started from a picture you brought in that shows a face. Those can't be made
+  intimate."
 - Rule 3, a model or add-on in use has CivitAI's flag: "A model or add-on in use is marked safe
-  images only on CivitAI, so it can't make intimate pictures."
+  images only on CivitAI."
 - Rule 3, a model or add-on in use isn't cleared by a lookup (or isn't installed any more):
-  "Pinhole couldn't confirm a model or add-on in use on CivitAI, so it can't make intimate
-  pictures."
+  "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only."
 - Rule 3, only a picture it was made from (or, in Describe, the picture itself) was under the
-  rule: "This comes from a picture made with a safe-images-only model, so it can't be intimate."
+  rule: "This comes from a picture made with a safe-images-only model or add-on."
 - Text check, under-18 and sexual terms: "This asks for something the usage guidelines don't
   allow." (`text_check::BLOCKED_MESSAGE`). Document or money copy: "Pinhole doesn't make copies
   of IDs, documents or money." (`text_check::DOCUMENT_MESSAGE`).
