@@ -104,7 +104,7 @@ export function Stage({
           <IconButton
             label="View full screen"
             size="sm"
-            className="absolute top-2 right-2 z-10 bg-black/40 text-white hover:bg-black/60"
+            className="absolute top-2 right-2 z-10 bg-black/40! text-white! hover:bg-black/60!"
             onClick={() => setViewing(true)}
           >
             <Maximize2 className="h-4 w-4" />

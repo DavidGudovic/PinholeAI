@@ -219,6 +219,10 @@ describe("Improve my prompt", () => {
   it("needs some text first", () => {
     box("");
     expect((screen.getByRole("button", { name: /Improve/ }) as HTMLButtonElement).disabled).toBe(true);
+    // Still takes the pointer so its title explains why it is off.
+    const cls = screen.getByRole("button", { name: /Improve/ }).className.split(" ");
+    expect(cls).not.toContain("disabled:pointer-events-none");
+    expect(cls).not.toContain("hover:bg-neutral-100");
   });
 
   it("replaces the prompt and Undo puts the original back", async () => {
@@ -261,6 +265,16 @@ describe("Improve my prompt", () => {
 });
 
 describe("Results", () => {
+  it("keeps the icon buttons together in one group that wraps as a unit", () => {
+    withApp(storeWithResults(result("a", 64, 64)), <Results />);
+    const icons = screen.getByTestId("result-icons");
+    expect(icons.className.split(" ")).not.toContain("flex-wrap");
+    for (const name of ["View full screen", "Copy image", "Remove from this session"]) {
+      expect(within(icons).getByRole("button", { name })).toBeTruthy();
+    }
+    expect(within(icons).queryByRole("button", { name: /Describe/ })).toBeNull();
+    expect(within(screen.getByTestId("result-actions")).getByRole("button", { name: /Describe/ })).toBeTruthy();
+  });
   it("doesn't re-render on progress ticks", () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "jobStart", kind: "create", at: 0, count: 1 });
