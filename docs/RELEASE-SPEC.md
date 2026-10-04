@@ -2,7 +2,7 @@
 
 The safeguards and release rules every public build follows: AI-generated marking, the local
 image check, the catalog rules, licences, notices and wording. Pinhole is released on GitHub
-(v1.0.0, v1.0.1 and v1.0.2 on 2026-10-01; v1.0.3 and v1.0.4 on 2026-10-03; v1.1.0 and v1.1.1 on 2026-10-04). The section numbers are
+(v1.0.0, v1.0.1 and v1.0.2 on 2026-10-01; v1.0.3 and v1.0.4 on 2026-10-03; v1.1.0 and v1.1.1 on 2026-10-04; v1.1.2 on 2026-10-05). The section numbers are
 cited from code, tests and `SAFETY.md`; keep them stable. What is still open is in §12.
 
 Last reviewed: 2026-10-01.
