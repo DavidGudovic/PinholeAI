@@ -571,8 +571,8 @@ enum ReadyFailure {
 /// Shown while the engine runs when a GPU build ended up without the graphics card.
 pub(crate) const NOT_ON_GPU_NOTE: &str = "The engine isn't using your graphics card, so pictures are made much more slowly. Update or reinstall your graphics driver, then restart Pinhole. Settings → Engine → Show engine output shows which devices it found.";
 
-/// Same, for Linux with an NVIDIA card: the engine reaches it through the NVIDIA Vulkan driver.
-pub(crate) const NOT_ON_GPU_NOTE_LINUX_NVIDIA: &str = "The engine can't reach your NVIDIA card, so pictures are made much more slowly. On Linux it needs NVIDIA's Vulkan driver: reinstall the NVIDIA driver (on Ubuntu: sudo ubuntu-drivers install), check that vulkaninfo --summary lists your card, then restart Pinhole.";
+/// Same, for Linux with an NVIDIA card: both the CUDA and the Vulkan engine need NVIDIA's own driver.
+pub(crate) const NOT_ON_GPU_NOTE_LINUX_NVIDIA: &str = "The engine can't reach your NVIDIA card, so pictures are made much more slowly. Install or update the NVIDIA driver (on Ubuntu: sudo ubuntu-drivers install), restart the computer, then open Pinhole again.";
 
 /// The card was found but was full when the engine started.
 pub(crate) const GPU_FULL_NOTE: &str = "Your graphics card had no free memory when the model loaded, so pictures are made on the processor (much slower). Close other programs that use the card, then pick the model again.";
