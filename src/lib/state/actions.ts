@@ -55,8 +55,10 @@ export function makeActions(store: Store) {
   async function refreshSettings() {
     dispatch({ type: "setSettings", settings: await api.getSettings() });
   }
-  // Replies can come back out of order: only the newest refresh applies its result (or its error).
+  // Replies can come back out of order: a reply (or error) is dropped once a newer refresh
+  // has already applied its list.
   let modelsSeq = 0;
+  let modelsApplied = 0;
   async function refreshModels() {
     const mine = ++modelsSeq;
     let models: InstalledModel[];
@@ -64,10 +66,11 @@ export function makeActions(store: Store) {
     try {
       [models, loras] = await Promise.all([api.listModels(), api.listLoras().catch(() => [])]);
     } catch (e) {
-      if (mine !== modelsSeq) return;
+      if (mine < modelsApplied) return;
       throw e;
     }
-    if (mine !== modelsSeq) return;
+    if (mine < modelsApplied) return;
+    modelsApplied = mine;
     dispatch({ type: "setModels", models });
     dispatch({ type: "setLoras", loras });
   }

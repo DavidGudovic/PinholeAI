@@ -1219,4 +1219,16 @@ describe("refreshModels", () => {
     await expect(first).resolves.toBeUndefined();
     expect(store.getState().models?.map((m) => m.id)).toEqual(["m", "n"]);
   });
+
+  it("keeps an older list when the newer refresh fails", async () => {
+    const { store, actions } = setup();
+    const newer = deferred<InstalledModel[]>();
+    vi.mocked(apiMod.listModels).mockResolvedValueOnce([model, other]).mockReturnValueOnce(newer.promise);
+    const first = actions.refreshModels();
+    const second = actions.refreshModels();
+    await first;
+    newer.reject({ code: "io", message: "failed", details: null });
+    await expect(second).rejects.toBeTruthy();
+    expect(store.getState().models?.map((m) => m.id)).toEqual(["m", "n"]);
+  });
 });
