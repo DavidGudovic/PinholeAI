@@ -948,9 +948,7 @@ fn keeps_intent(
     let has_person = names_person(idea, &spec.people);
     let added_person = !has_person
         && (spec.people.iter().any(in_new)
-            || new_person_details(idea, has_person, &spec.person_details)
-                .into_iter()
-                .any(in_new));
+            || adds_person_detail(r, idea, has_person, &spec.person_details));
     !added_person
         && !spec
             .drop
@@ -976,20 +974,20 @@ fn names_person(text: &str, people: &[String]) -> bool {
     })
 }
 
-/// The `person_details` words ("hair", "dress") that `idea` doesn't have, when it names no person
-/// (`has_person`); none when it does.
-fn new_person_details<'a>(
-    idea: &str,
-    has_person: bool,
-    person_details: &'a [String],
-) -> Vec<&'a String> {
+/// Whether `text` has one of the `person_details` words ("hair", "dress"; singular and plural
+/// count as one) that `idea` doesn't have, while `idea` names no person (`has_person`).
+fn adds_person_detail(text: &str, idea: &str, has_person: bool, person_details: &[String]) -> bool {
     if has_person {
-        return Vec::new();
+        return false;
     }
+    let words = |t: &str| -> std::collections::HashSet<String> {
+        lower_words(t).iter().map(|w| singular(w)).collect()
+    };
+    let (in_text, in_idea) = (words(text), words(idea));
     person_details
         .iter()
-        .filter(|d| !crate::generate::contains_phrase(idea, d))
-        .collect()
+        .map(|d| singular(&d.to_lowercase()))
+        .any(|d| in_text.contains(&d) && !in_idea.contains(&d))
 }
 
 /// The idea Improve builds on: the helper's rewording (`reworded`, trailing full stop off) when it
@@ -1061,7 +1059,7 @@ fn added_phrases<'a>(
     // People the idea doesn't have would change the picture, and so would their hair or clothes.
     let has_person = names_person(idea, people);
     let people: &[String] = if has_person { &[] } else { people };
-    let new_details = new_person_details(idea, has_person, person_details);
+
     let idea_words: std::collections::HashSet<String> = content_words(idea).into_iter().collect();
     let mut seen = std::collections::HashSet::new();
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
@@ -1098,9 +1096,7 @@ fn added_phrases<'a>(
                     && p != "-"
                     && p.split_whitespace().count() <= MAX_PHRASE_WORDS
                     && !names_person(p, people)
-                    && !new_details
-                        .iter()
-                        .any(|d| crate::generate::contains_phrase(p, d))
+                    && !adds_person_detail(p, idea, has_person, person_details)
                     && !skipped
                         .iter()
                         .any(|d| crate::generate::contains_phrase(p, d))
@@ -1787,7 +1783,7 @@ mod tests {
             drop: list(&["atmosphere", "best quality"]),
             common_words: list(&["the", "with", "make", "add", "replace", "give", "her"]),
             people: list(&["1boy", "1girl", "girl", "man"]),
-            person_details: list(&["hair", "suit", "suits", "dress"]),
+            person_details: list(&["hair", "suit", "dress", "earring"]),
             exact_words: list(&["her", "more", "less"]),
             edit: Default::default(),
         }
@@ -2270,6 +2266,18 @@ mod tests {
             )
             .unwrap(),
             "a dress on a hanger. Red silk dress."
+        );
+        // Singular and plural count as one.
+        assert_eq!(
+            assemble_improved(
+                "earrings on a velvet tray",
+                &lines("-", "gold earring, sleek suits"),
+                &m,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "earrings on a velvet tray. Gold earring."
         );
     }
 
