@@ -1164,6 +1164,30 @@ describe("Also apply to…", () => {
     await actions.importAlsoToEdit([new Blob([new Uint8Array(4)])]);
     expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
   });
+
+  it("imports at most two files at a time and keeps them in the order given", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    let running = 0;
+    let most = 0;
+    let n = 0;
+    vi.mocked(apiMod.importImage).mockImplementation(async (bytes: Uint8Array) => {
+      running++;
+      most = Math.max(most, running);
+      // Later files finish sooner, so the order comes from the list, not from finishing.
+      await new Promise((r) => setTimeout(r, 20 - bytes[0]));
+      running--;
+      if (bytes[0] === 5) throw { code: "bad_image", message: "not a picture", details: null };
+      n++;
+      return { id: `f${bytes[0]}`, width: 8, height: 8 } as never;
+    });
+    const files = Array.from({ length: ALSO_MAX }, (_, i) => new Blob([new Uint8Array([i])]));
+    await expect(actions.importAlsoToEdit(files)).rejects.toMatchObject({ message: "not a picture" });
+    expect(most).toBe(2);
+    expect(n).toBe(ALSO_MAX - 1);
+    expect(store.getState().edit.alsoIds).toEqual(Array.from({ length: ALSO_MAX }, (_, i) => `f${i}`).filter((id) => id !== "f5"));
+    vi.mocked(apiMod.importImage).mockImplementation(async () => ({ id: "mask", width: 8, height: 8 }) as never);
+  });
 });
 
 describe("Save as one sheet", () => {
