@@ -3,10 +3,18 @@ import { Save } from "lucide-react";
 import * as api from "../lib/api";
 import { canSaveAs } from "../lib/state/platform";
 import { useActions } from "../lib/state/AppProvider";
-import { unsavedEditIds, unsavedIds } from "../lib/state/model";
+import { unsavedEditIds, unsavedIds, type LeaveKind } from "../lib/state/model";
 import { useAppState, useDispatch, useStore } from "../lib/state/store";
 import type { CoreError } from "../lib/types";
 import { Button, Dialog, ErrorNotice } from "./ui";
+
+/** What is lost when the user goes ahead without saving. */
+export function leaveWarning(what: LeaveKind | null): string {
+  if (what === "edit") return "Unsaved edited images are permanently deleted.";
+  if (what === "close") return "Unsaved images are permanently deleted.";
+  // Reset also clears the prompt fields and Fine-tune changes (model.ts "clearSession").
+  return "Unsaved images, the prompt and Fine-tune settings are permanently deleted.";
+}
 
 /** Shown before closing the window, Reset, or replacing Edit's history while some pictures were never saved. */
 export function UnsavedDialog() {
@@ -43,7 +51,7 @@ export function UnsavedDialog() {
       open={what !== null}
       onClose={() => !busy && cancel()}
       title={count === 1 ? "You have 1 picture that isn't saved" : `You have ${count} pictures that aren't saved`}
-      description={`Nothing is saved until you press Save. ${closing ? "Closing Pinhole" : replacing ? "Editing another image" : "Reset"} removes them for good.`}
+      description="Nothing is saved until you press Save."
       footer={
         <>
           <Button variant="ghost" disabled={busy} onClick={cancel}>
@@ -60,6 +68,7 @@ export function UnsavedDialog() {
         </>
       }
     >
+      <p className="mb-2 text-sm font-medium text-red-700 dark:text-red-400">{leaveWarning(what)}</p>
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         {canSaveAs() ? "Save all puts every unsaved picture into a folder you choose." : `Save pictures one by one with the Save button first, or ${replacing ? "continue" : "leave"} without saving.`}
       </p>
