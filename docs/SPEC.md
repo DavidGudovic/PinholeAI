@@ -207,7 +207,7 @@ listed once. A folder whose drive isn't connected keeps its entries and shows "N
    generation settings (no prompt)" also writes model name, seed, steps, dials into a PNG text chunk.
    **Reuse settings**: dropping such a picture on Create's results area reads that chunk back (in Rust,
    only the known fields, range-checked; the picture is not kept) and fills model (by id, else by name),
-   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler and size through the same mapping
+   seed ("Keep this look" on), steps, Stick to prompt, sampler, scheduler, size and "Repeats without seams" through the same mapping
    as Paste from CivitAI. The prompt, negative prompt and add-ons are left as they are. A picture without
    the chunk opens the same chooser as a pasted picture (§5); other programs' metadata is never read.
 10. CI check: grep-based test fails the build if any code path writes a `prompt` field to a
