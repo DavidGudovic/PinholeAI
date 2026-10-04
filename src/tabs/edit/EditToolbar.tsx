@@ -77,28 +77,31 @@ export function EditToolbar({
     <div className="flex shrink-0 items-center gap-1.5 border-b border-neutral-200 bg-white/60 px-4 py-2 dark:border-neutral-800 dark:bg-neutral-900/40">
       <IconButton
         label="Undo"
+        size="sm"
         disabled={e.index === 0 || locked}
         onClick={() =>
           dispatch({ type: "editGoto", index: e.index - 1 })
         }
       >
-        <Undo2 className="h-4 w-4" />
+        <Undo2 className="h-3.5 w-3.5" />
       </IconButton>
       <IconButton
         label="Redo"
+        size="sm"
         disabled={e.index >= e.chain.length - 1 || locked}
         onClick={() =>
           dispatch({ type: "editGoto", index: e.index + 1 })
         }
       >
-        <Redo2 className="h-4 w-4" />
+        <Redo2 className="h-3.5 w-3.5" />
       </IconButton>
       <IconButton
         label="Delete this edit"
+        size="sm"
         disabled={e.index === 0 || job || locked}
         onClick={() => dispatch({ type: "editDelete", index: e.index })}
       >
-        <Trash2 className="h-4 w-4" />
+        <Trash2 className="h-3.5 w-3.5" />
       </IconButton>
       <span className="mx-1 h-5 w-px bg-neutral-200 dark:bg-neutral-800" />
       <Button
