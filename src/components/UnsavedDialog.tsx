@@ -37,8 +37,10 @@ export function UnsavedDialog() {
     setBusy(true);
     setError(null);
     try {
-      // Cancelling the folder picker (or a failed save) keeps the dialog open.
-      if (await actions.saveAll(replacing ? unsavedEditIds(store.getState()) : undefined)) await actions.finishLeave(what!);
+      // Cancelling the folder picker (or a failed save) keeps the dialog open, and so do pictures
+      // that finished while the folder picker was open and are still unsaved.
+      const unsaved = replacing ? unsavedEditIds : unsavedIds;
+      if ((await actions.saveAll(unsaved)) && !unsaved(store.getState()).length) await actions.finishLeave(what!);
     } catch (e) {
       setError(api.asCoreError(e));
     } finally {

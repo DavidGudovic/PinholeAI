@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import * as api from "../api";
 import { hardwareKey } from "../hardware";
 import { makeActions, type Actions } from "./actions";
-import { releaseRefs } from "./images";
+import { releaseRefs, watchThumbs } from "./images";
 import type { TabId } from "./model";
 import { StoreContext, createStore, type Store } from "./store";
 
@@ -27,6 +27,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
     const keep = (p: Promise<() => void>) =>
       p.then((u) => (alive ? unlisten.push(u) : u())).catch(() => undefined);
 
+    const offThumbs = watchThumbs(store);
     keep(api.onDownload((st) => store.dispatch({ type: "download", status: st })));
     keep(
       api.onGeneration((p) => {
@@ -86,6 +87,7 @@ export function AppProvider({ children, store: given }: { children: ReactNode; s
     return () => {
       alive = false;
       offSettings();
+      offThumbs();
       for (const u of unlisten) u();
     };
   }, [store, actions]);

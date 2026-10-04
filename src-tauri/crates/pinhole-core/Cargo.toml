@@ -39,3 +39,7 @@ tokio = { workspace = true }
 
 [features]
 test-util = ["pinhole-engine/test-util"]
+
+[[test]]
+name = "upscale_peak"
+required-features = ["test-util"]

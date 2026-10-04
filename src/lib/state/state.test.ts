@@ -118,6 +118,23 @@ describe("reducer", () => {
     expect(s.create.fineTune.seed).toBe(999);
   });
 
+  it("Keep this look moves to the next result when the selected one is removed", () => {
+    let s = run(withModels(), { type: "addResults", batch: null, images: [result("a", 11), result("b", 12), result("c", 13)], refs: [ref("a"), ref("b"), ref("c")] });
+    s = run(s, { type: "keepLook", on: true }, { type: "removeResult", id: "a" });
+    expect(s.selectedResultId).toBe("b");
+    expect(s.create.fineTune.seed).toBe(12);
+    // It still follows the selection afterwards.
+    s = run(s, { type: "selectResult", id: "c" });
+    expect(s.create.fineTune.seed).toBe(13);
+    // Removing a result that isn't selected leaves the seed alone.
+    s = run(s, { type: "removeResult", id: "b" });
+    expect(s.create.fineTune.seed).toBe(13);
+    // With nothing left to select, the seed is kept.
+    s = run(s, { type: "removeResult", id: "c" });
+    expect(s.selectedResultId).toBeNull();
+    expect(s.create.fineTune.seed).toBe(13);
+  });
+
   it("keeps images that are still shown somewhere and drops the rest", () => {
     let s = run(withModels(), { type: "addResults", batch: null, images: [result("a", 1)], refs: [ref("a")] });
     s = run(s, { type: "editLoad", ref: ref("a") });
@@ -200,6 +217,19 @@ describe("unsaved pictures and prompt history", () => {
     expect(unsavedIds(s).sort()).toEqual(["b", "e"]);
     s = run(s, { type: "removeResult", id: "b" });
     expect(unsavedIds(s)).toEqual(["e"]);
+  });
+
+  it("a removed picture's run and saved path go with it; kept pictures keep theirs", () => {
+    let s = made(withModels());
+    s = run(
+      s,
+      { type: "addResults", batch: null, images: [result("x", 4), result("y", 5)], refs: [ref("x"), ref("y")], group: "g1" },
+      { type: "markSaved", entries: [{ id: "x", path: "/x/x.png" }, { id: "y", path: "/x/y.png" }, { id: "e", path: "/x/e.png" }] },
+      { type: "removeResult", id: "x" },
+    );
+    expect(s.resultGroup).toEqual({ y: "g1" });
+    // An Edit result that isn't in Create's results keeps its saved path.
+    expect(s.saved).toEqual({ y: "/x/y.png", e: "/x/e.png" });
   });
 
   it("this session's pictures: Create and Edit results, newest first, without imported originals", () => {

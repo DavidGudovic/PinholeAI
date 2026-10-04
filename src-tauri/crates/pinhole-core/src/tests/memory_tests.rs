@@ -251,6 +251,10 @@ async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
     .await;
     use_external_engine(&core, &mock.base_url());
     let model = register_fake_model(&core, "z_image_turbo");
+    {
+        let mut f = core.gen.flags.lock();
+        (f.running, f.loaded_model_id) = (true, Some(model.clone()));
+    }
 
     let res = generate::generate(
         &core,
@@ -300,6 +304,27 @@ async fn field_report_prompt_then_diffusion_out_of_memory_recovers() {
     assert!(
         te_note < room_note && room_note < offload_note,
         "{loading_notes:?}"
+    );
+    // The retry succeeded: its choices are remembered for the model.
+    let remembered = core.gen.mem_fallback.lock().get(&model).copied();
+    assert!(
+        remembered.is_some_and(|fb| fb.te_on_cpu && fb.vram_reserve_gib == 4),
+        "{remembered:?}"
+    );
+    // The engine status sent after the recovered job has those choices in its note.
+    let last_note = rec
+        .0
+        .lock()
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            CoreEvent::Engine(s) => Some(s.note.clone().unwrap_or_default()),
+            _ => None,
+        })
+        .expect("engine status sent");
+    assert!(
+        last_note.contains("prompt is read on the processor"),
+        "{last_note}"
     );
     // The text encoder choice is kept for the session; system memory only
     // while that engine stays loaded (and the engine status says so).
@@ -572,11 +597,15 @@ async fn field_report_without_recovery_is_a_plain_vram_error() {
     .await;
     use_external_engine(&core, &mock.base_url());
     let model = register_fake_model(&core, "z_image_turbo");
-    let err = generate::generate(&core, GenerateRequest::txt2img(model, SENTINEL))
+    let err = generate::generate(&core, GenerateRequest::txt2img(model.clone(), SENTINEL))
         .await
         .unwrap_err();
     assert_eq!(err.code, "vram");
     assert_eq!(err.message, crate::memory::VRAM_MESSAGE);
+    assert!(
+        core.gen.mem_fallback.lock().get(&model).is_none(),
+        "no retry succeeded: nothing is remembered for the model"
+    );
     assert!(
         err.message
             .starts_with("Your graphics card ran out of memory. Close other programs"),
@@ -701,4 +730,45 @@ fn engine_output_keeps_the_memory_plan_in_view() {
         out.contains("RTX 5070 Ti") && out.contains("sampling completed"),
         "{out}"
     );
+}
+
+/// With a GPU engine build, an idle describe engine is stopped before each
+/// job and upscale, also when the image engine is already loaded.
+#[cfg(unix)]
+#[tokio::test]
+async fn idle_describe_engine_is_stopped_before_each_job_and_upscale() {
+    let (tmp, core, _) = gpu_core();
+    let mock = MockSdServer::start_with(MockOptions {
+        polls_before_done: 0,
+        ..Default::default()
+    })
+    .await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    install_fake_upscaler(&core);
+    let put_llama = || async {
+        let proc = fake_engine(tmp.path(), "exec sleep 30");
+        *core.describe.slot.lock().await = Some(describe::LlamaSlot::for_tests(proc));
+    };
+
+    put_llama().await;
+    let res = generate::generate(&core, GenerateRequest::txt2img(model.clone(), "a boat"))
+        .await
+        .unwrap();
+    assert!(core.describe.slot.lock().await.is_none(), "first job");
+
+    put_llama().await;
+    generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap();
+    assert!(
+        core.describe.slot.lock().await.is_none(),
+        "the loaded image engine was reused"
+    );
+
+    put_llama().await;
+    generate::upscale_image(&core, &res.images[0].id, 4)
+        .await
+        .unwrap();
+    assert!(core.describe.slot.lock().await.is_none(), "upscale");
 }

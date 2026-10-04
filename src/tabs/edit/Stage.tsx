@@ -1,5 +1,5 @@
 // The picture being edited, with the mask canvas, Compare and Side by side views, Extend frame and full-screen viewer.
-import { useRef, useState, type RefObject } from "react";
+import { memo, useRef, useState, type RefObject } from "react";
 import { Maximize2 } from "lucide-react";
 import { ImageViewer } from "../../components/ImageViewer";
 import { SideBySide, type SidePicture } from "../../components/SideBySide";
@@ -10,7 +10,8 @@ import { CompareView } from "./CompareView";
 import { MaskCanvas, type MaskHandle } from "./MaskCanvas";
 import { useFitBox } from "./useFitBox";
 
-export function Stage({
+// Memoised: EditTab keeps these props stable while the text boxes change.
+export const Stage = memo(function Stage({
   current,
   before,
   pair,
@@ -138,4 +139,4 @@ export function Stage({
       )}
     </div>
   );
-}
+});

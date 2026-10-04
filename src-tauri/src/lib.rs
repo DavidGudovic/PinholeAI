@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use pinhole_core::{AppCore, CoreEvent, EventSink, ShippedPaths};
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 
 struct TauriSink(AppHandle);
 
@@ -119,6 +120,67 @@ fn apply_webkit_env_fixes() {
     }
 }
 
+/// Resolve the Data folder, build `AppCore` and open the main window. `data_root` is set as
+/// soon as the Data folder is known, for the error message.
+fn setup(app: &mut tauri::App, data_root: &mut Option<PathBuf>) -> Result<(), String> {
+    let handle = app.handle().clone();
+    let shipped = shipped_paths(&handle);
+    let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
+    *data_root = Some(data.root.clone());
+    pinhole_core::update::cleanup_after_update(&exe_dir(), &data.root);
+    // Under WebDriver the (non-incognito) profile stays inside the test's Data/.
+    let webview_dir = (data.portable || under_webdriver()).then(|| data.root.join("webview"));
+    let core =
+        AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone()))).map_err(|e| e.message)?;
+    create_main_window(&handle, webview_dir).map_err(|e| e.to_string())?;
+    {
+        let core = core.clone();
+        tauri::async_runtime::block_on(async move { core.start_background() });
+    }
+    tauri::async_runtime::spawn(pinhole_core::update::remove_legacy_github_token(
+        core.data.root.clone(),
+    ));
+    app.manage(core);
+    Ok(())
+}
+
+/// What the message box says when Pinhole can't start. Closing it ends the process.
+fn startup_error_text(error: &str, data_root: Option<&std::path::Path>) -> String {
+    let mut text = format!("Pinhole couldn't start.\n\n{error}");
+    if let Some(root) = data_root {
+        text.push_str(&format!("\n\nData folder: {}", root.display()));
+    }
+    text
+}
+
+/// What the shell does once `setup` has run.
+#[derive(Debug, PartialEq)]
+enum AfterSetup {
+    Run,
+    /// Show this in a message box; closing it exits with code 1.
+    ShowError(String),
+    /// Exit with code 1 now: under WebDriver no one is there to close a message box.
+    Exit,
+}
+
+/// A setup error is also written to stderr, in case the message box can't be shown.
+fn after_setup(
+    result: Result<(), String>,
+    data_root: Option<&std::path::Path>,
+    webdriver: bool,
+) -> AfterSetup {
+    let Err(e) = result else {
+        return AfterSetup::Run;
+    };
+    let text = startup_error_text(&e, data_root);
+    eprintln!("{text}");
+    if webdriver {
+        AfterSetup::Exit
+    } else {
+        AfterSetup::ShowError(text)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     apply_webkit_env_fixes();
@@ -127,24 +189,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            let handle = app.handle().clone();
-            let shipped = shipped_paths(&handle);
-            let data = pinhole_store::DataDir::resolve(&exe_dir()).map_err(|e| e.to_string())?;
-            pinhole_core::update::cleanup_after_update(&exe_dir(), &data.root);
-            // Under WebDriver the (non-incognito) profile stays inside the test's Data/.
-            let webview_dir =
-                (data.portable || under_webdriver()).then(|| data.root.join("webview"));
-            let core = AppCore::new(shipped, data, Arc::new(TauriSink(handle.clone())))
-                .map_err(|e| e.message)?;
-            create_main_window(&handle, webview_dir)?;
-            {
-                let core = core.clone();
-                tauri::async_runtime::block_on(async move { core.start_background() });
+            let mut data_root = None;
+            let result = setup(app, &mut data_root);
+            match after_setup(result, data_root.as_deref(), under_webdriver()) {
+                AfterSetup::Run => {}
+                AfterSetup::ShowError(text) => app
+                    .dialog()
+                    .message(text)
+                    .title("Pinhole")
+                    .kind(MessageDialogKind::Error)
+                    .show(|_| std::process::exit(1)),
+                AfterSetup::Exit => std::process::exit(1),
             }
-            tauri::async_runtime::spawn(pinhole_core::update::remove_legacy_github_token(
-                core.data.root.clone(),
-            ));
-            app.manage(core);
             Ok(())
         })
         .invoke_handler(commands::dispatch)
@@ -162,7 +218,28 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{app_url_allowed, webkit_env_fixes};
+    use super::{after_setup, app_url_allowed, startup_error_text, webkit_env_fixes, AfterSetup};
+
+    #[test]
+    fn a_setup_error_is_shown_instead_of_ending_the_build() {
+        assert_eq!(after_setup(Ok(()), None, false), AfterSetup::Run);
+        let root = std::path::Path::new("/d/Data");
+        let err = || Err("Permission denied".to_string());
+        assert_eq!(
+            after_setup(err(), Some(root), false),
+            AfterSetup::ShowError(startup_error_text("Permission denied", Some(root)))
+        );
+        assert_eq!(after_setup(err(), Some(root), true), AfterSetup::Exit);
+    }
+
+    #[test]
+    fn startup_error_names_the_data_folder() {
+        let text = startup_error_text("Permission denied", Some(std::path::Path::new("/d/Data")));
+        assert!(text.contains("Permission denied"), "{text}");
+        assert!(text.contains("Data folder: /d/Data"), "{text}");
+        let text = startup_error_text("No home folder", None);
+        assert!(text.contains("No home folder") && !text.contains("Data folder"));
+    }
 
     #[test]
     fn the_window_only_shows_the_app() {

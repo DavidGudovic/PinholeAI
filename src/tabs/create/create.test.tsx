@@ -32,7 +32,7 @@ const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
 const { ChoicesNote, GenerateLabel, PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
-const { FinalPromptPreview, FineTuneDrawer, LoraSection } = await import("./FineTune");
+const { FinalPromptPreview, FineTuneDrawer, LoraSection, PromptPreview } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
@@ -188,6 +188,22 @@ describe("Final prompt preview", () => {
     act(() => store.dispatch({ type: "setStyles", styles: [{ ...style, positive: "oil painting" }] }));
     await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(2), { timeout: 2000 });
   });
+
+  it("refreshes when only the source picture or the edit mode changes", async () => {
+    const base = { modelId: "m", mode: "img2img", prompt: "", styleId: null, fineTune: {}, loras: [], addTriggerWords: true, initImageId: "a", fixDetails: true } as unknown as GenerateRequest;
+    const store = createStore();
+    const view = (req: GenerateRequest) => (
+      <StoreContext.Provider value={store}>
+        <PromptPreview req={req} empty="" />
+      </StoreContext.Provider>
+    );
+    const { rerender } = render(view(base));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(1));
+    rerender(view({ ...base, initImageId: "b" }));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    rerender(view({ ...base, initImageId: "b", fixDetails: false, extend: { width: 96, height: 64, left: 16, top: 0 } }));
+    await waitFor(() => expect(api.previewFinalPrompt).toHaveBeenCalledTimes(3), { timeout: 2000 });
+  });
 });
 
 describe("Paste as text", () => {
@@ -333,6 +349,24 @@ describe("Results", () => {
       );
     }
     expect(renders.mock.calls.length).toBe(before);
+  });
+
+  it("shows the small copy in the strip and the full picture on the stage", () => {
+    const store = storeWithResults(result("a", 2048, 2048), result("b", 1024, 1024));
+    store.dispatch({ type: "setThumb", id: "a", url: "blob:a", thumbUrl: "blob:a-thumb" });
+    withApp(store, <Results />);
+    const strip = screen.getByRole("listbox", { name: "Images in this session" });
+    const [a, b] = within(strip).getAllByRole("option").map((o) => o.querySelector("img")!);
+    expect(a.getAttribute("src")).toBe("blob:a-thumb");
+    // No small copy yet: the full picture.
+    expect(b.getAttribute("src")).toBe("blob:b");
+    for (const img of [a, b]) {
+      expect(img.getAttribute("decoding")).toBe("async");
+      expect(img.getAttribute("loading")).toBe("lazy");
+    }
+    const shown = screen.getAllByRole("img").filter((i) => !strip.contains(i)).map((i) => i.getAttribute("src"));
+    expect(shown).toContain("blob:a");
+    expect(shown).not.toContain("blob:a-thumb");
   });
 
   it("offers no upscale that the upscaler would refuse", async () => {

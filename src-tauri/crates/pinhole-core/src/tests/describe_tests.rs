@@ -2,6 +2,44 @@
 
 use super::*;
 
+/// A second download of the describe engine that finishes after the first one
+/// installed it: the installed engine is kept and the extra archives are removed.
+#[cfg(unix)]
+#[tokio::test]
+async fn unpacking_an_engine_that_is_already_installed_keeps_it() {
+    use pinhole_engine::install::{self, EngineKind};
+    let (_tmp, core, _rec) = new_core();
+    install_fake_engine(&core, EngineKind::Llama, "llama-server", "exit 0");
+    let (cfg, sel) = crate::engine_setup::selected_build(&core, EngineKind::Llama).unwrap();
+    let before = install::find_installed(
+        &core.data.engine(),
+        EngineKind::Llama,
+        &cfg.llama_cpp.version,
+        &sel.backend,
+    )
+    .unwrap();
+    let dl = install::download_dir(&core.data.engine());
+    std::fs::create_dir_all(&dl).unwrap();
+    let files: Vec<_> = (0..sel.build.archives().len())
+        .map(|i| {
+            let path = dl.join(format!("archive-{i}.zip"));
+            std::fs::write(&path, b"not an archive").unwrap();
+            pinhole_net::download::DownloadedFile {
+                path,
+                sha256: "0".repeat(64),
+                size_bytes: 14,
+            }
+        })
+        .collect();
+    let paths: Vec<_> = files.iter().map(|f| f.path.clone()).collect();
+    let got = crate::engine_setup::unpack_downloaded(&core, EngineKind::Llama, &cfg, &sel, files)
+        .await
+        .unwrap();
+    assert_eq!(got, before);
+    assert!(got.dir.join(install::MARKER_FILE).is_file());
+    assert!(paths.iter().all(|p| !p.exists()));
+}
+
 #[tokio::test]
 async fn describe_through_mock_llama() {
     let (_tmp, core, _rec) = new_core();

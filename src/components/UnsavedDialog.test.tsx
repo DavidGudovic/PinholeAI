@@ -1,6 +1,24 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import type { ResultImage } from "../lib/types";
+
+let finishSave: (() => void) | null = null;
+vi.mock("../lib/api", async (orig) => {
+  const real = await orig<typeof import("../lib/api")>();
+  return {
+    ...real,
+    saveImagesTo: vi.fn(
+      (ids: string[], dir: string) =>
+        new Promise((res) => (finishSave = () => res({ saved: ids.map((id) => ({ id, path: `${dir}/${id}.png` })), failed: 0 }))),
+    ),
+  };
+});
+const closeWindow = vi.fn(async () => undefined);
+vi.mock("../lib/state/platform", async (orig) => {
+  const real = await orig<typeof import("../lib/state/platform")>();
+  return { ...real, canSaveAs: () => true, chooseFolder: async () => "/x", closeWindow: () => closeWindow() };
+});
 
 const { installMocks } = await import("../lib/mock");
 const { AppProvider } = await import("../lib/state/AppProvider");
@@ -12,15 +30,20 @@ beforeAll(async () => {
 });
 afterEach(cleanup);
 
-function open(what: "close" | "clear" | "edit") {
+function open(what: "close" | "clear" | "edit", before?: (store: ReturnType<typeof createStore>) => void) {
   const store = createStore();
+  before?.(store);
   render(
     <AppProvider store={store}>
       <UnsavedDialog />
     </AppProvider>,
   );
   act(() => store.dispatch({ type: "askLeave", what }));
+  return store;
 }
+
+const img = (id: string) => ({ id, width: 64, height: 64, seed: 1 }) as unknown as ResultImage;
+const ref = (id: string) => ({ id, url: `blob:${id}`, width: 64, height: 64 });
 
 describe("UnsavedDialog", () => {
   it("warns in red that Reset deletes unsaved images, prompts and Fine-tune changes", () => {
@@ -38,5 +61,16 @@ describe("UnsavedDialog", () => {
     cleanup();
     open("edit");
     expect(screen.getByText("Unsaved edited images are permanently deleted.")).toBeTruthy();
+  });
+
+  it("stays open after Save all when another picture finished during the save", async () => {
+    const store = open("close", (s) => s.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] }));
+    fireEvent.click(screen.getByRole("button", { name: /Save all/ }));
+    await vi.waitFor(() => expect(finishSave).not.toBeNull());
+    act(() => store.dispatch({ type: "addResults", batch: null, images: [img("b")], refs: [ref("b")] }));
+    await act(async () => finishSave!());
+    expect(closeWindow).not.toHaveBeenCalled();
+    expect(store.getState().leave).toBe("close");
+    expect(screen.getByText("You have 1 picture that isn't saved")).toBeTruthy();
   });
 });

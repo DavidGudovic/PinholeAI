@@ -532,6 +532,11 @@ export function PromptPreview({ req, empty }: { req: GenerateRequest | null; emp
         req.fineTune.autoPromptPrefix ?? null,
         req.loras,
         req.addTriggerWords,
+        // Add detail and Extend pick their text from the source picture and the edit mode.
+        req.initImageId ?? null,
+        req.fixDetails ?? null,
+        req.maskImageId ?? null,
+        req.extend ?? null,
       ])
     : "";
   const debouncedKey = useDebounced(key, 350);

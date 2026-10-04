@@ -77,6 +77,9 @@ every decision can be overridden.
   NVIDIA → CUDA 12.x build (must support Blackwell / RTX 50xx), AMD/Intel → Vulkan build,
   no GPU → CPU build (warn: very slow).
 - Stored in `Data/engine/{sd,llama}/<version>/<backend>/`. Verify hash before first launch.
+- At startup (after leftover engines are stopped), folders of engine versions other than the
+  pinned ones, unfinished unpack folders from earlier runs and downloaded archives of other
+  versions are removed from `Data/engine/`.
 - Linux has no upstream CUDA build of `sd-server`; Pinhole's fork builds one for RTX 30xx and newer
   (compute capability 8.6+). Older NVIDIA cards, or no NVIDIA driver, use the Vulkan build.
 - Windows: the upstream builds need the MSVC runtime (VC++ 2015–2022 x64); Pinhole bundles the
@@ -424,11 +427,13 @@ smooth), `nomos_webphoto_x4` (photos, keeps skin texture) and `realesrgan_x4_ani
 model, drawings). With the `upscaler` setting on `auto` (the default) Upscale measures the picture
 with the image check's tagger and uses `realesrgan_x4` when its `realistic` or `photorealistic`
 tag reaches the photo-style threshold (`pinhole-check` `rules::PHOTO_STYLE`), the drawing upscaler
-otherwise. Fine-tune in Create and Edit has an **Upscaler** row, a list with one plain line per
-option: "Auto: picks by picture style", "Photo: smooth (good for hair, can look waxy)", "Photo:
-skin texture (real skin, can make beards crunchy)", "Drawing: clean lines and flat colour"
-(settings `auto` | `photo` | `photo_texture` | `drawing`). The upscaled picture's summary names
-the upscaler used ("drawing upscaler").
+otherwise. This reading is kept per session picture in memory (a made picture's comes from its own
+image check), so a picture is normally measured for it only once; it is dropped when the picture
+is discarded and on Reset. Fine-tune in Create and Edit has an **Upscaler** row, a list with one
+plain line per option: "Auto: picks by picture style", "Photo: smooth (good for hair, can look
+waxy)", "Photo: skin texture (real skin, can make beards crunchy)", "Drawing: clean lines and flat
+colour" (settings `auto` | `photo` | `photo_texture` | `drawing`). The upscaled picture's summary
+names the upscaler used ("drawing upscaler").
 
 **Prompt recall:** Up (at the start of the box) and Down step through the prompts sent earlier in
 this session, like a shell; Down past the newest restores what was typed. Kept in memory only (last
@@ -887,7 +892,10 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Idle RAM of the app with no model loaded: < 150 MB.
 - Time from Generate click to request sent: < 50 ms (model already loaded).
 - UI stays responsive during generation and downloads (all heavy work off the UI thread).
-- Result images are decoded once and kept as Blobs; thumbnails are generated in a worker.
+- Result images are decoded once and kept as Blobs; a small copy (long side 160 px) of each is made,
+  one picture at a time, once it is added to the session, and is used for every small tile (results
+  strip, edit history, session pictures, reference and second-image slots, Also apply to), which
+  decode asynchronously and load lazily.
 
 ---
 
@@ -993,16 +1001,17 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
   portable mode its profile folder lives in `Data/webview`.
 - **Observed peak VRAM** is not recorded yet (§6.2 step 3) — follow-up.
 - **Running out of graphics memory**: before `sd-server` starts, leftover Pinhole engines (processes
-  under `Data/engine/` that this app isn't running) are killed, an idle Describe engine is stopped,
-  and on NVIDIA `nvidia-smi` tells how much graphics memory other programs use (a note while
-  loading when it's more than a quarter of the card and more than 1 GB). A job that runs out of
+  under `Data/engine/` that this app isn't running) are killed and on NVIDIA `nvidia-smi` tells
+  how much graphics memory other programs use (a note while loading when it's more than a quarter
+  of the card and more than 1 GB). With a GPU engine build an idle Describe engine is stopped
+  before each job and upscale, also when the loaded image engine is reused. A job that runs out of
   memory is retried with each memory-saving choice at most once: while reading the prompt → text
   encoder on the processor (`--backend te=cpu`, Settings "Read the prompt on the
   processor"); while decoding → `--vae-tiling` (an automatic tiling choice shows in the engine
   note; Fine-tune "VAE tiling: Off" wins over it per request); then, and right away when denoising
   runs out, more of the card is kept free (`--max-vram -4` instead of `-2` on a 16 GB card, less on
-  smaller cards, at most a quarter of the card; remembered per model for the app session, shown in
-  the engine note); then the
+  smaller cards, at most a quarter of the card's nominal size; remembered per model for the app
+  session once the retried job succeeds, shown in the engine note); then the
   weights stay in system memory and are sent to the card as needed (`--offload-to-cpu`; only when
   every weight fits in RAM with 2 GB to spare, else tiling as a last resort; kept while the same
   model runs with the same settings, also after the idle stop — another model, other settings or

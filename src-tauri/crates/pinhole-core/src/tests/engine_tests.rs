@@ -773,3 +773,27 @@ async fn engine_stays_loaded_when_a_request_stops_before_reaching_it() {
     assert_eq!(mock.requests().len(), 1);
     assert!(!engine_running(&core).await, "the engine is stopped");
 }
+
+/// A job cancelled before its engine starts keeps the loaded engine.
+#[cfg(unix)]
+#[tokio::test]
+async fn cancel_before_the_launch_keeps_the_loaded_engine() {
+    let (tmp, core, _rec) = new_core();
+    put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), false).await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    let other = vec!["--model".to_string(), "/other.safetensors".to_string()];
+    let err = crate::engine::ensure_engine(
+        &core,
+        &other,
+        "other",
+        "Other",
+        &cancel,
+        std::time::Instant::now(),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, "cancelled");
+    assert!(engine_running(&core).await, "the loaded engine is kept");
+    assert_eq!(core.gen.slot.lock().await.model_id.as_deref(), Some("m"));
+}

@@ -44,6 +44,7 @@ vi.mock("./platform", async (orig) => {
 });
 
 const apiMod = await import("../api");
+const platformMod = await import("./platform");
 const { createStore } = await import("./store");
 const { makeActions } = await import("./actions");
 const { CLOSE_STRENGTH } = await import("./request");
@@ -796,8 +797,24 @@ describe("unsaved pictures", () => {
     const { store, actions } = setup();
     store.dispatch({ type: "addResults", batch: null, images: [img("a"), img("b")], refs: [ref("a"), ref("b")] });
     vi.mocked(apiMod.saveImagesTo).mockResolvedValueOnce({ saved: [{ id: "b", path: "/x/b.png" }], failed: 0 } as never);
-    expect(await actions.saveAll(["b"])).toBe(true);
+    expect(await actions.saveAll(() => ["b"])).toBe(true);
     expect(apiMod.saveImagesTo).toHaveBeenCalledWith(["b"], "/x");
+  });
+
+  it("Save all also saves pictures that finished while the folder picker was open", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] });
+    let pick: (dir: string) => void = () => undefined;
+    vi.mocked(platformMod.chooseFolder).mockImplementationOnce(() => new Promise((res) => (pick = res)));
+    vi.mocked(apiMod.saveImagesTo).mockClear();
+    const saving = actions.saveAll();
+    await tick();
+    store.dispatch({ type: "addResults", batch: null, images: [img("b")], refs: [ref("b")] });
+    pick("/x");
+    expect(await saving).toBe(true);
+    const [ids, dir] = vi.mocked(apiMod.saveImagesTo).mock.calls[0];
+    expect([...ids].sort()).toEqual(["a", "b"]);
+    expect(dir).toBe("/x");
   });
 
   it("remembers the prompt of each Generate for Up/Down recall", async () => {
@@ -1163,6 +1180,30 @@ describe("Also apply to…", () => {
     expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
     await actions.importAlsoToEdit([new Blob([new Uint8Array(4)])]);
     expect(store.getState().edit.alsoIds).toHaveLength(ALSO_MAX);
+  });
+
+  it("imports at most two files at a time and keeps them in the order given", async () => {
+    const { store, actions } = setup();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    let running = 0;
+    let most = 0;
+    let n = 0;
+    vi.mocked(apiMod.importImage).mockImplementation(async (bytes: Uint8Array) => {
+      running++;
+      most = Math.max(most, running);
+      // Later files finish sooner, so the order comes from the list, not from finishing.
+      await new Promise((r) => setTimeout(r, 20 - bytes[0]));
+      running--;
+      if (bytes[0] === 5) throw { code: "bad_image", message: "not a picture", details: null };
+      n++;
+      return { id: `f${bytes[0]}`, width: 8, height: 8 } as never;
+    });
+    const files = Array.from({ length: ALSO_MAX }, (_, i) => new Blob([new Uint8Array([i])]));
+    await expect(actions.importAlsoToEdit(files)).rejects.toMatchObject({ message: "not a picture" });
+    expect(most).toBe(2);
+    expect(n).toBe(ALSO_MAX - 1);
+    expect(store.getState().edit.alsoIds).toEqual(Array.from({ length: ALSO_MAX }, (_, i) => `f${i}`).filter((id) => id !== "f5"));
+    vi.mocked(apiMod.importImage).mockImplementation(async () => ({ id: "mask", width: 8, height: 8 }) as never);
   });
 });
 

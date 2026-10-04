@@ -17,6 +17,7 @@ import {
   unsavedEditIds,
   unsavedIds,
   willQueue,
+  type AppState,
   type EditMode,
   type EditParams,
   type ImgRef,
@@ -35,6 +36,27 @@ import { clearGenerationHandoff } from "../../tabs/create/handoff";
 
 let uidCounter = 0;
 const uid = (p: string) => `${p}${Date.now().toString(36)}${(uidCounter++).toString(36)}`;
+
+/** Picture files read and imported at the same time ("Also apply to…"): each one is decoded in full. */
+export const IMPORT_AT_ONCE = 2;
+
+/** Like Promise.allSettled over `items.map(fn)`, with at most `limit` calls running at once. Results keep the input order. */
+export async function settleLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const out: PromiseSettledResult<R>[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      try {
+        out[i] = { status: "fulfilled", value: await fn(items[i]) };
+      } catch (reason) {
+        out[i] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 
 export type Actions = ReturnType<typeof makeActions>;
 
@@ -476,12 +498,17 @@ export function makeActions(store: Store) {
     return saved;
   }
 
-  /** "Save all": asks for a folder, then saves every unsaved picture (or just `only`) there. False when cancelled; throws if some couldn't be saved. */
-  async function saveAll(only?: string[]): Promise<boolean> {
-    const ids = only ?? unsavedIds(get());
-    if (!ids.length) return true;
+  /**
+   * "Save all": asks for a folder, then saves every unsaved picture (or the ones `pick` returns)
+   * there. The list is read again once the folder is chosen, so pictures that finished while the
+   * folder picker was open are saved too. False when cancelled; throws if some couldn't be saved.
+   */
+  async function saveAll(pick: (s: AppState) => string[] = unsavedIds): Promise<boolean> {
+    if (!pick(get()).length) return true;
     const dir = await chooseFolder("Save all pictures to…", await saveFolderPath());
     if (!dir) return false;
+    const ids = pick(get());
+    if (!ids.length) return true;
     const batch = await api.saveImagesTo(ids, dir);
     dispatch({ type: "markSaved", entries: batch.saved });
     const n = batch.saved.length;
@@ -732,7 +759,7 @@ export function makeActions(store: Store) {
     const room = ALSO_MAX - get().edit.alsoIds.length;
     if (room <= 0 || !files.length) return;
     const nonce = get().sessionNonce;
-    const got = await Promise.allSettled(files.slice(0, room).map((f) => importBlob(f)));
+    const got = await settleLimited(files.slice(0, room), IMPORT_AT_ONCE, importBlob);
     const refs = got.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     if (refs.length && (resetting || get().sessionNonce !== nonce)) {
       releaseRefs(refs, true);
