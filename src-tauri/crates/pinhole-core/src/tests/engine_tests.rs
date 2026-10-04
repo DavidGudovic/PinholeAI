@@ -640,3 +640,104 @@ async fn deleting_the_model_while_the_old_engine_stops_cancels_the_load() {
     assert!(!spawned.exists(), "no engine started after the cancel");
     assert!(core.gen.loading.lock().is_none());
 }
+
+/// Deleting a model the loading engine doesn't use goes through without waiting for the
+/// load; a LoRA is still refused while the job runs.
+#[cfg(unix)]
+#[tokio::test]
+async fn deleting_another_model_during_a_load_does_not_wait_for_it() {
+    let (_tmp, core, _rec) = new_core();
+    install_fake_engine(
+        &core,
+        pinhole_engine::install::EngineKind::Sd,
+        "sd-server",
+        "exec sleep 30",
+    );
+    let model = register_fake_model(&core, "sd15");
+    let other = register_fake_model(&core, "sd15");
+    let lora = register_fake_lora(&core, "sd15", &[]);
+    let c2 = core.clone();
+    let m2 = model.clone();
+    let task =
+        tokio::spawn(
+            async move { generate::generate(&c2, GenerateRequest::txt2img(m2, "x")).await },
+        );
+    for _ in 0..500 {
+        if core.gen.flags.lock().loading {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(core.gen.flags.lock().loading, "the engine is loading");
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::models::delete_model(&core, &other),
+    )
+    .await
+    .expect("the delete doesn't wait for the load")
+    .unwrap();
+    assert!(core.installed.lock().get(&other).is_none());
+    let e = tokio::time::timeout(
+        Duration::from_secs(5),
+        crate::models::delete_model(&core, &lora),
+    )
+    .await
+    .expect("the delete doesn't wait for the load")
+    .unwrap_err();
+    assert!(e.message.contains("Wait for the current pictures"), "{e:?}");
+    assert!(core.installed.lock().get(&lora).is_some());
+    assert!(core.gen.flags.lock().loading, "the load goes on");
+    core.gen.active.lock().as_ref().unwrap().cancel();
+    assert_eq!(task.await.unwrap().unwrap_err().code, "cancelled");
+}
+
+/// A request stopped by the word check before reaching the engine keeps the loaded
+/// engine; a picture the image check drops after the engine made it stops the engine.
+#[cfg(unix)]
+#[tokio::test]
+async fn engine_stays_loaded_when_a_request_stops_before_reaching_it() {
+    let (tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    // Stands in for a Pinhole-started engine that holds an earlier job's results.
+    put_engine(&core, fake_engine(tmp.path(), "exec sleep 30"), true).await;
+
+    // The combined prompt (with the Style) is stopped by the word check.
+    let style = crate::library::save_style(
+        &core,
+        pinhole_store::styles::Style {
+            id: String::new(),
+            name: "Check".into(),
+            positive: "a valid driver's license from Ohio".into(),
+            negative: None,
+            families: vec![],
+            thumbnail: None,
+            builtin: false,
+        },
+    )
+    .unwrap();
+    let mut req = GenerateRequest::txt2img(model.clone(), "a desk");
+    req.style_id = Some(style.id);
+    let e = generate::generate(&core, req).await.unwrap_err();
+    assert_eq!(e.code, "blocked");
+    assert!(mock.requests().is_empty(), "nothing reached the engine");
+    assert!(engine_running(&core).await, "the loaded engine is kept");
+
+    // The image check drops a picture the engine made: the engine is stopped.
+    let mut readings = intimate_adult();
+    readings.tags.as_mut().unwrap().minor = 0.9;
+    use_check(
+        &core,
+        FakeCheck {
+            readings,
+            ..Default::default()
+        },
+    );
+    let e = generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, "blocked");
+    assert_eq!(mock.requests().len(), 1);
+    assert!(!engine_running(&core).await, "the engine is stopped");
+}
