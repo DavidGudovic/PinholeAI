@@ -205,143 +205,147 @@ function Preview({
       </div>
 
       <div className="flex flex-wrap items-center justify-center gap-1.5">
-        <SaveButton
-          id={result.id}
-          seed={result.seed}
-          run={run}
-          tab="create"
-          unsavedCount={unsavedCount}
-          onSaveAll={() => void run(() => actions.saveAll())}
-          sheetCount={sheet ? sheet.split(" ").length : 0}
-          onSaveSheet={() => void run(() => actions.saveSheet(sheet.split(" ")))}
-        />
-        <Button onClick={() => actions.sendToEdit(result.id)}>
-          <WandSparkles className="h-4 w-4" /> Edit this
-        </Button>
-        <Popover
-          width={pickModel ? 300 : 250}
-          onOpenChange={(open) => {
-            if (!open) setPickModel(false);
-          }}
-          trigger={(p) => (
-            <Button {...p}>
-              <Shuffle className="h-4 w-4" /> More like this{" "}
-              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-            </Button>
+        <div data-testid="result-actions" className="flex flex-wrap items-center justify-center gap-1.5">
+          <SaveButton
+            id={result.id}
+            seed={result.seed}
+            run={run}
+            tab="create"
+            unsavedCount={unsavedCount}
+            onSaveAll={() => void run(() => actions.saveAll())}
+            sheetCount={sheet ? sheet.split(" ").length : 0}
+            onSaveSheet={() => void run(() => actions.saveSheet(sheet.split(" ")))}
+          />
+          <Button onClick={() => actions.sendToEdit(result.id)}>
+            <WandSparkles className="h-4 w-4" /> Edit this
+          </Button>
+          <Popover
+            width={pickModel ? 300 : 250}
+            onOpenChange={(open) => {
+              if (!open) setPickModel(false);
+            }}
+            trigger={(p) => (
+              <Button {...p}>
+                <Shuffle className="h-4 w-4" /> More like this{" "}
+                <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+              </Button>
+            )}
+          >
+            {(close) =>
+              pickModel ? (
+                <OtherModelList
+                  resultId={result.id}
+                  onBack={() => setPickModel(false)}
+                  onClose={close}
+                  onPick={(modelId) => {
+                    close();
+                    void run(() => actions.onOtherModel(result.id, modelId));
+                  }}
+                />
+              ) : (
+                <FocusFirst>
+                  <MenuItem
+                    icon={<Images className="h-4 w-4" />}
+                    disabled={!hasBatch}
+                    hint={hasBatch ? `Same layout, new details${waits}` : "Only for images made in this session"}
+                    onClick={() => {
+                      close();
+                      void run(() => actions.closeTo(result.id));
+                    }}
+                  >
+                    Close to this one
+                  </MenuItem>
+                  <MenuItem
+                    icon={<Shuffle className="h-4 w-4" />}
+                    disabled={!hasBatch}
+                    hint={hasBatch ? `Same prompt, new layouts${waits}` : "Only for images made in this session"}
+                    onClick={() => {
+                      close();
+                      void run(() => actions.variations(result.id));
+                    }}
+                  >
+                    Variations
+                  </MenuItem>
+                  <MenuItem
+                    icon={<UserRound className="h-4 w-4" />}
+                    hint="This character or subject in a different scene"
+                    onClick={() => {
+                      close();
+                      actions.sameCharacter(result.id);
+                    }}
+                  >
+                    Same character
+                  </MenuItem>
+                  <MenuItem
+                    icon={<ArrowLeftRight className="h-4 w-4" />}
+                    disabled={!hasBatch}
+                    hint={hasBatch ? "Same prompt and seed, shown side by side" : "Only for images made in this session"}
+                    onClick={() => setPickModel(true)}
+                  >
+                    On another model…
+                  </MenuItem>
+                </FocusFirst>
+              )
+            }
+          </Popover>
+          <UpscaleMenu
+            width={result.width}
+            height={result.height}
+            onPick={(f) => void run(() => actions.upscale(result.id, f))}
+            onFinish={canFinish ? () => void run(() => actions.finishAtBest(result.id)) : undefined}
+          />
+          <Button
+            title="Write a prompt from this picture"
+            onClick={() => actions.sendToDescribe(result.id)}
+          >
+            <ScanText className="h-4 w-4" /> Describe
+          </Button>
+        </div>
+        <div data-testid="result-icons" className="flex items-center gap-1.5">
+          {(compare || reference) && (
+            <IconButton
+              label={compare ? `Side by side with the picture from ${compare.modelLabel}` : "Side by side with the reference picture"}
+              variant="secondary"
+              className={sideBySide ? "ring-2 ring-amber-500" : undefined}
+              aria-pressed={sideBySide}
+              onClick={() => setSideBySide((v) => !v)}
+            >
+              <PanelsLeftRight className="h-4 w-4" />
+            </IconButton>
           )}
-        >
-          {(close) =>
-            pickModel ? (
-              <OtherModelList
-                resultId={result.id}
-                onBack={() => setPickModel(false)}
-                onClose={close}
-                onPick={(modelId) => {
-                  close();
-                  void run(() => actions.onOtherModel(result.id, modelId));
-                }}
-              />
-            ) : (
-              <FocusFirst>
-                <MenuItem
-                  icon={<Images className="h-4 w-4" />}
-                  disabled={!hasBatch}
-                  hint={hasBatch ? `Same layout, new details${waits}` : "Only for images made in this session"}
-                  onClick={() => {
-                    close();
-                    void run(() => actions.closeTo(result.id));
-                  }}
-                >
-                  Close to this one
-                </MenuItem>
-                <MenuItem
-                  icon={<Shuffle className="h-4 w-4" />}
-                  disabled={!hasBatch}
-                  hint={hasBatch ? `Same prompt, new layouts${waits}` : "Only for images made in this session"}
-                  onClick={() => {
-                    close();
-                    void run(() => actions.variations(result.id));
-                  }}
-                >
-                  Variations
-                </MenuItem>
-                <MenuItem
-                  icon={<UserRound className="h-4 w-4" />}
-                  hint="This character or subject in a different scene"
-                  onClick={() => {
-                    close();
-                    actions.sameCharacter(result.id);
-                  }}
-                >
-                  Same character
-                </MenuItem>
-                <MenuItem
-                  icon={<ArrowLeftRight className="h-4 w-4" />}
-                  disabled={!hasBatch}
-                  hint={hasBatch ? "Same prompt and seed, shown side by side" : "Only for images made in this session"}
-                  onClick={() => setPickModel(true)}
-                >
-                  On another model…
-                </MenuItem>
-              </FocusFirst>
-            )
-          }
-        </Popover>
-        <UpscaleMenu
-          width={result.width}
-          height={result.height}
-          onPick={(f) => void run(() => actions.upscale(result.id, f))}
-          onFinish={canFinish ? () => void run(() => actions.finishAtBest(result.id)) : undefined}
-        />
-        <Button
-          title="Write a prompt from this picture"
-          onClick={() => actions.sendToDescribe(result.id)}
-        >
-          <ScanText className="h-4 w-4" /> Describe
-        </Button>
-        {(compare || reference) && (
+          {result.seamless && (
+            <IconButton
+              label="Show tiled"
+              variant="secondary"
+              className={tiled ? "ring-2 ring-amber-500" : undefined}
+              aria-pressed={tiled}
+              onClick={() => setTiledFor(tiled ? null : result.id)}
+            >
+              <Grid2x2 className="h-4 w-4" />
+            </IconButton>
+          )}
           <IconButton
-            label={compare ? `Side by side with the picture from ${compare.modelLabel}` : "Side by side with the reference picture"}
+            label="View full screen"
             variant="secondary"
-            className={sideBySide ? "ring-2 ring-amber-500" : undefined}
-            aria-pressed={sideBySide}
-            onClick={() => setSideBySide((v) => !v)}
+            onClick={onExpand}
           >
-            <PanelsLeftRight className="h-4 w-4" />
+            <Maximize2 className="h-4 w-4" />
           </IconButton>
-        )}
-        {result.seamless && (
           <IconButton
-            label="Show tiled"
+            label="Copy image"
             variant="secondary"
-            className={tiled ? "ring-2 ring-amber-500" : undefined}
-            aria-pressed={tiled}
-            onClick={() => setTiledFor(tiled ? null : result.id)}
+            onClick={() => void run(() => actions.copyImage(result.id))}
           >
-            <Grid2x2 className="h-4 w-4" />
+            <Copy className="h-4 w-4" />
           </IconButton>
-        )}
-        <IconButton
-          label="View full screen"
-          variant="secondary"
-          onClick={onExpand}
-        >
-          <Maximize2 className="h-4 w-4" />
-        </IconButton>
-        <IconButton
-          label="Copy image"
-          variant="secondary"
-          onClick={() => void run(() => actions.copyImage(result.id))}
-        >
-          <Copy className="h-4 w-4" />
-        </IconButton>
-        <IconButton
-          label="Remove from this session"
-          variant="ghost"
-          onClick={() => actions.removeResult(result.id)}
-        >
-          <Trash className="h-4 w-4" />
-        </IconButton>
+          <IconButton
+            label="Remove from this session"
+            variant="ghost"
+            onClick={() => actions.removeResult(result.id)}
+          >
+            <Trash className="h-4 w-4" />
+          </IconButton>
+        </div>
       </div>
 
       <p className="text-center text-xs text-neutral-500 tabular-nums">
