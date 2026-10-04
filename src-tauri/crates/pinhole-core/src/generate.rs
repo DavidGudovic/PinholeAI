@@ -1841,23 +1841,26 @@ fn model_and_family(core: &AppCore, model_id: &str) -> CoreResult<(InstalledFile
 pub(crate) fn pick_model_for_upscale(core: &AppCore, src: &SessionImage) -> Option<String> {
     let idx = core.installed.lock();
     let reg = core.registry();
-    // A known family and its file present (a linked drive may be disconnected).
-    let usable = |f: &&InstalledFile| {
-        f.family.as_deref().and_then(|id| reg.family(id)).is_some()
-            && idx.abs_path(&core.data, f).is_file()
+    let known = |f: &&InstalledFile| f.family.as_deref().and_then(|id| reg.family(id)).is_some();
+    // Prefer a model whose file is present (a linked drive may be disconnected).
+    // If none is, still pick one so starting it reports which file is missing.
+    let pick = |need_file: bool| {
+        let usable =
+            |f: &&InstalledFile| known(f) && (!need_file || idx.abs_path(&core.data, f).is_file());
+        if let Some(m) = src
+            .meta
+            .as_ref()
+            .and_then(|m| idx.get(&m.model_id))
+            .filter(|f| usable(f))
+        {
+            return Some(m.id.clone());
+        }
+        idx.models()
+            .filter(usable)
+            .max_by_key(|f| (f.last_used.unwrap_or(0), f.added_at))
+            .map(|f| f.id.clone())
     };
-    if let Some(m) = src
-        .meta
-        .as_ref()
-        .and_then(|m| idx.get(&m.model_id))
-        .filter(|f| usable(f))
-    {
-        return Some(m.id.clone());
-    }
-    idx.models()
-        .filter(usable)
-        .max_by_key(|f| (f.last_used.unwrap_or(0), f.added_at))
-        .map(|f| f.id.clone())
+    pick(true).or_else(|| pick(false))
 }
 
 /// Wait for a download group; `cancel` cancels the group (its `.part` stays for

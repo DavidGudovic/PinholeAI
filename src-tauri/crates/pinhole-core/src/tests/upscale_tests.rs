@@ -324,4 +324,15 @@ async fn upscale_model_pick_skips_a_model_whose_file_is_gone() {
         generate::pick_model_for_upscale(&core, &src).as_deref(),
         Some(second.as_str())
     );
+
+    // No file left: still the picture's model, so starting it names the missing file.
+    let path = {
+        let idx = core.installed.lock();
+        idx.abs_path(&core.data, idx.get(&second).unwrap())
+    };
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        generate::pick_model_for_upscale(&core, &src).as_deref(),
+        Some(first.as_str())
+    );
 }
