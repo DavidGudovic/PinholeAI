@@ -945,7 +945,10 @@ fn keeps_intent(
     if (idea_has_verb && new_verb_kind) || (!actions.is_empty() && forbidden_verb) {
         return false;
     }
-    let added_person = !names_person(idea, &spec.people) && spec.people.iter().any(in_new);
+    let has_person = names_person(idea, &spec.people);
+    let added_person = !has_person
+        && (spec.people.iter().any(in_new)
+            || adds_person_detail(r, idea, has_person, &spec.person_details));
     !added_person
         && !spec
             .drop
@@ -991,6 +994,22 @@ fn names_person(text: &str, people: &[String]) -> bool {
             words.contains(&p) || one.contains(&singular(&p))
         }
     })
+}
+
+/// Whether `text` has one of the `person_details` words ("hair", "dress"; singular and plural
+/// count as one) that `idea` doesn't have, while `idea` names no person (`has_person`).
+fn adds_person_detail(text: &str, idea: &str, has_person: bool, person_details: &[String]) -> bool {
+    if has_person {
+        return false;
+    }
+    let words = |t: &str| -> std::collections::HashSet<String> {
+        lower_words(t).iter().map(|w| singular(w)).collect()
+    };
+    let (in_text, in_idea) = (words(text), words(idea));
+    person_details
+        .iter()
+        .map(|d| singular(&d.to_lowercase()))
+        .any(|d| in_text.contains(&d) && !in_idea.contains(&d))
 }
 
 /// The idea Improve builds on: the helper's rewording (`reworded`, trailing full stop off) when it
@@ -1059,15 +1078,14 @@ fn added_phrases<'a>(
     given: &std::collections::BTreeMap<String, Vec<String>>,
     skipped: &[String],
     example: &str,
-    people: &[String],
+    spec: &ImproveSpec,
 ) -> Vec<(&'a str, Vec<String>)> {
+    let (people, person_details) = (&spec.people, &spec.person_details);
     let copied = example_phrases(example);
-    // People the idea doesn't have would change the picture.
-    let people: &[String] = if names_person(idea, people) {
-        &[]
-    } else {
-        people
-    };
+    // People the idea doesn't have would change the picture, and so would their hair or clothes.
+    let has_person = names_person(idea, people);
+    let people: &[String] = if has_person { &[] } else { people };
+
     let idea_words: std::collections::HashSet<String> = content_words(idea).into_iter().collect();
     let mut seen = std::collections::HashSet::new();
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
@@ -1104,6 +1122,7 @@ fn added_phrases<'a>(
                     && p != "-"
                     && p.split_whitespace().count() <= MAX_PHRASE_WORDS
                     && !names_person(p, people)
+                    && !adds_person_detail(p, idea, has_person, person_details)
                     && !skipped
                         .iter()
                         .any(|d| crate::generate::contains_phrase(p, d))
@@ -1163,7 +1182,7 @@ fn assemble_improved(
         &spec.given,
         &[spec.drop.as_slice(), avoid].concat(),
         spec.styles.get(style).map_or("", |st| st.example.as_str()),
-        &spec.people,
+        spec,
     );
     if groups.is_empty() {
         return (!same_words(&base, idea)).then_some(base);
@@ -1248,7 +1267,7 @@ fn assemble_edit(
         &spec.edit.given,
         &[spec.drop.as_slice(), avoid].concat(),
         &spec.edit.form,
-        &spec.people,
+        spec,
     );
     let common = &spec.common_words;
     let mentioned: std::collections::HashSet<String> = content_words(&both)
@@ -1792,6 +1811,7 @@ mod tests {
                 "the", "with", "make", "add", "replace", "give", "her", "put",
             ]),
             people: list(&["1boy", "1girl", "girl", "man"]),
+            person_details: list(&["hair", "suit", "dress", "earring"]),
             exact_words: list(&["her", "more", "less"]),
             edit: Default::default(),
         }
@@ -2284,6 +2304,70 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.split(", ").count(), 1 + MAX_ADDED_TAGS);
+    }
+
+    #[test]
+    fn hair_and_clothes_are_added_only_when_the_idea_has_a_person() {
+        let m = improve_spec();
+        let lines = |reworded: &str, details: &str| {
+            let mut l = vec![reworded.to_string(), details.to_string()];
+            l.resize(6, "-".to_string());
+            l
+        };
+        // No person: hair and outfits would put one in the picture.
+        assert_eq!(
+            assemble_improved(
+                "castle, sunset",
+                &lines("-", "stone walls, long_hair, golden hair, sleek suits"),
+                &m,
+                "booru",
+                &[]
+            )
+            .unwrap(),
+            "castle, sunset, stone walls"
+        );
+        assert!(!keeps_intent(
+            "castle at sunset",
+            "castle with long golden hair at sunset",
+            &m,
+            &[],
+            &[]
+        ));
+        // A person, or the thing itself in the idea: kept.
+        assert_eq!(
+            assemble_improved(
+                "1girl, castle",
+                &lines("-", "long_hair, stone walls"),
+                &m,
+                "booru",
+                &[]
+            )
+            .unwrap(),
+            "1girl, castle, long_hair, stone walls"
+        );
+        assert_eq!(
+            assemble_improved(
+                "a dress on a hanger",
+                &lines("-", "red silk dress"),
+                &m,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "a dress on a hanger. Red silk dress."
+        );
+        // Singular and plural count as one.
+        assert_eq!(
+            assemble_improved(
+                "earrings on a velvet tray",
+                &lines("-", "gold earring, sleek suits"),
+                &m,
+                "natural",
+                &[]
+            )
+            .unwrap(),
+            "earrings on a velvet tray. Gold earring."
+        );
     }
 
     #[test]

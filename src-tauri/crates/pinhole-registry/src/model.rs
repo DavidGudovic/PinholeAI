@@ -432,6 +432,10 @@ pub struct ImproveSpec {
     /// Words for people: a reworded idea that adds one while the idea names no person is not used.
     #[serde(default)]
     pub people: Vec<String>,
+    /// What only a person has or wears (hair, outfits): while the idea names no person, added
+    /// phrases and a reworded idea with one of these the idea doesn't have are left out.
+    #[serde(default)]
+    pub person_details: Vec<String>,
     /// Improve for Edit's change instructions. `safe`, `adult`, `avoid` and `drop` above apply too.
     #[serde(default)]
     pub edit: ImproveEditSpec,
