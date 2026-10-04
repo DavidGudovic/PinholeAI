@@ -1,7 +1,7 @@
 // Style picker (None + saved styles), "＋ Save as style" and the Manage dialog.
 // Styles are the ONE thing typed text may be stored for — and only when the
 // user explicitly saves one (SPEC §4.11). The UI says so where it happens.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Check, ChevronDown, Copy, Lock, Palette, Pencil, Plus, Settings2, Trash } from "lucide-react";
 import * as api from "../lib/api";
 import type { CoreError, Style } from "../lib/types";
@@ -174,9 +174,12 @@ function StyleEditorInner({
   const limitLabel = initialFamilies.length ? "Only for the kinds of models it's written for" : `Only for ${familyLabel ?? "this kind of"} models`;
   const [error, setError] = useState<CoreError | null>(null);
   const [saving, setSaving] = useState(false);
+  // Set at once (state isn't), so a second Enter while saving does nothing.
+  const savingRef = useRef(false);
 
   const save = async () => {
-    if (!name.trim() || !positive.trim()) return;
+    if (savingRef.current || !name.trim() || !positive.trim()) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
@@ -197,6 +200,7 @@ function StyleEditorInner({
     } catch (e) {
       setError(api.asCoreError(e));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -221,7 +225,13 @@ function StyleEditorInner({
         </>
       }
     >
-      <div className="space-y-4">
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
         <Field label="Name">
           <input
             data-autofocus
@@ -242,7 +252,7 @@ function StyleEditorInner({
         </Field>
         {limitedFamilies.length > 0 && <Toggle checked={onlyFamily} onChange={setOnlyFamily} label={limitLabel} />}
         {error && <ErrorNotice error={error} />}
-      </div>
+      </form>
     </Dialog>
   );
 }
