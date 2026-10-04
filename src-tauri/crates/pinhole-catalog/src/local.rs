@@ -140,6 +140,15 @@ pub fn part_path(dest: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
+/// Bytes of a `size`-byte download to `dest` that are not yet in `<dest>.part`
+/// (a cancelled download resumes from there).
+pub fn still_to_download(dest: &Path, size: u64) -> u64 {
+    let have = std::fs::metadata(part_path(dest))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    size.saturating_sub(have)
+}
+
 /// Free bytes on the file system holding `dir` (walks up to an existing parent).
 pub fn free_space(dir: &Path) -> u64 {
     let mut p = dir;
@@ -186,6 +195,16 @@ mod tests {
     use super::*;
 
     const SHA: &str = "6a35a7855770ae9820a3c931d4964c3817b6d9e3c6f9c4dabb5b3a94e5643b80";
+
+    #[test]
+    fn still_to_download_subtracts_part_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("m.safetensors");
+        assert_eq!(still_to_download(&dest, 1000), 1000);
+        std::fs::write(part_path(&dest), vec![0u8; 400]).unwrap();
+        assert_eq!(still_to_download(&dest, 1000), 600);
+        assert_eq!(still_to_download(&dest, 300), 0);
+    }
 
     #[test]
     fn autov2_matching() {

@@ -211,6 +211,17 @@ impl DownloadSpec {
         self.size_bytes.or(self.approx_size_bytes)
     }
 
+    /// Whether a file of `len` bytes at `dest` could be this download: the
+    /// exact size matches, or (exact size unknown) it is within 2 % + 2 MiB of
+    /// the approximate size. With no size at all, any length could be.
+    pub(crate) fn may_be_len(&self, len: u64) -> bool {
+        match (self.size_bytes, self.approx_size_bytes) {
+            (Some(s), _) => s == len,
+            (None, Some(a)) => len.abs_diff(a) <= a / 50 + 2 * MB,
+            (None, None) => true,
+        }
+    }
+
     /// Expected hash when it must be enforced (not `None`, empty or `TODO`).
     pub fn expected_sha256(&self) -> Option<String> {
         let h = self.sha256.as_deref()?.trim();
@@ -298,7 +309,7 @@ async fn fetch_verified(
     // Already there and verified (e.g. a retried install)? Don't download again.
     if let Some(exp) = &expected {
         if let Ok(meta) = tokio::fs::metadata(&spec.dest).await {
-            if meta.is_file() && spec.size_bytes.is_none_or(|s| s == meta.len()) {
+            if meta.is_file() && spec.may_be_len(meta.len()) {
                 phase(Phase::Verifying);
                 let (hasher, len) = hash_prefix(spec.dest.clone(), None, cancel.clone()).await?;
                 let actual = hex::encode(hasher.finalize());
@@ -1251,7 +1262,7 @@ async fn remaining_bytes(files: &[DownloadSpec]) -> u64 {
         // (that one is kept and the download gets a new name).
         if tokio::fs::metadata(&f.dest)
             .await
-            .is_ok_and(|m| m.is_file() && f.size_bytes.is_none_or(|s| s == m.len()))
+            .is_ok_and(|m| m.is_file() && f.may_be_len(m.len()))
         {
             continue;
         }
