@@ -647,10 +647,10 @@ describe("Describe tab", () => {
     act(() =>
       store.dispatch({
         type: "download",
-        status: { groupId: "desc-1", label: "Describer", kind: "captioner", state: "failed", currentFile: null, fileIndex: 0, fileCount: 1, downloadedBytes: 0, totalBytes: 1, error: "The connection dropped." },
+        status: { groupId: "desc-1", label: "Describer", kind: "captioner", state: "failed", currentFile: null, fileIndex: 0, fileCount: 1, downloadedBytes: 0, totalBytes: 1, error: "The download timed out — check your internet connection and try again." },
       }),
     );
-    expect((await screen.findByRole("alert")).textContent).toContain("The connection dropped. Try again.");
+    expect((await screen.findByRole("alert")).textContent).toBe("The download timed out — check your internet connection and try again.");
     expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();
     spy.mockRestore();
   });

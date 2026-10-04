@@ -289,10 +289,10 @@ describe("Improve my prompt", () => {
       fileCount: 1,
       downloadedBytes: 0,
       totalBytes: 1,
-      error: "The connection dropped.",
+      error: "The download timed out — check your internet connection and try again.",
     };
     act(() => store.dispatch({ type: "download", status: failed }));
-    expect((await screen.findByRole("alert")).textContent).toContain("The connection dropped. Try again.");
+    expect((await screen.findByRole("alert")).textContent).toBe("The download timed out — check your internet connection and try again.");
     expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();
     spy.mockRestore();
   });

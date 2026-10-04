@@ -169,7 +169,7 @@ export function useImprovePrompt(familyId: string | null | undefined, target: Im
               <div className="flex flex-wrap gap-2">
                 {failedNow && (
                   <p className="w-full text-xs text-red-600 dark:text-red-400" role="alert">
-                    {dl.error ?? "The download failed."} Try again.
+                    {dl.error ?? "The download failed. Try again."}
                   </p>
                 )}
                 <Button size="sm" variant="primary" disabled={installing} onClick={() => void install()}>
