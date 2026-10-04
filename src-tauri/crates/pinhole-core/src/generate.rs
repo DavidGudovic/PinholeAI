@@ -350,6 +350,7 @@ async fn prepare(
     } else {
         &[]
     };
+    crate::lookup::refuse_if_flagged(&model)?;
     let engine_paths = if materialize {
         link_add_ons(core, picked).await?
     } else {
@@ -363,7 +364,6 @@ async fn prepare(
     // Every picked add-on's name and trigger words, for the word check below (whether or
     // not the words are added to the prompt: the add-on steers the image either way).
     let mut addon_words: Vec<String> = Vec::new();
-    crate::lookup::refuse_if_flagged(&model)?;
     let mut addon_ids = Vec::new();
     {
         let idx = core.installed.lock();
@@ -519,16 +519,24 @@ pub(crate) fn contains_phrase(text: &str, phrase: &str) -> bool {
 /// Engine paths (by file id) of the picked add-ons from linked folders: links, or copies,
 /// in Pinhole's add-on folder ([`crate::linked::lora_path_for_engine`]). Made on a blocking
 /// thread without holding the index lock. Add-ons whose file isn't there are left out.
+/// A flagged add-on refuses the request before anything is linked or copied.
 async fn link_add_ons(
     core: &Arc<AppCore>,
     picked: &[LoraUse],
 ) -> CoreResult<HashMap<String, PathBuf>> {
     let todo: Vec<(InstalledFile, PathBuf)> = {
         let idx = core.installed.lock();
-        picked
+        let addons: Vec<&InstalledFile> = picked
             .iter()
             .filter_map(|l| idx.get(&l.lora_id))
-            .filter(|f| f.kind == ModelKind::Lora && f.is_linked())
+            .filter(|f| f.kind == ModelKind::Lora)
+            .collect();
+        for f in &addons {
+            crate::lookup::refuse_if_flagged(f)?;
+        }
+        addons
+            .into_iter()
+            .filter(|f| f.is_linked())
             .map(|f| (f.clone(), idx.abs_path(&core.data, f)))
             .collect()
     };
@@ -2051,13 +2059,36 @@ mod tests {
         assert_eq!(*core.linked.index_locked_while_linking.lock(), vec![false]);
     }
 
+    /// A flagged model or add-on is refused before any linked add-on is linked or copied.
+    #[tokio::test]
+    async fn a_flagged_request_links_no_add_ons() {
+        use pinhole_store::installed::Lookup;
+        for flag_model in [true, false] {
+            let tmp = tempfile::tempdir().unwrap();
+            let (core, model, lora) = core_with_linked_folder(tmp.path());
+            let flagged = if flag_model { &model } else { &lora };
+            core.installed.lock().get_mut(flagged).unwrap().lookup = Some(Lookup::Refused);
+            let mut req = GenerateRequest::txt2img(model, "a red boat");
+            req.loras = vec![LoraUse {
+                lora_id: lora,
+                weight: 1.0,
+                words: None,
+            }];
+            assert!(prepare(&core, &req, true).await.is_err());
+            assert!(core.linked.index_locked_while_linking.lock().is_empty());
+            let linked = core.data.models(ModelKind::Lora).join(".pinhole-linked");
+            let n = std::fs::read_dir(&linked).map(|d| d.count()).unwrap_or(0);
+            assert_eq!(n, 0);
+        }
+    }
+
     /// Using a linked model writes only linked-folders.json.
     #[tokio::test]
     async fn last_used_of_a_linked_model_is_saved_with_the_linked_folders() {
         let tmp = tempfile::tempdir().unwrap();
         let (core, model, _) = core_with_linked_folder(tmp.path());
         let installed = core.data.installed_file();
-        let before = std::fs::read(&installed).ok();
+        assert!(!installed.exists());
         touch_last_used(&core, &model).await;
         assert!(core
             .installed
@@ -2066,7 +2097,7 @@ mod tests {
             .unwrap()
             .last_used
             .is_some());
-        assert_eq!(std::fs::read(&installed).ok(), before);
+        assert!(!installed.exists());
         let back = pinhole_store::installed::InstalledIndex::load(&core.data).unwrap();
         assert!(back.get(&model).unwrap().last_used.is_some());
     }

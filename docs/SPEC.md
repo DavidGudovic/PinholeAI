@@ -172,8 +172,9 @@ installed files; a model that lacks parts gets **Get missing parts** (from the r
 loads add-ons only from one folder, so a linked add-on used in a picture is hard-linked (else
 symlinked, else copied) into `models/loras/.pinhole-linked/`, which is emptied at every start.
 Moving Pinhole's Models folder leaves linked files where they are (the old folder's
-`.pinhole-linked/` is removed), and it can't be moved into (or around) a linked folder. A file Pinhole already has (same SHA-256, from a note or a part match) is
-listed once. A folder whose drive isn't connected keeps its entries and shows "Not connected".
+`.pinhole-linked/` is removed), and it can't be moved into (or around) a linked folder. A file
+Pinhole already has (same SHA-256, from a note or a part match) is listed once. A folder whose
+drive isn't connected keeps its entries and shows "Not connected".
 
 ---
 
