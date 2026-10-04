@@ -36,7 +36,7 @@ pub(crate) const TILING_RETRY_NOTE: &str =
 
 pub(crate) const OFFLOAD_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with the model kept in system memory and sent to the card as needed (slower).";
 
-pub(crate) const MORE_ROOM_RETRY_NOTE: &str = "Your graphics card ran out of memory — trying again with more of the card kept free and the model sent to it in parts (slower).";
+pub(crate) const MORE_ROOM_RETRY_NOTE: &str = "Your graphics card ran out of memory. Trying again with the model loaded onto the card in parts (slower).";
 
 const RETRY_NOTES: &[&str] = &[
     TE_RETRY_NOTE,
