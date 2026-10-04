@@ -336,29 +336,44 @@ pub fn cleanup_downloads(paths: &[PathBuf]) {
 
 /// Best effort: remove what no pinned engine can use any more from `engine_root`:
 /// `<sd|llama>/<version>/` folders of other versions, unpack staging folders
-/// (`.<backend>.tmp-<pid>`) left by other processes, and files in `downloads/`
-/// that don't belong to a pinned version. Errors are ignored per entry. Run it
-/// when no engine of another version is running (e.g. after the orphan sweep).
+/// (`.<backend>.tmp-<pid>`) whose process is no longer running, and files in
+/// `downloads/` that are not an archive (or its `.part`) of a pinned build.
+/// Errors are ignored per entry. Run it when no engine of another version is
+/// running (e.g. after the orphan sweep).
 pub fn sweep_stale(engine_root: &Path, cfg: &EngineConfig) {
-    let own_tmp = format!(".tmp-{}", std::process::id());
-    let mut keep_prefixes = Vec::new();
+    let mut keep_files = std::collections::HashSet::new();
     for kind in [EngineKind::Sd, EngineKind::Llama] {
-        let pinned = sanitize(&kind.pin(cfg).version);
-        keep_prefixes.push(format!("{}-{pinned}-", kind.dir_name()));
+        let pin = kind.pin(cfg);
+        let pinned = sanitize(&pin.version);
+        for build in pin.builds.values() {
+            for a in build.archives() {
+                let name = format!("{}-{pinned}-{}", kind.dir_name(), a.file_name());
+                keep_files.insert(format!("{name}.part"));
+                keep_files.insert(name);
+            }
+        }
         for (name, path) in real_entries(&engine_root.join(kind.dir_name()), true) {
             if name != pinned {
                 let _ = fs::remove_dir_all(&path);
                 continue;
             }
             for (name, path) in real_entries(&path, true) {
-                if name.starts_with('.') && name.contains(".tmp-") && !name.ends_with(&own_tmp) {
-                    let _ = fs::remove_dir_all(&path);
+                if !name.starts_with('.') {
+                    continue;
                 }
+                let Some((_, pid)) = name.rsplit_once(".tmp-") else {
+                    continue;
+                };
+                // Another Pinhole running on the same Data folder may be unpacking.
+                if pid.parse::<u32>().is_ok_and(crate::orphans::pid_running) {
+                    continue;
+                }
+                let _ = fs::remove_dir_all(&path);
             }
         }
     }
     for (name, path) in real_entries(&download_dir(engine_root), false) {
-        if !keep_prefixes.iter().any(|p| name.starts_with(p.as_str())) {
+        if !keep_files.contains(&name) {
             let _ = fs::remove_file(&path);
         }
     }
@@ -1149,22 +1164,43 @@ mod tests {
             p
         };
         let own = std::process::id();
-        let other = own.wrapping_add(1);
+        // The pid of a process that has exited.
+        let exited = {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("--list")
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let pid = child.id();
+            child.wait().unwrap();
+            pid
+        };
+        let first = |pin: &EnginePin| pin.builds.values().next().unwrap().archives()[0].file_name();
+        let sd_archive = first(&cfg.stable_diffusion_cpp);
+        let llama_archive = first(&cfg.llama_cpp);
         let removed = [
             write(&format!("sd/old-ver/cpu/{MARKER_FILE}")),
             write("llama/b1/cuda/llama-server"),
-            write(&format!("sd/{sd_pin}/.cpu.tmp-{other}/x")),
+            write(&format!("sd/{sd_pin}/.cpu.tmp-{exited}/x")),
             write("downloads/sd-old-ver-a.zip"),
             write("downloads/llama-b1-a.tar.gz.part"),
+            write(&format!("downloads/llama-{llama_pin}-foo-{llama_archive}")),
+            write(&format!("downloads/sd-{sd_pin}-other.zip")),
         ];
-        let kept = [
+        let mut kept = vec![
             write(&format!("sd/{sd_pin}/cpu/{MARKER_FILE}")),
             write(&format!("sd/{sd_pin}/.cuda.tmp-{own}/x")),
             write(&format!("llama/{llama_pin}/vulkan/{MARKER_FILE}")),
-            write(&format!("downloads/sd-{sd_pin}-a.zip")),
-            write(&format!("downloads/llama-{llama_pin}-b.zip.part")),
+            write(&format!("downloads/sd-{sd_pin}-{sd_archive}")),
+            write(&format!("downloads/llama-{llama_pin}-{llama_archive}.part")),
             write("notes.txt"),
         ];
+        // Staging of another running process (here: the one that started the tests).
+        #[cfg(unix)]
+        kept.push(write(&format!(
+            "llama/{llama_pin}/.cpu.tmp-{}/x",
+            std::os::unix::process::parent_id()
+        )));
         sweep_stale(&root, &cfg);
         for p in &removed {
             assert!(!p.exists(), "{}", p.display());
