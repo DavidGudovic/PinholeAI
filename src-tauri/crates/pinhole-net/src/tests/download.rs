@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::sync::CancellationToken;
 
 use crate::download::{
-    check_free_space, download_file, part_path, sha256_file, DownloadError, DownloadSpec,
+    check_free_space, download_file, download_file_with_phase, part_path, sha256_file,
+    DownloadError, DownloadSpec, Phase,
 };
 use crate::testutil::{MockResponse, MockServer};
 use crate::{HttpClient, NetError, OfflineFlag};
@@ -379,6 +380,52 @@ async fn existing_verified_dest_is_not_downloaded_again() {
         .unwrap();
     assert_eq!(got.sha256, sha(b"already here"));
     assert_eq!(srv.connections(), 0);
+}
+
+#[test]
+fn only_a_file_of_about_the_right_size_is_hashed_before_downloading() {
+    let exact = DownloadSpec {
+        size_bytes: Some(1000),
+        ..Default::default()
+    };
+    assert!(exact.may_be_len(1000));
+    assert!(!exact.may_be_len(1001));
+    let approx = DownloadSpec {
+        approx_size_bytes: Some(1_000_000_000),
+        ..Default::default()
+    };
+    assert!(approx.may_be_len(1_000_000_000));
+    assert!(approx.may_be_len(1_010_000_000));
+    assert!(!approx.may_be_len(2_000_000_000));
+    assert!(!approx.may_be_len(500_000_000));
+    assert!(DownloadSpec::default().may_be_len(12345));
+}
+
+#[tokio::test]
+async fn a_different_size_file_at_dest_is_not_verified_first() {
+    let body = data(1000);
+    let b = body.clone();
+    let srv = MockServer::start(move |_| MockResponse::ok(b.clone())).await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("model.safetensors");
+    std::fs::write(&dest, data(20 * 1024 * 1024)).unwrap();
+    let s = DownloadSpec {
+        approx_size_bytes: Some(1000),
+        ..spec(srv.url("/m"), &dest, Some(sha(&body)), None)
+    };
+    let phases: Arc<Mutex<Vec<Phase>>> = Arc::default();
+    let p = phases.clone();
+    let got = download_file_with_phase(
+        &client(),
+        &s,
+        &CancellationToken::new(),
+        &|_, _| {},
+        &move |ph| p.lock().push(ph),
+    )
+    .await
+    .unwrap();
+    assert_eq!(got.path, dir.path().join("model-2.safetensors"));
+    assert_ne!(phases.lock().first(), Some(&Phase::Verifying));
 }
 
 #[tokio::test]
