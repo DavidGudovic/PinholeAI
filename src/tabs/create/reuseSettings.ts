@@ -65,10 +65,11 @@ export async function reuseSettingsFrom(file: Blob, store: Store, actions: Actio
   const same = usable.find((m) => s.modelId && m.id === s.modelId) ?? usable.find((m) => s.model && m.friendlyName === s.model) ?? null;
   const o = await applyParsed(parsedFromPicture(s), null, null, store, actions, { setPrompt: false, preferModelId: same?.id ?? null, keepLoras: true });
 
-  const fineTune: { sampler?: string; scheduler?: string } = {};
+  const fineTune: { sampler?: string; scheduler?: string; seamless?: true } = {};
   if (s.sampler && SD_SAMPLERS.some((x) => x.id === s.sampler)) fineTune.sampler = s.sampler;
   if (s.scheduler && SD_SCHEDULERS.some((x) => x.id === s.scheduler)) fineTune.scheduler = s.scheduler;
-  if (fineTune.sampler || fineTune.scheduler) store.dispatch({ type: "setFineTune", patch: fineTune });
+  if (s.seamless) fineTune.seamless = true;
+  if (Object.keys(fineTune).length > 0) store.dispatch({ type: "setFineTune", patch: fineTune });
 
   return { found: true, madeWith: s.model ?? null, modelSelected: !!same, modelName: o.modelName, applied: o.applied, skipped: o.skipped };
 }

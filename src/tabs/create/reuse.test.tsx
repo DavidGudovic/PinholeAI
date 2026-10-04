@@ -60,6 +60,22 @@ describe("reuse settings from a saved picture", () => {
     expect(store.getState().create).toBe(before);
   });
 
+  it("turns Repeats without seams on when the picture was made with it, off otherwise", async () => {
+    let { store, actions } = setup({ steps: 20, seamless: true });
+    await reuseSettingsFrom(blob(), store, actions);
+    expect(store.getState().create.fineTune.seamless).toBe(true);
+
+    vi.mocked(api.readPictureSettings).mockResolvedValue({ steps: 20, seamless: false });
+    await reuseSettingsFrom(blob(), store, actions);
+    expect(store.getState().create.fineTune.seamless ?? null).toBeNull();
+
+    // Pictures saved before it was recorded: off, like the other settings they don't carry.
+    ({ store, actions } = setup({ steps: 20 }));
+    store.dispatch({ type: "setFineTune", patch: { seamless: true } });
+    await reuseSettingsFrom(blob(), store, actions);
+    expect(store.getState().create.fineTune.seamless ?? null).toBeNull();
+  });
+
   it("ignores a sampler name the engine doesn't have", async () => {
     const { store, actions } = setup({ steps: 12, sampler: "made-up" });
     await reuseSettingsFrom(blob(), store, actions);
