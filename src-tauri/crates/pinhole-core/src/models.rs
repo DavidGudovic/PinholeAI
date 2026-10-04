@@ -946,6 +946,39 @@ fn register_pending(
     Ok(view_of(core, &entry))
 }
 
+/// The same bytes are installed as `existing`, but its file was deleted by hand: point the
+/// entry at the file just added (it keeps its id, so presets still find it). `Ok(true)` when
+/// the entry now uses `p.path`; a failed save removes the copy.
+fn repoint_missing(core: &AppCore, existing: &InstalledFile, p: &PendingAdd) -> CoreResult<bool> {
+    let Ok(rel) = rel_path_for(core, &p.path) else {
+        return Ok(false);
+    };
+    {
+        let mut index = core.installed.lock();
+        let Some(current) = index.get(&existing.id).cloned() else {
+            return Ok(false);
+        };
+        if current.is_linked()
+            || current.rel_path == rel
+            || index.abs_path(&core.data, &current).is_file()
+            || index.files.iter().any(|f| f.rel_path == rel)
+        {
+            return Ok(false);
+        }
+        let before = index.files.clone();
+        if let Some(f) = index.get_mut(&existing.id) {
+            f.rel_path = rel;
+        }
+        if let Err(e) = index.save(&core.data) {
+            index.files = before;
+            remove_copy(p);
+            return Err(e.into());
+        }
+    }
+    core.emit(CoreEvent::ModelsChanged);
+    Ok(true)
+}
+
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> CoreResult<T> {
     tokio::task::spawn_blocking(f)
         .await
@@ -1080,7 +1113,8 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     // Already installed (same bytes)? Keep the existing entry; adding it again retries a
     // lookup that couldn't run before.
     if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
-        if pending.copied
+        if !repoint_missing(core, &existing, &pending)?
+            && pending.copied
             && core
                 .data
                 .relative(&pending.path)
@@ -1146,13 +1180,17 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     }
     // Added meanwhile (the lookup takes a moment): keep the entry that is there.
     if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
-        if core
-            .data
-            .relative(&pending.path)
-            .is_some_and(|rel| rel != existing.rel_path)
+        if !repoint_missing(core, &existing, &pending)?
+            && core
+                .data
+                .relative(&pending.path)
+                .is_some_and(|rel| rel != existing.rel_path)
         {
             remove_copy(&pending);
         }
+        let existing = snapshot(core).get(&existing.id).cloned().ok_or_else(|| {
+            CoreError::not_found("That file was just removed from Pinhole. Add it again.")
+        })?;
         crate::lookup::refuse_if_flagged(&existing)?;
         return Ok(view_of(core, &existing));
     }
@@ -1587,6 +1625,51 @@ mod tests {
             .filter(|n| n.starts_with("odd"))
             .collect();
         assert!(left.is_empty(), "{left:?}");
+    }
+
+    #[tokio::test]
+    async fn add_local_file_replaces_entry_whose_file_is_gone() {
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        core.offline.set(true);
+
+        let src = tmp.path().join("Juggernaut.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let (sha, size) = local::hash_file(&src).unwrap();
+        let dir = core.data.models(ModelKind::Checkpoint);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("juggernautXL_v9.safetensors");
+        std::fs::copy(&src, &old).unwrap();
+        let entry = register_download(
+            &core,
+            &DownloadedFile {
+                path: old.clone(),
+                sha256: sha.clone(),
+                size_bytes: size,
+            },
+            Registration {
+                kind: ModelKind::Checkpoint,
+                friendly_name: "Juggernaut".into(),
+                family: Some("sdxl".into()),
+                component_id: None,
+                civitai: None,
+                dtype: None,
+                lookup: None,
+            },
+        )
+        .unwrap();
+        std::fs::remove_file(&old).unwrap();
+
+        let out = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+        let model = out.model.unwrap();
+        assert_eq!(model.id, entry.id, "the entry keeps its id");
+        let idx = core.installed.lock().clone();
+        assert_eq!(idx.files.iter().filter(|f| f.sha256 == sha).count(), 1);
+        let f = idx.get(&entry.id).unwrap();
+        assert_eq!(f.rel_path, "models/checkpoints/Juggernaut.safetensors");
+        assert!(idx.abs_path(&core.data, f).is_file(), "the copy is kept");
+        let saved = pinhole_store::InstalledIndex::load(&core.data).unwrap();
+        assert_eq!(saved.get(&entry.id).unwrap().rel_path, f.rel_path);
     }
 
     #[tokio::test]
