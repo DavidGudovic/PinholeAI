@@ -959,6 +959,7 @@ fn repoint_missing(core: &AppCore, existing: &InstalledFile, p: &PendingAdd) -> 
             return Ok(false);
         };
         if current.is_linked()
+            || current.refused()
             || current.rel_path == rel
             || index.abs_path(&core.data, &current).is_file()
             || index.files.iter().any(|f| f.rel_path == rel)
@@ -977,6 +978,33 @@ fn repoint_missing(core: &AppCore, existing: &InstalledFile, p: &PendingAdd) -> 
     }
     core.emit(CoreEvent::ModelsChanged);
     Ok(true)
+}
+
+/// Remove the new copy of a file that is already installed as `existing`, unless the copy
+/// landed at the entry's own path.
+fn drop_extra_copy(core: &AppCore, existing: &InstalledFile, p: &PendingAdd) {
+    if core
+        .data
+        .relative(&p.path)
+        .is_some_and(|rel| rel != existing.rel_path)
+    {
+        remove_copy(p);
+    }
+}
+
+/// Keep `existing` for a file added again: it takes the new path when its own file is gone,
+/// otherwise the new copy is removed. Returns the entry as it is now.
+fn keep_existing(
+    core: &AppCore,
+    existing: &InstalledFile,
+    p: &PendingAdd,
+) -> CoreResult<InstalledFile> {
+    if !repoint_missing(core, existing, p)? {
+        drop_extra_copy(core, existing, p);
+    }
+    snapshot(core).get(&existing.id).cloned().ok_or_else(|| {
+        CoreError::not_found("That file was just removed from Pinhole. Add it again.")
+    })
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> CoreResult<T> {
@@ -1113,28 +1141,26 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     // Already installed (same bytes)? Keep the existing entry; adding it again retries a
     // lookup that couldn't run before.
     if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
-        if !repoint_missing(core, &existing, &pending)?
-            && pending.copied
-            && core
-                .data
-                .relative(&pending.path)
-                .is_some_and(|rel| rel != existing.rel_path)
-        {
-            remove_copy(&pending);
-        }
         if existing.lookup == Some(Lookup::NotYet) || !pinhole_store::seal::trusted(&existing.id) {
             let outcome =
                 crate::lookup::look_up_existing(core, &existing.id, &existing.sha256).await;
             if outcome == Outcome::PersonOrMinor {
+                drop_extra_copy(core, &existing, &pending);
                 return Err(CoreError::invalid(
                     pinhole_catalog::api::PERSON_OR_MINOR_REASON,
                 ));
             }
         }
-        let existing = snapshot(core).get(&existing.id).cloned().ok_or_else(|| {
-            CoreError::not_found("That file was just removed from Pinhole. Add it again.")
-        })?;
-        crate::lookup::refuse_if_flagged(&existing)?;
+        let existing = snapshot(core)
+            .get(&existing.id)
+            .cloned()
+            .ok_or_else(|| {
+                CoreError::not_found("That file was just removed from Pinhole. Add it again.")
+            })
+            .inspect_err(|_| drop_extra_copy(core, &existing, &pending))?;
+        crate::lookup::refuse_if_flagged(&existing)
+            .inspect_err(|_| drop_extra_copy(core, &existing, &pending))?;
+        let existing = keep_existing(core, &existing, &pending)?;
         return Ok(view_of(core, &existing));
     }
 
@@ -1180,18 +1206,9 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     }
     // Added meanwhile (the lookup takes a moment): keep the entry that is there.
     if let Some(existing) = snapshot(core).find_by_sha(&sha256).cloned() {
-        if !repoint_missing(core, &existing, &pending)?
-            && core
-                .data
-                .relative(&pending.path)
-                .is_some_and(|rel| rel != existing.rel_path)
-        {
-            remove_copy(&pending);
-        }
-        let existing = snapshot(core).get(&existing.id).cloned().ok_or_else(|| {
-            CoreError::not_found("That file was just removed from Pinhole. Add it again.")
-        })?;
-        crate::lookup::refuse_if_flagged(&existing)?;
+        crate::lookup::refuse_if_flagged(&existing)
+            .inspect_err(|_| drop_extra_copy(core, &existing, &pending))?;
+        let existing = keep_existing(core, &existing, &pending)?;
         return Ok(view_of(core, &existing));
     }
     // 3. header sniffing
@@ -1627,24 +1644,23 @@ mod tests {
         assert!(left.is_empty(), "{left:?}");
     }
 
-    #[tokio::test]
-    async fn add_local_file_replaces_entry_whose_file_is_gone() {
-        let rec = Arc::new(Recorder::default());
-        let (tmp, core) = test_core(rec.clone());
-        core.offline.set(true);
-
-        let src = tmp.path().join("Juggernaut.safetensors");
-        safetensors(&src, SDXL_TENSORS);
-        let (sha, size) = local::hash_file(&src).unwrap();
+    /// Register `src`'s bytes as `models/checkpoints/juggernautXL_v9.safetensors`, then
+    /// delete that file.
+    fn entry_whose_file_is_gone(
+        core: &AppCore,
+        src: &Path,
+        lookup: Option<Lookup>,
+    ) -> InstalledFile {
+        let (sha, size) = local::hash_file(src).unwrap();
         let dir = core.data.models(ModelKind::Checkpoint);
         std::fs::create_dir_all(&dir).unwrap();
         let old = dir.join("juggernautXL_v9.safetensors");
-        std::fs::copy(&src, &old).unwrap();
+        std::fs::copy(src, &old).unwrap();
         let entry = register_download(
-            &core,
+            core,
             &DownloadedFile {
                 path: old.clone(),
-                sha256: sha.clone(),
+                sha256: sha,
                 size_bytes: size,
             },
             Registration {
@@ -1654,22 +1670,149 @@ mod tests {
                 component_id: None,
                 civitai: None,
                 dtype: None,
-                lookup: None,
+                lookup,
             },
         )
         .unwrap();
         std::fs::remove_file(&old).unwrap();
+        entry
+    }
 
-        let out = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+    fn assert_repointed(core: &AppCore, entry: &InstalledFile, out: AddFileResult, rel: &str) {
         let model = out.model.unwrap();
         assert_eq!(model.id, entry.id, "the entry keeps its id");
         let idx = core.installed.lock().clone();
-        assert_eq!(idx.files.iter().filter(|f| f.sha256 == sha).count(), 1);
+        let same = idx.files.iter().filter(|f| f.sha256 == entry.sha256);
+        assert_eq!(same.count(), 1);
         let f = idx.get(&entry.id).unwrap();
-        assert_eq!(f.rel_path, "models/checkpoints/Juggernaut.safetensors");
-        assert!(idx.abs_path(&core.data, f).is_file(), "the copy is kept");
+        assert_eq!(f.rel_path, rel);
+        assert!(
+            idx.abs_path(&core.data, f).is_file(),
+            "the new file is kept"
+        );
         let saved = pinhole_store::InstalledIndex::load(&core.data).unwrap();
         assert_eq!(saved.get(&entry.id).unwrap().rel_path, f.rel_path);
+    }
+
+    fn checkpoint_files(core: &AppCore) -> Vec<String> {
+        std::fs::read_dir(core.data.models(ModelKind::Checkpoint))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn add_local_file_replaces_entry_whose_file_is_gone() {
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        core.offline.set(true);
+        let src = tmp.path().join("Juggernaut.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let entry = entry_whose_file_is_gone(&core, &src, None);
+
+        let out = add_local_model(&core, src.to_str().unwrap()).await.unwrap();
+        assert_repointed(
+            &core,
+            &entry,
+            out,
+            "models/checkpoints/Juggernaut.safetensors",
+        );
+    }
+
+    /// A file already in the Models folder is used where it is.
+    #[tokio::test]
+    async fn add_in_place_file_replaces_entry_whose_file_is_gone() {
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        core.offline.set(true);
+        let src = tmp.path().join("Juggernaut.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let entry = entry_whose_file_is_gone(&core, &src, None);
+        let in_place = core
+            .data
+            .models(ModelKind::Checkpoint)
+            .join("renamed.safetensors");
+        std::fs::rename(&src, &in_place).unwrap();
+
+        let out = add_local_model(&core, in_place.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_repointed(&core, &entry, out, "models/checkpoints/renamed.safetensors");
+        assert_eq!(checkpoint_files(&core), ["renamed.safetensors"]);
+    }
+
+    #[tokio::test]
+    async fn add_local_file_keeps_refused_entry_whose_file_is_gone() {
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        core.offline.set(true);
+        let src = tmp.path().join("Juggernaut.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let entry = entry_whose_file_is_gone(&core, &src, Some(Lookup::Refused));
+
+        let e = add_local_model(&core, src.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert_eq!(e.message, pinhole_catalog::api::PERSON_OR_MINOR_REASON);
+        assert!(checkpoint_files(&core).is_empty(), "the copy is removed");
+        let f = core.installed.lock().get(&entry.id).cloned().unwrap();
+        assert_eq!(f.rel_path, entry.rel_path);
+    }
+
+    /// The same bytes get registered while the add's lookup runs (the CivitAI stand-in
+    /// registers them when asked).
+    async fn add_while_registered_during_lookup(
+        lookup: Option<Lookup>,
+    ) -> (
+        tempfile::TempDir,
+        Arc<AppCore>,
+        InstalledFile,
+        CoreResult<AddFileResult>,
+    ) {
+        use pinhole_net::testutil::{MockResponse, MockServer};
+        let rec = Arc::new(Recorder::default());
+        let (tmp, core) = test_core(rec.clone());
+        let src = tmp.path().join("Juggernaut.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let registered = Arc::new(Mutex::new(None::<InstalledFile>));
+        let srv = {
+            let (core, src, registered) = (core.clone(), src.clone(), registered.clone());
+            MockServer::start(move |_| {
+                let mut r = registered.lock();
+                if r.is_none() {
+                    *r = Some(entry_whose_file_is_gone(&core, &src, lookup));
+                }
+                MockResponse::status(404)
+            })
+            .await
+        };
+        *core.models.test_civitai.lock() = Some(srv.url(""));
+
+        let out = add_local_model(&core, src.to_str().unwrap()).await;
+        let entry = registered.lock().clone().expect("looked up");
+        (tmp, core, entry, out)
+    }
+
+    #[tokio::test]
+    async fn entry_added_during_lookup_whose_file_is_gone_takes_the_copy() {
+        let (_tmp, core, entry, out) = add_while_registered_during_lookup(None).await;
+        assert_repointed(
+            &core,
+            &entry,
+            out.unwrap(),
+            "models/checkpoints/Juggernaut.safetensors",
+        );
+    }
+
+    #[tokio::test]
+    async fn refused_entry_added_during_lookup_keeps_its_path() {
+        let (_tmp, core, entry, out) =
+            add_while_registered_during_lookup(Some(Lookup::Refused)).await;
+        let e = out.unwrap_err();
+        assert_eq!(e.message, pinhole_catalog::api::PERSON_OR_MINOR_REASON);
+        assert!(checkpoint_files(&core).is_empty(), "the copy is removed");
+        let f = core.installed.lock().get(&entry.id).cloned().unwrap();
+        assert_eq!(f.rel_path, entry.rel_path);
     }
 
     #[tokio::test]
