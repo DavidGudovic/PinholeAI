@@ -153,6 +153,7 @@ export function useImprovePrompt(familyId: string | null | undefined, target: Im
   );
 
   const installingNow = !!dl && isActiveDownload(dl);
+  const failedNow = dl?.state === "failed";
   const notice =
     needHelper !== null || error || note ? (
       <div className="space-y-2">
@@ -166,8 +167,14 @@ export function useImprovePrompt(familyId: string | null | undefined, target: Im
               <GroupProgress group={dl} compact onCancel={() => void api.cancelDownload(dl.groupId).finally(() => void actions.refreshDownloads().catch(() => undefined))} />
             ) : (
               <div className="flex flex-wrap gap-2">
+                {failedNow && (
+                  <p className="w-full text-xs text-red-600 dark:text-red-400" role="alert">
+                    {dl.error ?? "The download failed."} Try again.
+                  </p>
+                )}
                 <Button size="sm" variant="primary" disabled={installing} onClick={() => void install()}>
-                  {installing ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />} Get the helper{needHelper ? ` (${formatBytes(needHelper)})` : ""}
+                  {installing ? <Spinner className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />} {failedNow ? "Try again" : "Get the helper"}
+                  {needHelper ? ` (${formatBytes(needHelper)})` : ""}
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setNeedHelper(null)}>
                   Not now

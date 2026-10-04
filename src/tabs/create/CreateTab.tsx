@@ -5,10 +5,11 @@ import { LiveJobProgress } from "../../components/JobProgress";
 import { ErrorWithFix } from "../../components/ErrorWithFix";
 import { ModelPicker } from "../../components/ModelPicker";
 import { QueueButton } from "../../components/QueueButton";
-import { Button, ErrorNotice, IconButton, Kbd, Spinner } from "../../components/ui";
+import { Button, ErrorNotice, IconButton, Kbd, Spinner, cx, focusRing } from "../../components/ui";
 import { RecommendedCards } from "../../firstrun/RecommendedCards";
 import { SetupCard } from "../../components/SetupCard";
 import { useHardware } from "../models/lib/hooks";
+import { requestInstalledView } from "../models/lib/session";
 import { isCpuOnly, machinePlain } from "../models/lib/words";
 import * as api from "../../lib/api";
 import type { CoreError, GroupStatus } from "../../lib/types";
@@ -180,12 +181,7 @@ function CreateWorkspace() {
             </div>
             <PresetPicker onApplied={setPresetNotice} />
           </div>
-          {model && model.missingComponents.length > 0 && (
-            <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300">
-              <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
-              This model still needs {model.missingComponents.join(", ")}. Open Models → Installed to finish setting it up.
-            </p>
-          )}
+          {model && model.missingComponents.length > 0 && <MissingPartsNote missing={model.missingComponents} />}
           {ui?.licenseNote && model && /non-commercial/i.test(ui.licenseNote) && (
             <p className="text-xs text-neutral-500">{model.friendlyName}: {ui.licenseNote}</p>
           )}
@@ -230,6 +226,29 @@ function CreateWorkspace() {
 
       <PasteDialog open={pasteOpen} onClose={() => setPasteOpen(false)} onApply={applyPaste} />
     </div>
+  );
+}
+
+/** The picked model still lacks files: one click opens Models → Installed, where they can be fetched. */
+export function MissingPartsNote({ missing }: { missing: string[] }) {
+  const actions = useActions();
+  return (
+    <p className="flex items-start gap-1.5 text-xs text-amber-800 dark:text-amber-300">
+      <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+      <span>
+        This model still needs {missing.join(", ")}.{" "}
+        <button
+          type="button"
+          className={cx("rounded font-medium underline", focusRing)}
+          onClick={() => {
+            requestInstalledView();
+            actions.setTab("models");
+          }}
+        >
+          Get missing parts
+        </button>
+      </span>
+    </p>
   );
 }
 

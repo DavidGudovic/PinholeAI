@@ -630,6 +630,30 @@ describe("Describe tab", () => {
     await flush();
     expect(api.describeImage).not.toHaveBeenCalled();
   });
+
+  it("says why when the describer download failed and offers Try again", async () => {
+    captioner = { available: false, source: null, downloadBytes: 0, running: false };
+    const spy = vi.spyOn(api, "installCaptioner").mockResolvedValueOnce({ groupId: "desc-1" } as Awaited<ReturnType<typeof api.installCaptioner>>);
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "describe" });
+    render(
+      <AppProvider store={store}>
+        <DescribeTab />
+      </AppProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Get the describer/ }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    await flush();
+    act(() =>
+      store.dispatch({
+        type: "download",
+        status: { groupId: "desc-1", label: "Describer", kind: "captioner", state: "failed", currentFile: null, fileIndex: 0, fileCount: 1, downloadedBytes: 0, totalBytes: 1, error: "The connection dropped." },
+      }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toContain("The connection dropped. Try again.");
+    expect(screen.getByRole("button", { name: /Try again/ })).toBeTruthy();
+    spy.mockRestore();
+  });
 });
 
 describe("pictures from this session", () => {
