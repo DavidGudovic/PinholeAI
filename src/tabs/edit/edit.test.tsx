@@ -15,6 +15,9 @@ let paintOnShow = true;
 // Whether the brush is on (the mask's `active`), as last rendered.
 let maskActive = false;
 let captioner: CaptionerStatus = { available: false } as CaptionerStatus;
+// Renders of the mask (inside Stage) and of the edit history.
+let maskRenders = 0;
+let historyRenders = 0;
 
 const model = {
   id: "m",
@@ -54,12 +57,28 @@ vi.mock("./MaskCanvas", () => ({
   MaskCanvas: ({ ref, active, onPaintedChange }: { ref?: Ref<unknown>; active: boolean; onPaintedChange: (b: boolean) => void }) => {
     useImperativeHandle(ref, () => ({ clear: () => undefined, exportPng: () => maskExport.promise }));
     maskActive = active;
+    maskRenders++;
     useEffect(() => {
       if (active && paintOnShow) onPaintedChange(true);
     }, [active, onPaintedChange]);
     return null;
   },
 }));
+
+// The real (memoised) history, counting the renders that get past its memo.
+vi.mock("./EditHistory", async (orig) => {
+  const real = await orig<typeof import("./EditHistory")>();
+  const memoed = real.EditHistory as unknown as { type: (p: object) => unknown };
+  return {
+    EditHistory: {
+      ...memoed,
+      type: (p: object) => {
+        historyRenders++;
+        return memoed.type(p);
+      },
+    },
+  };
+});
 
 const api = await import("../../lib/api");
 const { installMocks } = await import("../../lib/mock");
@@ -152,6 +171,45 @@ describe("Edit tab", () => {
       );
     }
     expect(renders.mock.calls.length).toBe(before);
+  });
+
+  it("typing an instruction doesn't re-render the picture or the history", async () => {
+    const store = withResults("a");
+    store.dispatch({ type: "setTab", tab: "edit" });
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    await flush();
+    expect(screen.getByRole("list", { name: "Edit history" })).toBeTruthy();
+    const mask = maskRenders;
+    const history = historyRenders;
+    expect(mask).toBeGreaterThan(0);
+    expect(history).toBeGreaterThan(0);
+    for (const text of ["w", "wa", "wat"]) {
+      act(() => store.dispatch({ type: "patchEdit", patch: { instruction: text, restylePrompt: text } }));
+    }
+    expect(maskRenders).toBe(mask);
+    expect(historyRenders).toBe(history);
+  });
+
+  it("the history shows each step's small copy", async () => {
+    const store = createStore();
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    store.dispatch({ type: "setThumb", id: "a", url: "blob:a", thumbUrl: "blob:a-thumb" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await flush();
+    const img = screen.getByRole("list", { name: "Edit history" }).querySelector("img")!;
+    expect(img.getAttribute("src")).toBe("blob:a-thumb");
+    expect(img.getAttribute("loading")).toBe("lazy");
+    expect(screen.getByAltText(/Image being edited/).getAttribute("src")).toBe("blob:a");
   });
 
   it("Fix details uses the brush without a toggle and sends the mask", async () => {
@@ -884,6 +942,43 @@ describe("pictures from this session", () => {
     expect(sessionThumbs("Describe this picture")).toEqual(["blob:b"]);
     fireEvent.click(screen.getByRole("button", { name: "Describe this picture" }));
     expect(store.getState().describe.imageId).toBe("b");
+  });
+
+  it("thumbnails use the small copy once made, and load lazily", async () => {
+    const store = withResults("a", "b");
+    store.dispatch({ type: "setThumb", id: "b", url: "blob:b", thumbUrl: "blob:b-thumb" });
+    render(
+      <AppProvider store={store}>
+        <DescribeTab />
+      </AppProvider>,
+    );
+    await flush();
+    expect(sessionThumbs("Describe this picture")).toEqual(["blob:a", "blob:b-thumb"]);
+    for (const b of screen.getAllByRole("button", { name: "Describe this picture" })) {
+      expect(b.querySelector("img")!.getAttribute("loading")).toBe("lazy");
+      expect(b.querySelector("img")!.getAttribute("decoding")).toBe("async");
+    }
+  });
+
+  it("the hidden Describe tab doesn't re-render while Edit's text changes", async () => {
+    const store = withResults("a", "b");
+    store.dispatch({ type: "editLoad", ref: ref("a") });
+    const renders = vi.fn();
+    render(
+      <AppProvider store={store}>
+        <Profiler id="describe" onRender={renders}>
+          <DescribeTab />
+        </Profiler>
+      </AppProvider>,
+    );
+    await flush();
+    await flush();
+    const before = renders.mock.calls.length;
+    for (const text of ["s", "sk", "sky"]) {
+      act(() => store.dispatch({ type: "patchEdit", patch: { instruction: text } }));
+    }
+    act(() => store.dispatch({ type: "patchEdit", patch: { stayClose: 0.4 } }));
+    expect(renders.mock.calls.length).toBe(before);
   });
 });
 

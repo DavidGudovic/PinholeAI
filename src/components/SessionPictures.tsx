@@ -3,6 +3,7 @@
 // choosing a file. Picking one uses the picture already in the session; nothing is read from disk.
 import { useMemo, type ReactNode } from "react";
 import { FolderOpen } from "lucide-react";
+import { thumbSrc } from "../lib/state/images";
 import { sessionPictures, type ImgRef } from "../lib/state/model";
 import { useAppState } from "../lib/state/store";
 import { Button, MenuItem, MenuLabel, MenuSeparator, Popover, cx } from "./ui";
@@ -10,12 +11,13 @@ import { Button, MenuItem, MenuLabel, MenuSeparator, Popover, cx } from "./ui";
 /** This session's pictures, newest first, without the ids in `exclude` (at most `max`). */
 export function useSessionPictures(exclude: (string | null | undefined)[] = [], max = 8): ImgRef[] {
   const results = useAppState((s) => s.results);
-  const edit = useAppState((s) => s.edit);
+  // Only the history: typing in Edit's text boxes doesn't re-render every picture picker.
+  const chain = useAppState((s) => s.edit.chain);
   const images = useAppState((s) => s.images);
   const key = exclude.join("|");
   return useMemo(
-    () => sessionPictures({ results, edit, images }, key.split("|")).slice(0, max),
-    [results, edit, images, key, max],
+    () => sessionPictures({ results, edit: { chain }, images }, key.split("|")).slice(0, max),
+    [results, chain, images, key, max],
   );
 }
 
@@ -49,7 +51,7 @@ export function SessionStrip({
           )}
           onClick={() => onPick(p)}
         >
-          <img src={p.url} alt="" className="h-full w-full object-cover" draggable={false} />
+          <img src={thumbSrc(p)} alt="" className="h-full w-full object-cover" decoding="async" loading="lazy" draggable={false} />
         </button>
       ))}
     </div>

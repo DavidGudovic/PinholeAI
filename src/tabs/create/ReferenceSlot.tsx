@@ -9,6 +9,7 @@ import { SessionStrip, useSessionPictures } from "../../components/SessionPictur
 import { Button, ErrorNotice, IconButton, Spinner } from "../../components/ui";
 import * as api from "../../lib/api";
 import { useActions } from "../../lib/state/AppProvider";
+import { thumbSrc } from "../../lib/state/images";
 import { referenceModel, takesReference } from "../../lib/state/model";
 import { PhotoNotice } from "../../components/PhotoNotice";
 import { modKey } from "../../lib/state/platform";
@@ -52,7 +53,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
       <div className="space-y-2 rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
         <DropTarget onFile={(f) => void load(f)} label="Drop to replace the reference picture">
           <div className="flex items-center gap-3">
-            <img src={ref.url} alt="Reference picture" className="h-12 w-12 shrink-0 rounded-md object-cover" draggable={false} />
+            <img src={thumbSrc(ref)} alt="Reference picture" className="h-12 w-12 shrink-0 rounded-md object-cover" decoding="async" draggable={false} />
             <p className="min-w-0 flex-1 text-xs text-neutral-500">
               <span className="font-medium text-neutral-700 dark:text-neutral-300">Reference picture.</span> Say how to use it, like “in the style of the picture” or “the
               same dog on a beach”.{refShape && " Shape: same as this picture."}

@@ -155,16 +155,31 @@ export function EditTab() {
       )
     : null;
   const myJob = isEditJob(jobKind);
-  const canvas =
-    extending && current
-      ? extendCanvas(
-          current.width,
-          current.height,
-          e.extendTo,
-          e.extendSide,
-          ui,
-        )
-      : null;
+  // Memoised (like `pair` below) so Stage keeps the same props while the text boxes change.
+  const canvas = useMemo(
+    () =>
+      extending && current
+        ? extendCanvas(
+            current.width,
+            current.height,
+            e.extendTo,
+            e.extendSide,
+            ui,
+          )
+        : null,
+    [extending, current, e.extendTo, e.extendSide, ui],
+  );
+  const nodeLabel = node?.label;
+  const pair = useMemo(
+    () =>
+      showSide && nodeSecond && current
+        ? {
+            first: { ...nodeSecond, label: "Image 2" },
+            second: { ...current, label: nodeLabel ?? "Result" },
+          }
+        : undefined,
+    [showSide, nodeSecond, current, nodeLabel],
+  );
 
   const load = async (f: File) => {
     // Loading another image mid-edit would attach the result to the wrong history.
@@ -654,14 +669,7 @@ export function EditTab() {
             <Stage
               current={current}
               before={comparing ? before : undefined}
-              pair={
-                showSide && nodeSecond
-                  ? {
-                      first: { ...nodeSecond, label: "Image 2" },
-                      second: { ...current, label: node?.label ?? "Result" },
-                    }
-                  : undefined
-              }
+              pair={pair}
               beforeLabel={
                 compareWith === "original"
                   ? "Original"
@@ -687,7 +695,8 @@ export function EditTab() {
             )}
 
             <EditHistory
-              e={e}
+              chain={e.chain}
+              index={e.index}
               images={images}
               locked={locked}
               dispatch={dispatch}

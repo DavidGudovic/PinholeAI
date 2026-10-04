@@ -3,6 +3,7 @@
 import { useRef, type ReactNode } from "react";
 import { Check, FolderOpen, Images, Trash } from "lucide-react";
 import { Button, IconButton, MenuItem, MenuLabel, MenuSeparator, Popover, cx } from "../../components/ui";
+import { thumbSrc } from "../../lib/state/images";
 import { ALSO_MAX, type Action, type ImgRef } from "../../lib/state/model";
 
 /** Thumbnails shown in the picked row before "+N". */
@@ -91,7 +92,7 @@ export function AlsoApply({
                         on ? "ring-2" : "opacity-80 hover:opacity-100",
                       )}
                     >
-                      <img src={p.url} alt="" className="h-full w-full object-cover" draggable={false} />
+                      <img src={thumbSrc(p)} alt="" className="h-full w-full object-cover" decoding="async" loading="lazy" draggable={false} />
                       {on && (
                         <span className="absolute top-0.5 right-0.5 rounded-full bg-amber-500 p-0.5 text-white">
                           <Check className="h-2.5 w-2.5" />
@@ -150,7 +151,7 @@ export function AlsoApply({
       {picked.length > 0 && (
         <div className="mt-1.5 flex gap-1">
           {picked.slice(0, ROW_THUMBS).map((p) => (
-            <img key={p.id} src={p.url} alt="" className="h-9 w-9 rounded-md object-cover" draggable={false} />
+            <img key={p.id} src={thumbSrc(p)} alt="" className="h-9 w-9 rounded-md object-cover" decoding="async" draggable={false} />
           ))}
           {more > 0 && (
             <span className="flex h-9 w-9 items-center justify-center rounded-md bg-neutral-100 text-xs text-neutral-500 tabular-nums dark:bg-neutral-800">

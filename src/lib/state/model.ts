@@ -30,6 +30,8 @@ export type TabId = "create" | "edit" | "describe" | "models";
 export interface ImgRef {
   id: string;
   url: string;
+  /** A small copy for thumbnails, made after the ref is added (watchThumbs) and revoked with `url`. Never for the stage, compare, mask or save. */
+  thumbUrl?: string;
   width: number;
   height: number;
 }
@@ -344,6 +346,7 @@ export type Action =
   | { type: "createSetRef"; ref: ImgRef | null }
   | { type: "patchEdit"; patch: Partial<EditParams> }
   | { type: "describeLoad"; ref: ImgRef }
+  | { type: "setThumb"; id: string; url: string; thumbUrl: string }
   | { type: "describeClear" }
   | { type: "patchDescribe"; patch: Partial<DescribeParams> }
   | { type: "toast"; toast: Toast }
@@ -436,7 +439,7 @@ export function unsavedIds(s: Pick<AppState, "results" | "edit" | "saved" | "ima
  * first, for the "From this session" choices. Create results keep the strip's order; each Edit
  * result goes before the results that arrived before it (`images` keeps the order pictures arrived in).
  */
-export function sessionPictures(s: Pick<AppState, "results" | "edit" | "images">, exclude: (string | null | undefined)[] = []): ImgRef[] {
+export function sessionPictures(s: Pick<AppState, "results" | "images"> & { edit: Pick<EditParams, "chain"> }, exclude: (string | null | undefined)[] = []): ImgRef[] {
   const skip = new Set(exclude.filter(Boolean));
   const rank = new Map(Object.keys(s.images).map((id, i) => [id, i]));
   const results = s.results.map((r) => r.id).filter((id) => rank.has(id));
@@ -523,7 +526,12 @@ function pruneImages(s: AppState): AppState {
   if (keys.every((k) => keep.has(k))) return s;
   const images: Record<string, ImgRef> = {};
   for (const k of keys) if (keep.has(k)) images[k] = s.images[k];
-  return { ...s, images, batches, resultBatch };
+  const resultGroup: Record<string, string> = {};
+  for (const r of s.results) if (s.resultGroup[r.id]) resultGroup[r.id] = s.resultGroup[r.id];
+  // Saved paths stay for every kept picture (Edit results that are not in Create's results too).
+  const saved: Record<string, string> = {};
+  for (const [id, path] of Object.entries(s.saved)) if (images[id]) saved[id] = path;
+  return { ...s, images, batches, resultBatch, resultGroup, saved };
 }
 
 /** An edit node's second image, when the edit used one. */
@@ -531,7 +539,11 @@ const second = (id: string | undefined): Pick<EditNode, "secondImageId"> => (id 
 
 function withRefs(images: Record<string, ImgRef>, refs: ImgRef[]): Record<string, ImgRef> {
   const out = { ...images };
-  for (const r of refs) out[r.id] = r;
+  for (const r of refs) {
+    // The same picture added again keeps the thumbnail already made for it.
+    const old = out[r.id];
+    out[r.id] = old?.thumbUrl && !r.thumbUrl && old.url === r.url ? { ...r, thumbUrl: old.thumbUrl } : r;
+  }
   return out;
 }
 
@@ -810,6 +822,11 @@ function inner(s: AppState, a: Action): AppState {
       return { ...s, edit: { ...s.edit, ...a.patch } };
     case "describeLoad":
       return { ...s, images: withRefs(s.images, [a.ref]), describe: { ...s.describe, imageId: a.ref.id, text: "" } };
+    case "setThumb": {
+      const r = s.images[a.id];
+      if (!r || r.url !== a.url || r.thumbUrl) return s;
+      return { ...s, images: { ...s.images, [a.id]: { ...r, thumbUrl: a.thumbUrl } } };
+    }
     case "describeClear":
       return { ...s, describe: { ...s.describe, imageId: null, text: "" } };
     case "patchDescribe":
