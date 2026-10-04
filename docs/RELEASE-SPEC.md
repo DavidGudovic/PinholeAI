@@ -190,7 +190,7 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    on 2026-10-04. Both were measured on UTKFace portraits with exact ages (used for measurement
    only; nothing kept), through the app's own face finder and crops (`falsepos` with
    `FALSEPOS_AGES=1`, one folder per age). The table is the share of ordinary, non-sexual face
-   photos the age half of rule 2 acts on, on the same 1,702 faces before and after the move.
+   photos the age half of rule 2 acts on, on the same 1,597 faces before and after the move.
    These are numbers for the age estimates alone, not how often the whole check catches harmful
    pictures, and UTKFace ages are themselves sometimes wrong:
 
@@ -205,19 +205,18 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    ages 20–25 together: 1.8 %, 8.2 % (17.8 % at 22).
 
    The same check was measured on 377 generated pictures from CivitAI (2026-10-04): images
-   CivitAI rates as safe, photo-style, with one face and an adult age of 20 or more stated in
-   the prompt (used for measurement only; nothing kept). The stated age is the label; a
-   generator can draw a face older or younger than the prompt asks for. Share of these adults
-   the age half of rule 2 acts on:
+   CivitAI rates as safe, photo-style, with one face, whose stated subject age is 20 or more
+   (used for measurement only; nothing kept). The stated age is the label; a generated face can
+   look older or younger than stated. Share of these adults the age half of rule 2 acts on:
 
-   | Model family (faces) | Read below stated age (mean) | Line 20 (shipped) | Line 21 | Line 22 |
+   | Model family (faces) | Estimated minus stated age (mean) | Line 20 (shipped) | Line 21 | Line 22 |
    |---|---|---|---|---|
-   | SDXL and Illustrious (101) | −0.3 years | 0 % | 4 % | 23 % |
-   | Z-Image (87) | 0.7 years | 13 % | 17 % | 30 % |
-   | Flux (38) | 3.6 years | 3 % | 11 % | 18 % |
-   | SD 1.5 (20) | 3.3 years | 10 % | 20 % | 30 % |
-   | Qwen (16) | −0.6 years | 19 % | 25 % | 44 % |
-   | Pony (115) | 4.9 years | 63 % | 74 % | 84 % |
+   | SDXL and Illustrious (101) | +0.3 years | 0 % | 4 % | 23 % |
+   | Z-Image (87) | −0.7 years | 13 % | 17 % | 30 % |
+   | Flux (38) | −3.6 years | 3 % | 11 % | 18 % |
+   | SD 1.5 (20) | −3.3 years | 10 % | 20 % | 30 % |
+   | Qwen (16) | +0.6 years | 19 % | 25 % | 44 % |
+   | Pony (115) | −4.9 years | 63 % | 74 % | 84 % |
 
    The first estimate's groups acted on none of them. The line at 20 was picked from these two
    measurements: on generated faces it removes most wrong blocks for most model families, while
