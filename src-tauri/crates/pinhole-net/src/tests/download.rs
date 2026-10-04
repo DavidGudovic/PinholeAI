@@ -273,6 +273,45 @@ async fn bytes_from_a_dropped_connection_are_not_a_leftover() {
 }
 
 #[tokio::test]
+async fn drops_that_each_add_bytes_do_not_use_up_the_retries() {
+    // Every response ends after 10 KB of a 50 KB file: five connections in
+    // all, more than the four attempts a call gets without progress.
+    let body = data(50_000);
+    let b = body.clone();
+    let srv = MockServer::start(move |req| {
+        let start = req.range_start().unwrap_or(0) as usize;
+        let end = (start + 10_000).min(b.len());
+        let rest = (b.len() - start).to_string();
+        let resp = MockResponse::new(if start > 0 { 206 } else { 200 }, b[start..end].to_vec())
+            .without_content_length()
+            .header("content-length", &rest);
+        if start > 0 {
+            resp.header(
+                "content-range",
+                &format!("bytes {}-{}/{}", start, b.len() - 1, b.len()),
+            )
+        } else {
+            resp
+        }
+    })
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.safetensors");
+    let s = spec(
+        srv.url("/f"),
+        &dest,
+        Some(sha(&body)),
+        Some(body.len() as u64),
+    );
+    let got = download_file(&client(), &s, &CancellationToken::new(), &|_, _| {})
+        .await
+        .unwrap();
+    assert_eq!(got.sha256, sha(&body));
+    assert_eq!(std::fs::read(&dest).unwrap(), body);
+    assert_eq!(srv.requests().len(), 5);
+}
+
+#[tokio::test]
 async fn restart_after_a_stale_part_gets_its_own_retries() {
     // Two server errors, then the stale `.part` fails the hash; the fresh
     // download still gets the full retry budget for its own server error.
