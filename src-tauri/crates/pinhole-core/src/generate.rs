@@ -47,8 +47,9 @@ use crate::engine::{
 use crate::engine_setup;
 use crate::events::GenPhase;
 use crate::memory::{
-    memory_choices, memory_error, next_memory_fallback, offload_fits_ram, set_retry_note,
-    with_memory_choices, with_memory_plan, with_remembered_offload, TeChoice,
+    memory_choices, memory_error, next_memory_fallback, offload_fits_ram, remember_memory_choices,
+    set_retry_note, with_memory_choices, with_memory_plan, with_remembered_offload, MemFallback,
+    TeChoice,
 };
 use crate::session::SessionImage;
 use crate::{AppCore, CoreError, CoreResult};
@@ -1131,8 +1132,15 @@ async fn generate_inner(
         if part.1 > 1 {
             *core.gen.part_note.lock() = Some(format!("Face {} of {}.", part.0 + 1, part.1));
         }
+        // Memory-saving choices this pass's retries made; remembered once a run succeeds.
+        let mut learned = MemFallback::default();
         let job = loop {
             let args = with_memory_choices(&wiring_args, fb);
+            // An idle describe engine holds graphics memory this job needs,
+            // also when the loaded image engine is reused.
+            if gpu_backend {
+                crate::describe::stop_if_idle(core).await;
+            }
             let client = ensure_engine(core, &args, &prep.model.id, &label, cancel, t0).await?;
             match run_job(
                 core,
@@ -1147,7 +1155,10 @@ async fn generate_inner(
             )
             .await
             {
-                Ok(job) => break job,
+                Ok(job) => {
+                    remember_memory_choices(core, &prep.model.id, learned);
+                    break job;
+                }
                 Err(RunError::Failed(e)) => return Err(e),
                 Err(RunError::OutOfMemory { stage, details }) => {
                     let offload_ok = offload_fits_ram(&args, hw.ram_gb);
@@ -1163,16 +1174,12 @@ async fn generate_inner(
                         return Err(memory_error(core, stage, &args, gpu_backend)
                             .with_details(with_memory_plan(core, &prep.model.id, &args, details)));
                     };
-                    // Remember the automatic choice for this model (RAM only, app session).
-                    {
-                        let mut remembered = core.gen.mem_fallback.lock();
-                        let entry = remembered.entry(prep.model.id.clone()).or_default();
-                        entry.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
-                        entry.vae_tiling |= next_fb.vae_tiling;
-                        if next_fb.vram_reserve_gib > fb.vram_reserve_gib {
-                            entry.vram_reserve_gib =
-                                entry.vram_reserve_gib.max(next_fb.vram_reserve_gib);
-                        }
+                    // The automatic choice, remembered for this model once a retry succeeds.
+                    learned.te_on_cpu |= next_fb.te_on_cpu && !fb.te_on_cpu;
+                    learned.vae_tiling |= next_fb.vae_tiling;
+                    if next_fb.vram_reserve_gib > fb.vram_reserve_gib {
+                        learned.vram_reserve_gib =
+                            learned.vram_reserve_gib.max(next_fb.vram_reserve_gib);
                     }
                     fb = next_fb;
                     set_retry_note(core, note);
@@ -1341,12 +1348,21 @@ async fn run_job(
     }
     let mark = core.gen.logs.mark();
     emit_progress(core, GenPhase::Queued, label, None, None, t0);
-    let job_id = match client.submit(body).await {
-        Ok(id) => id,
-        Err(e) => return Err(job_failure(core, api_failure(core, e, secrets), mark)),
-    };
     // From now on the engine may hold this job's images (IDLE_STOP_AFTER).
     core.gen.slot.lock().await.results_cached = true;
+    let job_id = match client.submit(body).await {
+        Ok(id) => id,
+        Err(e) => {
+            // The engine may have queued the job anyway: stop it so the job
+            // doesn't keep running or hold up the next one.
+            let queued = submit_may_have_queued(&e);
+            let err = api_failure(core, e, secrets);
+            if queued && core.gen.external.lock().is_none() {
+                drop_engine(core).await;
+            }
+            return Err(job_failure(core, err, mark));
+        }
+    };
 
     let (mut passes, mut last_step) = (0u32, 0u32);
     let mut errors = 0;
@@ -1446,10 +1462,23 @@ async fn run_job(
             Err(e) => {
                 errors += 1;
                 if errors >= 5 {
-                    return Err(job_failure(core, api_failure(core, e, secrets), mark));
+                    let err = api_failure(core, e, secrets);
+                    // The job may still be queued or running on the engine.
+                    cancel_job(core, client, &job_id).await;
+                    return Err(job_failure(core, err, mark));
                 }
             }
         }
+    }
+}
+
+/// Whether a failed submit may still have left the job queued on the engine
+/// (no answer, or an answer that isn't a clear refusal).
+fn submit_may_have_queued(e: &ApiError) -> bool {
+    match e {
+        ApiError::Connect | ApiError::QueueFull | ApiError::NotFound => false,
+        ApiError::Status { code, .. } => *code >= 500,
+        ApiError::Timeout | ApiError::Decode(_) | ApiError::Net(_) => true,
     }
 }
 
@@ -1661,6 +1690,14 @@ async fn upscale_inner(
     session_epoch: u64,
     label: &mut String,
 ) -> CoreResult<ResultImage> {
+    let hw = crate::app::hw_context(core);
+    // A GPU engine build (a CPU build may stand in while the GPU one isn't downloaded).
+    let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd)
+        .map_or(hw.backend != "cpu", |e| e.backend != "cpu");
+    // An idle describe engine holds graphics memory the upscale needs.
+    if gpu_backend {
+        crate::describe::stop_if_idle(core).await;
+    }
     let client = match running_engine(core).await {
         Some(u) => {
             *label = loaded_model_label(core).await;
@@ -1676,7 +1713,6 @@ async fn upscale_inner(
             })?;
             let prep_model = model_and_family(core, &model_id)?;
             label.clone_from(&prep_model.0.friendly_name);
-            let hw = crate::app::hw_context(core);
             let files = model_files(core, &prep_model.0, &prep_model.1, &hw, false)?;
             let extras = LaunchExtras {
                 lora_dir: Some(core.data.models(ModelKind::Lora)),
@@ -1688,8 +1724,6 @@ async fn upscale_inner(
             let args = wiring::launch_args(&core.registry(), &files, &hw, &extras);
             // The same memory choices as Generate, so this launch doesn't forget
             // that the model's weights had to go to system memory.
-            let gpu_backend = engine_setup::installed_engine(core, EngineKind::Sd)
-                .map_or(hw.backend != "cpu", |e| e.backend != "cpu");
             let fb = with_remembered_offload(
                 core,
                 &model_id,
@@ -1715,6 +1749,8 @@ async fn upscale_inner(
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
     emit_progress(core, GenPhase::Generating, label, None, None, t0);
+    // The engine has run a job: the idle stop and Reset now stop it.
+    core.gen.slot.lock().await.results_cached = true;
     let b64 = base64::engine::general_purpose::STANDARD.encode(src.bytes.as_slice());
     let req = UpscaleRequest::new(b64, Some(upscaler_stem.to_string()), 1);
     let resp = tokio::select! {
@@ -1956,6 +1992,24 @@ async fn ensure_upscaler(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a clear refusal means the engine didn't queue the job.
+    #[test]
+    fn submit_errors_that_may_have_queued_the_job() {
+        assert!(submit_may_have_queued(&ApiError::Timeout));
+        assert!(submit_may_have_queued(&ApiError::Decode("x".into())));
+        assert!(submit_may_have_queued(&ApiError::Net("x".into())));
+        assert!(submit_may_have_queued(&ApiError::Status {
+            code: 500,
+            error: String::new()
+        }));
+        assert!(!submit_may_have_queued(&ApiError::Connect));
+        assert!(!submit_may_have_queued(&ApiError::QueueFull));
+        assert!(!submit_may_have_queued(&ApiError::Status {
+            code: 400,
+            error: String::new()
+        }));
+    }
 
     /// Cancel while the first-use upscaler download runs ends the wait at once
     /// and cancels the download group.

@@ -72,6 +72,19 @@ pub(crate) struct LlamaSlot {
     api_key: String,
 }
 
+#[cfg(all(test, feature = "test-util"))]
+impl LlamaSlot {
+    /// A slot holding `proc` (tests).
+    pub(crate) fn for_tests(proc: EngineProcess) -> Self {
+        Self {
+            proc,
+            model: PathBuf::new(),
+            mmproj: PathBuf::new(),
+            api_key: String::new(),
+        }
+    }
+}
+
 /// Captioner (llama-server) state.
 pub struct DescribeState {
     pub(crate) slot: tokio::sync::Mutex<Option<LlamaSlot>>,

@@ -1192,3 +1192,99 @@ async fn repeats_without_seams_launches_with_circular_for_create_only() {
     assert!(!res.images[0].seamless);
     assert!(!circular(core.gen.external_launches.lock().last().unwrap()));
 }
+
+/// A stand-in sd-server: `img_gen` answers `submit_status` (job `job_1` on
+/// success), every poll answers 500 and cancel requests are recorded.
+async fn failing_sd_server(submit_status: u16) -> (String, Arc<Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let cancels = Arc::new(Mutex::new(Vec::new()));
+    let seen = cancels.clone();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 8192];
+                let (head, body_len) = loop {
+                    let n = sock.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..end]).to_string();
+                        let len = head
+                            .lines()
+                            .find_map(|l| {
+                                let (k, v) = l.split_once(':')?;
+                                k.eq_ignore_ascii_case("content-length")
+                                    .then(|| v.trim().parse::<usize>().ok())?
+                            })
+                            .unwrap_or(0);
+                        break (head, end + 4 + len);
+                    }
+                };
+                while buf.len() < body_len {
+                    let n = sock.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let line = head.lines().next().unwrap_or_default().to_string();
+                let (status, body) = if line.starts_with("POST /sdcpp/v1/img_gen") {
+                    (submit_status, r#"{"id":"job_1"}"#)
+                } else if line.starts_with("POST /sdcpp/v1/jobs/") {
+                    seen.lock().push(line);
+                    (404, r#"{"error":"gone"}"#)
+                } else {
+                    (500, r#"{"error":"broken"}"#)
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+    (base, cancels)
+}
+
+/// Polls that keep failing: the job is cancelled on the engine before the
+/// error is returned.
+#[tokio::test]
+async fn failing_polls_cancel_the_job() {
+    let (_tmp, core, _rec) = new_core();
+    let (base, cancels) = failing_sd_server(200).await;
+    use_external_engine(&core, &base);
+    let model = register_fake_model(&core, "sdxl");
+    let err = generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "engine_failed");
+    let cancels = cancels.lock().clone();
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert!(
+        cancels[0].contains("/sdcpp/v1/jobs/job_1/cancel"),
+        "{cancels:?}"
+    );
+}
+
+/// A submit that fails may still have queued the job: the engine counts as
+/// holding results (Reset and the idle stop stop it).
+#[tokio::test]
+async fn failed_submit_marks_the_engine_as_holding_results() {
+    let (_tmp, core, _rec) = new_core();
+    let (base, _) = failing_sd_server(503).await;
+    use_external_engine(&core, &base);
+    let model = register_fake_model(&core, "sdxl");
+    let err = generate::generate(&core, GenerateRequest::txt2img(model, "a boat"))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "engine_failed");
+    assert!(core.gen.slot.lock().await.results_cached);
+}
