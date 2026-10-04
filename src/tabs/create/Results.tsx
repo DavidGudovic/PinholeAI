@@ -30,6 +30,7 @@ import * as api from "../../lib/api";
 import type { CoreError, ResultImage } from "../../lib/types";
 import { useShortcuts } from "../../lib/shortcuts";
 import { useActions } from "../../lib/state/AppProvider";
+import { thumbSrc } from "../../lib/state/images";
 import { createModels, sheetIds, takesReference, unsavedIds, type ImgRef } from "../../lib/state/model";
 import { modKey } from "../../lib/state/platform";
 import { settingsSummary } from "../../lib/state/request";
@@ -491,9 +492,11 @@ const Strip = memo(function Strip({
                 )}
               >
                 <img
-                  src={img.url}
+                  src={thumbSrc(img)}
                   alt=""
                   className="h-full w-full object-cover"
+                  decoding="async"
+                  loading="lazy"
                   draggable={false}
                 />
                 {r.parentId && (

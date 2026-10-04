@@ -1,15 +1,20 @@
 // The row of edit steps under the picture; click one to go back to it.
+import { memo } from "react";
 import { ArrowRight } from "lucide-react";
 import { cx, focusRing } from "../../components/ui";
-import type { Action, EditParams, ImgRef } from "../../lib/state/model";
+import { thumbSrc } from "../../lib/state/images";
+import type { Action, EditNode, ImgRef } from "../../lib/state/model";
 
-export function EditHistory({
-  e,
+// Only the history's own props, so typing in Edit's text boxes doesn't re-render it.
+export const EditHistory = memo(function EditHistory({
+  chain,
+  index,
   images,
   locked,
   dispatch,
 }: {
-  e: EditParams;
+  chain: EditNode[];
+  index: number;
   images: Record<string, ImgRef>;
   locked: boolean;
   dispatch: (a: Action) => void;
@@ -20,7 +25,7 @@ export function EditHistory({
         className="flex items-center gap-1.5 overflow-x-auto pb-1"
         aria-label="Edit history"
       >
-        {e.chain.map((n, i) => {
+        {chain.map((n, i) => {
           const img = images[n.imageId];
           return (
             <li
@@ -35,24 +40,26 @@ export function EditHistory({
               )}
               <button
                 type="button"
-                aria-current={i === e.index ? "step" : undefined}
-                disabled={locked && i !== e.index}
+                aria-current={i === index ? "step" : undefined}
+                disabled={locked && i !== index}
                 onClick={() => dispatch({ type: "editGoto", index: i })}
                 className={cx(
                   "group flex flex-col items-center gap-1 rounded-lg p-1 disabled:cursor-not-allowed disabled:opacity-50",
                   focusRing,
-                  i === e.index
+                  i === index
                     ? "bg-amber-50 dark:bg-amber-500/10"
                     : "hover:bg-neutral-100 dark:hover:bg-neutral-800",
                 )}
               >
                 {img && (
                   <img
-                    src={img.url}
+                    src={thumbSrc(img)}
                     alt=""
+                    decoding="async"
+                    loading="lazy"
                     className={cx(
                       "h-14 w-14 rounded-md object-cover ring-2",
-                      i === e.index
+                      i === index
                         ? "ring-amber-500"
                         : "ring-transparent",
                     )}
@@ -62,7 +69,7 @@ export function EditHistory({
                 <span
                   className={cx(
                     "text-[11px]",
-                    i === e.index
+                    i === index
                       ? "font-medium text-amber-900 dark:text-amber-200"
                       : "text-neutral-500",
                   )}
@@ -76,4 +83,4 @@ export function EditHistory({
       </ol>
     </div>
   );
-}
+});

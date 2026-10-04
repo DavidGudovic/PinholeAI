@@ -886,7 +886,9 @@ A **Style** is reusable look-and-feel text, kept separate from the prompt.
 - Idle RAM of the app with no model loaded: < 150 MB.
 - Time from Generate click to request sent: < 50 ms (model already loaded).
 - UI stays responsive during generation and downloads (all heavy work off the UI thread).
-- Result images are decoded once and kept as Blobs; thumbnails are generated in a worker.
+- Result images are decoded once and kept as Blobs; a small copy (long side 160 px) of each is made
+  after it is shown and used for the thumbnails (results strip, edit history, session pictures), which
+  decode asynchronously and load lazily.
 
 ---
 

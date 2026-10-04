@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ImagePlus, Trash } from "lucide-react";
 import { PictureButton } from "../../components/SessionPictures";
 import { IconButton } from "../../components/ui";
+import { thumbSrc } from "../../lib/state/images";
 import type { Action, ImgRef } from "../../lib/state/model";
 
 export function SecondImage({
@@ -34,7 +35,8 @@ export function SecondImage({
       {second ? (
         <div className="flex items-center gap-3 rounded-xl border border-neutral-200 p-2 dark:border-neutral-800">
           <img
-            src={second.url}
+            src={thumbSrc(second)}
+            decoding="async"
             alt="Image 2"
             className="h-12 w-12 shrink-0 rounded-md object-cover"
             draggable={false}

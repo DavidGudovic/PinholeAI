@@ -1,7 +1,8 @@
 // Session images → in-memory blob: URLs. The WebView never loads images from
 // the network or disk: bytes come from Rust (`get_image`) and live in RAM.
 import { discardImage, getImage, importImage } from "../api";
-import type { ImgRef } from "./model";
+import type { AppState, ImgRef } from "./model";
+import type { Store } from "./store";
 
 /** get_image returns PNG for every session image (imported JPEG/WebP are re-encoded in Rust); sniffing is a fallback. */
 export function imageMime(buf: ArrayBuffer): string {
@@ -27,9 +28,70 @@ export async function importBlob(blob: Blob): Promise<ImgRef> {
 /** Revoke blob URLs (after the current frame) and, unless the whole session was cleared, discard the Rust copies. */
 export function releaseRefs(refs: ImgRef[], discard: boolean): void {
   setTimeout(() => {
-    for (const r of refs) URL.revokeObjectURL(r.url);
+    for (const r of refs) {
+      URL.revokeObjectURL(r.url);
+      if (r.thumbUrl) URL.revokeObjectURL(r.thumbUrl);
+    }
   }, 0);
   if (discard) for (const r of refs) void discardImage(r.id).catch(() => undefined);
+}
+
+/** Long side of a thumbnail in pixels (about twice the largest tile that shows one). */
+export const THUMB_SIZE = 160;
+
+/** What a small tile shows: the ref's thumbnail once it is made, else the full picture. */
+export const thumbSrc = (r: ImgRef): string => r.thumbUrl ?? r.url;
+
+/** A small PNG copy of the ref's picture as a blob: URL; null when the picture is already small or can't be drawn. */
+export async function makeThumbUrl(r: ImgRef): Promise<string | null> {
+  const long = Math.max(r.width, r.height);
+  if (long <= THUMB_SIZE || typeof document === "undefined") return null;
+  try {
+    const img = new Image();
+    if (typeof img.decode !== "function") return null;
+    img.src = r.url;
+    await img.decode();
+    const scale = THUMB_SIZE / long;
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(r.width * scale));
+    c.height = Math.max(1, Math.round(r.height * scale));
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob | null>((done) => c.toBlob(done, "image/png"));
+    return blob ? URL.createObjectURL(blob) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make a thumbnail for each ref once it is in the store, so a picture never waits for its
+ * thumbnail. A thumbnail whose ref is gone by the time it is ready is revoked straight away;
+ * otherwise releaseRefs revokes it together with the ref's url.
+ */
+export function watchThumbs(store: Store, make: (r: ImgRef) => Promise<string | null> = makeThumbUrl): () => void {
+  const tried = new WeakSet<ImgRef>();
+  let seen: AppState["images"] | null = null;
+  const scan = () => {
+    const images = store.getState().images;
+    if (images === seen) return;
+    seen = images;
+    for (const r of Object.values(images)) {
+      if (r.thumbUrl || tried.has(r)) continue;
+      tried.add(r);
+      void make(r)
+        .catch(() => null)
+        .then((thumbUrl) => {
+          if (!thumbUrl) return;
+          store.dispatch({ type: "setThumb", id: r.id, url: r.url, thumbUrl });
+          if (store.getState().images[r.id]?.thumbUrl !== thumbUrl) URL.revokeObjectURL(thumbUrl);
+        });
+    }
+  };
+  scan();
+  return store.subscribe(scan);
 }
 
 /** First image file in a DataTransfer (drop or paste), if any. */
