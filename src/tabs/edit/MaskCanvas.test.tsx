@@ -99,4 +99,29 @@ describe("MaskCanvas", () => {
       expect(h).toBeLessThan(64);
     }
   });
+
+  it("reads back a mask painted all over in blocks of at most 256 px a side", () => {
+    shown = 400;
+    const big = { width: 4096, height: 4096, displayWidth: 400, brush: 40 };
+    const read = vi.spyOn(HTMLCanvasElement.prototype.getContext("2d") as unknown as { getImageData: () => unknown }, "getImageData");
+    const onPainted = vi.fn();
+    const { rerender } = render(<MaskCanvas {...big} erase={false} active onPaintedChange={onPainted} />);
+    const canvas = screen.getByLabelText("Paint where the image may change");
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 0, clientY: 0 });
+    fireEvent.pointerMove(canvas, { clientX: 400, clientY: 400 });
+    fireEvent.pointerMove(canvas, { clientX: 0, clientY: 400 });
+    fireEvent.pointerMove(canvas, { clientX: 400, clientY: 0 });
+    fireEvent.pointerUp(canvas);
+    expect(onPainted).toHaveBeenLastCalledWith(true);
+    rerender(<MaskCanvas {...big} erase active onPaintedChange={onPainted} />);
+    fireEvent.pointerDown(canvas, { button: 0, clientX: 200, clientY: 200 });
+    fireEvent.pointerUp(canvas);
+    expect(onPainted).toHaveBeenLastCalledWith(false);
+    // Nothing left: every block of the 4096 px mask was read, none larger than 256 px.
+    expect(read).toHaveBeenCalledTimes(16 * 16);
+    for (const [, , w, h] of read.mock.calls as unknown as number[][]) {
+      expect(w).toBeLessThanOrEqual(256);
+      expect(h).toBeLessThanOrEqual(256);
+    }
+  });
 });

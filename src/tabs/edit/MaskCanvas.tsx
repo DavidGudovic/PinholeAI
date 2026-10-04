@@ -18,9 +18,13 @@ interface Box {
   y1: number;
 }
 
+/** Side of each block hasPaint reads at a time, in image pixels. */
+const READ_TILE = 256;
+
 /**
  * Whether any pixel inside `box` is painted (nothing is painted outside it), reading only that
- * area. Anti-aliased eraser edges can leave a few nearly transparent pixels.
+ * area, one READ_TILE block at a time and stopping at the first painted pixel. Anti-aliased
+ * eraser edges can leave a few nearly transparent pixels.
  */
 function hasPaint(c: HTMLCanvasElement, box: Box | null): boolean {
   const ctx = c.getContext("2d");
@@ -29,10 +33,13 @@ function hasPaint(c: HTMLCanvasElement, box: Box | null): boolean {
   const y0 = Math.max(0, Math.floor(box.y0));
   const x1 = Math.min(c.width, Math.ceil(box.x1));
   const y1 = Math.min(c.height, Math.ceil(box.y1));
-  if (!(x1 > x0 && y1 > y0)) return false;
-  const px = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
-  for (let i = 3; i < px.length; i += 4) {
-    if (px[i] > 16) return true;
+  for (let ty = y0; ty < y1; ty += READ_TILE) {
+    for (let tx = x0; tx < x1; tx += READ_TILE) {
+      const px = ctx.getImageData(tx, ty, Math.min(READ_TILE, x1 - tx), Math.min(READ_TILE, y1 - ty)).data;
+      for (let i = 3; i < px.length; i += 4) {
+        if (px[i] > 16) return true;
+      }
+    }
   }
   return false;
 }
