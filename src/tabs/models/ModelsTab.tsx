@@ -1,14 +1,14 @@
 // Models tab: Browse (CivitAI) · Installed, plus the downloads list.
 // Keep this export signature.
 import { useEffect, useRef, useState } from "react";
-import { getSettings, listLoras, listModels, onModelsChanged } from "../../lib/api";
+import { getSettings } from "../../lib/api";
+import { useAppState } from "../../lib/state/store";
 import type { Settings } from "../../lib/types";
 import { Segmented, Spinner } from "../../components/ui";
 import { onSettingsChanged } from "../../settings/events";
 import { BrowseView } from "./BrowseView";
 import { DownloadsPanel } from "./DownloadsPanel";
 import { InstalledView } from "./InstalledView";
-import { useTauriEvent } from "./lib/hooks";
 import { ScrollRootContext, useIsVisible } from "./lib/preview";
 import { getLastView, hasAddonRequest, onAddonRequest, onHelpersRequest, onInstalledRequest, rememberView } from "./lib/session";
 import { HelpersView } from "./HelpersView";
@@ -19,7 +19,8 @@ export function ModelsTab() {
   const [view, setViewState] = useState<View>(() => (hasAddonRequest() ? "browse" : (getLastView() ?? "browse")));
   const [settings, setLocalSettings] = useState<Settings | null>(null);
   const [settingsReady, setSettingsReady] = useState(false);
-  const [installedCount, setInstalledCount] = useState<number | null>(null);
+  // The app store already holds the installed models and add-ons; null until the first load.
+  const installedCount = useAppState((s) => (s.models == null ? null : s.models.length + s.loras.length));
   // The shell keeps every tab mounted. Don't contact CivitAI (or pop the Safe mode question)
   // until the Models tab has actually been opened.
   const rootRef = useRef<HTMLDivElement>(null);
@@ -74,15 +75,6 @@ export function ModelsTab() {
       .finally(() => setSettingsReady(true));
     return onSettingsChanged(setLocalSettings);
   }, []);
-
-  const countInstalled = () =>
-    Promise.all([listModels(), listLoras()])
-      .then(([m, l]) => setInstalledCount(m.length + l.length))
-      .catch(() => undefined);
-  useEffect(() => {
-    void countInstalled();
-  }, []);
-  useTauriEvent(onModelsChanged, () => void countInstalled());
 
   return (
     <div ref={rootRef} className="h-full overflow-y-auto">

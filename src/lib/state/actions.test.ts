@@ -1182,3 +1182,53 @@ describe("Save as one sheet", () => {
     expect(store.getState().saved).toEqual({});
   });
 });
+
+describe("refreshModels", () => {
+  const deferred = <T,>() => {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+  const other: InstalledModel = { ...model, id: "n", friendlyName: "n" };
+
+  it("keeps the newest list when an older reply arrives last", async () => {
+    const { store, actions } = setup();
+    const older = deferred<InstalledModel[]>();
+    const newer = deferred<InstalledModel[]>();
+    vi.mocked(apiMod.listModels).mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    const first = actions.refreshModels();
+    const second = actions.refreshModels();
+    newer.resolve([model]);
+    await second;
+    older.resolve([model, other]);
+    await first;
+    expect(store.getState().models?.map((m) => m.id)).toEqual(["m"]);
+  });
+
+  it("ignores an error from an older refresh", async () => {
+    const { store, actions } = setup();
+    const older = deferred<InstalledModel[]>();
+    vi.mocked(apiMod.listModels).mockReturnValueOnce(older.promise).mockResolvedValueOnce([model, other]);
+    const first = actions.refreshModels();
+    await actions.refreshModels();
+    older.reject({ code: "io", message: "failed", details: null });
+    await expect(first).resolves.toBeUndefined();
+    expect(store.getState().models?.map((m) => m.id)).toEqual(["m", "n"]);
+  });
+
+  it("keeps an older list when the newer refresh fails", async () => {
+    const { store, actions } = setup();
+    const newer = deferred<InstalledModel[]>();
+    vi.mocked(apiMod.listModels).mockResolvedValueOnce([model, other]).mockReturnValueOnce(newer.promise);
+    const first = actions.refreshModels();
+    const second = actions.refreshModels();
+    await first;
+    newer.reject({ code: "io", message: "failed", details: null });
+    await expect(second).rejects.toBeTruthy();
+    expect(store.getState().models?.map((m) => m.id)).toEqual(["m", "n"]);
+  });
+});

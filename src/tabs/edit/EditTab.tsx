@@ -1,6 +1,6 @@
 // Edit (img2img + instruction editing), SPEC §5.2.
 // The image lives in the Rust session (RAM); the edit chain is an in-memory undo stack.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { DropTarget, DropZone, useFilePicker } from "../../components/ImageDrop";
 import { CheckReadings } from "../../components/CheckReadings";
 import { SessionChoices, useSessionPictures } from "../../components/SessionPictures";
@@ -87,6 +87,8 @@ export function EditTab() {
   const masks = useRef(new Map<string, Blob | null>());
   // Steps made by Add detail (Fix details with nothing painted): Try again redoes the faces.
   const wholeDetail = useRef(new Set<string>());
+  // Re-renders after those refs change, since Try again reads them while rendering.
+  const [, bump] = useReducer((n: number) => n + 1, 0);
   const hw = useHardware();
   const noGpu = !!hw?.detected && isCpuOnly(hw);
 
@@ -288,6 +290,7 @@ export function EditTab() {
       if (now.index === from + 1 && made && made.imageId !== current.id) {
         masks.current.set(made.imageId, m);
         if (fixing && !m) wholeDetail.current.add(made.imageId);
+        bump();
         setCompare(true);
         setCompareWith("previous");
         setSideBySide(false);
@@ -656,7 +659,7 @@ export function EditTab() {
                   : (prevNode?.label ?? "Before")
               }
               afterLabel={node?.label ?? "After"}
-              maskOn={maskOn && !twoImages && !comparing && !showSide}
+              maskOn={maskOn && !twoImages && !batching && !comparing && !showSide}
               canvas={canvas && !comparing && !showSide ? canvas : null}
               maskRef={mask}
               brush={brush}

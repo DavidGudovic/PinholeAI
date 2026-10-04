@@ -331,7 +331,25 @@ pub async fn plan_civitai_install(
         hw: &hw,
         filters: &filters,
     };
-    let plan = plan::build_plan(&env, version, model.as_ref(), free, false, file_id);
+    let mut plan = plan::build_plan(&env, version, model.as_ref(), free, false, file_id);
+    if !plan.enough_disk {
+        // A cancelled download resumes from its `.part` file: those bytes are
+        // already on disk.
+        let family = plan
+            .family
+            .as_ref()
+            .or(plan.family_candidates.first())
+            .map(|f| f.family_id.clone());
+        let partial = plan::partial_bytes(
+            &env,
+            version,
+            model.as_ref(),
+            family.as_deref(),
+            file_id,
+            |kind| core.data.models(kind),
+        );
+        plan.enough_disk = plan::enough_disk(free, partial, plan.total_download_bytes);
+    }
     // Does the download need a key (401/403)? Only asked when there is
     // something to download.
     let picked = plan.file_options.iter().find(|o| o.selected).and_then(|o| {

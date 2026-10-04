@@ -773,7 +773,7 @@ export function MenuItem({
       className={cx(
         "flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
         focusRing,
-        selected ? "bg-amber-50 dark:bg-amber-500/10" : "hover:bg-neutral-100 dark:hover:bg-neutral-800",
+        selected ? "bg-amber-50 dark:bg-amber-500/10" : "enabled:hover:bg-neutral-100 dark:enabled:hover:bg-neutral-800",
         danger && "text-red-700 dark:text-red-400",
       )}
     >

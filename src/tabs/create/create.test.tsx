@@ -32,7 +32,7 @@ const { AppProvider } = await import("../../lib/state/AppProvider");
 const { StoreContext, createStore } = await import("../../lib/state/store");
 const { ChoicesNote, GenerateLabel, PresetNoticeCard } = await import("./CreateTab");
 const { SavePresetDialog } = await import("./PresetPicker");
-const { FinalPromptPreview, FineTuneDrawer } = await import("./FineTune");
+const { FinalPromptPreview, FineTuneDrawer, LoraSection } = await import("./FineTune");
 const { PromptBox } = await import("./PromptBox");
 const { Results } = await import("./Results");
 const tipModule = await import("./TipLine");
@@ -232,6 +232,10 @@ describe("Improve my prompt", () => {
   it("needs some text first", () => {
     box("");
     expect((screen.getByRole("button", { name: /Improve/ }) as HTMLButtonElement).disabled).toBe(true);
+    // Still takes the pointer so its title explains why it is off.
+    const cls = screen.getByRole("button", { name: /Improve/ }).className.split(" ");
+    expect(cls).not.toContain("disabled:pointer-events-none");
+    expect(cls).not.toContain("hover:bg-neutral-100");
   });
 
   it("replaces the prompt and Undo puts the original back", async () => {
@@ -299,6 +303,16 @@ describe("Improve my prompt", () => {
 });
 
 describe("Results", () => {
+  it("keeps the icon buttons together in one group that wraps as a unit", () => {
+    withApp(storeWithResults(result("a", 64, 64)), <Results />);
+    const icons = screen.getByTestId("result-icons");
+    expect(icons.className.split(" ")).not.toContain("flex-wrap");
+    for (const name of ["View full screen", "Copy image", "Remove from this session"]) {
+      expect(within(icons).getByRole("button", { name })).toBeTruthy();
+    }
+    expect(within(icons).queryByRole("button", { name: /Describe/ })).toBeNull();
+    expect(within(screen.getByTestId("result-actions")).getByRole("button", { name: /Describe/ })).toBeTruthy();
+  });
   it("doesn't re-render on progress ticks", () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "jobStart", kind: "create", at: 0, count: 1 });
@@ -559,6 +573,29 @@ describe("Named sizes", () => {
     expect(store.getState().create.fineTune).toMatchObject({ width: 768, height: 1344 });
     expect(screen.getByRole("button", { name: "Phone" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "Instagram" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("Typing in the prompt", () => {
+  it("does not re-render the dials, the Fine-tune drawer or the add-on list", async () => {
+    const store = createStore();
+    const renders = vi.fn();
+    // The drawer stays closed: open, it shows the final prompt preview, which follows the prompt.
+    withApp(
+      store,
+      <Profiler id="sidebar" onRender={renders}>
+        <Dials ui={null} />
+        <FineTuneDrawer ui={null} model={null} />
+        <LoraSection model={null} />
+      </Profiler>,
+    );
+    await flush();
+    const before = renders.mock.calls.length;
+    for (const prompt of ["a", "a f", "a fox"]) act(() => store.dispatch({ type: "patchCreate", patch: { prompt } }));
+    expect(renders.mock.calls.length).toBe(before);
+    // A dial change still shows up.
+    act(() => store.dispatch({ type: "setDial", dial: "quality", value: "best" }));
+    expect(renders.mock.calls.length).toBeGreaterThan(before);
   });
 });
 

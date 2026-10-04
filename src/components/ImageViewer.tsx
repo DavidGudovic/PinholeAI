@@ -17,7 +17,7 @@ import {
   ScanSearch,
   X,
 } from "lucide-react";
-import { IconButton, useEscape, useModalFocus } from "./ui";
+import { IconButton, cx, focusRing, useEscape, useModalFocus } from "./ui";
 
 export interface ViewerImage {
   url: string;
@@ -222,7 +222,7 @@ export function ImageViewer({
       aria-modal="true"
       aria-label="Image viewer"
       tabIndex={-1}
-      className="fixed inset-0 z-[60] flex flex-col bg-neutral-950 text-white outline-none"
+      className="dark fixed inset-0 z-[60] flex flex-col bg-neutral-950 text-white outline-none"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
         <span className="text-xs text-neutral-400 tabular-nums">
@@ -291,7 +291,7 @@ export function ImageViewer({
             aria-label="Previous image"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => go(-1)}
-            className="absolute top-1/2 left-3 -translate-y-1/2 rounded-full bg-white/10 p-2 hover:bg-white/20"
+            className={cx(focusRing, "absolute top-1/2 left-3 -translate-y-1/2 rounded-full bg-white/10 p-2 hover:bg-white/20")}
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -302,7 +302,7 @@ export function ImageViewer({
             aria-label="Next image"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => go(1)}
-            className="absolute top-1/2 right-3 -translate-y-1/2 rounded-full bg-white/10 p-2 hover:bg-white/20"
+            className={cx(focusRing, "absolute top-1/2 right-3 -translate-y-1/2 rounded-full bg-white/10 p-2 hover:bg-white/20")}
           >
             <ChevronRight className="h-5 w-5" />
           </button>
