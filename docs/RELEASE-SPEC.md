@@ -172,8 +172,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
      whose age estimate's child groups (0–2 plus 3–9, `child_face`) reach ≥ 0.6, or whose
      under-20 groups (0–2, 3–9 and 10–19, `under_20_face`) reach ≥ 0.8 (`UNDER_20_FACE`,
      teenagers), or whose age in years from the second age estimate (MiVOLO v2, `age`) is under
-     22 (`UNDER_AGE`), or
-   - photo style and a borderline face (second estimate 22 to under 26, `BORDERLINE_AGE`) in a
+     20 (`UNDER_AGE`), or
+   - photo style and a borderline face (second estimate 20 to under 26, `BORDERLINE_AGE`) in a
      picture where the tagger sees a setting, clothing or object that presents the person as
      under 18 (`young_context` ≥ 0.35: 13 tags plus the child tags, by id in `run.rs`). A face
      estimated 26 or older is never judged by the setting. The age estimates
@@ -186,26 +186,43 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
    often drawn young). The under-20 threshold was picked on FairFace validation portraits
    (2026-10-01, `falsepos` example with `FALSEPOS_AGES=1`; labels are apparent ages), accepting
    some wrong blocks of young-looking adults, which only matter on sexual photo-style results.
-   The second estimate and its line at 22 were added on 2026-10-01 and measured on UTKFace
-   portraits with exact ages (used for measurement only; nothing kept), through the app's own
-   face finder and crops (`falsepos` with `FALSEPOS_AGES=1`, one folder per age). The table is
-   the share of ordinary, non-sexual face photos the age half of rule 2 acts on. These are
-   numbers for the age estimates alone, not how often the whole check catches harmful pictures,
-   and UTKFace ages are themselves sometimes wrong:
+   The second estimate was added on 2026-10-01 with its line at 22, and the line was moved to 20
+   on 2026-10-04. Both were measured on UTKFace portraits with exact ages (used for measurement
+   only; nothing kept), through the app's own face finder and crops (`falsepos` with
+   `FALSEPOS_AGES=1`, one folder per age). The table is the share of ordinary, non-sexual face
+   photos the age half of rule 2 acts on, on the same 1,597 faces before and after the move.
+   These are numbers for the age estimates alone, not how often the whole check catches harmful
+   pictures, and UTKFace ages are themselves sometimes wrong:
 
-   | Age (faces) | 10–12 (351) | 13 (81) | 14–15 (200) | 16–17 (200) | 18–19 (197) | 20–21 (164) | 22–23 (160) | 24–25 (160) | 26–30 (199) |
+   | Age (faces) | 10–12 (150) | 13 (50) | 14–15 (200) | 16–17 (200) | 18–19 (197) | 20–21 (200) | 22–23 (200) | 24–25 (200) | 26–30 (200) |
    |---|---|---|---|---|---|---|---|---|---|
-   | First estimate's groups only (before) | 85.5 % | 84.0 % | 60.5 % | 22.5 % | 4.6 % | 3.0 % | 1.2 % | 1.9 % | 0.0 % |
-   | + second estimate under 21 | 99.4 % | 100 % | 95.5 % | 79.5 % | 37.6 % | 15.9 % | 8.1 % | 4.4 % | 1.0 % |
-   | **+ second estimate under 22 (shipped)** | **99.4 %** | **100 %** | **96.5 %** | **86.5 %** | **51.3 %** | **27.4 %** | **12.5 %** | **6.9 %** | **2.5 %** |
-   | + second estimate under 23 | 99.7 % | 100 % | 97.5 % | 89.5 % | 65.0 % | 36.0 % | 17.5 % | 10.0 % | 3.0 % |
+   | First estimate's groups only | 89.3 % | 86.0 % | 60.5 % | 22.5 % | 4.6 % | 3.0 % | 1.5 % | 1.0 % | 0.5 % |
+   | **+ second estimate under 20 (shipped)** | **100 %** | **100 %** | **94.5 %** | **72.5 %** | **26.4 %** | **9.5 %** | **9.0 %** | **6.0 %** | **1.0 %** |
+   | + second estimate under 21 | 100 % | 100 % | 95.5 % | 80.0 % | 37.1 % | 15.0 % | 12.5 % | 8.5 % | 1.0 % |
+   | + second estimate under 22 (2026-10-01 to 2026-10-04) | 100 % | 100 % | 96.5 % | 86.5 % | 51.8 % | 25.0 % | 16.5 % | 12.0 % | 2.0 % |
 
-   Ages 10–17 together: 64.2 % before, 95.7 % with the line at 22; ages 20–25 together: 2.1 %
-   before, 15.4 % after. The line at 22 was picked because 16- and 17-year-olds are the hardest
-   to tell from adults, and it is the lowest line that catches most of them; the cost falls on
-   young-looking adults in sexual photo-style results only. On FairFace children labelled 3–9,
-   the age half catches 99.7 % (94.2 % before); 0–2: 99.0 % (unchanged). Earlier FairFace
-   numbers for the first estimate alone, by its apparent-age labels:
+   Ages 10–17 together: 57.2 % with the groups only, 89.0 % with the line at 20 (94.3 % at 22);
+   ages 20–25 together: 1.8 %, 8.2 % (17.8 % at 22).
+
+   The same check was measured on 377 generated pictures from CivitAI (2026-10-04): images
+   CivitAI rates as safe, photo-style, with one face, whose stated subject age is 20 or more
+   (used for measurement only; nothing kept). The stated age is the label; a generated face can
+   look older or younger than stated. Share of these adults the age half of rule 2 acts on:
+
+   | Model family (faces) | Estimated minus stated age (mean) | Line 20 (shipped) | Line 21 | Line 22 |
+   |---|---|---|---|---|
+   | SDXL and Illustrious (101) | +0.3 years | 0 % | 4 % | 23 % |
+   | Z-Image (87) | −0.7 years | 13 % | 17 % | 30 % |
+   | Flux (38) | −3.6 years | 3 % | 11 % | 18 % |
+   | SD 1.5 (20) | −3.3 years | 10 % | 20 % | 30 % |
+   | Qwen (16) | +0.6 years | 19 % | 25 % | 44 % |
+   | Pony (115) | −4.9 years | 63 % | 74 % | 84 % |
+
+   The first estimate's groups acted on none of them. The line at 20 was picked from these two
+   measurements: on generated faces it removes most wrong blocks for most model families, while
+   on photos it still acts on most 16- and 17-year-olds. On FairFace children labelled 3–9, the
+   age half caught 99.7 % with the line at 22 (94.2 % before the second estimate); 0–2: 99.0 %
+   (unchanged). Earlier FairFace numbers for the first estimate alone, by its apparent-age labels:
 
    | Faces the age rule acts on | Labelled 10–19 (1,180) | Labelled 20–29 (1,996) | Labelled 30–39 (367) |
    |---|---|---|---|
