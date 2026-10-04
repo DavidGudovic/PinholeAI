@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => core);
 import { browseCatalog, generate, previewFinalPrompt } from "../lib/api";
 import { dismissBlocked } from "../lib/blocked";
 import type { GenerateRequest } from "../lib/types";
-import { BlockedNotice } from "./BlockedNotice";
+import { BlockedNotice, CANT_HELP } from "./BlockedNotice";
 
 afterEach(() => {
   act(() => dismissBlocked());
@@ -27,7 +27,8 @@ describe("BlockedNotice", () => {
     await act(async () => {
       await expect(generate({} as GenerateRequest)).rejects.toMatchObject({ code: "blocked" });
     });
-    expect(screen.getByRole("status").textContent).toBe(`Why it was blocked: ${BLOCKED.message}`);
+    expect(screen.getByRole("status").textContent).toBe(`${CANT_HELP}Why it was blocked: ${BLOCKED.message}`);
+    expect(screen.getByText("Pinhole can't help with this.")).toBeTruthy();
     expect(screen.getByText("Not allowed")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "Close" })[0]);
     expect(screen.queryByText("Usage guidelines")).toBeNull();

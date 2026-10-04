@@ -253,8 +253,8 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
-Block message: one or two short sentences naming the rule, shown under "Why it was blocked" with
-the usage guidelines (§7). It never includes scores, estimated ages, thresholds or which model
+Block message: "Pinhole can't help with this.", then one or two short sentences naming the rule
+under "Why it was blocked", shown with the usage guidelines (§7). It never includes scores, estimated ages, thresholds or which model
 measured what. If several pictures of a batch are blocked, the message of the first rule in this
 order is shown: rule 2, rule 1, rule 3.
 
