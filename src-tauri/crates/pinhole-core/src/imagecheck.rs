@@ -1,7 +1,7 @@
 //! The local image check at result intake (RELEASE-SPEC §4). Every generated picture
 //! is measured by `pinhole_check` before it enters the session; if one picture of a
-//! batch is blocked, the whole batch is dropped with a one-sentence message for the rule
-//! ([`block_message`]).
+//! batch is blocked, the whole batch is dropped with a message naming the rule
+//! ([`block_message()`]).
 //!
 //! Fail closed: without all check files (or with a damaged one) Create and Edit stop
 //! with `check_missing`, which the UI answers with "Set up safety check". The check is
@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 use pinhole_check::{files, CheckError, Checker, Original, Readings, Rule};
+use pinhole_engine::block_message;
 use pinhole_net::download::{DownloadKind, DownloadSpec};
 use serde::Serialize;
 
@@ -363,17 +364,18 @@ enum SafeOnly {
     Earlier,
 }
 
-pub const LOOKS_UNDERAGE_MESSAGE: &str = "Someone in this picture may look under 18.";
+pub const LOOKS_UNDERAGE_MESSAGE: &str = block_message!("someone looks under 18.");
 pub const PHOTO_MADE_INTIMATE_MESSAGE: &str =
-    "This started from a picture you brought in that shows a face. Those can't be made intimate.";
+    block_message!("it's intimate and started from a photo with a face.");
 pub const SAFE_ONLY_MARKED_MESSAGE: &str =
-    "A model or add-on in use is marked safe images only on CivitAI.";
-pub const SAFE_ONLY_UNCONFIRMED_MESSAGE: &str =
-    "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only.";
+    block_message!("a model or add-on in use is safe images only.");
+pub const SAFE_ONLY_UNCONFIRMED_MESSAGE: &str = block_message!(
+    "a model or add-on in use isn't confirmed on CivitAI, so it makes safe images only."
+);
 pub const SAFE_ONLY_EARLIER_MESSAGE: &str =
-    "This comes from a picture made with a safe-images-only model or add-on.";
+    block_message!("it's based on a safe-images-only picture.");
 
-/// The sentence shown when the image check blocks a picture.
+/// The message shown when the image check blocks a picture.
 fn block_message(rule: Rule, safe: Option<SafeOnly>) -> &'static str {
     match (rule, safe) {
         (Rule::LooksUnderage, _) => LOOKS_UNDERAGE_MESSAGE,
@@ -778,23 +780,23 @@ mod tests {
         let cases = [
             (
                 block_message(Rule::LooksUnderage, None),
-                "Someone in this picture may look under 18.",
+                "Pinhole cannot help with this. Reason: someone looks under 18. Automated checks can make mistakes and block harmless results.",
             ),
             (
                 block_message(Rule::PhotoMadeIntimate, None),
-                "This started from a picture you brought in that shows a face. Those can't be made intimate.",
+                "Pinhole cannot help with this. Reason: it's intimate and started from a photo with a face. Automated checks can make mistakes and block harmless results.",
             ),
             (
                 block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Marked)),
-                "A model or add-on in use is marked safe images only on CivitAI.",
+                "Pinhole cannot help with this. Reason: a model or add-on in use is safe images only. Automated checks can make mistakes and block harmless results.",
             ),
             (
                 block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Unconfirmed)),
-                "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only.",
+                "Pinhole cannot help with this. Reason: a model or add-on in use isn't confirmed on CivitAI, so it makes safe images only. Automated checks can make mistakes and block harmless results.",
             ),
             (
                 block_message(Rule::SafeImagesOnlyModel, Some(SafeOnly::Earlier)),
-                "This comes from a picture made with a safe-images-only model or add-on.",
+                "Pinhole cannot help with this. Reason: it's based on a safe-images-only picture. Automated checks can make mistakes and block harmless results.",
             ),
         ];
         for (shown, expected) in cases {

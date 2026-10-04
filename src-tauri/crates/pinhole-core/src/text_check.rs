@@ -3,9 +3,7 @@
 //! to "Improve my prompt", on what the Describe model writes back and on Browse search text.
 
 use crate::{CoreError, CoreResult};
-pub use pinhole_engine::words::{
-    pairs_minor_with_sexual, Blocked, CheckedPrompt, BLOCKED_MESSAGE, DOCUMENT_MESSAGE,
-};
+pub use pinhole_engine::words::{pairs_minor_with_sexual, Blocked, CheckedPrompt, BLOCKED_MESSAGE};
 
 fn blocked(b: Blocked) -> CoreError {
     CoreError::new("blocked", b.message())
@@ -40,6 +38,6 @@ mod tests {
         assert!(check("a nude woman, oil painting").is_ok());
         assert!(checked("loli, nude").is_err());
         let e = check("a valid driver's license from Ohio").unwrap_err();
-        assert_eq!(e.message, DOCUMENT_MESSAGE);
+        assert_eq!(e.message, BLOCKED_MESSAGE);
     }
 }

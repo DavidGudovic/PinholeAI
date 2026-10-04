@@ -16,12 +16,23 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-/// Shown when the word check blocks text that pairs an under-18 term with a sexual term. The
-/// UI shows it with the usage guidelines.
-pub const BLOCKED_MESSAGE: &str = "This asks for something the usage guidelines don't allow.";
+/// The message shown when a check blocks something, built from the reason:
+/// "Pinhole cannot help with this. Reason: <reason> Automated checks can make mistakes and block
+/// harmless results."
+#[macro_export]
+macro_rules! block_message {
+    ($reason:literal) => {
+        concat!(
+            "Pinhole cannot help with this. Reason: ",
+            $reason,
+            " Automated checks can make mistakes and block harmless results."
+        )
+    };
+}
 
-/// Shown when the word check blocks a request for a copy of a document or money.
-pub const DOCUMENT_MESSAGE: &str = "Pinhole doesn't make copies of IDs, documents or money.";
+/// Shown when the word check blocks text. The UI shows it with the usage guidelines.
+pub const BLOCKED_MESSAGE: &str =
+    block_message!("it asks for something the usage guidelines don't allow.");
 
 /// Terms that point at someone under 18. The last word of each also matches with a trailing
 /// `s`/`es` ("little girls").
@@ -290,11 +301,10 @@ pub enum Blocked {
 }
 
 impl Blocked {
-    /// The sentence shown to the user.
+    /// The message shown to the user.
     pub fn message(self) -> &'static str {
         match self {
-            Blocked::MinorWithSexual => BLOCKED_MESSAGE,
-            Blocked::DocumentCopy => DOCUMENT_MESSAGE,
+            Blocked::MinorWithSexual | Blocked::DocumentCopy => BLOCKED_MESSAGE,
         }
     }
 }

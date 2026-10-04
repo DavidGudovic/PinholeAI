@@ -253,23 +253,22 @@ as strict). The tags are read by id from the pinned tag list (`run.rs`, `tag_ids
 
 If one picture of a batch is blocked, the whole batch is dropped.
 
-Block message: the line "Pinhole can't help with this." and, under "Why it was blocked", one or
-two short sentences naming the rule, shown with the usage guidelines (§7). It never includes
-scores, estimated ages, thresholds or which model measured what. If several pictures of a batch
-are blocked, the message of the first rule in this order is shown: rule 2, rule 1, rule 3.
+Block message: "Pinhole cannot help with this. Reason: <reason> Automated checks can make
+mistakes and block harmless results." (`block_message!` in `pinhole-engine/src/words.rs`), shown
+with the usage guidelines (§7). The reason names the rule only. It never includes scores,
+estimated ages, thresholds or which model measured what. If several pictures of a batch are
+blocked, the reason of the first rule in this order is shown: rule 2, rule 1, rule 3.
 
-- Rule 2: "Someone in this picture may look under 18."
-- Rule 1: "This started from a picture you brought in that shows a face. Those can't be made
-  intimate."
-- Rule 3, a model or add-on in use has CivitAI's flag: "A model or add-on in use is marked safe
-  images only on CivitAI."
-- Rule 3, a model or add-on in use isn't cleared by a lookup (or isn't installed any more):
-  "A model or add-on in use isn't confirmed on CivitAI, so it counts as safe images only."
+- Rule 2: "someone looks under 18."
+- Rule 1: "it's intimate and started from a photo with a face."
+- Rule 3, a model or add-on in use has CivitAI's flag: "a model or add-on in use is safe images
+  only."
+- Rule 3, a model or add-on in use isn't cleared by a lookup (or isn't installed any more): "a
+  model or add-on in use isn't confirmed on CivitAI, so it makes safe images only."
 - Rule 3, only a picture it was made from (or, in Describe, the picture itself) was under the
-  rule: "This comes from a picture made with a safe-images-only model or add-on."
-- Text check, under-18 and sexual terms: "This asks for something the usage guidelines don't
-  allow." (`text_check::BLOCKED_MESSAGE`). Document or money copy: "Pinhole doesn't make copies
-  of IDs, documents or money." (`text_check::DOCUMENT_MESSAGE`).
+  rule: "it's based on a safe-images-only picture."
+- Text check, every block (under-18 and sexual terms, document or money copy): "it asks for
+  something the usage guidelines don't allow." (`text_check::BLOCKED_MESSAGE`).
 
 ### 3.3 How it runs
 
