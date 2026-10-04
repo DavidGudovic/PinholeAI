@@ -126,6 +126,8 @@ impl Inspector for FakeCheck {
 #[cfg(any(test, feature = "test-util"))]
 pub fn use_fake(core: &AppCore, fake: FakeCheck) {
     *core.check.inspector.write() = Arc::new(fake);
+    // Photo-style flags came from the previous check's readings.
+    core.check.photo_style.lock().clear();
 }
 
 pub struct CheckState {
@@ -142,6 +144,9 @@ pub struct CheckState {
     exported: Mutex<HashMap<String, Exported>>,
     /// Brought-in pictures that passed the check before Describe, by session image id.
     describable: Mutex<std::collections::HashSet<String>>,
+    /// Whether a session image is photo-style ([`is_photo_style`]), by session image id.
+    /// Session images never change, so each is measured once.
+    photo_style: Mutex<HashMap<String, bool>>,
 }
 
 impl CheckState {
@@ -153,6 +158,7 @@ impl CheckState {
             install_start: tokio::sync::Mutex::new(()),
             exported: Mutex::new(HashMap::new()),
             describable: Mutex::new(std::collections::HashSet::new()),
+            photo_style: Mutex::new(HashMap::new()),
         }
     }
 
@@ -165,6 +171,17 @@ impl CheckState {
         self.originals.lock().clear();
         self.exported.lock().clear();
         self.describable.lock().clear();
+        self.photo_style.lock().clear();
+    }
+
+    /// A session image was discarded: drop what was kept about it by id.
+    pub fn forget_image(&self, id: &str) {
+        self.photo_style.lock().remove(id);
+    }
+
+    /// A result just added to the session: its photo-style flag from the check's readings.
+    pub(crate) fn note_photo_style(&self, id: &str, photo: bool) {
+        self.photo_style.lock().insert(id.to_string(), photo);
     }
 
     /// Save/Copy: remember what an exported picture was made from.
@@ -446,7 +463,12 @@ pub async fn face_boxes(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<V
 
 /// Whether a picture is photo-style (the tagger's `realistic` / `photorealistic` tags), which
 /// picks Upscale's upscaler. A picture without tagger readings counts as photo-style.
+/// Kept by session image id: results get it from their own check, other pictures are
+/// measured the first time they are asked about.
 pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResult<bool> {
+    if let Some(&photo) = core.check.photo_style.lock().get(&img.id) {
+        return Ok(photo);
+    }
     let c = core.clone();
     let png = img.bytes.clone();
     let res = tokio::task::spawn_blocking(move || c.check.inspector().readings(&png))
@@ -456,9 +478,18 @@ pub async fn is_photo_style(core: &Arc<AppCore>, img: &SessionImage) -> CoreResu
                 .with_details(e.to_string())
         })?;
     let r = res.map_err(|e| check_error(core, e))?;
-    Ok(r.tags
+    let photo = photo_style(&r);
+    // Not kept for a picture discarded while it was measured.
+    if core.session.get(&img.id).is_some() {
+        core.check.note_photo_style(&img.id, photo);
+    }
+    Ok(photo)
+}
+
+fn photo_style(r: &Readings) -> bool {
+    r.tags
         .as_ref()
-        .is_none_or(pinhole_check::rules::is_photo_style))
+        .is_none_or(pinhole_check::rules::is_photo_style)
 }
 
 /// Result intake: measure every picture of a batch. Returns the pictures unchanged
@@ -506,7 +537,8 @@ pub async fn check_results(
                     .map(|rule| (rule, r.clone()))
             })
             .min_by_key(|(rule, _)| rank(*rule));
-        Ok::<_, CheckError>((pngs, blocked))
+        let photo: Vec<bool> = all[..pngs.len()].iter().map(photo_style).collect();
+        Ok::<_, CheckError>((pngs, photo, blocked))
     })
     .await
     .map_err(|e| {
@@ -516,16 +548,18 @@ pub async fn check_results(
         )
         .with_details(e.to_string())
     })?;
-    let (pngs, blocked) = res.map_err(|e| check_error(core, e))?;
+    let (pngs, photo, blocked) = res.map_err(|e| check_error(core, e))?;
     if let Some((rule, r)) = blocked {
         return Err(blocked_error(rule, safe, &r));
     }
     Ok(pngs
         .into_iter()
-        .map(|png| CheckedPng {
+        .zip(photo)
+        .map(|(png, photo_style)| CheckedPng {
             png,
             made_from: made_from.clone(),
             safe_images_only,
+            photo_style,
         })
         .collect())
 }
@@ -539,11 +573,17 @@ pub struct CheckedPng {
     made_from: Arc<[Source]>,
     /// Checked under rule 3 (see [`MadeBy`]); every picture made from it is too.
     safe_images_only: bool,
+    /// Photo-style by its readings ([`is_photo_style`]).
+    photo_style: bool,
 }
 
 impl CheckedPng {
     pub fn png(&self) -> &[u8] {
         &self.png
+    }
+
+    pub(crate) fn photo_style(&self) -> bool {
+        self.photo_style
     }
 
     pub(crate) fn into_parts(self) -> (Vec<u8>, Arc<[Source]>, bool) {
@@ -557,6 +597,7 @@ impl CheckedPng {
             png,
             made_from: Arc::from(Vec::new()),
             safe_images_only: false,
+            photo_style: true,
         }
     }
 }
@@ -802,5 +843,31 @@ mod tests {
         for (shown, expected) in cases {
             assert_eq!(shown, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn photo_style_is_measured_once_per_picture_and_forgotten_with_it() {
+        let (_tmp, core) =
+            crate::app::tests::test_core(Arc::new(crate::app::tests::Recorder::default()));
+        let fake = FakeCheck::default();
+        let counts = fake.counts.clone();
+        use_fake(&core, fake);
+        let png = pinhole_engine::image::encode_png_rgba(&[9u8; 8 * 8 * 4], 8, 8).unwrap();
+        let id = crate::session::import_image(&core, png).unwrap().id;
+        let img = core.session.get(&id).unwrap();
+        assert!(is_photo_style(&core, &img).await.unwrap());
+        assert!(is_photo_style(&core, &img).await.unwrap());
+        assert_eq!(counts.lock().0, 1, "measured once");
+
+        crate::session::discard(&core, &id);
+        assert!(!core.check.photo_style.lock().contains_key(&id));
+
+        // Not kept for a picture no longer in the session.
+        assert!(is_photo_style(&core, &img).await.unwrap());
+        assert!(core.check.photo_style.lock().is_empty());
+
+        core.check.note_photo_style("other", false);
+        core.check.forget();
+        assert!(core.check.photo_style.lock().is_empty());
     }
 }

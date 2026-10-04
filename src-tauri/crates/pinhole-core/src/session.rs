@@ -228,6 +228,7 @@ pub fn get(core: &AppCore, id: &str) -> CoreResult<Arc<Vec<u8>>> {
 
 pub fn discard(core: &AppCore, id: &str) {
     core.session.remove(id);
+    core.check.forget_image(id);
 }
 
 /// Reset: drop every image immediately (and the engines' output
@@ -474,11 +475,9 @@ fn sheet_bytes(ims: &[SessionImage]) -> CoreResult<Vec<u8>> {
             .any(Option::is_some)
             .then_some(SOURCE_COMPOSITE)
     };
-    let tiles = ims
-        .iter()
-        .map(marked_pixels)
-        .collect::<CoreResult<Vec<_>>>()?;
-    let (mut rgba, w, h) = img::sheet(&tiles);
+    // One picture decoded at a time: each is placed (and shrunk) before the next is read.
+    let sizes: Vec<(u32, u32)> = ims.iter().map(|im| (im.width, im.height)).collect();
+    let (mut rgba, w, h) = img::sheet_with(&sizes, ims.iter().map(marked_pixels))?;
     // Resizing can wash out a picture's own watermark (a saved one opened again carries one
     // in its pixels only), so any sheet with a marker gets one of its own.
     if source.is_some() {
@@ -1170,6 +1169,17 @@ mod tests {
             })
             .collect();
         assert!(pinhole_engine::watermark::is_marked(&tile, 320, 256));
+    }
+
+    #[test]
+    fn a_sheet_has_the_pixels_of_its_marked_pictures_placed_together() {
+        let ims = [made("a", 120, 80), made("b", 60, 100), made("c", 120, 100)];
+        let bytes = sheet_bytes(&ims).unwrap();
+        // All pictures decoded first, then placed.
+        let tiles = ims.iter().map(|im| marked_pixels(im).unwrap()).collect();
+        let (mut want, w, h) = img::sheet(tiles);
+        pinhole_engine::watermark::embed(&mut want, w, h);
+        assert_eq!(img::decode_rgba(&bytes).unwrap(), (want, w, h));
     }
 
     #[test]

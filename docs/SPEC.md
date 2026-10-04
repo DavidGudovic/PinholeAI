@@ -423,7 +423,9 @@ smooth), `nomos_webphoto_x4` (photos, keeps skin texture) and `realesrgan_x4_ani
 model, drawings). With the `upscaler` setting on `auto` (the default) Upscale measures the picture
 with the image check's tagger and uses `realesrgan_x4` when its `realistic` or `photorealistic`
 tag reaches the photo-style threshold (`pinhole-check` `rules::PHOTO_STYLE`), the drawing upscaler
-otherwise. Fine-tune in Create and Edit has an **Upscaler** row, a list with one plain line per
+otherwise. This reading is kept per session picture in memory (a made picture's comes from its own
+image check), so each picture is measured for it at most once; it is dropped when the picture is
+discarded and on Reset. Fine-tune in Create and Edit has an **Upscaler** row, a list with one plain line per
 option: "Auto: picks by picture style", "Photo: smooth (good for hair, can look waxy)", "Photo:
 skin texture (real skin, can make beards crunchy)", "Drawing: clean lines and flat colour"
 (settings `auto` | `photo` | `photo_texture` | `drawing`). The upscaled picture's summary names

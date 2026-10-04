@@ -196,6 +196,32 @@ async fn upscale_picks_the_upscaler_by_picture_style() {
     );
 }
 
+/// Auto upscale of a generated picture reuses the style its own check read: only the
+/// upscaled results are measured.
+#[tokio::test]
+async fn auto_upscale_of_a_made_picture_reuses_its_style_reading() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    install_fake_upscaler(&core);
+    let fake = FakeCheck::default();
+    let counts = fake.counts.clone();
+    use_check(&core, fake);
+    let mut req = GenerateRequest::txt2img(model, "a cat");
+    req.fine_tune.width = Some(64);
+    req.fine_tune.height = Some(48);
+    let src = generate::generate(&core, req).await.unwrap().images[0].clone();
+    assert_eq!(counts.lock().0, 1);
+    for factor in [2, 4] {
+        let up = generate::upscale_image(&core, &src.id, factor)
+            .await
+            .unwrap();
+        assert_eq!(up.upscaler.as_deref(), Some("photo"));
+    }
+    assert_eq!(counts.lock().0, 3, "the two results, not the source again");
+}
+
 /// Cancel works while Upscale reads the picture style for the Auto pick: nothing is
 /// downloaded or upscaled after it.
 #[tokio::test]
