@@ -262,6 +262,27 @@ describe("Edit tab", () => {
     expect(req).toMatchObject({ initImageId: "a", extend: { height: 64 } });
   });
 
+  it("Ctrl+Enter does nothing while the Extend button is disabled", async () => {
+    const store = createStore();
+    store.dispatch({ type: "setTab", tab: "edit" });
+    render(
+      <AppProvider store={store}>
+        <EditTab />
+      </AppProvider>,
+    );
+    await waitFor(() => expect(store.getState().models?.length).toBe(1));
+    act(() => {
+      store.dispatch({ type: "editLoad", ref: ref("a") });
+      store.dispatch({ type: "patchEdit", patch: { mode: "extend", extendTo: "square" } });
+    });
+    await flush();
+    expect((screen.getByRole("button", { name: /^Extend/ }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => void runPrimaryAction("edit"));
+    await flush();
+    expect(api.generate).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Pick another shape to extend it/)).toBeNull();
+  });
+
   it("runs one edit when Restyle is pressed twice while the mask is exported", async () => {
     const store = createStore();
     store.dispatch({ type: "setTab", tab: "edit" });
