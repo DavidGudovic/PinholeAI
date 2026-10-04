@@ -83,7 +83,7 @@ async fn improve_edit_instruction_through_mock_llama() {
     let (_tmp, core, _rec) = new_core();
     let llama = MockLlamaServer::start(
         // Without the started "CHANGE:", as other servers answer.
-        "replace the mug with a tall glass of juice\n\nDETAILS: frosted glass, apple juice, same spot\n\nKEEP: the table, the mug, the lighting",
+        "swap the mug for a glass of juice\n\nDETAILS: frosted glass, apple juice, same spot\n\nKEEP: the table, the mug, the lighting",
         0,
     )
     .await;
@@ -99,7 +99,7 @@ async fn improve_edit_instruction_through_mock_llama() {
     .unwrap();
     assert_eq!(
         out.text,
-        "replace the mug with a tall glass of juice. Frosted glass, apple juice. Keep the table and the lighting unchanged.",
+        "swap the mug for a glass of juice. Frosted glass, apple juice. Keep the table and the lighting unchanged.",
         "the reworded instruction leads; what it changes is not kept"
     );
     let body = &llama.requests()[0];
