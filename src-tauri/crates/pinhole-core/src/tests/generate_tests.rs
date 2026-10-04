@@ -538,6 +538,40 @@ async fn add_detail_describes_the_faces_by_picture_style() {
     assert!(!typed.contains("photo of a face"), "{typed}");
 }
 
+/// The Add detail preview reads the picture style once per picture: later previews and the
+/// generation reuse it.
+#[tokio::test]
+async fn add_detail_reads_the_picture_style_once() {
+    let (_tmp, core, _rec) = new_core();
+    let mock = MockSdServer::start().await;
+    use_external_engine(&core, &mock.base_url());
+    let model = register_fake_model(&core, "sdxl");
+    let src = session::import_image(
+        &core,
+        pinhole_engine::testutil::solid_png(1200, 900, [10, 20, 30, 255]),
+    )
+    .unwrap();
+    let fake = FakeCheck {
+        face_boxes: vec![[100.0, 100.0, 200.0, 200.0]],
+        ..Default::default()
+    };
+    let counts = fake.counts.clone();
+    use_check(&core, fake);
+    let mut req = GenerateRequest::txt2img(model, "");
+    req.mode = GenMode::Img2img;
+    req.init_image_id = Some(src.id.clone());
+    req.strength = Some(0.45);
+    req.fix_details = true;
+    for negative in ["", "blurry"] {
+        req.fine_tune.negative_prompt = Some(negative.into());
+        generate::preview_final_prompt(&core, &req).await.unwrap();
+    }
+    assert_eq!(counts.lock().0, 1, "one reading for both previews");
+    generate::generate(&core, req).await.unwrap();
+    // Only the result and its redrawn box are measured.
+    assert_eq!(counts.lock().0, 3);
+}
+
 #[tokio::test]
 async fn extend_draws_the_bigger_canvas_and_keeps_the_source() {
     let (_tmp, core, _rec) = new_core();

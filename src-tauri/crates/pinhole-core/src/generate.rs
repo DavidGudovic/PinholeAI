@@ -1258,6 +1258,9 @@ async fn generate_inner(
     }
     *core.gen.part_note.lock() = None;
     drop(body);
+    // Only whether this was a redraw is needed from here on; the plan holds the full source.
+    let redrawn = fix.is_some();
+    drop(fix);
     // Result intake: every picture passes the image check first; if one is blocked,
     // none is kept. A redrawn box is also checked on its own.
     let checked = crate::imagecheck::check_results(
@@ -1300,8 +1303,9 @@ async fn generate_inner(
             upscaler: None,
             seamless,
             // Fix details / Extend work on a crop or a canvas: the picture's own size stands.
-            base_size: fix.is_none().then_some((width, height)),
+            base_size: (!redrawn).then_some((width, height)),
         };
+        let photo = png.photo_style();
         if !core
             .session
             .insert_generated(session_epoch, png, meta.clone())
@@ -1309,6 +1313,7 @@ async fn generate_inner(
             // Reset while the job ran: its images go with the session.
             return Err(CoreError::new("cancelled", "Cancelled."));
         }
+        core.check.note_photo_style(&core.session, &meta.id, photo);
         out.push(meta);
     }
     touch_last_used(core, &prep.model.id);
@@ -1764,6 +1769,8 @@ async fn upscale_inner(
             return Err(CoreError::new("cancelled", "Cancelled."));
         }
     };
+    // The request holds the source as base64: not needed once the engine answered.
+    drop(req);
     let resp = resp.map_err(|e| match e {
         // The upscale request carries no prompt; `redact_text` still cuts prompt-like fields.
         ApiError::Status { code: 400, error } => {
@@ -1772,15 +1779,20 @@ async fn upscale_inner(
         }
         other => api_failure(core, other, &[]),
     })?;
-    let img = resp.images.into_iter().next().ok_or_else(|| {
-        CoreError::new(
-            "engine_failed",
-            "The upscaler returned no image. Try again.",
-        )
-    })?;
-    let raw = base64::engine::general_purpose::STANDARD
-        .decode(img.b64_json.as_bytes())
-        .map_err(|_| CoreError::new("engine_failed", "The upscaler returned a damaged image."))?;
+    // The base64 answer goes as soon as it is decoded.
+    let raw = {
+        let img = resp.images.into_iter().next().ok_or_else(|| {
+            CoreError::new(
+                "engine_failed",
+                "The upscaler returned no image. Try again.",
+            )
+        })?;
+        base64::engine::general_purpose::STANDARD
+            .decode(img.b64_json.as_bytes())
+            .map_err(|_| {
+                CoreError::new("engine_failed", "The upscaler returned a damaged image.")
+            })?
+    };
     let png = tokio::task::spawn_blocking(move || -> CoreResult<Vec<u8>> {
         let clean = pinhole_engine::png::scrub(&raw).map_err(|_| {
             CoreError::new("engine_failed", "The upscaler returned a damaged image.")
@@ -1844,6 +1856,7 @@ async fn upscale_inner(
     .await?
     .pop()
     .ok_or_else(|| CoreError::internal("The upscale returned no image."))?;
+    let photo = checked.photo_style();
     if cancel.is_cancelled()
         || !core
             .session
@@ -1851,6 +1864,7 @@ async fn upscale_inner(
     {
         return Err(CoreError::new("cancelled", "Cancelled."));
     }
+    core.check.note_photo_style(&core.session, &meta.id, photo);
     Ok(meta)
 }
 

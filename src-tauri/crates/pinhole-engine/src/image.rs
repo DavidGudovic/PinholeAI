@@ -239,13 +239,31 @@ pub fn sheet_columns(n: usize) -> usize {
 /// Pictures (RGBA8, row-major) side by side in one picture: a grid of equal cells the size of the
 /// largest picture, each picture fitted and centred in its cell, small white gaps between them
 /// and around the edge, no text. Scaled down so neither side is over [`SHEET_MAX_SIDE`].
-pub fn sheet(tiles: &[(Vec<u8>, u32, u32)]) -> (Vec<u8>, u32, u32) {
+pub fn sheet(tiles: Vec<(Vec<u8>, u32, u32)>) -> (Vec<u8>, u32, u32) {
+    let sizes: Vec<(u32, u32)> = tiles.iter().map(|t| (t.1, t.2)).collect();
+    match sheet_with(
+        &sizes,
+        tiles.into_iter().map(Ok::<_, std::convert::Infallible>),
+    ) {
+        Ok(out) => out,
+        Err(never) => match never {},
+    }
+}
+
+/// [`sheet`] with the cells laid out from `sizes` (each picture's width and height, in
+/// order) and the pixels taken one picture at a time from `tiles`, so only one full-size
+/// picture is held at once. A picture is fitted by its own pixel size; the first error from
+/// `tiles` is returned.
+pub fn sheet_with<E>(
+    sizes: &[(u32, u32)],
+    tiles: impl IntoIterator<Item = Result<(Vec<u8>, u32, u32), E>>,
+) -> Result<(Vec<u8>, u32, u32), E> {
     use image::imageops::{self, FilterType};
-    let n = tiles.len().max(1);
+    let n = sizes.len().max(1);
     let cols = sheet_columns(n) as u32;
     let rows = n.div_ceil(cols as usize) as u32;
-    let cell_w = tiles.iter().map(|t| t.1).max().unwrap_or(1).max(1);
-    let cell_h = tiles.iter().map(|t| t.2).max().unwrap_or(1).max(1);
+    let cell_w = sizes.iter().map(|t| t.0).max().unwrap_or(1).max(1);
+    let cell_h = sizes.iter().map(|t| t.1).max().unwrap_or(1).max(1);
     let gap = (cell_w.min(cell_h) / 50).max(8);
     let full_w = cols * cell_w + (cols + 1) * gap;
     let full_h = rows * cell_h + (rows + 1) * gap;
@@ -254,17 +272,18 @@ pub fn sheet(tiles: &[(Vec<u8>, u32, u32)]) -> (Vec<u8>, u32, u32) {
     let (cw, ch, g) = (px(cell_w), px(cell_h), px(gap));
     let (w, h) = (cols * cw + (cols + 1) * g, rows * ch + (rows + 1) * g);
     let mut out = image::RgbaImage::from_pixel(w, h, image::Rgba([255, 255, 255, 255]));
-    for (i, (rgba, tw, th)) in tiles.iter().enumerate() {
-        let Some(tile) = image::RgbaImage::from_raw(*tw, *th, rgba.clone()) else {
+    for (i, t) in tiles.into_iter().take(sizes.len()).enumerate() {
+        let (rgba, tw, th) = t?;
+        let Some(tile) = image::RgbaImage::from_raw(tw, th, rgba) else {
             continue;
         };
         // Fit inside the cell, keeping the shape.
-        let fit = (cw as f64 / *tw as f64).min(ch as f64 / *th as f64);
+        let fit = (cw as f64 / tw as f64).min(ch as f64 / th as f64);
         let (fw, fh) = (
-            ((*tw as f64 * fit).round() as u32).clamp(1, cw),
-            ((*th as f64 * fit).round() as u32).clamp(1, ch),
+            ((tw as f64 * fit).round() as u32).clamp(1, cw),
+            ((th as f64 * fit).round() as u32).clamp(1, ch),
         );
-        let tile = if (fw, fh) == (*tw, *th) {
+        let tile = if (fw, fh) == (tw, th) {
             tile
         } else {
             imageops::resize(&tile, fw, fh, FilterType::Lanczos3)
@@ -274,7 +293,7 @@ pub fn sheet(tiles: &[(Vec<u8>, u32, u32)]) -> (Vec<u8>, u32, u32) {
         let y = g + r * (ch + g) + (ch - fh) / 2;
         imageops::overlay(&mut out, &tile, i64::from(x), i64::from(y));
     }
-    (out.into_raw(), w, h)
+    Ok((out.into_raw(), w, h))
 }
 
 fn short(s: &str) -> String {
@@ -395,7 +414,7 @@ mod tests {
     fn sheet_puts_pictures_in_a_grid_with_gaps() {
         let red = ([200u8, 0, 0, 255].repeat(100 * 60), 100, 60);
         let tiles = [red.clone(), red.clone(), red.clone(), red];
-        let (px, w, h) = sheet(&tiles);
+        let (px, w, h) = sheet(tiles.to_vec());
         // 2×2 cells of 100×60 with 8 px gaps.
         assert_eq!((w, h), (2 * 100 + 3 * 8, 2 * 60 + 3 * 8));
         let at = |x: u32, y: u32| &px[((y * w + x) * 4) as usize..((y * w + x) * 4 + 4) as usize];
@@ -415,12 +434,99 @@ mod tests {
     fn sheet_fits_other_shapes_and_stays_under_the_limit() {
         let wide = ([0u8, 0, 200, 255].repeat(200 * 100), 200, 100);
         let tall = ([0u8, 200, 0, 255].repeat(100 * 200), 100, 200);
-        let (_, w, h) = sheet(&[wide.clone(), tall]);
+        let (_, w, h) = sheet(vec![wide.clone(), tall]);
         // Cells take the largest width and height.
         assert_eq!((w, h), (2 * 200 + 3 * 8, 200 + 2 * 8));
         let big = (vec![9u8; 4000 * 3000 * 4], 4000, 3000);
-        let (px, w, h) = sheet(&[big.clone(), big.clone(), big]);
+        let (px, w, h) = sheet(vec![big.clone(), big.clone(), big]);
         assert!(w <= SHEET_MAX_SIDE && h <= SHEET_MAX_SIDE);
         assert_eq!(px.len() as u64, u64::from(w) * u64::from(h) * 4);
+    }
+
+    /// The sheet as it was built before tiles were taken one at a time.
+    fn sheet_all_at_once(tiles: &[(Vec<u8>, u32, u32)]) -> (Vec<u8>, u32, u32) {
+        use image::imageops::{self, FilterType};
+        let n = tiles.len().max(1);
+        let cols = sheet_columns(n) as u32;
+        let rows = n.div_ceil(cols as usize) as u32;
+        let cell_w = tiles.iter().map(|t| t.1).max().unwrap_or(1).max(1);
+        let cell_h = tiles.iter().map(|t| t.2).max().unwrap_or(1).max(1);
+        let gap = (cell_w.min(cell_h) / 50).max(8);
+        let full_w = cols * cell_w + (cols + 1) * gap;
+        let full_h = rows * cell_h + (rows + 1) * gap;
+        let scale = (SHEET_MAX_SIDE as f64 / full_w.max(full_h) as f64).min(1.0);
+        let px = |v: u32| ((v as f64 * scale).round() as u32).max(1);
+        let (cw, ch, g) = (px(cell_w), px(cell_h), px(gap));
+        let (w, h) = (cols * cw + (cols + 1) * g, rows * ch + (rows + 1) * g);
+        let mut out = image::RgbaImage::from_pixel(w, h, image::Rgba([255, 255, 255, 255]));
+        for (i, (rgba, tw, th)) in tiles.iter().enumerate() {
+            let Some(tile) = image::RgbaImage::from_raw(*tw, *th, rgba.clone()) else {
+                continue;
+            };
+            let fit = (cw as f64 / *tw as f64).min(ch as f64 / *th as f64);
+            let (fw, fh) = (
+                ((*tw as f64 * fit).round() as u32).clamp(1, cw),
+                ((*th as f64 * fit).round() as u32).clamp(1, ch),
+            );
+            let tile = if (fw, fh) == (*tw, *th) {
+                tile
+            } else {
+                imageops::resize(&tile, fw, fh, FilterType::Lanczos3)
+            };
+            let (c, r) = (i as u32 % cols, i as u32 / cols);
+            let x = g + c * (cw + g) + (cw - fw) / 2;
+            let y = g + r * (ch + g) + (ch - fh) / 2;
+            imageops::overlay(&mut out, &tile, i64::from(x), i64::from(y));
+        }
+        (out.into_raw(), w, h)
+    }
+
+    fn pattern(w: u32, h: u32, seed: u32) -> (Vec<u8>, u32, u32) {
+        let px = (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = (i % w, i / w);
+                [
+                    (x * 7 + seed) as u8,
+                    (y * 11 + seed) as u8,
+                    (x ^ y) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        (px, w, h)
+    }
+
+    #[test]
+    fn sheet_pixels_match_the_all_at_once_sheet() {
+        // Different shapes (resized into their cells) plus one that fits as it is.
+        let tiles = vec![pattern(90, 60, 1), pattern(40, 120, 5), pattern(90, 120, 9)];
+        assert_eq!(sheet(tiles.clone()), sheet_all_at_once(&tiles));
+        // Scaled down to the size limit.
+        let tiles = vec![pattern(9000, 20, 3), pattern(30, 50, 7)];
+        assert_eq!(sheet(tiles.clone()), sheet_all_at_once(&tiles));
+    }
+
+    #[test]
+    fn sheet_with_takes_tiles_one_at_a_time_and_stops_at_an_error() {
+        let sizes = [(20, 10), (20, 10), (20, 10)];
+        let mut taken = 0;
+        let r = sheet_with(
+            &sizes,
+            (0..3).map(|i| {
+                taken += 1;
+                if i == 1 {
+                    Err("damaged")
+                } else {
+                    Ok(pattern(20, 10, i))
+                }
+            }),
+        );
+        assert_eq!(r, Err("damaged"));
+        assert_eq!(taken, 2, "nothing after the error is read");
+        // Cells come from `sizes`; a picture of another pixel size is fitted by its pixels.
+        let tiles = [Ok(pattern(20, 10, 1)), Ok(pattern(40, 20, 2))];
+        let (px, w, h) = sheet_with::<()>(&[(40, 20), (40, 20)], tiles).unwrap();
+        assert_eq!((w, h), (2 * 40 + 3 * 8, 20 + 2 * 8));
+        assert_eq!(px.len() as u32, w * h * 4);
     }
 }
