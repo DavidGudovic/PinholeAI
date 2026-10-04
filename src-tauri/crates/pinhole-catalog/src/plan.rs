@@ -20,6 +20,36 @@ use crate::view::{FamilyChoice, InstallPlan, PlanComponent, PlanFile, PlanFileOp
 /// Kept free on top of the download so the disk isn't filled to the brim.
 pub const DISK_MARGIN_BYTES: u64 = 512 * 1_000_000;
 
+/// Whether `total` bytes fit, given `free` bytes and `partial` bytes already
+/// downloaded into `.part` files the install resumes from.
+pub fn enough_disk(free: u64, partial: u64, total: u64) -> bool {
+    free.saturating_add(partial) >= total.saturating_add(DISK_MARGIN_BYTES)
+}
+
+/// Bytes of this install already in `.part` files left by a cancelled
+/// download (`models_dir(kind)` = where files of that kind are saved).
+/// `family_id` = the resolved family or the first candidate.
+pub fn partial_bytes(
+    env: &PlanEnv,
+    version: &ModelVersion,
+    model: Option<&Model>,
+    family_id: Option<&str>,
+    chosen_file: Option<u64>,
+    models_dir: impl Fn(ModelKind) -> std::path::PathBuf,
+) -> u64 {
+    let Ok(install) = civitai_install_files(env, version, model, family_id, chosen_file) else {
+        return 0;
+    };
+    install
+        .files
+        .iter()
+        .map(|f| {
+            let dest = models_dir(f.kind).join(&f.file_name);
+            f.size_bytes - local::still_to_download(&dest, f.size_bytes)
+        })
+        .fold(0u64, u64::saturating_add)
+}
+
 /// Registry, hardware and installed files the plan is computed against.
 pub struct PlanEnv<'a> {
     pub registry: &'a Registry,
@@ -319,7 +349,7 @@ pub fn build_plan(
         components,
         total_download_bytes,
         free_disk_bytes,
-        enough_disk: free_disk_bytes >= total_download_bytes.saturating_add(DISK_MARGIN_BYTES),
+        enough_disk: enough_disk(free_disk_bytes, 0, total_download_bytes),
         vram: need_fit.map(|(n, _)| n),
         fit: need_fit.map(|(_, f)| f),
         license_note: license_note(env, family_id.as_deref(), model),
@@ -502,6 +532,39 @@ mod tests {
             serde_json::from_str(include_str!("../tests/fixtures/model_version.json")).unwrap(),
             serde_json::from_str(include_str!("../tests/fixtures/model.json")).unwrap(),
         )
+    }
+
+    #[test]
+    fn partial_downloads_count_toward_free_space() {
+        let reg = registry();
+        let f = filters();
+        let idx = index(vec![]);
+        let h = hw(8.0);
+        let env = PlanEnv {
+            registry: &reg,
+            index: &idx,
+            hw: &h,
+            filters: &f,
+        };
+        let (v, m) = jugg();
+        let dir = tempfile::tempdir().unwrap();
+        let models_dir = |k: ModelKind| dir.path().join(k.dir_name());
+        let p = build_plan(&env, &v, Some(&m), 1_000_000_000, false, None);
+        assert!(!p.enough_disk);
+        let fam = p.family.as_ref().map(|f| f.family_id.as_str());
+        assert_eq!(partial_bytes(&env, &v, Some(&m), fam, None, models_dir), 0);
+
+        // A cancelled download left 7 GB of the main file in its `.part`.
+        let install = civitai_install_files(&env, &v, Some(&m), fam, None).unwrap();
+        let main = &install.files[0];
+        let dest = models_dir(main.kind).join(&main.file_name);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        let part = std::fs::File::create(local::part_path(&dest)).unwrap();
+        part.set_len(7_000_000_000).unwrap();
+        let partial = partial_bytes(&env, &v, Some(&m), fam, None, models_dir);
+        assert_eq!(partial, 7_000_000_000);
+        assert!(enough_disk(1_000_000_000, partial, p.total_download_bytes));
+        assert!(!enough_disk(100_000_000, partial, p.total_download_bytes));
     }
 
     #[test]

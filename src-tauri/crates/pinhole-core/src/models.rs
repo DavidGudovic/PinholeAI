@@ -776,10 +776,11 @@ pub(crate) async fn start_install(
         if items.is_empty() {
             return Err(CoreError::invalid("This is already downloading."));
         }
-        let total: u64 = items.iter().map(|(f, _)| f.size_bytes).sum();
         let models_root =
             models_dir_for_write(core, ModelKind::Checkpoint).map(|_| core.data.models_root())?;
-        check_free_space(&models_root, total).map_err(|e| disk_space_error(e, &items[0].0.url))?;
+        let first_url = items[0].0.url.clone();
+        // Bytes still to download: a cancelled download resumes from its `.part`.
+        let mut need = 0u64;
 
         let mut specs = Vec::new();
         let mut planned: Vec<(PathBuf, String, Registration)> = Vec::new();
@@ -812,6 +813,7 @@ pub(crate) async fn start_install(
                             .relative(p)
                             .is_some_and(|rel| index.has_rel_path(&rel)))
             });
+            need = need.saturating_add(local::still_to_download(&dest, f.size_bytes));
             let headers: Vec<(String, String)> =
                 pinhole_catalog::api::civitai_auth_header(api_key.as_deref(), &f.url)
                     .into_iter()
@@ -839,6 +841,7 @@ pub(crate) async fn start_install(
             };
             planned.push((dest, inflight_key(&f), reg));
         }
+        check_free_space(&models_root, need).map_err(|e| disk_space_error(e, &first_url))?;
         let group_id =
             core.downloads
                 .enqueue_kind(label, pinhole_net::download::DownloadKind::Model, specs);
@@ -977,6 +980,8 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
     }
     let registry = core.registry();
     purge_expired_pending(core);
+    // Refuse before copying a large file that couldn't be registered afterwards.
+    core.installed.lock().check_savable(&core.data)?;
 
     let header_src = src.clone();
     let reg_for_detect = registry.clone();
@@ -1184,7 +1189,7 @@ pub async fn add_local_model(core: &Arc<AppCore>, path: &str) -> CoreResult<AddF
         }
         // A LoRA of unknown base still works; it just can't be checked for compatibility.
         FamilyResolution::Unsupported(_) if kind == ModelKind::Lora => {
-            register_pending(core, &pending, None)
+            register_pending(core, &pending, None).inspect_err(|_| remove_copy(&pending))
         }
         FamilyResolution::Unsupported(base) => {
             remove_copy(&pending);
@@ -2063,6 +2068,51 @@ mod tests {
         assert!(core.downloads.status().is_empty(), "nothing queued");
         assert!(core.models.inflight_dests.lock().is_empty());
         assert!(core.models.inflight.lock().is_empty());
+    }
+
+    /// "Add a file" is refused before copying when the index couldn't be saved.
+    #[tokio::test]
+    async fn add_a_file_is_refused_before_copying_when_the_index_cant_be_saved() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        core.installed.lock().schema_version = pinhole_store::installed::SCHEMA_VERSION + 1;
+        let src = tmp.path().join("Big.safetensors");
+        safetensors(&src, SDXL_TENSORS);
+        let e = add_local_model(&core, src.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(e.message.contains("newer version"), "{}", e.message);
+        let dir = core.data.models(ModelKind::Checkpoint);
+        assert!(
+            !dir.exists() || std::fs::read_dir(&dir).unwrap().next().is_none(),
+            "nothing copied"
+        );
+    }
+
+    /// A LoRA of unknown base whose registration fails leaves no copy behind.
+    #[tokio::test]
+    async fn failed_lora_registration_removes_the_copy() {
+        let (tmp, core) = test_core(Arc::new(Recorder::default()));
+        core.offline.set(true);
+        // A directory where the index file goes: saving it fails.
+        std::fs::create_dir_all(core.data.installed_file()).unwrap();
+        let src = tmp.path().join("style.safetensors");
+        safetensors(
+            &src,
+            &[
+                "lora_unet_input_blocks_1_1_proj_in.lora_down.weight",
+                "lora_unet_input_blocks_1_1_proj_in.lora_up.weight",
+            ],
+        );
+        assert!(add_local_model(&core, src.to_str().unwrap()).await.is_err());
+        let dir = core.data.models(ModelKind::Lora);
+        let left: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        assert!(core.installed.lock().files.is_empty());
+        assert!(src.is_file(), "the user's file is untouched");
     }
 
     /// "Add a file" never picks the name a download is writing to (only its
