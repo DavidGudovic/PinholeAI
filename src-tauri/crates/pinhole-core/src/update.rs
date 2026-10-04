@@ -71,6 +71,12 @@ pub const SELF_UPDATE: bool = !UPDATE_PUBLIC_KEY.trim_ascii().is_empty();
 /// nothing was replaced). The UI can be closed and reopened meanwhile.
 static UPDATING: AtomicBool = AtomicBool::new(false);
 
+/// Set when an update was installed but Pinhole couldn't restart into it.
+static RESTART_NEEDED: AtomicBool = AtomicBool::new(false);
+
+const RESTART_MESSAGE: &str =
+    "The update is installed. Close Pinhole and open it again when your picture or download is done.";
+
 /// How this copy of Pinhole can update itself. `UpdateInstallMode` in `src/lib/types.ts`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -532,13 +538,25 @@ pub async fn install_update(
     }
     let current = parse_current(current_version)?;
     if UPDATING.swap(true, Ordering::SeqCst) {
-        return Err(CoreError::invalid("An update is already under way."));
+        return Err(busy_error(RESTART_NEEDED.load(Ordering::SeqCst)));
     }
     let result = install_inner(core, &current, version).await;
-    if result.as_ref().is_err_and(|e| !installed_anyway(e)) {
-        UPDATING.store(false, Ordering::SeqCst);
+    match &result {
+        Err(e) if installed_anyway(e) => RESTART_NEEDED.store(true, Ordering::SeqCst),
+        Err(_) => UPDATING.store(false, Ordering::SeqCst),
+        Ok(_) => {}
     }
     result
+}
+
+/// Why a second update doesn't start: one is running, or one is installed and only a
+/// restart is missing.
+fn busy_error(restart_needed: bool) -> CoreError {
+    if restart_needed {
+        CoreError::new("update_restart", RESTART_MESSAGE)
+    } else {
+        CoreError::invalid("An update is already under way.")
+    }
 }
 
 /// An `update_restart` error comes after the new version was put in place, so no second
@@ -664,10 +682,7 @@ async fn install_inner(
             res?;
             // The password dialog can stay open a while: work started meanwhile isn't cut off.
             if ensure_idle(core, Some(&group)).is_err() {
-                return Err(CoreError::new(
-                    "update_restart",
-                    "The update is installed. Close Pinhole and open it again when your picture or download is done.",
-                ));
+                return Err(CoreError::new("update_restart", RESTART_MESSAGE));
             }
             Ok(Prepared::Relaunch(PathBuf::from(DEB_EXE)))
         }
@@ -883,6 +898,14 @@ mod tests {
         assert!(installed_anyway(&CoreError::new("update_restart", "x")));
         assert!(!installed_anyway(&CoreError::invalid("x")));
         assert!(!installed_anyway(&CoreError::new("io", "x")));
+    }
+
+    #[test]
+    fn updating_again_after_an_install_asks_for_a_restart() {
+        let e = busy_error(true);
+        assert_eq!(e.code, "update_restart");
+        assert_eq!(e.message, RESTART_MESSAGE);
+        assert_eq!(busy_error(false).message, "An update is already under way.");
     }
 
     fn rel(tag: &str, draft: bool, assets: &[(&str, u64)]) -> GhRelease {
