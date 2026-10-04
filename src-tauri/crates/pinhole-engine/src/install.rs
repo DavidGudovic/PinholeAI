@@ -204,6 +204,10 @@ pub fn unpack_build(
             }
         }
     }
+    // A working install of this version/backend is kept as it is.
+    if let Some(done) = find_installed(engine_root, kind, &pin.version, &sel.backend) {
+        return Ok(done);
+    }
     let final_dir = install_dir(engine_root, kind, &pin.version, &sel.backend);
     let parent = final_dir
         .parent()
@@ -269,11 +273,17 @@ pub fn unpack_build(
     };
     let json =
         serde_json::to_vec_pretty(&marker).map_err(|e| EngineError::Archive(e.to_string()))?;
-    fs::write(tmp.join(MARKER_FILE), json)?;
-    if final_dir.exists() {
-        fs::remove_dir_all(&final_dir)?;
+    let placed = (|| -> io::Result<()> {
+        fs::write(tmp.join(MARKER_FILE), json)?;
+        if final_dir.exists() {
+            fs::remove_dir_all(&final_dir)?;
+        }
+        fs::rename(&tmp, &final_dir)
+    })();
+    if let Err(e) = placed {
+        let _ = fs::remove_dir_all(&tmp);
+        return Err(e.into());
     }
-    fs::rename(&tmp, &final_dir)?;
     find_installed(engine_root, kind, &pin.version, &sel.backend)
         .ok_or_else(|| EngineError::BinaryMissing(pin.binary.clone()))
 }
@@ -322,6 +332,51 @@ pub fn cleanup_downloads(paths: &[PathBuf]) {
     for p in paths {
         let _ = fs::remove_file(p);
     }
+}
+
+/// Best effort: remove what no pinned engine can use any more from `engine_root`:
+/// `<sd|llama>/<version>/` folders of other versions, unpack staging folders
+/// (`.<backend>.tmp-<pid>`) left by other processes, and files in `downloads/`
+/// that don't belong to a pinned version. Errors are ignored per entry. Run it
+/// when no engine of another version is running (e.g. after the orphan sweep).
+pub fn sweep_stale(engine_root: &Path, cfg: &EngineConfig) {
+    let own_tmp = format!(".tmp-{}", std::process::id());
+    let mut keep_prefixes = Vec::new();
+    for kind in [EngineKind::Sd, EngineKind::Llama] {
+        let pinned = sanitize(&kind.pin(cfg).version);
+        keep_prefixes.push(format!("{}-{pinned}-", kind.dir_name()));
+        for (name, path) in real_entries(&engine_root.join(kind.dir_name()), true) {
+            if name != pinned {
+                let _ = fs::remove_dir_all(&path);
+                continue;
+            }
+            for (name, path) in real_entries(&path, true) {
+                if name.starts_with('.') && name.contains(".tmp-") && !name.ends_with(&own_tmp) {
+                    let _ = fs::remove_dir_all(&path);
+                }
+            }
+        }
+    }
+    for (name, path) in real_entries(&download_dir(engine_root), false) {
+        if !keep_prefixes.iter().any(|p| name.starts_with(p.as_str())) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
+/// `(name, path)` of the directories (`dirs`) or files (`!dirs`) directly in
+/// `dir`; symlinks and unreadable entries are skipped.
+fn real_entries(dir: &Path, dirs: bool) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    rd.filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type()
+                .is_ok_and(|t| !t.is_symlink() && if dirs { t.is_dir() } else { t.is_file() })
+        })
+        .filter_map(|e| Some((e.file_name().into_string().ok()?, e.path())))
+        .collect()
 }
 
 /// Download (via the one allow-listed [`pinhole_net::HttpClient`]) + verify +
@@ -990,6 +1045,137 @@ mod tests {
         assert!(got.dir.join("libcudart.so.12").is_file());
         assert!(got.dir.join("libcublas.so.12").is_file());
         assert!(got.dir.join("LICENSE").is_file());
+    }
+
+    /// A small llama CPU build: (pin, selection, archive spec, archive path).
+    fn llama_cpu_build(dir: &Path) -> (EnginePin, SelectedBuild, ArchiveSpec, PathBuf) {
+        let exe_path = format!("llama-b1/{}", exe_name("llama-server"));
+        let tgz = dir.join("llama-b1-bin-ubuntu-x64.tar.gz");
+        make_tgz(&tgz, &[(exe_path.as_str(), b"#!/bin/sh\n")], &[]);
+        let pin = EnginePin {
+            repo: "r".into(),
+            version: "b1".into(),
+            commit: None,
+            binary: "llama-server".into(),
+            launch_defaults: vec![],
+            backend_override: Default::default(),
+            builds: Default::default(),
+        };
+        let build = BuildSpec {
+            url: "https://github.com/x/releases/download/b1/a.tar.gz".into(),
+            sha256: "TODO".into(),
+            size_bytes: None,
+            size_mb: None,
+            extra: vec![],
+            note: None,
+            min_glibc: None,
+        };
+        let sel = SelectedBuild {
+            key: "linux_cpu".into(),
+            backend: "cpu".into(),
+            build: build.clone(),
+        };
+        (pin, sel, build.archives()[0].clone(), tgz)
+    }
+
+    #[test]
+    fn unpack_build_keeps_an_existing_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("engine");
+        let (pin, sel, spec, tgz) = llama_cpu_build(tmp.path());
+        let first = unpack_build(
+            &root,
+            EngineKind::Llama,
+            &pin,
+            &sel,
+            &[(spec.clone(), tgz.clone(), "abc".into())],
+        )
+        .unwrap();
+        fs::write(first.dir.join("kept.txt"), b"x").unwrap();
+        // The archive is gone by now (removed after the first unpack).
+        fs::remove_file(&tgz).unwrap();
+        let again = unpack_build(
+            &root,
+            EngineKind::Llama,
+            &pin,
+            &sel,
+            &[(spec, tgz, "abc".into())],
+        )
+        .unwrap();
+        assert_eq!(again, first);
+        assert!(first.dir.join("kept.txt").is_file());
+        assert!(first.dir.join(MARKER_FILE).is_file());
+    }
+
+    #[test]
+    fn unpack_build_removes_staging_when_the_final_move_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("engine");
+        let (pin, sel, spec, tgz) = llama_cpu_build(tmp.path());
+        // A file where the install folder goes: it can't be replaced by a folder.
+        let final_dir = install_dir(&root, EngineKind::Llama, "b1", "cpu");
+        fs::create_dir_all(final_dir.parent().unwrap()).unwrap();
+        fs::write(&final_dir, b"x").unwrap();
+        assert!(unpack_build(
+            &root,
+            EngineKind::Llama,
+            &pin,
+            &sel,
+            &[(spec, tgz, "abc".into())],
+        )
+        .is_err());
+        let names: Vec<_> = fs::read_dir(final_dir.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["cpu".to_string()]);
+    }
+
+    #[test]
+    fn sweep_stale_removes_other_versions_staging_and_archives() {
+        let cfg = EngineConfig::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../config/engine.yaml"),
+        )
+        .unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("engine");
+        let sd_pin = sanitize(&cfg.stable_diffusion_cpp.version);
+        let llama_pin = sanitize(&cfg.llama_cpp.version);
+        let write = |rel: &str| {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"x").unwrap();
+            p
+        };
+        let own = std::process::id();
+        let other = own.wrapping_add(1);
+        let removed = [
+            write(&format!("sd/old-ver/cpu/{MARKER_FILE}")),
+            write("llama/b1/cuda/llama-server"),
+            write(&format!("sd/{sd_pin}/.cpu.tmp-{other}/x")),
+            write("downloads/sd-old-ver-a.zip"),
+            write("downloads/llama-b1-a.tar.gz.part"),
+        ];
+        let kept = [
+            write(&format!("sd/{sd_pin}/cpu/{MARKER_FILE}")),
+            write(&format!("sd/{sd_pin}/.cuda.tmp-{own}/x")),
+            write(&format!("llama/{llama_pin}/vulkan/{MARKER_FILE}")),
+            write(&format!("downloads/sd-{sd_pin}-a.zip")),
+            write(&format!("downloads/llama-{llama_pin}-b.zip.part")),
+            write("notes.txt"),
+        ];
+        sweep_stale(&root, &cfg);
+        for p in &removed {
+            assert!(!p.exists(), "{}", p.display());
+        }
+        for p in &kept {
+            assert!(p.exists(), "{}", p.display());
+        }
+        assert!(!root.join("sd").join("old-ver").exists());
+        assert!(!root.join("llama").join("b1").exists());
+        // A missing engine folder is fine.
+        sweep_stale(&tmp.path().join("nothing"), &cfg);
     }
 
     #[test]

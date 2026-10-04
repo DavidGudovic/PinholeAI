@@ -77,6 +77,9 @@ every decision can be overridden.
   NVIDIA → CUDA 12.x build (must support Blackwell / RTX 50xx), AMD/Intel → Vulkan build,
   no GPU → CPU build (warn: very slow).
 - Stored in `Data/engine/{sd,llama}/<version>/<backend>/`. Verify hash before first launch.
+- At startup (after leftover engines are stopped), folders of engine versions other than the
+  pinned ones, unfinished unpack folders from earlier runs and downloaded archives of other
+  versions are removed from `Data/engine/`.
 - Linux has no upstream CUDA build of `sd-server`; Pinhole's fork builds one for RTX 30xx and newer
   (compute capability 8.6+). Older NVIDIA cards, or no NVIDIA driver, use the Vulkan build.
 - Windows: the upstream builds need the MSVC runtime (VC++ 2015–2022 x64); Pinhole bundles the
