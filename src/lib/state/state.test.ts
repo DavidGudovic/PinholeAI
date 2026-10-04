@@ -118,6 +118,23 @@ describe("reducer", () => {
     expect(s.create.fineTune.seed).toBe(999);
   });
 
+  it("Keep this look moves to the next result when the selected one is removed", () => {
+    let s = run(withModels(), { type: "addResults", batch: null, images: [result("a", 11), result("b", 12), result("c", 13)], refs: [ref("a"), ref("b"), ref("c")] });
+    s = run(s, { type: "keepLook", on: true }, { type: "removeResult", id: "a" });
+    expect(s.selectedResultId).toBe("b");
+    expect(s.create.fineTune.seed).toBe(12);
+    // It still follows the selection afterwards.
+    s = run(s, { type: "selectResult", id: "c" });
+    expect(s.create.fineTune.seed).toBe(13);
+    // Removing a result that isn't selected leaves the seed alone.
+    s = run(s, { type: "removeResult", id: "b" });
+    expect(s.create.fineTune.seed).toBe(13);
+    // With nothing left to select, the seed is kept.
+    s = run(s, { type: "removeResult", id: "c" });
+    expect(s.selectedResultId).toBeNull();
+    expect(s.create.fineTune.seed).toBe(13);
+  });
+
   it("keeps images that are still shown somewhere and drops the rest", () => {
     let s = run(withModels(), { type: "addResults", batch: null, images: [result("a", 1)], refs: [ref("a")] });
     s = run(s, { type: "editLoad", ref: ref("a") });

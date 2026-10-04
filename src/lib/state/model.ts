@@ -707,7 +707,14 @@ function inner(s: AppState, a: Action): AppState {
       if (i < 0) return s;
       const results = s.results.filter((r) => r.id !== a.id);
       const selectedResultId = s.selectedResultId === a.id ? (results[Math.min(i, results.length - 1)]?.id ?? null) : s.selectedResultId;
-      return { ...s, results, selectedResultId };
+      let create = s.create;
+      // "Keep this look" moves to the new selection, as in selectResult. With nothing left to
+      // select, the seed stays as it is.
+      const next = selectedResultId !== s.selectedResultId ? results.find((r) => r.id === selectedResultId) : undefined;
+      if (next && create.fineTune.seed != null && create.fineTune.seed === s.results[i].seed) {
+        create = { ...create, fineTune: { ...create.fineTune, seed: next.seed } };
+      }
+      return { ...s, results, selectedResultId, create };
     }
     case "markSaved": {
       const saved = { ...s.saved };
