@@ -32,7 +32,21 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span className="hidden text-[15px] font-semibold tracking-tight md:inline">Pinhole</span>
       </div>
 
-      <nav role="tablist" aria-label="Sections" className="flex items-center gap-0.5">
+      <nav
+        role="tablist"
+        aria-label="Sections"
+        className="flex items-center gap-0.5"
+        onKeyDown={(e) => {
+          // Left/Right (Home/End) move between the sections, like a tab strip.
+          const i = TABS.findIndex((t) => t.id === tab);
+          const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: TABS.length - 1 }[e.key];
+          if (to === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
+          e.preventDefault();
+          const next = TABS[(to + TABS.length) % TABS.length].id;
+          actions.setTab(next, false);
+          e.currentTarget.querySelector<HTMLElement>(`[aria-controls="tab-${next}"]`)?.focus();
+        }}
+      >
         {TABS.map((t) => {
           const active = t.id === tab;
           return (
@@ -42,7 +56,8 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
               role="tab"
               aria-selected={active}
               aria-controls={`tab-${t.id}`}
-              onClick={() => actions.setTab(t.id)}
+              // A click puts the cursor in the section's text field; Enter or Space keeps focus here.
+              onClick={(e) => actions.setTab(t.id, e.detail > 0)}
               className={cx(
                 "relative inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors",
                 focusRing,

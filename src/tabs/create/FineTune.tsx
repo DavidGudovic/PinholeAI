@@ -16,6 +16,7 @@ import { buildCreateRequest, randomSeed } from "../../lib/state/request";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { FALLBACK_SHAPES, qualityIndex } from "./Dials";
 import { UpscalerSelect, useUpscaler } from "../../components/UpscalerChoice";
+import { focusTabField } from "../../lib/focus";
 
 function Row({
   label,
@@ -419,6 +420,7 @@ export function LoraSection({ model, target = "create" }: { model: InstalledMode
                   onClick={() => {
                     setLoras([...used, { loraId: l.id, weight: DEFAULT_LORA_WEIGHT }]);
                     close();
+                    focusTabField(target);
                   }}
                   hint={l.trainedWords.length ? `Trigger: ${l.trainedWords.join(", ")}` : l.baseModel ?? undefined}
                 >

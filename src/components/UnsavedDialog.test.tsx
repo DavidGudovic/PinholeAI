@@ -63,6 +63,12 @@ describe("UnsavedDialog", () => {
     expect(screen.getByText("Unsaved edited images are permanently deleted.")).toBeTruthy();
   });
 
+  it("focuses the button that goes ahead, so Enter closes the window", async () => {
+    open("close");
+    await act(() => new Promise((r) => setTimeout(r, 0)));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close without saving" }));
+  });
+
   it("stays open after Save all when another picture finished during the save", async () => {
     const store = open("close", (s) => s.dispatch({ type: "addResults", batch: null, images: [img("a")], refs: [ref("a")] }));
     fireEvent.click(screen.getByRole("button", { name: /Save all/ }));

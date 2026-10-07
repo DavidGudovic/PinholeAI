@@ -9,6 +9,7 @@ import { useActions } from "../../lib/state/AppProvider";
 import { loraCompatible, pickedTriggerWords } from "../../lib/state/model";
 import { useAppState, useDispatch } from "../../lib/state/store";
 import type { InstalledLora, InstalledModel, LoraUse } from "../../lib/types";
+import { focusTabField } from "../../lib/focus";
 
 /** `target`: the Create or the Edit tab's add-ons. */
 export function AddonChips({ model, target = "create" }: { model: InstalledModel | null; target?: "create" | "edit" }) {
@@ -87,7 +88,11 @@ export function AddonChips({ model, target = "create" }: { model: InstalledModel
               aria-label={`Remove ${name}`}
               title={`Remove ${name}`}
               className={cx("mr-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full hover:bg-black/10 dark:hover:bg-white/10", focusRing)}
-              onClick={() => remove(i)}
+              onClick={() => {
+                remove(i);
+                // The chip (and this button) goes away: keep the cursor where typing goes on.
+                focusTabField(target);
+              }}
             >
               <X className="h-3 w-3" />
             </button>

@@ -48,6 +48,7 @@ import { MaskControls } from "./MaskControls";
 import { RedrawFields } from "./RedrawFields";
 import { SecondImage } from "./SecondImage";
 import { Stage } from "./Stage";
+import { focusTabField } from "../../lib/focus";
 
 type SizeChoice = EditSizeChoice;
 
@@ -210,6 +211,7 @@ export function EditTab() {
     setImporting(true); // Apply waits for image 2
     try {
       await actions.importSecondToEdit(f);
+      focusTabField("edit");
     } catch (err) {
       setError(api.asCoreError(err));
     } finally {
@@ -232,6 +234,7 @@ export function EditTab() {
     }
     setError(null);
     dispatch({ type: "editSetSecond", ref });
+    focusTabField("edit");
   };
   // "Also apply to…": this session's pictures, not the one shown (nor image 2 while it is used).
   const alsoOptions = useSessionPictures([node?.imageId, twoImages ? e.secondImageId : null], 24);
@@ -519,9 +522,10 @@ export function EditTab() {
           <div className="flex flex-wrap items-center gap-2">
             <StylePicker
               value={e.styleId}
-              onChange={(id) =>
-                dispatch({ type: "patchEdit", patch: { styleId: id } })
-              }
+              onChange={(id) => {
+                dispatch({ type: "patchEdit", patch: { styleId: id } });
+                focusTabField("edit");
+              }}
               familyId={model?.familyId}
               familyLabel={model?.familyLabel}
             />

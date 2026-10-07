@@ -15,6 +15,7 @@ import { PhotoNotice } from "../../components/PhotoNotice";
 import { modKey } from "../../lib/state/platform";
 import { useAppState, useDispatch, useStore } from "../../lib/state/store";
 import type { CoreError, InstalledModel } from "../../lib/types";
+import { focusTabField } from "../../lib/focus";
 
 /** How many of this session's pictures the empty slot offers. */
 const RECENT = 6;
@@ -38,6 +39,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
     setImporting(true);
     try {
       await actions.importCreateReference(f);
+      focusTabField("create");
     } catch (e) {
       setError(api.asCoreError(e));
     } finally {
@@ -58,7 +60,11 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
               <span className="font-medium text-neutral-700 dark:text-neutral-300">Reference picture.</span> Say how to use it, like “in the style of the picture” or “the
               same dog on a beach”.{refShape && " Shape: same as this picture."}
             </p>
-            <IconButton label="Remove the reference picture" size="sm" onClick={() => dispatch({ type: "createSetRef", ref: null })}>
+            <IconButton label="Remove the reference picture" size="sm" onClick={() => {
+                dispatch({ type: "createSetRef", ref: null });
+                focusTabField("create");
+              }}
+            >
               <Trash className="h-3.5 w-3.5" />
             </IconButton>
           </div>
@@ -72,7 +78,13 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
               {!suggest && " Edit can keep the same character in a new scene."}
             </span>
             {suggest ? (
-              <Button size="sm" onClick={() => dispatch({ type: "selectModel", modelId: suggest.id })}>
+              <Button
+                size="sm"
+                onClick={() => {
+                  dispatch({ type: "selectModel", modelId: suggest.id });
+                  focusTabField("create");
+                }}
+              >
                 Switch to {suggest.friendlyName}
               </Button>
             ) : (
@@ -97,6 +109,7 @@ export function ReferenceSlot({ model }: { model: InstalledModel | null }) {
         <SessionStrip pictures={recent} title="Use as the reference picture" onPick={(p) => {
             const now = store.getState().images[p.id];
             if (now) dispatch({ type: "createSetRef", ref: now });
+            focusTabField("create");
           }} />
       </div>
       {error && (

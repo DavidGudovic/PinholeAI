@@ -6,6 +6,7 @@ import { defaultStayClosePosition } from "../../lib/paste/map";
 import type { FamilyUi, InstalledModel } from "../../lib/types";
 import type { Action, EditParams } from "../../lib/state/model";
 import { useImprovePrompt } from "../create/ImprovePrompt";
+import { focusTabField } from "../../lib/focus";
 
 // Recommended edit models that can take a second image (registry `multi_ref`; FLUX.2 has no one-click download yet).
 const TWO_IMAGE_PICKS = ["qwen_image_21"];
@@ -61,9 +62,10 @@ export function InstructionFields({
       <ModelPicker
         models={edits}
         value={editModelId}
-        onChange={(id) =>
-          dispatch({ type: "patchEdit", patch: { editModelId: id } })
-        }
+        onChange={(id) => {
+          dispatch({ type: "patchEdit", patch: { editModelId: id } });
+          focusTabField("edit");
+        }}
         label="Edit model"
       />
       {editFit && editFit !== "fits" && !noGpu && (
