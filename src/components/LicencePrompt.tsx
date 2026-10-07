@@ -20,7 +20,7 @@ export function LicencePrompt() {
       }
       footer={
         <>
-          <Button variant="ghost" onClick={() => req.resolve(false)}>
+          <Button variant="ghost" onClick={() => req.resolve(false)} data-autofocus>
             Cancel
           </Button>
           <Button variant="primary" onClick={() => req.resolve(true)}>

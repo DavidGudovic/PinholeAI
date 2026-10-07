@@ -124,7 +124,7 @@ export function ModelsFolderSection() {
         footer={
           phase === "confirm" ? (
             <>
-              <Button variant="ghost" onClick={() => setPhase("idle")}>
+              <Button variant="ghost" onClick={() => setPhase("idle")} data-autofocus>
                 Cancel
               </Button>
               <Button variant="primary" onClick={() => void move()}>

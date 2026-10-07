@@ -926,7 +926,7 @@ comes in as GitHub issues; open items are in `docs/PROJECT-BRIEF.md` and `docs/R
 
 - **Face fix** pass (ADetailer-style) for small faces in full-body shots.
 - Built: **Batch edit** ("Also apply to…", §5.2) and **Save as one sheet** (§5.1).
-- Built: "Improve my prompt" (§5.1) and the keyboard-first flow: Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`. Focus follows the keyboard: picking a model, style, preset, reference picture or add-on, opening Create or Edit from elsewhere, Reset and app start put the cursor in that tab's text field (`src/lib/focus.ts`); dialogs focus their main button (Cancel for deletes and Safe mode; the go-ahead button in the unsaved-pictures dialog); arrow keys move through menus and the top-bar sections.
+- Built: "Improve my prompt" (§5.1) and the keyboard-first flow: Ctrl/Cmd+Enter generate, E edit, S save, Ctrl/Cmd+Shift+S save as, D describe, F full screen, R try again (Edit), ? shows the list (also in Settings). Letter keys are ignored while typing or with a window open. Code: `src/lib/shortcuts.tsx`. Focus follows the keyboard: picking a model, style, preset, reference picture or add-on, opening Create or Edit from elsewhere, Reset and app start put the cursor in that tab's text field (`src/lib/focus.ts`); the unsaved-pictures dialog focuses the button that goes ahead, while deletes, Safe mode, model licences and moving the models folder focus Cancel; arrow keys move through menus and the top-bar sections.
 - Ruled out: background remover, ControlNet, seed grid (Edit Fine-tune stays slim).
 
 ---

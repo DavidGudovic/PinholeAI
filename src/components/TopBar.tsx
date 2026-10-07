@@ -38,7 +38,9 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         className="flex items-center gap-0.5"
         onKeyDown={(e) => {
           // Left/Right (Home/End) move between the sections, like a tab strip.
-          const i = TABS.findIndex((t) => t.id === tab);
+          const from = (e.target as HTMLElement).closest("[role=tab]")?.getAttribute("aria-controls");
+          const i = TABS.findIndex((t) => `tab-${t.id}` === from);
+          if (i < 0) return;
           const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: TABS.length - 1 }[e.key];
           if (to === undefined || e.altKey || e.ctrlKey || e.metaKey) return;
           e.preventDefault();

@@ -364,17 +364,12 @@ const FOCUSABLE = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
-/**
- * Where a dialog puts focus when it opens: the element marked `data-autofocus`, else the first
- * field, else the last footer button (the main action), else the panel itself.
- */
+/** Where a dialog puts focus when it opens: the element marked `data-autofocus`, else the first field, else the panel itself. */
 function dialogFocusTarget(panel: HTMLElement): HTMLElement | null {
-  const marked = panel.querySelector<HTMLElement>("[data-autofocus]:not(:disabled)");
-  if (marked) return marked;
-  const field = panel.querySelector<HTMLElement>("textarea:not(:disabled), input:not([type=hidden]):not(:disabled), select:not(:disabled)");
-  if (field) return field;
-  const buttons = panel.querySelectorAll<HTMLElement>("[data-dialog-footer] button:not(:disabled)");
-  return buttons[buttons.length - 1] ?? null;
+  return (
+    panel.querySelector<HTMLElement>("[data-autofocus]:not(:disabled)") ??
+    panel.querySelector<HTMLElement>("textarea:not(:disabled), input:not([type=hidden]):not(:disabled), select:not(:disabled)")
+  );
 }
 
 /** Centered modal. */
@@ -398,7 +393,7 @@ export function Dialog({
   useEscape(open, onClose);
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  // Focus the marked element, the first field or the main button for keyboard users.
+  // Focus the marked element or the first field for keyboard users.
   useModalFocus(open, panel, dialogFocusTarget);
   if (!open) return null;
   return createPortal(
@@ -428,7 +423,7 @@ export function Dialog({
         </div>
         <div className="min-h-0 overflow-auto px-5 pb-4">{children}</div>
         {footer && (
-          <div data-dialog-footer className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-800 dark:bg-neutral-900/60">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-neutral-200 bg-neutral-50 px-5 py-3 dark:border-neutral-800 dark:bg-neutral-900/60">
             {footer}
           </div>
         )}

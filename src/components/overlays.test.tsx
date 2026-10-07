@@ -382,14 +382,14 @@ describe("modal focus stays inside", () => {
     expect(document.activeElement).toBe(save);
   });
 
-  it("a dialog without fields focuses its main button; a marked button wins", async () => {
+  it("a marked button takes focus before a field; with neither, the panel does", async () => {
     render(
       <Dialog open onClose={() => undefined} title="Sure?" footer={<><button>Cancel</button><button>Go ahead</button></>}>
         text
       </Dialog>,
     );
     await tick();
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Go ahead" }));
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
     cleanup();
     render(
       <Dialog open onClose={() => undefined} title="Delete?" footer={<><button data-autofocus>Cancel</button><button>Delete</button></>}>
