@@ -558,7 +558,7 @@ function DeleteDialog({ target, onClose, onDeleted }: { target: { id: string; na
       title={`Delete “${target?.name ?? ""}”?`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} data-autofocus>
             Cancel
           </Button>
           <Button variant="danger" onClick={() => void confirm()} disabled={!preview || busy}>
@@ -638,7 +638,7 @@ function DeleteHelperDialog({ target, onClose, onDeleted }: { target: InstalledH
       title={`Delete “${target?.friendlyName ?? ""}”?`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} data-autofocus>
             Cancel
           </Button>
           <Button variant="danger" onClick={() => void confirm()} disabled={busy}>

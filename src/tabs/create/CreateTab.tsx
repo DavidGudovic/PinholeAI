@@ -32,6 +32,7 @@ import { PresetPicker, type PresetNotice } from "./PresetPicker";
 import { PromptBox } from "./PromptBox";
 import { ReferenceSlot } from "./ReferenceSlot";
 import { Results } from "./Results";
+import { focusTabField } from "../../lib/focus";
 
 export function CreateTab() {
   const models = useAppState((s) => s.models);
@@ -142,6 +143,7 @@ function CreateWorkspace() {
     setOutcome(o);
     setPresetNotice(null);
     setError(null);
+    focusTabField("create");
   };
 
   // A picture Pinhole saved, dropped on the results area: reuse how it was made. Any other
@@ -177,9 +179,18 @@ function CreateWorkspace() {
           <SetupCard needsModel={false} />
           <div className="flex items-stretch gap-2">
             <div className="min-w-0 flex-1">
-              <ModelPicker models={usable} value={modelId} onChange={(id) => dispatch({ type: "selectModel", modelId: id })} />
+              <ModelPicker models={usable} value={modelId} onChange={(id) => {
+                  dispatch({ type: "selectModel", modelId: id });
+                  focusTabField("create");
+                }}
+              />
             </div>
-            <PresetPicker onApplied={setPresetNotice} />
+            <PresetPicker
+              onApplied={(n) => {
+                setPresetNotice(n);
+                focusTabField("create");
+              }}
+            />
           </div>
           {model && model.missingComponents.length > 0 && <MissingPartsNote missing={model.missingComponents} />}
           {ui?.licenseNote && model && /non-commercial/i.test(ui.licenseNote) && (

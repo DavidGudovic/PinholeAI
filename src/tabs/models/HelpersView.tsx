@@ -115,7 +115,7 @@ function RemoveDialog({ target, onClose }: { target: HelperModel | null; onClose
       title={`Delete “${target?.title ?? ""}”?`}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} data-autofocus>
             Cancel
           </Button>
           <Button variant="danger" onClick={() => void confirm()} disabled={busy}>

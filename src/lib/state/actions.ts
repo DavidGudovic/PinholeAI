@@ -33,6 +33,7 @@ import { buildCreateRequest, buildEditRequest, closeRequest, finishRequest, othe
 import type { Store } from "./store";
 import { canSaveAs, chooseFolder, chooseSavePath, closeWindow, copyText, notifyDone, primeSound, windowInBackground } from "./platform";
 import { clearGenerationHandoff } from "../../tabs/create/handoff";
+import { focusTabField } from "../focus";
 
 let uidCounter = 0;
 const uid = (p: string) => `${p}${Date.now().toString(36)}${(uidCounter++).toString(36)}`;
@@ -565,8 +566,10 @@ export function makeActions(store: Store) {
     toast(what);
   }
 
-  function setTab(tab: TabId) {
+  /** `focusField`: put the cursor in the tab's text field (off when a tab is picked from the keyboard). */
+  function setTab(tab: TabId, focusField = true) {
     dispatch({ type: "setTab", tab });
+    if (focusField) focusTabField(tab);
   }
 
   /** Use an installed style add-on in Create (strength 0.8, adjustable under the prompt). */
@@ -1017,6 +1020,7 @@ export function makeActions(store: Store) {
       resetting = false;
     }
     toast("Reset: prompt fields and unsaved images were cleared.");
+    focusTabField(get().tab);
   }
 
   function onEngine(engine: EngineStatus) {

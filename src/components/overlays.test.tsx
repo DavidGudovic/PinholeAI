@@ -147,6 +147,23 @@ describe("keyboard focus", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("Up and Down move between menu items, wrapping around", async () => {
+    render(<Menu />);
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    await tick();
+    const first = screen.getByRole("menuitem", { name: "First" });
+    const second = screen.getByRole("menuitem", { name: "Open dialog" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(first);
+    fireEvent.keyDown(first, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(second);
+    fireEvent.keyDown(second, { key: "Home" });
+    expect(document.activeElement).toBe(first);
+  });
+
   it("leaves focus alone when the menu closes by a click outside it", async () => {
     render(
       <>
@@ -363,6 +380,24 @@ describe("modal focus stays inside", () => {
     expect(document.activeElement).toBe(close);
     fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
     expect(document.activeElement).toBe(save);
+  });
+
+  it("a marked button takes focus before a field; with neither, the panel does", async () => {
+    render(
+      <Dialog open onClose={() => undefined} title="Sure?" footer={<><button>Cancel</button><button>Go ahead</button></>}>
+        text
+      </Dialog>,
+    );
+    await tick();
+    expect(document.activeElement).toBe(screen.getByRole("dialog"));
+    cleanup();
+    render(
+      <Dialog open onClose={() => undefined} title="Delete?" footer={<><button data-autofocus>Cancel</button><button>Delete</button></>}>
+        <input aria-label="Name" />
+      </Dialog>,
+    );
+    await tick();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Cancel" }));
   });
 
   it("the image viewer takes focus and gives it back on close", async () => {

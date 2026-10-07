@@ -213,7 +213,7 @@ export function SafeModeOffDialog({ open, onCancel, onConfirm }: { open: boolean
       title="Turn off Safe mode?"
       footer={
         <>
-          <Button variant="ghost" onClick={onCancel}>
+          <Button variant="ghost" onClick={onCancel} data-autofocus>
             Cancel
           </Button>
           <Button variant="primary" onClick={onConfirm}>

@@ -33,6 +33,32 @@ const finished = (groupId: string): GroupStatus => ({
 });
 
 describe("TopBar", () => {
+  it("a click on a section puts the cursor in its text field; arrow keys move between sections", async () => {
+    const { createStore } = await import("../lib/state/store");
+    const store = createStore();
+    render(
+      <AppProvider store={store}>
+        <TopBar onOpenSettings={() => undefined} />
+        <div id="tab-create" hidden={store.getState().tab !== "create"}>
+          <textarea id="prompt" aria-label="Prompt" />
+        </div>
+      </AppProvider>,
+    );
+    store.dispatch({ type: "setTab", tab: "models" });
+    fireEvent.click(screen.getByRole("tab", { name: /Create/ }), { detail: 1 });
+    expect(store.getState().tab).toBe("create");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("Prompt")));
+
+    const create = screen.getByRole("tab", { name: /Create/ });
+    create.focus();
+    fireEvent.keyDown(create, { key: "ArrowRight" });
+    expect(store.getState().tab).toBe("edit");
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: /Edit/ }));
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowLeft" });
+    expect(store.getState().tab).toBe("models");
+  });
+
   it("keeps a failed engine download on screen with its Details", async () => {
     api.installEngine.mockRejectedValue({ code: "download", message: "The engine download failed. Check your connection and try again.", details: "HTTP 503 from github.com" });
     render(

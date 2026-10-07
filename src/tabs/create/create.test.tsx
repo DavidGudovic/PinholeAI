@@ -475,6 +475,22 @@ describe("reference picture", () => {
     expect(screen.getByAltText("Reference picture")).toBeTruthy();
   });
 
+  it("picking a picture puts the cursor back in the prompt", async () => {
+    const store = storeWithResults(result("a", 64, 64));
+    store.dispatch({ type: "setModels", models: [klein] });
+    withApp(
+      store,
+      <div id="tab-create">
+        <PromptBox ui={null} onOpenPaste={() => undefined} onApplyPasted={() => undefined} />
+        <ReferenceSlot model={klein} />
+      </div>,
+    );
+    const pick = screen.getByRole("button", { name: "Use as the reference picture" });
+    pick.focus();
+    act(() => fireEvent.click(pick));
+    await waitFor(() => expect(document.activeElement?.id).toBe("prompt"));
+  });
+
   it("with a model that can't use it: says so, offers a model that can, and Generate explains", async () => {
     const store = storeWithResults(result("a", 64, 64));
     store.dispatch({ type: "setModels", models: [sdxl, klein] });

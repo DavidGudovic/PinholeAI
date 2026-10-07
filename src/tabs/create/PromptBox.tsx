@@ -1,6 +1,6 @@
 // The prompt box + style row + "Paste from CivitAI".
 // PRIVACY: the prompt and anything pasted stay in memory (React state) only.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ClipboardPaste, Sparkles } from "lucide-react";
 import { StylePicker } from "../../components/StylePicker";
 import { AutoTextarea, Button, cx, focusRing } from "../../components/ui";
@@ -10,6 +10,7 @@ import { recallStep, shouldRecall, type Browse } from "../../lib/state/promptRec
 import { useAppState, useDispatch } from "../../lib/state/store";
 import { useImprovePrompt } from "./ImprovePrompt";
 import { STARTER_IDEAS } from "./starterIdeas";
+import { focusTabField } from "../../lib/focus";
 
 export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | null; onOpenPaste: () => void; onApplyPasted: (text: string) => void }) {
   const prompt = useAppState((s) => s.create.prompt);
@@ -22,6 +23,10 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
   // Generation data pasted into the box, waiting for "Apply these settings?".
   // `base` is the prompt at paste time: the offsets only fit that text.
   const [pending, setPending] = useState<{ text: string; start: number; end: number; base: string } | null>(null);
+  // At start (and after Reset) the cursor waits in the prompt, unless something else has focus.
+  useEffect(() => {
+    if (!document.activeElement || document.activeElement === document.body) focusTabField("create");
+  }, []);
 
   const insertAsText = () => {
     if (!pending) return;
@@ -115,7 +120,10 @@ export function PromptBox({ ui, onOpenPaste, onApplyPasted }: { ui: FamilyUi | n
         )}
         {/* Wraps instead of squeezing on a narrow sidebar. The Improve model is chosen in Settings → Helper models. */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-t border-neutral-200 px-2 py-1.5 dark:border-neutral-800">
-          <StylePicker value={styleId} onChange={(id) => dispatch({ type: "patchCreate", patch: { styleId: id } })} familyId={ui?.familyId} familyLabel={ui?.label} />
+          <StylePicker value={styleId} onChange={(id) => {
+              dispatch({ type: "patchCreate", patch: { styleId: id } });
+              focusTabField("create");
+            }} familyId={ui?.familyId} familyLabel={ui?.label} />
           <div className="ml-auto flex items-center gap-1">{improve.button}</div>
         </div>
       </div>

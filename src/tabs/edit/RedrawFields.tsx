@@ -10,6 +10,7 @@ import type {
   ImgRef,
 } from "../../lib/state/model";
 import { ExtendControls } from "./ExtendControls";
+import { focusTabField } from "../../lib/focus";
 
 export function RedrawFields({
   e,
@@ -36,12 +37,13 @@ export function RedrawFields({
         <ModelPicker
           models={creates}
           value={restyleModelId}
-          onChange={(id) =>
+          onChange={(id) => {
             dispatch({
               type: "patchEdit",
               patch: { restyleModelId: id },
-            })
-          }
+            });
+            focusTabField("edit");
+          }}
           label="Model"
         />
       ) : (

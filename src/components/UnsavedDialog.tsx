@@ -59,7 +59,8 @@ export function UnsavedDialog() {
           <Button variant="ghost" disabled={busy} onClick={cancel}>
             Go back
           </Button>
-          <Button variant="secondary" disabled={busy} onClick={() => void actions.finishLeave(what!)}>
+          {/* Focused on open: Enter goes ahead, Escape goes back. */}
+          <Button variant="secondary" disabled={busy} onClick={() => void actions.finishLeave(what!)} data-autofocus>
             {closing ? "Close without saving" : replacing ? "Continue without saving" : "Reset without saving"}
           </Button>
           {canSaveAs() && (

@@ -2077,8 +2077,16 @@ async fn ensure_upscaler(
 mod tests {
     use super::*;
 
-    /// A core with a linked folder holding a checkpoint and a style add-on.
+    /// A core with a linked folder holding a checkpoint and a style add-on. Built on a plain
+    /// thread, so the scan starts no CivitAI lookup that could hold the index during the test.
     fn core_with_linked_folder(tmp: &std::path::Path) -> (Arc<AppCore>, String, String) {
+        let tmp = tmp.to_path_buf();
+        std::thread::spawn(move || linked_core(&tmp))
+            .join()
+            .unwrap()
+    }
+
+    fn linked_core(tmp: &std::path::Path) -> (Arc<AppCore>, String, String) {
         use crate::linked::{fixtures, tests::new_core, tests::wait_scans};
         let comfy = tmp.join("Comfy");
         fixtures::sdxl(&comfy.join("checkpoints/m.safetensors"));

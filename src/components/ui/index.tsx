@@ -9,6 +9,7 @@ import {
   useState,
   type ComponentProps,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type Ref,
   type RefObject,
@@ -313,15 +314,17 @@ export function useEscape(open: boolean, onClose: () => void) {
 /**
  * Modal focus: on open, remember the focused element and move focus into the
  * panel (the first match of `first`, else the panel itself); on close, put it back.
+ * `first` is a selector, or a function that picks the element (keep it stable across renders).
  * Tab and Shift+Tab wrap around inside the panel, so focus stays in it while it is open.
  */
-export function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, first?: string) {
+export function useModalFocus(open: boolean, panel: RefObject<HTMLElement | null>, first?: string | ((panel: HTMLElement) => HTMLElement | null)) {
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
     const t = setTimeout(() => {
-      const el = first ? panel.current?.querySelector<HTMLElement>(first) : null;
-      (el ?? panel.current)?.focus();
+      const root = panel.current;
+      const el = !root || !first ? null : typeof first === "string" ? root.querySelector<HTMLElement>(first) : first(root);
+      (el ?? root)?.focus();
     }, 0);
     const root = panel.current;
     const onKey = (e: KeyboardEvent) => {
@@ -361,6 +364,14 @@ const FOCUSABLE = [
   "[tabindex]:not([tabindex='-1'])",
 ].join(", ");
 
+/** Where a dialog puts focus when it opens: the element marked `data-autofocus`, else the first field, else the panel itself. */
+function dialogFocusTarget(panel: HTMLElement): HTMLElement | null {
+  return (
+    panel.querySelector<HTMLElement>("[data-autofocus]:not(:disabled)") ??
+    panel.querySelector<HTMLElement>("textarea:not(:disabled), input:not([type=hidden]):not(:disabled), select:not(:disabled)")
+  );
+}
+
 /** Centered modal. */
 export function Dialog({
   open,
@@ -382,8 +393,8 @@ export function Dialog({
   useEscape(open, onClose);
   const panel = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  // Focus the first field (or the panel) for keyboard users.
-  useModalFocus(open, panel, "[data-autofocus], textarea, input:not([type=hidden]), select");
+  // Focus the marked element or the first field for keyboard users.
+  useModalFocus(open, panel, dialogFocusTarget);
   if (!open) return null;
   return createPortal(
     <div className="pinhole-fade fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/50 p-4 backdrop-blur-[2px]" onMouseDown={onClose}>
@@ -731,6 +742,7 @@ export function Popover({
             ref={panel}
             style={style}
             tabIndex={-1}
+            onKeyDown={menuArrowKeys}
             className={cx(
               "pinhole-pop overflow-auto outline-none rounded-xl border border-neutral-200 bg-white p-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900",
               className,
@@ -742,6 +754,20 @@ export function Popover({
         )}
     </>
   );
+}
+
+/** Up/Down (Home/End) move between a popover's menu items, wrapping around. Fields keep their own keys. */
+function menuArrowKeys(e: ReactKeyboardEvent<HTMLElement>) {
+  const from = e.target as HTMLElement;
+  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (from !== e.currentTarget && from.getAttribute("role") !== "menuitem") return;
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>("[role=menuitem]:not(:disabled)")];
+  if (!items.length) return;
+  e.preventDefault();
+  const i = items.indexOf(from);
+  const next =
+    e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : i < 0 ? (e.key === "ArrowDown" ? 0 : items.length - 1) : (i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+  items[next].focus();
 }
 
 export function MenuItem({
