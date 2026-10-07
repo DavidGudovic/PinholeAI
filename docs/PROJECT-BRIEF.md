@@ -11,9 +11,9 @@ press Generate. Tauri 2 + Rust core + React/TS UI. Images are made by
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`. Both are pinned, SHA-256-verified
 downloads (`config/engine.yaml`), never bundled. Your prompts and images stay on your computer.
 
-## Status (v1.1.2)
+## Status (v1.1.3)
 - The app is feature-complete (milestones M0–M6 done). v1.0.0 is the first GitHub release
-  (2026-10-01); v1.0.1 and v1.0.2 followed the same day (safety and model-trust fixes, then signed updates, stronger checks and Browse and Settings fixes); v1.0.3 on 2026-10-03 (picture paste, Add detail for faces, upscaler choice, Side by side, Improve in Edit, queued Upscale); v1.0.4 on 2026-10-03 (Close to this one, Finish at Best quality, On another model, choices in braces, Also apply to…, saves to Pictures/Pinhole, Repeats without seams, picture drop); v1.1.0 on 2026-10-04 (faster model browser, block reasons in the message, age line 20, Improve fixes); v1.1.1 on 2026-10-04 (bug fixes); v1.1.2 on 2026-10-05 (memory and bug fixes).
+  (2026-10-01); v1.0.1 and v1.0.2 followed the same day (safety and model-trust fixes, then signed updates, stronger checks and Browse and Settings fixes); v1.0.3 on 2026-10-03 (picture paste, Add detail for faces, upscaler choice, Side by side, Improve in Edit, queued Upscale); v1.0.4 on 2026-10-03 (Close to this one, Finish at Best quality, On another model, choices in braces, Also apply to…, saves to Pictures/Pinhole, Repeats without seams, picture drop); v1.1.0 on 2026-10-04 (faster model browser, block reasons in the message, age line 20, Improve fixes); v1.1.1 on 2026-10-04 (bug fixes); v1.1.2 on 2026-10-05 (memory and bug fixes); v1.1.3 on 2026-10-07 (keyboard focus).
   `RELEASE-SPEC.md` §12 lists what is still open. In-app updates open the release page until
   a signing key is set up (`src-tauri/update-key.pub` + the `PINHOLE_UPDATE_KEY` secret).
 - Proven in CI on every full run: engine download + launch + real 256×256 generation on Windows and
